@@ -1,6 +1,7 @@
 // The dashboard page in Playwright's Chromium, for tests/test_web_dashboard.py.
 //   node web_dashboard_browser.js URL SHOTS SIZES: the page at each size ({name: [width, height]}): a screenshot of each (SHOTS/dashboard-
-//     NAME.png, device scale factor 2) and, on stdout, {name: {tiles, rects, columns, scroll, scrollWidth, scrollHeight, status, errors}}.
+//     NAME.png, device scale factor 2) and, on stdout, {name: {tiles, rects, columns, scroll, scrollWidth, scrollHeight, status, errors,
+//     zoomed}}; then the first tile zoomed (Enter): its look, and a screenshot (SHOTS/dashboard-NAME-zoomed.png).
 //   node web_dashboard_browser.js URL --live: the page open at 800x600; prints {label} (the first tile's), waits for a line on stdin
 //     (the test has changed the reading), then prints {label, same_page, errors} once the tile shows it, or after 15 s.
 //   node web_dashboard_browser.js URL --arrive TITLE: the page open at 1024x768; prints the tile's state ({label, faded, opacity, shown,
@@ -58,6 +59,18 @@ async function sizes(browser, url, shots, wanted) {
       scrollHeight: document.documentElement.scrollHeight,
       status: document.getElementById("status").textContent,
     })), errors };
+    // zoomed (Enter on the first tile): its look (box, title, text, table) and a screenshot (SHOTS/dashboard-NAME-zoomed.png)
+    await page.focus(".tile");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${shots}/dashboard-${name}-zoomed.png` });
+    report[name].zoomed = await page.evaluate(() => {
+      const t = document.querySelector("#grid .tile"), rect = (e) => e.getBoundingClientRect().toJSON();
+      const table = [...t.querySelectorAll(".unit, .chip, .figure, .tablearea")].map((e) => getComputedStyle(e));
+      return { zoomed: document.body.classList.contains("zoomed"), box: rect(t), title: rect(t.querySelector(".title")),
+               texts: [...t.querySelectorAll("svg text")].map(rect).filter((r) => r.width),
+               table: [...new Set(table.map((c) => `${c.visibility} ${c.opacity}`))] };
+    });
     await context.close();
   }
   process.stdout.write(JSON.stringify(report));
@@ -357,7 +370,12 @@ const ZOOM_HELPERS = () => {
   window.__record = (title, ms) => new Promise((resolve) => {
     const frames = [], start = performance.now();
     const step = (now) => {
-      if (title) { const r = window.__tile(title).getBoundingClientRect(); frames.push({ t: now, left: r.left, top: r.top, width: r.width, height: r.height }); }
+      if (title) {   // (and its title's place, and its table's opacity: a figure's, as drawn)
+        const t = window.__tile(title), r = t.getBoundingClientRect(), h = t.querySelector(".title").getBoundingClientRect();
+        const f = getComputedStyle(t.querySelector(".figure"));
+        frames.push({ t: now, left: r.left, top: r.top, width: r.width, height: r.height, titleTop: h.top, titleSize: h.height,
+                      table: f.visibility === "hidden" ? 0 : +f.opacity });
+      }
       else frames.push({ t: now, x: window.__track() });
       if (now - start < ms) requestAnimationFrame(step); else resolve({ frames, at: window.__at });
     };
@@ -368,6 +386,14 @@ const ZOOM_HELPERS = () => {
   addEventListener("keydown", (e) => { window.__at = performance.now(); setTimeout(() => window.__keys.push([e.key, e.defaultPrevented])); });
   addEventListener("wheel", (e) => { setTimeout(() => window.__wheels.push(e.defaultPrevented)); }, { passive: true });
   window.__keys = []; window.__wheels = [];
+  // A tile's look: its box; its title, reading and (a dial's) band word, each on the screen; its table's visibility and opacity
+  window.__look = (title) => {
+    const t = window.__tile(title), rect = (e) => e && e.getBoundingClientRect().toJSON();
+    const table = [...t.querySelectorAll(".unit, .chip, .figure, .tablearea")].map((e) => getComputedStyle(e));
+    return { box: rect(t), title: rect(t.querySelector(".title")), reading: rect(t.querySelector("svg text.reading")),
+             texts: [...t.querySelectorAll("svg text")].map(rect).filter((r) => r.width),
+             table: [...new Set(table.map((c) => `${c.visibility} ${c.opacity}`))] };
+  };
 };
 // A recording summed up: where it started and ended, whether it passed through between, and how long after the click or key it came to rest
 function motion(rec, key) {
@@ -382,7 +408,9 @@ async function zoomClick(page, title, point) {   // a click, the tile's rect rec
   await page.waitForTimeout(50);
   await page.mouse.click(...point);
   const rec = await recording;
-  return { ...motion(rec, ["left", "top", "width", "height"]), anims: await page.evaluate(() => window.__anims), ...await page.evaluate(() => window.__state()) };
+  const after = rec.frames.filter((x) => x.t >= rec.at);
+  return { ...motion(rec, ["left", "top", "width", "height"]), anims: await page.evaluate(() => window.__anims), ...await page.evaluate(() => window.__state()),
+           tables: after.map((x) => x.table), titles: after.map((x) => [(x.titleTop - x.top) / x.width, x.titleSize / x.width]) };
 }
 async function keyStep(page, key, wait = 400) {   // a key, the strip recorded as it slides
   const recording = page.evaluate(() => window.__record(null, 450));
@@ -419,6 +447,8 @@ async function zoomMode(browser, url) {
   out.zoomedCursor = { gauge: await cursorAt(page, await at(page, "Humidity", 0.85, 0.3)), margin: await cursorAt(page, [20, 384]),
                        title: await cursorAt(page, await textPoint("Humidity", ".title")) };
   out.grip = await page.evaluate(() => getComputedStyle(window.__tile("Humidity").querySelector(".close")).display);
+  out.zoomedLook = await page.evaluate(() => window.__look("Humidity"));                // (its title and gauge filling the window, no table)
+  out.neighbourTable = await page.evaluate(() => window.__look("Temperature").table);   // (the gallery's others: no table either)
   // live: a new reading for Temperature, the tile beside it off the screen, reaches it in place
   await page.evaluate(() => { window.__mark = window.__tile("Temperature"); });
   process.stdout.write(JSON.stringify({ label: await page.evaluate(() => window.__mark.getAttribute("aria-label")) }) + "\n");
@@ -474,7 +504,7 @@ async function zoomMode(browser, url) {
   // a drag on the text selects it: no paging, still zoomed
   const shown = out.last.reached.shown;
   out.text = {};
-  for (const [name, selector] of [["title", ".title"], ["reading", "svg text.reading"], ["table", ".figure"]]) {
+  for (const [name, selector] of [["title", ".title"], ["reading", "svg text.reading"]]) {
     const r = await tileOf(page, shown).locator(selector).first().boundingBox(), y = r.y + r.height / 2;
     await mouseDrag(page, [r.x + 2, y], [r.x + r.width - 1, y + 1]);
     out.text[name] = { selected: await selection(page), ...await page.evaluate(() => window.__state()) };
@@ -482,6 +512,7 @@ async function zoomMode(browser, url) {
   // a click without moving on the gauge: back to the dashboard, in 200 ms, the tile in its place
   out.zoomOut = await zoomClick(page, shown, await at(page, shown, 0.85, 0.3));
   out.outRect = await tileOf(page, shown).boundingBox();
+  out.outTable = await page.evaluate((shown) => window.__look(shown).table, shown);   // (its table back)
   // a double-click (its clicks 300 ms apart, slower than the zoom): zoomed, not zoomed and straight back out
   const wind = await at(page, "Wind", 0.85, 0.3);
   await page.mouse.move(...wind);
@@ -590,7 +621,8 @@ async function zoomTouchMode(browser, url) {
   out.scrolled = scrolled;
   out.tapped = await page.evaluate(() => document.elementFromPoint(100, 150).closest(".tile").querySelector(".title").textContent);
   await tap(await at(page, out.tapped, 0.85, 0.3));
-  out.zoomed = { ...await page.evaluate(() => window.__state()), rect: await tileOf(page, out.tapped).boundingBox() };
+  out.zoomed = { ...await page.evaluate(() => window.__state()), rect: await tileOf(page, out.tapped).boundingBox(),
+                 look: await page.evaluate((title) => window.__look(title), out.tapped) };
   // a tap straight back: the page scrolled where it was; then zoomed again
   await page.waitForTimeout(400);   // (not a double tap)
   await tap([200, 300]);

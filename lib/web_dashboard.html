@@ -11,7 +11,7 @@
      colours and sizes (lib/gauge_look.py, sent with the data); redrawn on each /dashboard/events event, and every minute regardless.
      The tiles can be rearranged in the browser: dragged to reorder (a long press on a touch screen), hidden with their × or the
      remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server.
-     A click or tap on a gauge zooms its tile to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
+     A click or tap on a gauge zooms its tile (title and gauge, no table) to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
      Behind everything, the weather as pixel art on one canvas (Sky): rain, smog, uv, humidity, wind, heat and ice, each while the
      readings call for it, its tile framed in red; "stop animations" in the strip stops them. -->
 <style>
@@ -25,13 +25,14 @@
     padding-bottom: calc(var(--pad, 8px) + var(--status, 18px)); min-height: 100%; }   /* (room under the tiles for the status line) */
   /* A tile: its own background clear (whatever is behind the page shows through it), its foreground opaque; a thin opaque frame
      (::before, inset, so neighbours don't share a line), seen only on mouseover, picked up, focused or red. Its gauge can be dragged (user-select none), its
-     title, reading and table keep their text selectable. transform-origin 0 0: the reflow animations' scale is from the corner. */
+     title, reading and table keep their text selectable. transform-origin 0 0: the reflow animations' scale is from the corner.
+     Its contents are placed by its width alone (cqw), so the zoomed view, its box only their top (the title and gauge), shows them alike. */
   .tile { position: relative; container-type: inline-size; overflow: hidden; background: transparent; transform-origin: 0 0;
     transition: opacity 0.9s ease, transform 0.22s ease; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   .tile::before { content: ""; position: absolute; inset: 0.9cqw; border: 1px solid transparent; border-radius: 2.5cqw; pointer-events: none; }
   @media (hover: hover) { .tile:hover::before { border-color: #262E34; } }   /* (its frame unseen until the mouse is over it) */
   .tile.faded { opacity: var(--fade, 0.4); }   /* no reading now: dimmed towards the card (as the PNG blends its colours) */
-  .tile svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .tile svg { position: absolute; left: 0; top: 0; width: 100%; display: block; }   /* (its height: by the width, drawTile()) */
   .tile svg text { font-family: inherit; }
   .title, .unit, .chip, .figure, .tile svg text.reading { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
   .at { position: absolute; display: flex; align-items: center; justify-content: center; white-space: nowrap; line-height: 1; }
@@ -98,9 +99,15 @@
     -webkit-user-select: none; user-select: none; }
   body.zoomed .tile { position: absolute; top: var(--zy); left: calc(var(--zx) + var(--i) * var(--pitch)); width: var(--zw); height: var(--zh); }
   body.zoomed .grip, body.zoomed .close { display: none; }
+  /* Zoomed (the gallery's tiles too), only the title and the gauge: the tile's box just their part of it (--zh), the Daily/Monthly/
+     Yearly table hidden: gone at once as the tile grows, and while it shrinks back (never drawn large over the others), then fading
+     in, in its place */
+  .unit, .chip, .figure, .tablearea { transition: opacity 0.15s ease; }
+  body.zoomed .tile :is(.unit, .chip, .figure, .tablearea), .tile.zooming :is(.unit, .chip, .figure, .tablearea)
+    { opacity: 0; visibility: hidden; transition: none; }
   .tile.zooming { z-index: 2; }        /* (the tile zooming in or out, over the others) */
   body.paging, body.paging * { cursor: grabbing !important; -webkit-user-select: none !important; user-select: none !important; }
-  @media (prefers-reduced-motion: reduce) { .tile, .grip, .close, #remove { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .tile, .grip, .close, #remove, .tile :is(.unit, .chip, .figure, .tablearea) { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -885,7 +892,8 @@ const Sky = (() => {
   const TOUCH_SLOP = 10, MOUSE_SLOP = 5;   // moved further (CSS px) first: a touch scrolls instead, a mouse press becomes a drag
   const BUZZ_MS = 15;                  // the vibration as a long press picks a tile up (where navigator.vibrate exists: not iOS)
   const LIFT = 1.04;                   // a picked-up tile, a little larger
-  const TABLE_TOP = 372;               // where the Daily/Monthly/Yearly table starts, in the tile's own pixels (table(): 378)
+  const TABLE_TOP = 372;               // where the Daily/Monthly/Yearly table starts, in the tile's own pixels (table(): 378); above
+                                       // it, the title and the gauge (a dial's band name ends at 370): all the zoomed view shows
   const EDGE = 48, EDGE_SPEED = 10;    // a drag this near the window's top or bottom scrolls a scrolling page, this many px a frame
   const ZOOM_MS = 200;                 // a tile zooming to fill the window, and back
   const STEP_MS = 200;                 // the zoomed view: a key's step to the next or previous tile
@@ -1016,12 +1024,12 @@ const Sky = (() => {
 
   const DRAW = {thermometer, dial, beaker};
 
-  // ---------- HTML: the title and the table, placed in the tile's own pixels (480 x 575), sized with it ----------
+  // ---------- HTML: the title and the table, placed in the tile's own pixels (480 x 575), sized with it (by its width: cqw) ----------
   function place(parent, x, y, w, h, size, words, cls, style) {
-    const [W, H] = L.cell;
+    const W = L.cell[0], u = (v) => `${v / W * 100}cqw`;
     const d = document.createElement("div");
     d.className = "at " + (cls || "");
-    Object.assign(d.style, {left: `${x / W * 100}%`, top: `${y / H * 100}%`, width: `${w / W * 100}%`, height: `${h / H * 100}%`,
+    Object.assign(d.style, {left: u(x), top: u(y), width: u(w), height: u(h),
                             fontSize: `${size / W * 100}cqw`}, style || {});
     d.textContent = words;
     parent.appendChild(d);
@@ -1063,6 +1071,7 @@ const Sky = (() => {
     box.setAttribute("aria-label", label(tile));
     box.tabIndex = 0;   // (focused, Enter or Space zooms it)
     const svg = el("svg", {viewBox: `0 0 ${L.cell[0]} ${L.cell[1]}`, preserveAspectRatio: "xMidYMid meet", "aria-hidden": "true"});
+    svg.style.height = `${L.cell[1] / L.cell[0] * 100}cqw`;   // (by the width: zoomed, the tile's box is only its top)
     box.appendChild(svg);
     const at = DRAW[tile.kind](svg, tile, ink, `clip${clips++}`);
     place(box, 0, 38 - 25, L.cell[0], 50, 38, tile.title, "title", {color: ink(L.ink)});
@@ -1322,7 +1331,7 @@ const Sky = (() => {
   function draggable(e, box) {
     if (e.target.closest(".close, .title, .unit, .chip, .figure")) return false;
     const r = box.getBoundingClientRect();
-    if ((e.clientY - r.top) / r.height * L.cell[1] >= TABLE_TOP) return false;   // (the table, gaps between its chips too)
+    if ((e.clientY - r.top) / r.width * L.cell[0] >= TABLE_TOP) return false;   // (the table, gaps between its chips too)
     const reading = box.querySelector("svg text.reading");
     const t = reading && reading.getBoundingClientRect();
     return !(t && t.width && e.clientX >= t.left - 2 && e.clientX <= t.right + 2 && e.clientY >= t.top - 2 && e.clientY <= t.bottom + 2);
@@ -1472,8 +1481,8 @@ const Sky = (() => {
   }
 
   // ---------- the zoomed view: one tile filling the window, and a gallery through the others ----------
-  // A click or tap on a tile's gauge (not its text) zooms the whole tile to fill the window; a click or tap without moving (with a mouse,
-  // not on the text) or Esc goes back. Both are a FLIP: the tiles laid out where they end, then each eased by its transform from where
+  // A click or tap on a tile's gauge (not its text) zooms its title and gauge (its table hidden) to fill the window; a click or tap
+  // without moving (with a mouse, not on the text) or Esc goes back. Both are a FLIP: the tiles laid out where they end, then each eased by its transform from where
   // it was (the tile shown grows from, or shrinks to, its place; the others fade out where they were, or in where they are).
   // Zoomed, the visible tiles stand side by side in #grid, one window-width apart, and #grid slides sideways (its transform only) to
   // page through them, in the saved order, stopping at the first and the last: ←/→, Space and Backspace step; a drag on the gauge (a
@@ -1542,10 +1551,11 @@ const Sky = (() => {
     }
   }
 
-  // The gallery's places for the window's size now: each tile as large as fits beside the status strip, centred in its place
+  // The gallery's places for the window's size now: each tile's title and gauge (its top, to TABLE_TOP: the table hidden) as large as
+  // fits beside the status strip, centred in its place
   function galleryLayout() {
     const boxes = [...grid.children], n = boxes.length;
-    const aspect = L.cell[0] / L.cell[1], W = window.innerWidth, H = window.innerHeight - 2 * PAD - STATUS;
+    const aspect = L.cell[0] / TABLE_TOP, W = window.innerWidth, H = window.innerHeight - 2 * PAD - STATUS;
     const w = Math.min(W - 2 * PAD, H * aspect), h = w / aspect;
     for (const [k, v] of Object.entries({"--zw": w, "--zh": h, "--zx": (W - w) / 2, "--zy": PAD + (H - h) / 2, "--pitch": W}))
       grid.style.setProperty(k, `${v}px`);

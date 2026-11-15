@@ -370,7 +370,9 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert got["tiles"] == n and got["scrollWidth"] <= width, (name, got)
         assert got["status"] == "stop animations · updated 18:42", (name, got)   # (the US AQI's 56, Moderate: smog behind the tiles)
         assert all(r["right"] <= width + 0.5 and r["left"] >= -0.5 for r in got["rects"]), (name, got)
-        assert (shots / f"dashboard-{name}.png").exists()
+        assert (shots / f"dashboard-{name}.png").exists() and (shots / f"dashboard-{name}-zoomed.png").exists()
+        assert got["zoomed"]["zoomed"], (name, got["zoomed"])
+        fills(got["zoomed"], width, height)                                       # zoomed: its title and gauge fill the window, no table
     for name in ("tablet-landscape", "tablet-portrait", "desktop"):            # these fit every tile without scrolling
         got = report[name]
         assert got["scroll"] == "no" and got["scrollHeight"] <= SIZES[name][1], (name, got)
@@ -574,11 +576,13 @@ async def test_fewer_tiles_grow_evenly_to_fill_the_window_and_never_shrink_below
 
 # ---------- the zoomed view and its gallery ----------
 ZOOM_MS = 200
+TABLE_TOP = 372     # (the web page's: where a tile's table starts, in its own pixels; above it the title and gauge, all a zoomed tile shows)
 
 
 def zoomed_rect(width, height):
-    """The zoomed tile's place at this window size: as large as fits beside the margins and the status strip, centred."""
-    aspect = look()["cell"][0] / look()["cell"][1]
+    """The zoomed tile's place at this window size: its title and gauge (no table) as large as fits beside the margins and the status
+    strip, centred."""
+    aspect = look()["cell"][0] / TABLE_TOP
     w = min(width - 16, (height - 16 - 18) * aspect)
     h = w / aspect
     return {"left": (width - w) / 2, "top": 8 + (height - 16 - 18 - h) / 2, "width": w, "height": h}
@@ -586,6 +590,20 @@ def zoomed_rect(width, height):
 
 def near(rect, want, tolerance=1.0):
     return all(abs(rect[k] - want[k]) <= tolerance for k in ("left", "top", "width", "height"))
+
+
+def fills(zl, width, height):
+    """A zoomed tile's look (__look) at this window size: no table; its box (the title and gauge) as large as fits, its limiting axis
+    within a few px of the window's room (less the margins and the status strip), centred, clear of the strip; its text inside it."""
+    box, room = zl["box"], (width - 16, height - 16 - 18)
+    assert zl["table"] == ["hidden 0"], zl
+    assert box["width"] <= room[0] + 1 and box["height"] <= room[1] + 1, zl
+    assert room[0] - box["width"] <= 3 or room[1] - box["height"] <= 3, zl                    # (one axis filled)
+    assert box["width"] / box["height"] == pytest.approx(look()["cell"][0] / TABLE_TOP, rel=0.01), zl   # (its proportions kept)
+    assert (box["left"] + box["right"]) / 2 == pytest.approx(width / 2, abs=1), zl
+    assert (box["top"] + box["bottom"]) / 2 == pytest.approx(8 + room[1] / 2, abs=1) and box["bottom"] <= height - 18, zl
+    for r in [zl["title"], *zl["texts"]]:                                                     # (the reading, a dial's band word)
+        assert box["left"] - 1 <= r["left"] and r["right"] <= box["right"] + 1 and box["top"] - 1 <= r["top"] and r["bottom"] <= box["bottom"] + 1, (r, zl)
 
 
 @pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
@@ -610,12 +628,20 @@ async def test_a_click_on_a_gauge_zooms_its_tile_and_the_gallery_pages_by_keys_d
     # the cursor: a magnifier with + over a gauge, the usual one over the text; zoomed, a magnifier with − (around the tile too)
     assert got["cursor"] == {"gauge": "zoom-in", "title": "auto", "figure": "auto", "reading": "auto"}
     assert got["zoomedCursor"] == {"gauge": "zoom-out", "margin": "zoom-out", "title": "auto"}
-    # a click on the gauge: the whole tile grows from its place to fill the window, in 200 ms (a FLIP: transforms only)
+    # a click on the gauge: its title and gauge (the grid tile's top part) grow from their place to fill the window, in 200 ms (a FLIP:
+    # transforms only), ending exactly there; the title moving with the tile all the way (no jump); the table gone from the start
     zoom_in = got["zoomIn"]
     assert zoom_in["zoomed"] and zoom_in["shown"] == "Humidity" and ZOOM_MS in zoom_in["anims"], zoom_in
-    assert near(zoom_in["first"], got["gridRect"] | {"left": got["gridRect"]["x"], "top": got["gridRect"]["y"]}, 2), zoom_in
+    grid_rect = got["gridRect"] | {"left": got["gridRect"]["x"], "top": got["gridRect"]["y"]}
+    assert near(zoom_in["first"], grid_rect | {"height": grid_rect["width"] * TABLE_TOP / look()["cell"][0]}, 2), zoom_in
     assert near(zoom_in["last"], full) and zoom_in["between"] and 150 <= zoom_in["settledMs"] <= 330, zoom_in
+    assert all(t == pytest.approx(zoom_in["titles"][0], abs=0.002) for t in zoom_in["titles"]), zoom_in["titles"]   # (in the tile's terms)
+    tables = zoom_in["tables"]
+    assert tables and set(tables) == {0}, tables
     assert got["grip"] == "none"                                                 # (no grip or × in the zoomed view)
+    # zoomed: no table (the gallery's others neither); the title and gauge fill the window, centred, clear of the strip
+    fills(got["zoomedLook"], 1024, 768)
+    assert got["neighbourTable"] == ["hidden 0"], got["neighbourTable"]
     # live: the tile beside it, off the screen, takes the new reading in place, and shows it as it slides in
     assert got["live"] == {"label": "Temperature 21.5 °C", "sameTile": True, "zoomed": True, "shown": "Humidity", "track": -1024}
     keys = got["keys"]
@@ -648,14 +674,16 @@ async def test_a_click_on_a_gauge_zooms_its_tile_and_the_gallery_pages_by_keys_d
     # a drag on the text selects it: no paging, still zoomed
     text = got["text"]
     assert {k: (v["selected"], v["shown"], v["zoomed"]) for k, v in text.items()} == {
-        "title": (default[-1], default[-1], True), "reading": (text["reading"]["selected"], default[-1], True),
-        "table": (text["table"]["selected"], default[-1], True)}, text
-    assert text["reading"]["selected"].strip() and text["table"]["selected"].strip(), text
+        "title": (default[-1], default[-1], True), "reading": (text["reading"]["selected"], default[-1], True)}, text
+    assert text["reading"]["selected"].strip(), text
     # a click without moving: back to the dashboard in 200 ms, the tile in its place in the grid
     zoom_out = got["zoomOut"]
-    assert not zoom_out["zoomed"] and near(zoom_out["first"], full) and zoom_out["between"] and 150 <= zoom_out["settledMs"] <= 330, zoom_out
+    whole = full | {"height": full["width"] * look()["cell"][1] / look()["cell"][0]}   # (the whole tile, from there: its row height rounded, scaled up)
+    assert not zoom_out["zoomed"] and near(zoom_out["first"], whole, 3) and zoom_out["between"] and 150 <= zoom_out["settledMs"] <= 330, zoom_out
     assert near(zoom_out["last"], got["outRect"] | {"left": got["outRect"]["x"], "top": got["outRect"]["y"]})
     assert zoom_out["last"]["width"] == pytest.approx(got["gridRect"]["width"], abs=0.5)
+    tables = zoom_out["tables"]                                                   # (its table back: hidden as it shrinks, then fading in)
+    assert tables[0] == 0 and tables[-1] == 1 and all(a <= b for a, b in zip(tables, tables[1:])) and got["outTable"] == ["visible 1"], (tables, got["outTable"])
     # Esc: back too, the order as it was
     assert got["esc"]["before"]["zoomed"] and got["esc"]["before"]["shown"] == "Wind" and not got["esc"]["after"]["zoomed"]
     assert got["esc"]["titles"] == default
@@ -689,6 +717,7 @@ async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_t
     assert got["zoomed"]["zoomed"] and got["zoomed"]["shown"] == got["tapped"]
     assert not got["backStraight"]["zoomed"] and abs(got["backStraight"]["scrollY"] - got["scrolled"]) <= 2, got["backStraight"]
     assert near(got["zoomed"]["rect"] | {"left": got["zoomed"]["rect"]["x"], "top": got["zoomed"]["rect"]["y"]}, zoomed_rect(390, 844))
+    fills(got["zoomed"]["look"], 390, 844)
     assert [got[k]["shown"] for k in ("next", "previous", "flick", "fromTitle")] == [default[t + 1], default[t], default[t + 1], default[t + 2]], got
     assert got["vertical"]["shown"] == default[t + 2] and got["vertical"]["zoomed"]
     assert got["held"] == {"zoomed": True, "shown": default[t + 2], "track": got["vertical"]["track"], "buzz": [], "zone": False}
