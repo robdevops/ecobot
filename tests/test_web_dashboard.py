@@ -481,6 +481,11 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     saved = [t for t in default if t not in ("Rain", "Temperature")] + ["Temperature"]
     assert got["newTile"] == moved(saved, "Rain", "Atmospheric pressure")
     assert got["keptOthers"] == {"order": moved(got["newTile"], "Humidity", "Rain") + ["Gone sensor"], "hidden": ["Gone sensor"], "later": True}
+    # a click 150 ms after a drop reaches the page (only the drop's own click, if the browser sends one, is swallowed)
+    assert got["clickAfterDrop"] == ["tile"]
+    # the × pressed from the keyboard: the focus moves on to the next tile's ×, or with no tile left, to the reset link
+    order = moved(got["newTile"], "Humidity", "Rain")
+    assert got["keyboardHide"] == [f"Hide {order[0]}", f"Hide {order[1]}", "Hide Rain", "reset preferences"]
     # storage blocked: it all works, nothing saved, no error
     assert got["blocked"] == {"titles": [t for t in moved(default, "Temperature", "Humidity") if t != "Rain"], "errors": []}
     # see-through: the tile's own background clear, its foreground (title, reading, frame) opaque, the page its dark colour
@@ -506,6 +511,10 @@ async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swi
     # held and let go in place: the grip and × stay, and a tap on the × hides it
     assert got["armed"]["armed"] == ["Humidity"] and got["armed"]["close"] == "1"
     assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "updated 18:42 · reset preferences"}
+    # held at the bottom edge: the page scrolls to its end, never past it, and stays there once let go
+    edge = got["edge"]
+    assert edge["seen"][-1] == pytest.approx(edge["end"], abs=1) and max(edge["seen"]) <= edge["end"] + 1, edge
+    assert edge["after"] <= edge["end"] + 1, edge
 
 
 @pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")

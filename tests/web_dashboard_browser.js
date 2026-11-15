@@ -8,9 +8,11 @@
 //     every frame for 1.5 s and prints {before, after, frames: [{opacity, number}], same_tile, errors}.
 //   node web_dashboard_browser.js URL --arrange: the page at 1024x768 with a mouse: dragging to reorder, the drag's text zones, the grip
 //     and the × on mouseover, the remove zone, the reset link, the preferences across reloads (corrupt, blocked, a tile new to them) and
-//     the tiles' see-through look; prints {step: what was seen}.
+//     the tiles' see-through look, a click soon after a drop, the focus after the × pressed from the keyboard; prints {step: what was
+//     seen}.
 //   node web_dashboard_browser.js URL --touch: the page at 390x844 with touch (CDP touch events): a long press picks a tile up (buzz,
-//     grip and ×, remove zone) and moves it; a short tap is a click; a swipe scrolls; prints {step: what was seen}.
+//     grip and ×, remove zone) and moves it; a short tap is a click; a swipe scrolls; held at the bottom edge it scrolls to the page's
+//     end only; prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --fill CASES: for each case {name: [width, height, hidden titles]}, the page with those hidden;
 //     prints {name: {rects, columns, scroll}}.
 "use strict";
@@ -194,8 +196,36 @@ async function arrangeMode(browser, url) {
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
   out.newTile = await titles(page);
-  await mouseDrag(page, await at(page, "Humidity", 0.5, 0.3), await at(page, "Rain", 0.5, 0.4));
+  // (dropped on another tile, so the browser sends no click for the drop; a click on a tile 150 ms later arrives)
+  await page.evaluate(() => { window.__clicks = []; addEventListener("click", (e) => window.__clicks.push(e.target.closest(".tile") ? "tile" : "page")); });
+  const [h0, r0] = [await at(page, "Humidity", 0.5, 0.3), await at(page, "Rain", 0.5, 0.4)];
+  await page.mouse.move(...h0);
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) await page.mouse.move(h0[0] + (r0[0] - h0[0]) * i / 12, h0[1] + (r0[1] - h0[1]) * i / 12);
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  await page.mouse.click(...await at(page, "Wind", 0.5, 0.3));
+  await settle(page);
+  out.clickAfterDrop = await page.evaluate(() => window.__clicks);
   out.keptOthers = JSON.parse(await stored(page));
+  // the × pressed from the keyboard: the focus goes on to the next tile's ×; with the last tile hidden, to the reset link
+  await settle(page);
+  await page.keyboard.press("Shift");   // (the keyboard in use: the first tile's × focused as by the keyboard)
+  await page.evaluate(() => document.querySelector(".close").focus());
+  const focused = () => page.evaluate(() => document.activeElement.getAttribute("aria-label") || document.activeElement.textContent);
+  out.keyboardHide = [await focused()];
+  await page.keyboard.press("Enter");
+  await settle(page);
+  out.keyboardHide.push(await focused());
+  const allBut = out.initial.filter((t) => t !== "Rain");
+  await page.evaluate(([key, hidden]) => localStorage.setItem(key, JSON.stringify({ order: [], hidden })), [KEY, allBut]);
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
+  await page.keyboard.press("Tab");
+  out.keyboardHide.push(await focused());
+  await page.keyboard.press("Enter");
+  await settle(page);
+  out.keyboardHide.push(await focused());
   out.errors = errors;
   await context.close();
   // storage blocked: the page works, nothing saved, no error
@@ -275,6 +305,19 @@ async function touchMode(browser, url) {
   await touch("touchEnd", []);
   await settle(page);
   out.closed = { titles: await titles(page), status: await statusText(page) };
+  // held near the bottom edge: the page scrolls to its end and no further (the lifted tile mustn't stretch it without end)
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(200);
+  const end = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
+  const e0 = await at(page, "Temperature", 0.85, 0.3);
+  await touch("touchStart", [e0]);
+  await page.waitForTimeout(700);
+  for (let i = 1; i <= 6; i++) { await touch("touchMove", [[e0[0], e0[1] + (830 - e0[1]) * i / 6]]); await page.waitForTimeout(16); }
+  const seen = [];
+  for (let i = 0; i < 12; i++) { await page.waitForTimeout(250); seen.push(await page.evaluate(() => window.scrollY)); }
+  await touch("touchEnd", []);
+  await settle(page);
+  out.edge = { end, seen, after: await page.evaluate(() => window.scrollY) };
   out.errors = errors;
   await context.close();
   process.stdout.write(JSON.stringify(out));
