@@ -291,6 +291,10 @@ usual order. Fewer tiles grow to fill the window (a single one fills it), never 
 is kept in the browser (its local storage, per browser and device); nothing is sent to ecobot-mcp. A gauge added later takes its
 usual place among yours.
 
+With more than one tile shown, a click or tap on a gauge zooms its whole tile to fill the window. Zoomed, page through the tiles
+like a photo gallery, each still live: ← and →, Space (next) and Backspace (previous), a swipe, a drag on the gauge, or a two-finger
+sideways swipe on a trackpad; it stops at the first and the last. A click or tap (not on the text) or Esc goes back.
+
 It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
 Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To

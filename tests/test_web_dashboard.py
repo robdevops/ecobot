@@ -4,7 +4,9 @@ server's own change detection), no token and any Host for it while /mcp still as
 and a shutdown that doesn't wait on an open stream. Then the page in a browser (Playwright's Chromium, through node, skipped without
 it) at a phone's, a tablet's and a desktop's sizes: every tile on the screen where the size allows, nothing wider than the window, no
 console error; the tiles rearranged (dragged with a mouse and with a touch's long press, hidden by the × and the remove zone, kept
-across reloads, reset), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds. With
+across reloads, reset), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds; a tile zoomed to
+fill the window and the gallery through the others (keys, mouse drags, a trackpad's swipe, touch swipes, both ends, the text still
+selectable, live readings). With
 ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
@@ -482,7 +484,7 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     assert got["newTile"] == moved(saved, "Rain", "Atmospheric pressure")
     assert got["keptOthers"] == {"order": moved(got["newTile"], "Humidity", "Rain") + ["Gone sensor"], "hidden": ["Gone sensor"], "later": True}
     # a click 150 ms after a drop reaches the page (only the drop's own click, if the browser sends one, is swallowed)
-    assert got["clickAfterDrop"] == ["tile"]
+    assert got["clickAfterDrop"] == ["tile"] and got["zoomedAfterDrop"]
     # the × pressed from the keyboard: the focus moves on to the next tile's ×, or with no tile left, to the reset link
     order = moved(got["newTile"], "Humidity", "Rain")
     assert got["keyboardHide"] == [f"Hide {order[0]}", f"Hide {order[1]}", "Hide Rain", "reset preferences"]
@@ -500,8 +502,8 @@ async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swi
     got = await run_page(server, "--touch")
     default = titles_of(station)
     assert got["errors"] == [] and got["initial"] == default
-    # a short tap: a click (left for the zoom), nothing picked up; a swipe: the page scrolls
-    assert got["tap"] == {"buzz": [], "clicks": 1, "scrollY": 0, "zone": False, "armed": [], "close": None, "titles": default}
+    # a short tap: a click (it zooms the tile), nothing picked up; a swipe: the page scrolls
+    assert got["tap"] == {"buzz": [], "clicks": 1, "scrollY": 0, "zone": False, "armed": [], "close": None, "titles": default, "zoomed": True}
     assert got["swipe"]["scrollY"] > 100 and got["swipe"]["armed"] == [] and got["swipe"]["titles"] == default
     # held: a buzz, its grip and ×, the remove zone; moved without scrolling the page; dropped in its new place
     assert got["held"] == {"buzz": [15], "clicks": 1, "scrollY": 0, "zone": True, "armed": ["Temperature"], "close": "1"}
@@ -543,3 +545,110 @@ async def test_fewer_tiles_grow_evenly_to_fill_the_window_and_never_shrink_below
     # many: at least the full dashboard's size; a phone's scrolling tiles stay at theirs rather than shrink to fit
     assert min(width("tablet-many")) >= min(width("tablet-all")) and len(got["tablet-many"]["rects"]) == len(every) - 2
     assert width("phone-eight") == width("phone-all") and got["phone-eight"]["columns"] == "2" and len(got["phone-eight"]["rects"]) == 8
+
+
+# ---------- the zoomed view and its gallery ----------
+ZOOM_MS = 200
+
+
+def zoomed_rect(width, height):
+    """The zoomed tile's place at this window size: as large as fits beside the margins and the status strip, centred."""
+    aspect = look()["cell"][0] / look()["cell"][1]
+    w = min(width - 16, (height - 16 - 18) * aspect)
+    h = w / aspect
+    return {"left": (width - w) / 2, "top": 8 + (height - 16 - 18 - h) / 2, "width": w, "height": h}
+
+
+def near(rect, want, tolerance=1.0):
+    return all(abs(rect[k] - want[k]) <= tolerance for k in ("left", "top", "width", "height"))
+
+
+@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+async def test_a_click_on_a_gauge_zooms_its_tile_and_the_gallery_pages_by_keys_drags_and_swipes_stopping_at_both_ends(server, station):
+    port = free_port()
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):
+        page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", "--zoom", stdin=subprocess.PIPE,
+                                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        before = json.loads(await asyncio.wait_for(page.stdout.readline(), 60))
+        station.reads("outdoor", "temperature", "21.5")                         # Temperature: beside the tile shown, off the screen
+        await server.publish_changes()
+        page.stdin.write(b"go\n")
+        await page.stdin.drain()
+        out, err = await asyncio.wait_for(page.communicate(), 120)
+    assert page.returncode == 0, err.decode()
+    got = json.loads(out)
+    default = titles_of(station)
+    at = default.index
+    full = zoomed_rect(1024, 768)
+    assert got["errors"] == [] and got["initial"] == default, got["errors"]
+    assert default[:2] == ["Temperature", "Humidity"] and before["label"] == "Temperature 12.9 °C"
+    # the cursor: a magnifier with + over a gauge, the usual one over the text; zoomed, a magnifier with − (around the tile too)
+    assert got["cursor"] == {"gauge": "zoom-in", "title": "auto", "figure": "auto", "reading": "auto"}
+    assert got["zoomedCursor"] == {"gauge": "zoom-out", "margin": "zoom-out", "title": "auto"}
+    # a click on the gauge: the whole tile grows from its place to fill the window, in 200 ms (a FLIP: transforms only)
+    zoom_in = got["zoomIn"]
+    assert zoom_in["zoomed"] and zoom_in["shown"] == "Humidity" and ZOOM_MS in zoom_in["anims"], zoom_in
+    assert near(zoom_in["first"], got["gridRect"] | {"left": got["gridRect"]["x"], "top": got["gridRect"]["y"]}, 2), zoom_in
+    assert near(zoom_in["last"], full) and zoom_in["between"] and 150 <= zoom_in["settledMs"] <= 330, zoom_in
+    assert got["grip"] == "none"                                                 # (no grip or × in the zoomed view)
+    # live: the tile beside it, off the screen, takes the new reading in place, and shows it as it slides in
+    assert got["live"] == {"label": "Temperature 21.5 °C", "sameTile": True, "zoomed": True, "shown": "Humidity", "track": -1024}
+    keys = got["keys"]
+    assert keys["left"]["shown"] == "Temperature" and keys["left"]["between"] and 150 <= keys["left"]["settledMs"] <= 330, keys
+    assert keys["leftReading"] == "21.5 °C"
+    # each key's default prevented: Backspace never goes back a page, Space never scrolls
+    # ← at the first: a nudge and back, still the first
+    assert keys["pastFirst"]["shown"] == "Temperature" and keys["pastFirst"]["track"] == 0 and keys["pastFirst"]["extreme"] >= 20, keys
+    assert [keys[k]["shown"] for k in ("space", "right", "backspace")] == default[1:3] + default[1:2], keys
+    assert all(k["zoomed"] for k in keys.values() if isinstance(k, dict)) and keys["url"]   # (Backspace: still this page)
+    assert keys["prevented"] == [["ArrowLeft", True], ["ArrowLeft", True], [" ", True], ["ArrowRight", True], ["Backspace", True]], keys
+    # mouse drags on the gauge: followed directly; let go past halfway, the next; a short slow one back; a quick short flick on
+    drag = got["drag"]
+    assert drag["start"]["shown"] == default[1]
+    assert drag["far"]["shown"] == default[2] and drag["far"]["during"] == pytest.approx(-1024 - 600, abs=12), drag
+    assert drag["short"]["shown"] == default[2] and drag["short"]["track"] == -2048, drag
+    assert drag["flick"]["shown"] == default[3] and drag["back"]["shown"] == default[2], drag
+    # at the first, dragged on: it gives (less than the drag), springs back
+    assert drag["pastFirst"]["shown"] == default[0] and 20 < drag["pastFirst"]["during"] < 300 * 0.6 and drag["pastFirst"]["track"] == 0, drag
+    assert all(d["zoomed"] for d in drag.values())                                  # (the click ending a drag doesn't go back)
+    # a trackpad's two-finger swipe (wheel deltaX): the next, or back if short; never reaching the browser
+    wheel = got["wheel"]
+    assert [wheel[k]["shown"] for k in ("far", "short", "back")] == [default[1], default[1], default[0]], wheel
+    assert wheel["prevented"] and all(wheel["prevented"]), wheel
+    # the last: → past it nudges and stays, as do a swipe and a drag on
+    last = got["last"]
+    assert last["reached"]["shown"] == default[-1] and last["pastLast"]["shown"] == default[-1] and last["pastLast"]["extreme"] >= 20, last
+    assert last["wheeled"]["shown"] == default[-1] and last["dragged"]["shown"] == default[-1], last
+    assert last["wheeled"]["track"] == last["dragged"]["track"] == -1024 * (len(default) - 1)
+    # a drag on the text selects it: no paging, still zoomed
+    text = got["text"]
+    assert {k: (v["selected"], v["shown"], v["zoomed"]) for k, v in text.items()} == {
+        "title": (default[-1], default[-1], True), "reading": (text["reading"]["selected"], default[-1], True),
+        "table": (text["table"]["selected"], default[-1], True)}, text
+    assert text["reading"]["selected"].strip() and text["table"]["selected"].strip(), text
+    # a click without moving: back to the dashboard in 200 ms, the tile in its place in the grid
+    zoom_out = got["zoomOut"]
+    assert not zoom_out["zoomed"] and near(zoom_out["first"], full) and zoom_out["between"] and 150 <= zoom_out["settledMs"] <= 330, zoom_out
+    assert near(zoom_out["last"], got["outRect"] | {"left": got["outRect"]["x"], "top": got["outRect"]["y"]})
+    assert zoom_out["last"]["width"] == pytest.approx(got["gridRect"]["width"], abs=0.5)
+    # Esc: back too, the order as it was
+    assert got["esc"]["before"]["zoomed"] and got["esc"]["before"]["shown"] == "Wind" and not got["esc"]["after"]["zoomed"]
+    assert got["esc"]["titles"] == default
+    # one tile: no zoom cursor, no zoom
+    assert got["single"] == {"cursor": "auto", "zoomed": False}
+
+
+@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_tap_goes_back_where_the_page_was(server, station):
+    got = await run_page(server, "--zoom-touch")
+    default = titles_of(station)
+    assert got["errors"] == [] and got["initial"] == default, got["errors"]
+    t = default.index(got["tapped"])
+    assert got["scrolled"] > 100
+    assert got["zoomed"]["zoomed"] and got["zoomed"]["shown"] == got["tapped"]
+    assert near(got["zoomed"]["rect"] | {"left": got["zoomed"]["rect"]["x"], "top": got["zoomed"]["rect"]["y"]}, zoomed_rect(390, 844))
+    assert [got[k]["shown"] for k in ("next", "previous", "flick", "fromTitle")] == [default[t + 1], default[t], default[t + 1], default[t + 2]], got
+    assert got["vertical"]["shown"] == default[t + 2] and got["vertical"]["zoomed"]
+    assert got["held"] == {"zoomed": True, "shown": default[t + 2], "track": got["vertical"]["track"], "buzz": [], "zone": False}
+    assert got["backAt"]["shown"] == default[t - 1]
+    assert not got["out"]["zoomed"] and got["out"]["titles"] == default

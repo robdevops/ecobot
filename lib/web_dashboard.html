@@ -10,7 +10,8 @@
 <!-- The gauges, live (lib/web_dashboard.py): drawn here from /dashboard/data as the PNG (lib/gauges.py) draws them, in the same
      colours and sizes (lib/gauge_look.py, sent with the data); redrawn on each /dashboard/events event, and every minute regardless.
      The tiles can be rearranged in the browser: dragged to reorder (a long press on a touch screen), hidden with their × or the
-     remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server. -->
+     remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server.
+     A click or tap on a gauge zooms its tile to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back. -->
 <style>
   :root { --bg: #14191D; --ink: #E8EAED; --soft: #B8BDC2; }
   * { box-sizing: border-box; }
@@ -65,6 +66,24 @@
   #message { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; text-align: center;
     font-size: 20px; color: var(--soft); }
   body.unavailable #message { display: flex; }
+  /* The cursor: over a gauge, a magnifier with + while there's more than one tile (a click zooms it), with − in the zoomed view (a
+     click goes back); over the text, the usual one. (.tablearea: under the table's chips, so the gaps between them count as the table.) */
+  body.many:not(.zoomed) .tile { cursor: zoom-in; }
+  body.zoomed #grid { cursor: zoom-out; }
+  .title, .unit, .chip, .figure, .tile svg text.reading { cursor: auto; }
+  .tablearea { cursor: default; }
+  /* The zoomed view, a gallery: #grid becomes a strip of the visible tiles side by side, each as large as fits and centred in its own
+     window-wide place (the strip as wide as them all, so it's under the pointer wherever it is), slid sideways (its transform) to page
+     through them; the page itself doesn't scroll meanwhile, and a
+     sideways swipe never reaches the browser (no back/forward). The grip and × aren't needed here: hidden. */
+  html.zoomed, html.zoomed body { overflow: hidden; overscroll-behavior-x: contain; }
+  body.zoomed #grid { position: fixed; inset: 0 auto 0 0; width: calc(var(--n) * var(--pitch)); display: block; padding: 0; min-height: 0;
+    touch-action: pinch-zoom;
+    -webkit-user-select: none; user-select: none; }
+  body.zoomed .tile { position: absolute; top: var(--zy); left: calc(var(--zx) + var(--i) * var(--pitch)); width: var(--zw); height: var(--zh); }
+  body.zoomed .grip, body.zoomed .close { display: none; }
+  .tile.zooming { z-index: 2; }        /* (the tile zooming in or out, over the others) */
+  body.paging, body.paging * { cursor: grabbing !important; -webkit-user-select: none !important; user-select: none !important; }
   @media (prefers-reduced-motion: reduce) { .tile, .grip, .close, #remove { transition: none; } }
 </style>
 </head>
@@ -94,6 +113,12 @@
   const LIFT = 1.04;                   // a picked-up tile, a little larger
   const TABLE_TOP = 372;               // where the Daily/Monthly/Yearly table starts, in the tile's own pixels (table(): 378)
   const EDGE = 48, EDGE_SPEED = 10;    // a drag this near the window's top or bottom scrolls a scrolling page, this many px a frame
+  const ZOOM_MS = 200;                 // a tile zooming to fill the window, and back
+  const STEP_MS = 200;                 // the zoomed view: a key's step to the next or previous tile
+  const FLICK = 0.4, FLICK_MIN = 24;   // ... a swipe let go this fast (px/ms) goes on to the next tile, if it moved this far (px) at all
+  const BOUNCE_PX = 40, BOUNCE_MS = 300;   // ... a key pressed past the first or last tile: the strip nudged this far and back
+  const WHEEL_IDLE_MS = 140;           // ... a trackpad's sideways swipe (wheel deltaX) is over when no wheel event came for this long
+  const EASE = "cubic-bezier(0.25, 0.8, 0.3, 1)";   // (quick, then gently to rest)
   const grid = document.getElementById("grid"), statusLine = document.getElementById("status"), message = document.getElementById("message");
   const removeZone = document.getElementById("remove");
   let L = null, tiles = [], asOf = null, lost = false, opening = true, unavailable = "";
@@ -266,6 +291,7 @@
     box.appendChild(svg);
     const at = DRAW[tile.kind](svg, tile, ink, `clip${clips++}`);
     place(box, 0, 38 - 25, L.cell[0], 50, 38, tile.title, "title", {color: ink(L.ink)});
+    place(box, 0, TABLE_TOP, L.cell[0], L.cell[1] - TABLE_TOP, 0, "", "tablearea");   // (the table's area, under its chips: its cursor)
     const fill = table(box, tile, ink);
     const grip = document.createElement("div");   // (the whole gauge drags; the grip is the cue)
     grip.className = "grip";
@@ -331,6 +357,8 @@
     document.body.dataset.columns = cols;
     document.body.dataset.scroll = scroll ? "yes" : "no";
     document.documentElement.classList.toggle("scroll", scroll);   // (a scrolled page stops with a row at the top)
+    document.body.classList.toggle("many", n > 1);   // (more than one tile: a click zooms one)
+    if (zoom) galleryLayout();
   }
 
   // ---------- the preferences: the tiles' order and the hidden ones, kept in the browser ----------
@@ -423,6 +451,7 @@
     const boxes = visibleIds().map((id) => tileFor(byId.get(id)).box);
     if (boxes.length !== grid.children.length || boxes.some((b, i) => grid.children[i] !== b)) grid.replaceChildren(...boxes);
     if (drawn.size) opening = false;   // (only the first drawing rises from 0; a tile drawn later starts at its reading)
+    if (zoom && boxes.length < 2) zoomOut(false);   // (the others gone from the readings, nothing to zoom between)
     document.body.classList.toggle("unavailable", !boxes.length);
     message.textContent = tiles.length ? "Every gauge is hidden." : unavailable;
     layout();
@@ -431,7 +460,7 @@
   // A change to the tiles' places (`change`), animated: each tile glides (transform only) from where it was to where it lands, and
   // one newly shown grows in. The tiles are measured once before and once after.
   function reflow(change) {
-    if (STILL) return change();
+    if (STILL || zoom) return change();   // (zoomed: the gallery keeps the tile shown in place)
     const before = new Map([...grid.children].map((b) => [b, b.getBoundingClientRect()]));
     change();
     const boxes = [...grid.children];
@@ -521,6 +550,7 @@
   grid.addEventListener("pointerdown", (e) => {
     const box = e.target.closest(".tile");
     disarm(e.target.closest(".close") ? box : null);
+    if (zoom) return pageDown(e);   // (zoomed: a drag pages through the tiles instead)
     if (press || !e.isPrimary || (e.pointerType !== "touch" && e.button !== 0) || !box || !draggable(e, box)) return;
     press = {box, id: box.dataset.id, pointerId: e.pointerId, touch: e.pointerType === "touch", x0: e.clientX, y0: e.clientY,
              x: e.clientX, y: e.clientY, scroll0: [window.scrollX, window.scrollY], engaged: false, moved: false};
@@ -528,6 +558,7 @@
   });
 
   window.addEventListener("pointermove", (e) => {
+    if (pager && e.pointerId === pager.pointerId) return pageMove(e);
     if (!press || e.pointerId !== press.pointerId) return;
     press.x = e.clientX;
     press.y = e.clientY;
@@ -540,9 +571,18 @@
     if (far > TOUCH_SLOP) press.moved = true;
     dragTo();
   });
-  window.addEventListener("pointerup", (e) => { if (press && e.pointerId === press.pointerId) press.engaged ? drop() : release(); });
-  window.addEventListener("pointercancel", (e) => { if (press && e.pointerId === press.pointerId) press.engaged ? drop(true) : release(); });
-  window.addEventListener("blur", () => { if (press) press.engaged ? drop(true) : release(); });
+  window.addEventListener("pointerup", (e) => {
+    if (pager && e.pointerId === pager.pointerId) pageUp(e);
+    else if (press && e.pointerId === press.pointerId) press.engaged ? drop() : release();
+  });
+  window.addEventListener("pointercancel", (e) => {
+    if (pager && e.pointerId === pager.pointerId) pageUp(e);
+    else if (press && e.pointerId === press.pointerId) press.engaged ? drop(true) : release();
+  });
+  window.addEventListener("blur", () => {
+    if (pager) pageUp(null);
+    if (press) press.engaged ? drop(true) : release();
+  });
   window.addEventListener("keydown", (e) => { if (e.key === "Escape" && press && press.engaged) drop(true); });
   // A touch that has picked a tile up doesn't scroll the page (touch-action stays as it was, so an ordinary swipe still scrolls),
   // nor opens the long press's menu
@@ -553,7 +593,7 @@
   window.addEventListener("click", (e) => {
     if (performance.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); swallowUntil = 0; }
   }, true);
-  window.addEventListener("pointerdown", () => { swallowUntil = 0; }, true);
+  window.addEventListener("pointerdown", (e) => { swallowUntil = 0; lastDown = {x: e.clientX, y: e.clientY, t: e.timeStamp, touch: e.pointerType === "touch"}; }, true);
 
   function release() {   // a press that never became a drag: nothing done
     clearTimeout(press.timer);
@@ -644,6 +684,213 @@
       else if (rearrange) arrange();
     });
     for (const b of boxes) b.style.transition = "";   // (one hidden, out of the page: ready for when it's back)
+  }
+
+  // ---------- the zoomed view: one tile filling the window, and a gallery through the others ----------
+  // A click or tap on a tile's gauge (not its text) zooms the whole tile to fill the window; a click or tap without moving (with a mouse,
+  // not on the text) or Esc goes back. Both are a FLIP: the tiles laid out where they end, then each eased by its transform from where
+  // it was (the tile shown grows from, or shrinks to, its place; the others fade out where they were, or in where they are).
+  // Zoomed, the visible tiles stand side by side in #grid, one window-width apart, and #grid slides sideways (its transform only) to
+  // page through them, in the saved order, stopping at the first and the last: ←/→, Space and Backspace step; a drag on the gauge (a
+  // touch's anywhere), and a trackpad's sideways two-finger swipe, follow the input and then settle on the nearest tile (a flick goes
+  // on). The tiles are the grid's own, so the data keeps every one of them live as it slides in.
+  // The view: {id (the tile shown), index (its place among the visible), pitch (one place's width, px), x (#grid's offset, px), scrollY
+  // (the page's scroll to go back to)}, or null
+  let zoom = null;
+  let zoomUntil = 0;   // (a zoom's animation runs until then: a click meanwhile is ignored)
+  let lastDown = {x: 0, y: 0, t: 0, touch: false};   // (the last press anywhere: was the click after it one without moving, how long
+                                                     // held, and a touch?)
+  const translate = (x) => `translate3d(${x.toFixed(1)}px, 0, 0)`;
+  const trackX = () => new DOMMatrixReadOnly(getComputedStyle(grid).transform).m41;   // (where #grid is now, mid-slide too)
+
+  function zoomIn(box) {
+    const boxes = [...grid.children];
+    const before = new Map(boxes.map((b) => [b, b.getBoundingClientRect()]));
+    zoom = {id: box.dataset.id, index: 0, pitch: 0, x: 0, scrollY: window.scrollY};
+    document.documentElement.classList.add("zoomed");
+    document.body.classList.add("zoomed");
+    layout();   // (the gallery's places, the strip at this tile)
+    window.addEventListener("wheel", wheeled, {passive: false});
+    flip(box, before, false);
+  }
+
+  // Back to the dashboard (`animate` false: at once, as when the other tiles are gone from the data)
+  function zoomOut(animate = true) {
+    if (!zoom) return;
+    if (pager) pageUp(null);
+    if (wheel) { clearTimeout(wheel.timer); wheel = null; }
+    const boxes = [...grid.children], box = boxes[zoom.index];
+    const before = new Map(boxes.map((b) => [b, b.getBoundingClientRect()]));
+    const {scrollY} = zoom;
+    zoom = null;
+    window.removeEventListener("wheel", wheeled);
+    document.documentElement.classList.remove("zoomed");
+    document.body.classList.remove("zoomed");
+    Object.assign(grid.style, {transform: "", transition: ""});
+    for (const b of boxes) b.style.removeProperty("--i");
+    layout();
+    window.scrollTo(0, scrollY);   // (where the page was; and if the tile shown last is off the screen, scrolled to it)
+    if (box) {
+      const r = box.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > window.innerHeight - STATUS) window.scrollBy(0, r.top - PAD);
+    }
+    if (animate && box) flip(box, before, true);
+  }
+
+  // The zoom's animation: `box` from its place before to its place now, the others fading out (zooming in) or in (zooming out)
+  function flip(box, before, out) {
+    if (STILL) return;
+    zoomUntil = performance.now() + ZOOM_MS;
+    const timing = {duration: ZOOM_MS, easing: "ease-out"};
+    for (const [b, was] of before) {
+      const now = b.getBoundingClientRect();
+      const from = `translate(${was.left - now.left}px, ${was.top - now.top}px) scale(${was.width / now.width})`;
+      const opacity = getComputedStyle(b).opacity;
+      if (b === box) {
+        b.classList.add("zooming");
+        b.animate([{transform: from}, {transform: "none"}], timing).finished.then(() => b.classList.remove("zooming"), () => {});
+      } else if (out) b.animate([{opacity: 0}, {opacity}], timing);
+      else b.animate([{transform: from, opacity}, {transform: from, opacity: 0}], timing);
+    }
+  }
+
+  // The gallery's places for the window's size now: each tile as large as fits beside the status strip, centred in its place
+  function galleryLayout() {
+    const boxes = [...grid.children], n = boxes.length;
+    const aspect = L.cell[0] / L.cell[1], W = window.innerWidth, H = window.innerHeight - 2 * PAD - STATUS;
+    const w = Math.min(W - 2 * PAD, H * aspect), h = w / aspect;
+    for (const [k, v] of Object.entries({"--zw": w, "--zh": h, "--zx": (W - w) / 2, "--zy": PAD + (H - h) / 2, "--pitch": W}))
+      grid.style.setProperty(k, `${v}px`);
+    grid.style.setProperty("--n", n);
+    boxes.forEach((b, i) => b.style.setProperty("--i", i));
+    const at = boxes.findIndex((b) => b.dataset.id === zoom.id);   // (the tile shown gone from the readings, its neighbour)
+    zoom.index = at >= 0 ? at : Math.max(0, Math.min(zoom.index, n - 1));
+    zoom.id = boxes[zoom.index].dataset.id;
+    zoom.pitch = W;
+    if (!pager && !wheel) slide(-zoom.index * W, 0);
+  }
+
+  // #grid to offset x, in ms (0: at once, as a drag follows its pointer)
+  function slide(x, ms) {
+    zoom.x = x;
+    grid.style.transition = ms && !STILL ? `transform ${ms}ms ${EASE}` : "none";
+    grid.style.transform = translate(x);
+  }
+  // ... following a drag: past the first or the last tile it gives, ever less (a rubber band)
+  function follow(x) {
+    const max = 0, min = -(grid.children.length - 1) * zoom.pitch;
+    const give = (over) => (1 - 1 / (over * 0.55 / zoom.pitch + 1)) * zoom.pitch;
+    slide(x > max ? max + give(x - max) : x < min ? min - give(min - x) : x, 0);
+  }
+  // ... to tile i: the one shown now
+  function goTo(i, ms) {
+    zoom.index = i;
+    zoom.id = grid.children[i].dataset.id;
+    slide(-i * zoom.pitch, ms);
+  }
+  // ... a drag or a swipe let go at velocity v (px/ms, + rightwards): to the nearest tile, or on to the next for a flick
+  function settle(v) {
+    const n = grid.children.length, at = -zoom.x / zoom.pitch;
+    const flick = Math.abs(v) > FLICK && Math.abs(zoom.x + zoom.index * zoom.pitch) >= FLICK_MIN;
+    let to = flick ? (v < 0 ? Math.floor(at) + 1 : Math.ceil(at) - 1) : Math.round(at);
+    to = Math.max(0, Math.min(to, n - 1));
+    const distance = Math.abs(-to * zoom.pitch - zoom.x) / zoom.pitch;   // (the rest of the way: a short way, quickly)
+    goTo(to, Math.round(Math.max(150, Math.min(320, distance * 450))));
+  }
+  const velocity = (samples) => {   // px/ms, from [[time, x]]
+    const [t0, x0] = samples[0], [t1, x1] = samples[samples.length - 1];
+    return t1 > t0 ? (x1 - x0) / (t1 - t0) : 0;
+  };
+  // ... a key's step (dir: +1 next, -1 previous); past the first or the last, a nudge that way and back
+  function step(dir) {
+    const to = zoom.index + dir;
+    if (to >= 0 && to < grid.children.length) return goTo(to, STEP_MS);
+    if (STILL) return;
+    const rest = -zoom.index * zoom.pitch;
+    grid.animate([{transform: translate(trackX())}, {transform: translate(rest - dir * BOUNCE_PX), offset: 0.35}, {transform: translate(rest)}],
+                 {duration: BOUNCE_MS, easing: "ease-out"});
+  }
+
+  // The keys: ←/→, Space forward, Backspace back (never the browser's back), Esc out. (A link focused in the strip keeps Enter and Space.)
+  window.addEventListener("keydown", (e) => {
+    if (!zoom || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    const onControl = e.target.closest && e.target.closest("button, a, input, select, textarea");
+    const dir = {ArrowRight: 1, ArrowLeft: -1, Backspace: -1, " ": onControl ? 0 : 1}[e.key];
+    if (e.key === "Escape") zoomOut();
+    else if (dir) step(dir);
+    else return;
+    e.preventDefault();
+  });
+
+  // A click or a tap without moving: on a gauge, zooms its tile (more than one shown); zoomed, goes back (a mouse's on the text excepted).
+  // (A touch held as long as a long press isn't a tap.)
+  grid.addEventListener("click", (e) => {
+    if (performance.now() < zoomUntil || Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) > MOUSE_SLOP) return;
+    if (lastDown.touch && e.timeStamp - lastDown.t >= LONG_PRESS_MS) return;
+    const box = e.target.closest(".tile");
+    if (zoom) { if (lastDown.touch || !box || draggable(e, box)) zoomOut(); }
+    else if (box && grid.children.length > 1 && draggable(e, box)) zoomIn(box);
+  });
+
+  // A drag, zoomed: {pointerId, touch, x0, y0, t0, onText, moved, paging, ignored, base, samples: [[time, x]]}. A mouse's pages from
+  // the gauge or around the tile (from the text it selects); a touch's from anywhere, unless held on the text first (selecting it).
+  // Sideways only: a drag mostly up or down does nothing.
+  let pager = null;
+  function pageDown(e) {
+    if (pager || !e.isPrimary || (e.pointerType !== "touch" && e.button !== 0)) return;
+    const box = e.target.closest(".tile"), onText = !!box && !draggable(e, box);
+    if (onText && e.pointerType !== "touch") return;
+    pager = {pointerId: e.pointerId, touch: e.pointerType === "touch", x0: e.clientX, y0: e.clientY, t0: e.timeStamp, onText,
+             moved: false, paging: false, ignored: false, samples: []};
+  }
+  function pageMove(e) {
+    const p = pager, dx = e.clientX - p.x0, dy = e.clientY - p.y0;
+    if (!p.paging && !p.ignored) {
+      if (Math.hypot(dx, dy) <= (p.touch ? TOUCH_SLOP : MOUSE_SLOP)) return;
+      p.moved = true;
+      p.ignored = Math.abs(dy) > Math.abs(dx) || (p.onText && e.timeStamp - p.t0 >= LONG_PRESS_MS);
+      if (p.ignored) return;
+      p.paging = true;
+      p.base = trackX();   // (from where it is, mid-slide too)
+      document.body.classList.add("paging");
+      try { grid.setPointerCapture(p.pointerId); } catch (err) { /* (the pointer already gone) */ }
+    }
+    if (p.ignored) return;
+    p.samples.push([e.timeStamp, e.clientX]);
+    while (p.samples.length > 2 && e.timeStamp - p.samples[0][0] > 100) p.samples.shift();   // (the last 100 ms: its velocity)
+    follow(p.base + dx);
+  }
+  function pageUp(e) {   // (e null: the drag lost, as the window loses focus)
+    const p = pager;
+    pager = null;
+    document.body.classList.remove("paging");
+    if (p.moved) swallowUntil = performance.now() + 400;   // (the click a mouse's drag ends with isn't one)
+    if (!p.paging || !zoom) return;
+    // (its velocity: over the last 100 ms before it was let go; held still first, none)
+    const s = e && e.type === "pointerup" ? p.samples.filter(([t]) => e.timeStamp - t <= 100) : [];
+    settle(s.length > 1 ? velocity(s) : 0);
+  }
+
+  // A trackpad's two-finger sideways swipe (wheel events' deltaX): followed, no further than one tile a swipe, then settled. Kept from
+  // the browser, so it never goes back or forward a page. (Listened to only while zoomed: the dashboard's own scrolling isn't held up.)
+  // {base, offset, samples: [[time, offset]], timer}
+  let wheel = null;
+  function wheeled(e) {
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerWidth : 1, dx = e.deltaX * unit;
+    if (!wheel && Math.abs(dx) <= Math.abs(e.deltaY * unit)) return;   // (up and down: nothing to do here)
+    e.preventDefault();
+    if (pager) return;
+    if (!wheel) wheel = {base: trackX(), offset: 0, samples: []};
+    wheel.offset = Math.max(-zoom.pitch, Math.min(wheel.offset - dx, zoom.pitch));
+    wheel.samples.push([e.timeStamp, wheel.offset]);
+    while (wheel.samples.length > 2 && e.timeStamp - wheel.samples[0][0] > 100) wheel.samples.shift();
+    follow(wheel.base + wheel.offset);
+    clearTimeout(wheel.timer);
+    wheel.timer = setTimeout(() => {
+      const s = wheel.samples;
+      wheel = null;
+      if (zoom) settle(s.length > 1 ? velocity(s) : 0);
+    }, WHEEL_IDLE_MS);
   }
 
   // ---------- the events: a new reading, fetched and drawn in place ----------
