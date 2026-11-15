@@ -24,11 +24,12 @@
   #grid { display: grid; justify-content: center; align-content: center; padding: var(--pad, 8px);
     padding-bottom: calc(var(--pad, 8px) + var(--status, 18px)); min-height: 100%; }   /* (room under the tiles for the status line) */
   /* A tile: its own background clear (whatever is behind the page shows through it), its foreground opaque; a thin opaque frame
-     (::before, inset, so neighbours don't share a line) keeps each a distinct area. Its gauge can be dragged (user-select none), its
+     (::before, inset, so neighbours don't share a line), seen only on mouseover, picked up, focused or red. Its gauge can be dragged (user-select none), its
      title, reading and table keep their text selectable. transform-origin 0 0: the reflow animations' scale is from the corner. */
   .tile { position: relative; container-type: inline-size; overflow: hidden; background: transparent; transform-origin: 0 0;
     transition: opacity 0.9s ease, transform 0.22s ease; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-  .tile::before { content: ""; position: absolute; inset: 0.9cqw; border: 1px solid #262E34; border-radius: 2.5cqw; pointer-events: none; }
+  .tile::before { content: ""; position: absolute; inset: 0.9cqw; border: 1px solid transparent; border-radius: 2.5cqw; pointer-events: none; }
+  @media (hover: hover) { .tile:hover::before { border-color: #262E34; } }   /* (its frame unseen until the mouse is over it) */
   .tile.faded { opacity: var(--fade, 0.4); }   /* no reading now: dimmed towards the card (as the PNG blends its colours) */
   .tile svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .tile svg text { font-family: inherit; }

@@ -162,6 +162,8 @@ async function arrangeMode(browser, url) {
   // mouseover: the grip and the × show on the tile under the mouse only
   await page.mouse.move(...await at(page, "Humidity", 0.5, 0.4));
   await page.waitForTimeout(300);
+  // mouseover: the frame too, on the tile under the mouse only (unseen otherwise)
+  out.hoverFrames = await page.evaluate(() => [...document.querySelectorAll(".tile")].slice(0, 3).map((t) => getComputedStyle(t, "::before").borderTopColor));
   out.hover = await page.evaluate(() => [...document.querySelectorAll(".tile")].slice(0, 3).map((t) => ({
     grip: getComputedStyle(t.querySelector(".grip")).opacity, close: getComputedStyle(t.querySelector(".close")).opacity })));
   // a drag from the gauge: Temperature to Atmospheric pressure's place, the others making room meanwhile

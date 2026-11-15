@@ -516,7 +516,10 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     look_ = got["look"]
     assert look_["background"] == "rgba(0, 0, 0, 0)" and look_["image"] == "none" and look_["grid"] == "rgba(0, 0, 0, 0)"
     assert look_["opacity"] == "1" and look_["body"] == "rgb(20, 25, 29)"
-    assert all(look_[k].startswith("rgb(") for k in ("title", "reading", "frame")) and look_["frameWidth"] == "1px", look_
+    assert all(look_[k].startswith("rgb(") for k in ("title", "reading")) and look_["frameWidth"] == "1px", look_
+    # the frame unseen until the mouse is over its tile, then on that tile only
+    assert look_["frame"] == "rgba(0, 0, 0, 0)", look_
+    assert got["hoverFrames"] == ["rgba(0, 0, 0, 0)", "rgb(38, 46, 52)", "rgba(0, 0, 0, 0)"], got["hoverFrames"]
 
 
 @pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
@@ -726,7 +729,7 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
                              "first": True, "pixelated": "pixelated", "under": True}
     # the tiles see-through (what's behind shows in a tile's margin), their foreground opaque; zoomed too
     assert got["through"] == {"differs": True, "still": True}
-    assert got["look"] == {"background": "rgba(0, 0, 0, 0)", "opacity": "1", "title": "rgb(232, 234, 237)", "frame": "rgb(38, 46, 52)",
+    assert got["look"] == {"background": "rgba(0, 0, 0, 0)", "opacity": "1", "title": "rgb(232, 234, 237)", "frame": "rgba(0, 0, 0, 0)",
                            "alertFrame": "rgb(217, 54, 62)",
                            # dragged, a framed tile shows the drag's frames as any other: lifted grey, then the remove zone's red
                            "dragFrames": {"lifted": "rgb(90, 102, 112)", "doomed": "rgb(229, 72, 77)", "after": "rgb(217, 54, 62)"}}
