@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 
 STATION_URI, ALERTS_URI = "ecobot://station", "ecobot://alerts"   # (as lib/mcp_server.py's)
 STATUS_URI = "ecobot://status"   # the Status picture (lib/status.py)
-LISTENED = (STATION_URI, ALERTS_URI)   # what the bot listens to (not the live readings, pushed every few seconds)
+LISTENED = (STATION_URI, ALERTS_URI)   # what the bot listens to (not the live readings, pushed with each new reading)
 CALL_WAIT = 5.0          # how long a question's call waits for the service while it is being reached again, before it is refused
 BACKGROUND = "background"   # request _meta priority of a call nobody waits for (lib/service/common.py): refused at once while down
 AIR_LINK_LABEL = "live chart"   # the AirGradient dashboard link's words (lib/airgradient/source.py)

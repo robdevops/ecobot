@@ -213,7 +213,7 @@ CREATE TABLE climate_day (
 
 Every band is in the rows, so a chart's band comes with its line:
 - **Ecowitt's own lows and highs** (30 minutes and coarser) go in `_lo` and `_hi` when the readings are written.
-- **The bot's live readings** (every few seconds from Home Assistant, once a minute from the cloud) are gathered per 5 minutes in
+- **The bot's live readings** (every 30 seconds from Home Assistant, once a minute from the cloud) are gathered per 5 minutes in
   memory, as the AirGradient's are now (`AirGradient._average`), and each 5 minutes with two or more readings widens that 5-minute
   row's range when the bucket closes. This replaces `LiveRanges.add` and its `ranges` table.
 - **Home Assistant's ranges**, the station's and the AirGradient's, widen the same 5-minute rows.

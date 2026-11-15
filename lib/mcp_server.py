@@ -89,7 +89,7 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
                   "label, unit) and the words people use for them; each source's mode and how far back its history goes; the alert "
                   "kinds, each with its rule and thresholds; the AirGradient dashboard link. Pushed when the readings change.", None),
     WEATHER_URI: ("now/weather", "The weather now", "The weather station's live reading: {as_of, sensors: {sensor: {reading: {value, "
-                  "unit, text, [emoji], [compass]}}}, lines, heading}. Pushed on each new reading (every 5 s with Home Assistant, 60 s "
+                  "unit, text, [emoji], [compass]}}}, lines, heading}. Pushed on each new reading (polled every 30 s with Home Assistant, 60 s "
                   "from the cloud).", "eco"),
     AIR_URI: ("now/air", "The air now", "The air sensor's latest reading, with each reading's rating, PM2.5's and PM10's US AQI and band (the US AQI is the higher): {as_of, "
               "sensors: {air: {reading: {value, unit, text, [rating], [aqi_us, band]}}}, lines, heading}. Pushed on each new reading.",

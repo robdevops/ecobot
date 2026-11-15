@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 LIVE_GROUPS = list(READING_GROUPS)   # what the once-a-minute live reading asks for: everything "weather now" and the report show
 HA_IMPORT_SECONDS = 900                # how often Home Assistant's readings are folded into the 5-minute ranges ...
 HA_RECENT_SECONDS = 3 * 3600           # ... the last few hours each time (the whole RANGE_KEEP_DAYS the first time)
-LIVE_POLL_SECONDS = 5                  # Home Assistant's live reading is asked for this often (a request to a machine on the network)
+LIVE_POLL_SECONDS = 30                 # Home Assistant's live reading is asked for this often (the gateway reports about once a minute)
 LIVE_RECORD_SECONDS = 30               # ... and counted into the ranges this often
 LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
 
@@ -97,7 +97,7 @@ class Ecowitt(Source):
         self.api = FallbackAPI(home, cloud, cfg.tz) if home and cloud else home or cloud
         self.via = "HA/cloud" if home and cloud else "HA" if home else "cloud"
         self.has_minutes = home is not None   # (only Home Assistant has minutes)
-        self.fast = home                     # the API that can be asked every few seconds, if any
+        self.fast = home                     # the API that can be asked every LIVE_POLL_SECONDS, if any
         self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # (shared with the air sensor)
         self._ha_ok: bool | None = None
         self.live_marks = LiveMarks()   # the live readings' lows and highs, for the recent charts' bands
@@ -213,7 +213,7 @@ class Ecowitt(Source):
             log.warning("Couldn't keep the live readings' ranges: %s", e)
 
     async def watch_live(self):
-        """Ask Home Assistant for the live reading every few seconds, for ever. A reading newer than the last one found is kept for "weather
+        """Ask Home Assistant for the live reading every LIVE_POLL_SECONDS, for ever. A reading newer than the last one found is kept for "weather
         now", the report and the rain alert (which is called at once, not at the next minute's refresh). A failure is logged once, with its
         recovery; the cloud, where there is one, answers the questions meanwhile."""
         if self.fast is None:
