@@ -12,7 +12,7 @@
      The tiles can be rearranged in the browser: dragged to reorder (a long press on a touch screen), hidden with their × or the
      remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server.
      A click or tap on a gauge zooms its tile to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
-     Behind everything, the weather as pixel art on one canvas (Sky): rain, smog, radiation, drips, leaves, heat and ice, each while the
+     Behind everything, the weather as pixel art on one canvas (Sky): rain, smog, uv, humidity, wind, heat and ice, each while the
      readings call for it, its tile framed in red; "stop animations" in the strip stops them. -->
 <style>
   :root { --bg: #14191D; --ink: #E8EAED; --soft: #B8BDC2; }
@@ -115,10 +115,10 @@
 // for every effect, each frame cleared once and drawn back to front (ORDER). The effects share a particle budget and a cap on their
 // strength together, so several at once are no busier or brighter than one strong one. Nothing runs while no effect is on or fading
 // out; the tab hidden, it waits; with reduced motion, one still, faint frame and no loop.
-//   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), radiation, drips, leaves, heat: 0 or
+//   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), uv, humidity, wind, heat: 0 or
 //   1, ice: how far below 0 °C it is (0: none)}; animate false (the page's "stop animations"): nothing drawn.
-//   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), size: [art width, art height, P], levels, iceReach (art px)},
-//   for the tests.
+//   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), size: [art width, art height, P], particles (each effect's
+//   now), budget (theirs together, at most), levels, iceReach (art px)}, for the tests.
 const Sky = (() => {
   const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
   const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -128,7 +128,7 @@ const Sky = (() => {
   const BUDGET = 1 / 400;              // the particles of every effect together: this many per art pixel² (480 x 300: 360)
   const CAP = 1.5;                     // ... and their strengths together at most this (one strong effect: about 0.8)
   const STILL_HINT = 0.5;              // reduced motion: the still frame this faint
-  const ORDER = ["smog", "heat", "radiation", "rain", "leaves", "drips", "ice"];   // back to front
+  const ORDER = ["smog", "heat", "uv", "rain", "wind", "humidity", "ice"];        // back to front
   let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
 
   // ---------- tools: seeded randomness, colours, dithering, noise, little canvases ----------
@@ -191,7 +191,7 @@ const Sky = (() => {
   // An effect: its level (0 off), how present it is (0-1: fading in and out), its strength (how bright at full) and the particles it
   // would like (at full), resized to the window, stepped and drawn each frame. Each one below fills in its own.
   function effect(own) {
-    const e = {level: 0, amount: 0, strength: () => 0.8, need: () => 0, resize() {}, step() {}, draw() {},
+    const e = {level: 0, amount: 0, strength: () => 0.8, need: () => 0, count: () => 0, resize() {}, step() {}, draw() {},
                want(v) { e.level = v; },
                fade(dt) { e.amount = STILL ? (e.level > 0 ? 1 : 0) : clamp(e.amount + (e.level > 0 ? dt : -dt) / FADE_S, 0, 1); },
                alive: () => e.level > 0 || e.amount > 0};
@@ -235,6 +235,7 @@ const Sky = (() => {
     return {
       strength: () => 0.55 + 0.35 * e.level,
       need: () => (W * H / 1000) * (0.1 + 2.4 * Math.pow(e.level, 1.5)),   // (light: about 85 drops on a laptop; heavy: 360)
+      count: () => drops.length,
       resize() {
         drops = [];
         mist = painted(W, Math.ceil(H * 0.12), (x, y) => {   // heavy rain's spray, low down
@@ -362,71 +363,51 @@ const Sky = (() => {
     };
   });
 
-  // ---------- radiation: soft shafts of violet light coming in from the top, shimmering motes drifting down through them ----------
+  // ---------- uv: soft shafts of violet light coming in from the top, slowly sliding and breathing ----------
+  // Each shaft a dithered wedge, widening and fading as it comes down; drawn twice, a wide faint halo and a narrow bright core, the two
+  // breathing out of step, so it seems to waver. A faint glow along the top.
   const RAD = ["#22153C", "#3C256A", "#6444A8", "#A287E6", "#EFE7FF"].map(rgb);
-  const radiation = effect((e) => {
-    // A mote's twinkle, frame by frame: a dim point, a bright one, a cross, a star
-    const MOTE = [["2"], ["4"], [".3.", "343", ".3."], ["..1..", "..3..", "13431", "..3..", "..1.."]]
-      .map((rows) => mapped(rows, {1: RAD[1], 2: RAD[2], 3: RAD[3], 4: RAD[4]}));
-    let shafts = [], motes = [], glow = null;
-    const shaft = (wide, long, slope) => painted(wide * 2 + long * Math.abs(slope) + 2, long, (x, y) => {
+  const uv = effect((e) => {
+    let shafts = [], glow = null;
+    const shaft = (wide, long, slope, bright) => painted(wide * 2 + long * Math.abs(slope) + 2, long, (x, y) => {
       const k = y / long, half = wide * (0.6 + 0.6 * k), mid = wide + (slope < 0 ? long * -slope : 0) + y * slope;
       const across = 1 - Math.abs(x - mid) / half;
       if (across <= 0) return null;
-      const s = shadeOf(Math.pow(across, 1.2) * Math.pow(1 - k, 1.3) * 0.75, x, y, 4);
+      const s = shadeOf(Math.pow(across, 0.7) * Math.pow(1 - k, 1.1) * bright, x, y, 5);
       return s < 0 ? null : RAD[s];
     });
-    const spawn = (m, anywhere) => {
-      m.x = between(0, W);
-      m.y = anywhere ? between(0, H * 0.75) : between(-6, 0);
-      m.v = between(5, 16);
-      m.end = between(H * 0.4, H * 0.85);
-      m.rate = between(2, 5);
-      m.phase = between(0, 7);
-    };
     return {
       strength: () => 0.8,
-      need: () => W * H / 2800,
       resize() {
         const r = seeded(77);
         const n = Math.max(4, Math.round(W / 70));
-        shafts = Array.from({length: n}, (_, i) => ({
-          sprite: shaft(Math.round(10 + r() * 22), Math.round(H * (0.4 + r() * 0.5)), 0.12 + r() * 0.1),
-          x: (i + r() * 0.6) * W / n - 10, phase: r() * 7, drift: 0.6 + r() * 0.8}));
+        shafts = Array.from({length: n}, (_, i) => {
+          const wide = Math.round(10 + r() * 22), long = Math.round(H * (0.4 + r() * 0.5)), slope = 0.12 + r() * 0.1;
+          const narrow = Math.max(3, Math.round(wide * 0.5));
+          const halo = shaft(wide, long, slope, 0.6), core = shaft(narrow, Math.round(long * 0.8), slope, 0.75);
+          return {halo, core, inset: wide - narrow,   // (the core down the halo's middle)
+                  x: (i + r() * 0.6) * W / n - 10, phase: r() * 7, rate: 0.3 + r() * 0.25, drift: 0.6 + r() * 0.8};
+        });
         glow = painted(W, Math.ceil(H * 0.16), (x, y) => {
           const s = shadeOf(Math.pow(1 - y / (H * 0.16), 2.4) * 0.6, x, y, 3);
           return s < 0 ? null : RAD[s];
         });
-        motes = [];
-      },
-      step(dt, t, share) {
-        const n = Math.round(this.need() * share);
-        while (motes.length < n) { const m = {}; spawn(m, true); motes.push(m); }
-        if (motes.length > n) motes.length = n;
-        for (const m of motes) {
-          m.y += m.v * dt;
-          if (m.y > m.end) spawn(m, false);
-        }
       },
       draw(g, alpha, t) {
         g.globalAlpha = alpha * 0.8;
         g.drawImage(glow, 0, 0);
         for (const s of shafts) {
-          const span = W + s.sprite.width;
-          g.globalAlpha = alpha * (0.35 + 0.45 * Math.pow(Math.sin(t * 0.45 + s.phase), 2));
-          g.drawImage(s.sprite, Math.round(((s.x + t * s.drift) % span + span) % span - s.sprite.width), 0);
-        }
-        for (const m of motes) {
-          const twinkle = Math.sin(t * m.rate + m.phase), f = twinkle > 0.85 ? 3 : twinkle > 0.45 ? 2 : twinkle > -0.2 ? 1 : 0;
-          const sprite = MOTE[f], fadeOut = clamp((m.end - m.y) / 30, 0, 1);
-          g.globalAlpha = alpha * fadeOut;
-          g.drawImage(sprite, Math.round(m.x + Math.sin(t * 0.8 + m.phase) * 2) - (sprite.width >> 1), Math.round(m.y) - (sprite.height >> 1));
+          const span = W + s.halo.width, x = Math.round(((s.x + t * s.drift) % span + span) % span - s.halo.width);
+          g.globalAlpha = alpha * (0.3 + 0.4 * Math.pow(Math.sin(t * s.rate + s.phase), 2));
+          g.drawImage(s.halo, x, 0);
+          g.globalAlpha = alpha * (0.15 + 0.55 * Math.pow(Math.sin(t * s.rate * 1.7 + s.phase * 2), 4));
+          g.drawImage(s.core, x + s.inset, 0);
         }
       },
     };
   });
 
-  // ---------- leaves: autumn leaves tumbling past on the wind, three deep, a few streaks of the wind itself ----------
+  // ---------- wind: autumn leaves blowing past left to right, three deep, caught in eddies and gusts; wisps of the wind itself ----------
   const LEAF_COLOURS = [   // [shadow, base, light] for: red, amber, ochre, green, brown; and the stem
     ["#5A1915", "#922B20", "#C24C34"], ["#66290F", "#A94B1B", "#D87A33"], ["#62420F", "#9E7024", "#D2A142"],
     ["#2C3F17", "#52702D", "#82A047"], ["#3B2816", "#664629", "#8C6840"]].map((r) => r.map(rgb));
@@ -439,8 +420,14 @@ const Sky = (() => {
      ["....lll...", "..llmmmmm.", "ssvvvvvvvd", "..mmmmmdd.", "....ddd..."],
      ["..l.l...", ".lmlmld.", "lmmvmmd.", ".lvmmvmd", "lmmvmmd.", ".dmvmd..", "..dsd...", "...s...."]]];
   const TURN = [1, 0.7, 0.35, -0.35, -0.7, -1, -0.7, -0.35, 0.35, 0.7];   // a leaf turning over and back (negative: its underside)
-  const leaves = effect((e) => {
-    const LAYERS = [{speed: 45, alpha: 0.5, share: 0.4}, {speed: 75, alpha: 0.75, share: 0.35}, {speed: 115, alpha: 1, share: 0.25}];
+  const wind = effect((e) => {
+    // The air: a steady wind to the right, pulsing with gusts; slow turbulence over it (the curl of a few drifting waves: it swirls,
+    // never piles up); and a few eddies drifting along behind it, each a vortex that draws leaves near it onto a ring and sweeps them
+    // round and round, then flings them off as it dies away. A leaf eases toward the air's speed where it is (it has a little
+    // weight), turning over faster the faster the air turns about it. A few wisps of the wind itself trace the same air.
+    const LAYERS = [{speed: 40, alpha: 0.5, share: 0.4}, {speed: 60, alpha: 0.75, share: 0.35}, {speed: 85, alpha: 1, share: 0.25}];
+    const DRIFT = 60;                  // the turbulence's own speed along (px/s, at no gust); the eddies lag it
+    const EDDY_DRAW = 150;             // how hard an eddy draws leaves onto its ring, and flings them off (px/s, about)
     // Each layer's leaves: each shape in each colour turning each way, as its frames
     const transposed = (rows) => rows[0].split("").map((_, x) => rows.map((row) => row[x]).join(""));
     const sprites = LEAF_SHAPES.map((shapes) => shapes.flatMap((rows) => LEAF_COLOURS.flatMap(([d, m, l]) => {
@@ -451,29 +438,69 @@ const Sky = (() => {
         return mapped(squashed, k > 0 ? {d, m, l, v: l, s: STEM} : {d: under[0], m: under[1], l: under[2], v: under[1], s: STEM});
       }));
     })));
-    const STREAK = [rgb("#3A444C"), rgb("#4C5862")];
-    let flying = [], gusts = [];
+    const WISP = ["#2E363D", "#45515B", "#5F6E7A"].map((c) => `rgb(${rgb(c)})`);
+    let flying = [], eddies = [], wisps = [], gust = 0, nextGust = 0, travelled = 0;
+    // The air's velocity at (x, y) for a layer whose leaves the steady wind carries at `pace` (px/s): [vx, vy], and how fast it turns
+    // there (its curl, 1/s)
+    const air = [0, 0, 0];
+    function airAt(x, y, pace, t) {
+      const k = pace / DRIFT;   // (the far layers' air slower, its swirls smaller: parallax)
+      // turbulence: the curl of a stream function, two crossed waves riding along with the wind (it swirls, never piles up)
+      const X = x - travelled, a = 0.6 * t, A = 420 * (0.7 + 0.6 * gust) * k, B = 110 * k;
+      const s1 = Math.sin(0.05 * X + a), c1 = Math.cos(0.05 * X + a), s2 = Math.sin(0.07 * y - 0.7 * a), c2 = Math.cos(0.07 * y - 0.7 * a);
+      const s3 = Math.sin(0.11 * X + 1.3 - a), c3 = Math.cos(0.11 * X + 1.3 - a), s4 = Math.sin(0.13 * y - 0.9 * a), c4 = Math.cos(0.13 * y - 0.9 * a);
+      let vx = pace * (1 + gust) + A * 0.07 * s1 * c2 + B * 0.13 * s3 * c4;
+      let vy = -A * 0.05 * c1 * s2 - B * 0.11 * c3 * s4;
+      let curl = A * 0.0074 * s1 * s2 + B * 0.029 * s3 * s4;
+      // eddies: each a vortex, still at its eye, swirling fastest a little way out, fading beyond; near it the air goes along with it.
+      // While it lasts it draws what comes near onto a ring round its eye (so leaves are caught and go round), then flings them off.
+      for (const d of eddies) {
+        const dx = x - d.x, dy = y - d.y, q = (dx * dx + dy * dy) / (d.r * d.r);
+        if (q > 6 || !d.on) continue;
+        const near = Math.exp(-q * 0.5), f = d.spin * d.on * near * near / d.r, pull = d.on * near, out = Math.sqrt(q);
+        const radial = (d.draw > 0 ? -d.draw * (out - 0.7) : -d.draw * 0.6 * out) * EDDY_DRAW * near * d.on / Math.max(out * d.r, 1);
+        vx += (d.vx - vx) * pull - dy * f + dx * radial;
+        vy += (d.vy - vy) * pull + dx * f + dy * radial;
+        curl += 2 * f * (1 - q);
+      }
+      air[0] = vx; air[1] = vy; air[2] = curl;
+      return air;
+    }
+    const eddy = (d, anywhere) => {
+      d.r = between(26, 46);
+      d.x = between(-d.r, W * 0.85);   // (springing up anywhere, spinning up in place)
+      d.y = between(H * 0.12, H * 0.88);
+      d.spin = (random() < 0.5 ? -1 : 1) * between(4.5, 6) * d.r;   // (its fastest swirl about 0.43 this, px/s: a turn in 2 s or so)
+      d.v = DRIFT * between(0.6, 0.85);   // (lagging the wind: swirling faster than it moves, so leaves loop)
+      d.vx = d.v; d.vy = 0;
+      d.age = anywhere ? between(0, 4) : 0;
+      d.life = between(5, 9);
+      d.wander = between(0, 7);
+      d.on = 0; d.draw = 1;
+    };
     const spawn = (f, anywhere) => {
       const set = sprites[f.layer];
       f.frames = set[Math.floor(random() * set.length)];
-      f.x = anywhere ? between(-10, W) : between(-40, -10);
+      f.x = anywhere ? between(-10, W) : between(-30, -8);
       f.y = between(H * 0.05, H * 0.95);
-      f.v = LAYERS[f.layer].speed * between(0.75, 1.25);
-      f.bob = between(3, 9);
+      f.vx = LAYERS[f.layer].speed; f.vy = 0;
+      f.weight = between(0.12, 0.3);   // (s: how long it takes to catch the air's speed)
+      f.turn = between(0, 10);
+      f.spin = between(4, 9);
+      f.sink = between(2, 10);
       f.phase = between(0, 7);
-      f.spin = between(6, 13);
-      f.sink = between(-4, 8);
     };
-    const gust = (s, anywhere) => {
-      s.x = anywhere ? between(-60, W) : between(-200, -60);
-      s.y = Math.round(between(0, H));
-      s.length = Math.round(between(18, 60));
-      s.v = between(220, 320);
+    const wisp = (w, anywhere) => {
+      w.x = anywhere ? between(0, W) : between(-40, -5);
+      w.y = between(H * 0.1, H * 0.9);
+      w.trail = [];
+      w.fast = between(1.3, 1.7);
     };
     return {
       strength: () => 0.8,
       need: () => W * H / 2600,
-      resize() { flying = []; gusts = []; },
+      count: () => flying.length,
+      resize() { flying = []; eddies = []; wisps = []; },
       step(dt, t, share) {
         const n = Math.round(this.need() * share);
         while (flying.length < n) {
@@ -484,35 +511,69 @@ const Sky = (() => {
         }
         if (flying.length > n) flying.length = n;
         flying.sort((a, b) => a.layer - b.layer);
-        while (gusts.length < 3) { const s = {}; gust(s, true); gusts.push(s); }
-        const wind = 1 + 0.35 * Math.sin(t * 0.7) + 0.15 * Math.sin(t * 1.9);   // (it gusts)
-        for (const f of flying) {
-          f.x += f.v * wind * dt;
-          f.y += f.sink * dt;
-          if (f.x > W + 12 || f.y > H + 12 || f.y < -12) spawn(f, false);
+        // gusts: a sudden push now and then, dying away
+        if ((nextGust -= dt) <= 0) { gust += between(0.5, 1.1); nextGust = between(2.5, 6); }
+        gust *= Math.exp(-0.9 * dt);
+        travelled += DRIFT * (1 + gust) * dt;
+        const want = Math.max(2, Math.round(W * H / 30000));
+        while (eddies.length < want) { const d = {}; eddy(d, true); eddies.push(d); }
+        for (const d of eddies) {
+          d.age += dt;
+          const k = clamp(d.age / d.life, 0, 1);
+          d.on = Math.pow(Math.sin(Math.PI * k), 0.6);   // (spinning up, and down)
+          d.draw = clamp((0.72 - k) * 6, -1, 1);          // (drawing in, then flinging off)
+          d.vx = d.v * (1 + 0.6 * gust);
+          d.vy = Math.sin(t * 0.5 + d.wander) * 6;
+          d.x += d.vx * dt;
+          d.y += d.vy * dt;
+          if (d.age >= d.life || d.x > W + 2 * d.r) eddy(d, false);
         }
-        for (const s of gusts) { s.x += s.v * dt; if (s.x > W) gust(s, false); }
+        for (const f of flying) {
+          const [vx, vy, curl] = airAt(f.x, f.y, LAYERS[f.layer].speed, t), ease = 1 - Math.exp(-dt / f.weight);
+          f.vx += (vx - f.vx) * ease;
+          f.vy += (vy + f.sink - f.vy) * ease;
+          f.x += f.vx * dt;
+          f.y += f.vy * dt;
+          f.turn += (f.spin + Math.min(Math.abs(curl) * 2.5, 14)) * dt;
+          if (f.x > W + 14 || f.x < -60 || f.y > H + 14 || f.y < -14) spawn(f, false);
+        }
+        while (wisps.length < 4) { const w = {}; wisp(w, true); wisps.push(w); }
+        for (const w of wisps) {   // (twice a frame: the trail smooth through the eddies)
+          for (let i = 0; i < 2; i++) {
+            const [vx, vy] = airAt(w.x, w.y, DRIFT, t);
+            w.x += vx * w.fast * dt / 2;
+            w.y += vy * w.fast * dt / 2;
+            w.trail.push(Math.round(w.x), Math.round(w.y));
+          }
+          if (w.trail.length > 44) w.trail.splice(0, w.trail.length - 44);
+          if (w.x > W + 30 || w.y < -20 || w.y > H + 20 || w.x < -80) wisp(w, false);
+        }
       },
       draw(g, alpha, t) {
-        g.globalAlpha = alpha * 0.35;
-        for (const s of gusts) for (let i = 0; i < s.length; i += 2) {   // (dotted, brighter at its middle)
-          g.fillStyle = `rgb(${STREAK[Math.abs(i - s.length / 2) < s.length / 4 ? 1 : 0]})`;
-          g.fillRect(Math.round(s.x) + i, s.y + (i > s.length / 2 ? 1 : 0), 1, 1);
+        for (const w of wisps) {   // (a dotted line along where it went, brightest at its middle, faint at both ends)
+          const m = w.trail.length / 2;
+          for (let i = 0; i < m; i++) {
+            const k = i / Math.max(m - 1, 1), lit = Math.sin(Math.PI * k);
+            if (lit < 0.15 || (i & 1)) continue;
+            g.globalAlpha = alpha * 0.45 * lit;
+            g.fillStyle = WISP[lit > 0.8 ? 2 : lit > 0.45 ? 1 : 0];
+            g.fillRect(w.trail[2 * i], w.trail[2 * i + 1], 1, 1);
+          }
         }
         let layer = -1;
         for (const f of flying) {
           if (f.layer !== layer) { layer = f.layer; g.globalAlpha = alpha * LAYERS[layer].alpha; }
-          const frame = f.frames[Math.floor(t * f.spin + f.phase * 3) % f.frames.length];
-          const y = f.y + Math.sin(t * 1.7 + f.phase) * f.bob;
+          const frame = f.frames[Math.floor(f.turn) % f.frames.length];
+          const y = f.y + Math.sin(t * 2.3 + f.phase) * 1.2;   // (a flutter)
           g.drawImage(frame, Math.round(f.x - frame.width / 2), Math.round(y - frame.height / 2));
         }
       },
     };
   });
 
-  // ---------- drips: water beading along the top edge, each drop swelling, stretching and falling ----------
+  // ---------- humidity: water beading along the top edge, each drop swelling, stretching and falling ----------
   const WATER = ["#1A2E41", "#2C5573", "#5793BC", "#A6D7F2", "#EFFAFF"].map(rgb);
-  const drips = effect((e) => {
+  const humidity = effect((e) => {
     const SIZES = [0.6, 1, 1.4, 1.9, 2.4, 2.9, 3.4];   // a bead's radius, swelling
     // A bead of radius r: dark above, its body, a bright crescent low down where the light comes through, a glint high on the left
     // A bead of radius r hanging from its tip: tapering up to where it clings, a round belly; lit from the top left: a white glint,
@@ -539,6 +600,7 @@ const Sky = (() => {
     return {
       strength: () => 0.85,
       need: () => W / 16,
+      count: () => sites.length,
       resize() {
         film = painted(W, 3, (x, y) => {   // the wet edge
           const s = shadeOf([0.75, 0.45, 0.2][y] + 0.15 * Math.sin(x * 0.21), x, y, 3);
@@ -705,7 +767,7 @@ const Sky = (() => {
     };
   });
 
-  const effects = {smog, heat, radiation, rain, leaves, drips, ice};
+  const effects = {smog, heat, uv, rain, wind, humidity, ice};
 
   // ---------- the loop ----------
   let animate = true, frame = 0, last = 0, clock = 0, frames = 0, cost = 0;
@@ -791,6 +853,7 @@ const Sky = (() => {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) start(); });
 
   return {set, state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: !!frame, frames, cost, size: [W, H, P],
+                              particles: Object.fromEntries(ORDER.map((k) => [k, effects[k].count()])), budget: W * H * BUDGET,
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach()})};
 })();
 </script>
@@ -1184,7 +1247,7 @@ const Sky = (() => {
   }
 
   // ---------- the data ----------
-  // The bottom strip: the time of the reading, then its links (only while they do something)
+  // The bottom strip, at the bottom right: its links (only while they do something), then the time of the reading at the far right
   function link(words, action, name) {
     const a = document.createElement("button");
     Object.assign(a, {type: "button", className: `link ${name}`, textContent: words});
@@ -1193,10 +1256,12 @@ const Sky = (() => {
   }
   function showStatus() {
     statusLine.classList.toggle("lost", lost);
-    const parts = [lost ? "reconnecting…" : asOf ? `updated ${asOf.slice(11, 16)}` : ""];
-    if (calling()) parts.push(link(animated() ? "stop animations" : "start animations", toggleAnimations, "animations"));
+    const parts = [];
     if (resettable()) parts.push(link("reset preferences", reset, "reset"));
-    statusLine.replaceChildren(...parts.flatMap((p, i) => i && parts[0] ? [" · ", p] : [p]));
+    if (calling()) parts.push(link(animated() ? "stop animations" : "start animations", toggleAnimations, "animations"));
+    const time = lost ? "reconnecting…" : asOf ? `updated ${asOf.slice(11, 16)}` : "";
+    if (time) parts.push(time);
+    statusLine.replaceChildren(...parts.flatMap((p, i) => i ? [" · ", p] : [p]));
   }
 
   function render(data) {
@@ -1646,10 +1711,10 @@ const Sky = (() => {
 
   // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animations" ----------
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
-  // stronger to 8 mm/h), smog from the US AQI's Moderate band up (1-5, a band each), radiation at a UV index of 11, drips at 95 %
-  // humidity, leaves on a wind above 50 km/h (the reading now, not the gust), heat at 40 °C, ice below 0 °C (how far below). A tile
+  // stronger to 8 mm/h), smog from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 95 %
+  // humidity, wind above 50 km/h (the reading now, not the gust), heat at 40 °C, ice below 0 °C (how far below). A tile
   // with no reading now calls for nothing.
-  const CALLED_BY = {rain: "Rain", smog: "US AQI", radiation: "UV index", drips: "Humidity", leaves: "Wind", heat: "Temperature",
+  const CALLED_BY = {rain: "Rain", smog: "US AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
                      ice: "Temperature"};
   const BANDS = [50, 100, 150, 200, 300];   // the US AQI's bands' upper edges, Good to Very Unhealthy (the tile's own bounds if it has them)
   let real = {}, simulated = {}, conditions = {};
@@ -1664,8 +1729,8 @@ const Sky = (() => {
       ? aqiTile.bounds.slice(1, -1) : BANDS;
     return {rain: rate > 0 ? 0.3 + 0.7 * Math.min(1, rate / 8) : 0,
             smog: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),
-            radiation: uvi !== null && uvi >= 11 ? 1 : 0, drips: humidity !== null && humidity >= 95 ? 1 : 0,
-            leaves: wind !== null && wind > 50 ? 1 : 0, heat: temperature !== null && temperature >= 40 ? 1 : 0,
+            uv: uvi !== null && uvi >= 11 ? 1 : 0, humidity: humidity !== null && humidity >= 95 ? 1 : 0,
+            wind: wind !== null && wind > 50 ? 1 : 0, heat: temperature !== null && temperature >= 40 ? 1 : 0,
             ice: temperature !== null && temperature < 0 ? -temperature : 0};
   }
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: the strip's link shows)
@@ -1725,7 +1790,7 @@ const Sky = (() => {
 </script>
 <!-- TEMPORARY: effect test links. A "test:" row at the bottom left, one link per effect, simulating its condition (the effect and its
      tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
-     ?fx=smog3,leaves,ice, ?fx=all (rain light, rain2 heavy, smog1-smog5, radiation, drips, leaves, heat, ice; "all"). To remove: delete
+     ?fx=smog3,wind,ice, ?fx=all (rain light, rain2 heavy, smog1-smog5, uv, humidity, wind, heat, ice; ?fx=all every one, no link of its own). To remove: delete
      from here to "END TEMPORARY" (this style, the row and its script). The page's own listener for "ecobot-fx" then simply hears nothing. -->
 <style>
   #fxtest { position: fixed; left: 0; bottom: 0; z-index: 1; height: 18px; max-width: calc(100vw - 230px);   /* (set to fit, below) */ overflow-x: auto; overflow-y: hidden;
@@ -1743,8 +1808,8 @@ const Sky = (() => {
 (() => {
   // Each effect's simulated levels, one click a step (back to off after the last): as the page's conditions (rain: its strength;
   // smog: its band; ice: degrees below 0 °C)
-  const STEPS = {rain: [0.35, 1], smog: [1, 2, 3, 4, 5], radiation: [1], drips: [1], leaves: [1], heat: [1], ice: [5]};
-  const ALL = {rain: 1, smog: 3, radiation: 1, drips: 1, leaves: 1, heat: 1, ice: 5};
+  const STEPS = {rain: [0.35, 1], smog: [1, 2, 3, 4, 5], uv: [1], humidity: [1], wind: [1], heat: [1], ice: [5]};
+  const ALL = {rain: 1, smog: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5};   // (?fx=all)
   const row = document.getElementById("fxtest");
   let on = {};   // {effect: its step's index}
   const name = (k) => k === "rain" ? ["rain", "rain2"][on[k]] : k === "smog" ? `smog${on[k] + 1}` : k;   // (in the URL)
@@ -1785,7 +1850,6 @@ const Sky = (() => {
     if (next < STEPS[k].length) on[k] = next; else delete on[k];
     apply();
   });
-  button("all", null, () => { read("all"); apply(); });
   button("clear", null, () => { on = {}; apply(); });
   // Beside the strip, in the room it leaves; where that's too little (a phone, the strip with its links), just above it instead
   const strip = document.getElementById("status");

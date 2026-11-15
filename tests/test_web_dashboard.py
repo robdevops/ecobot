@@ -7,7 +7,7 @@ console error; the tiles rearranged (dragged with a mouse and with a touch's lon
 across reloads, reset), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds; a tile zoomed to
 fill the window and the gallery through the others (keys, mouse drags, a trackpad's swipe, touch swipes, both ends, the text still
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
-one canvas behind the tiles, "stop animations", reduced motion, the temporary test links and ?fx=), and the data's rain rate. With
+one canvas behind the tiles, "stop animations", reduced motion, the temporary test links and ?fx=, uv's beams with no particles, the wind's leaves within the budget), and the data's rain rate. With
 ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
@@ -368,7 +368,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         got = report[name]
         assert got["errors"] == [], (name, got["errors"])
         assert got["tiles"] == n and got["scrollWidth"] <= width, (name, got)
-        assert got["status"] == "updated 18:42 · stop animations", (name, got)   # (the US AQI's 56, Moderate: smog behind the tiles)
+        assert got["status"] == "stop animations · updated 18:42", (name, got)   # (the US AQI's 56, Moderate: smog behind the tiles)
         assert all(r["right"] <= width + 0.5 and r["left"] >= -0.5 for r in got["rects"]), (name, got)
         assert (shots / f"dashboard-{name}.png").exists()
     for name in ("tablet-landscape", "tablet-portrait", "desktop"):            # these fit every tile without scrolling
@@ -491,13 +491,13 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
                            "table": {"same": True, "dragging": False, "selected": "85"},
                            "reading": {"same": True, "dragging": False, "selected": "70"}}
     # the ×, then the remove zone, hide; the reset link shows beside the time
-    assert got["closed"] == {"titles": [t for t in reordered if t != "Rain"], "status": "updated 18:42 · stop animations · reset preferences"}
+    assert got["closed"] == {"titles": [t for t in reordered if t != "Rain"], "status": "reset preferences · stop animations · updated 18:42"}
     assert got["removing"]["over"] and got["removing"]["zone"] == "none"
     shown = [t for t in reordered if t not in ("Rain", "Wind")]
     assert got["removed"] == {"titles": shown, "stored": {"order": reordered, "hidden": ["Rain", "Wind"]}}
-    assert got["reloaded"] == {"titles": shown, "status": "updated 18:42 · stop animations · reset preferences"}
+    assert got["reloaded"] == {"titles": shown, "status": "reset preferences · stop animations · updated 18:42"}
     # reset: every tile, in the default order, nothing kept, no link
-    assert got["reset"] == {"titles": default, "status": "updated 18:42 · stop animations", "stored": None}
+    assert got["reset"] == {"titles": default, "status": "stop animations · updated 18:42", "stored": None}
     # unreadable preferences: the defaults; a tile new to the saved order (Rain) in its usual place, after Atmospheric pressure; an
     # absent tile's place and a later stage's keys kept
     assert got["corrupt"] == default
@@ -534,7 +534,7 @@ async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swi
     assert got["dropped"]["titles"] == reordered and not got["dropped"]["zone"] and got["dropped"]["clicks"] == 1
     # held and let go in place: the grip and × stay, and a tap on the × hides it
     assert got["armed"]["armed"] == ["Humidity"] and got["armed"]["close"] == "1"
-    assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "updated 18:42 · stop animations · reset preferences"}
+    assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "reset preferences · stop animations · updated 18:42"}
     # held at the bottom edge: the page scrolls to its end, never past it, and stays there once let go
     edge = got["edge"]
     assert edge["seen"][-1] == pytest.approx(edge["end"], abs=1) and max(edge["seen"]) <= edge["end"] + 1, edge
@@ -694,7 +694,7 @@ async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_t
 
 
 # ---------- the weather behind the tiles ----------
-EFFECTS = {"rain": "Rain", "smog": "US AQI", "radiation": "UV index", "drips": "Humidity", "leaves": "Wind", "heat": "Temperature",
+EFFECTS = {"rain": "Rain", "smog": "US AQI", "uv": "UV index", "humidity": "Humidity", "wind": "Wind", "heat": "Temperature",
            "ice": "Temperature"}
 
 
@@ -718,7 +718,7 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
     assert got["iceDepth"] == [0.5, 5]                                           # further in the colder
     # several at once: one canvas, one loop, at most 30 frames drawn a second
     several = got["several"]
-    assert several["effects"] == ["smog", "radiation", "rain", "leaves", "drips", "ice"] and several["canvases"] == 1, several
+    assert several["effects"] == ["smog", "uv", "rain", "wind", "humidity", "ice"] and several["canvases"] == 1, several
     assert sorted(several["framed"]) == sorted({EFFECTS[k] for k in several["effects"]}) and several["ink"] > 0, several
     assert 20 <= several["drawn"] <= 32 and several["frames"] <= 64, several    # (one request a display frame, every other one drawn)
     # the canvas: filling the window, fixed, first, behind the tiles, never in the pointer's way, its pixels crisp
@@ -733,16 +733,17 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
     assert got["zoomed"] == {"zoomed": True, "title": "UV index", "background": "rgba(0, 0, 0, 0)", "grid": "rgba(0, 0, 0, 0)",
                              "alert": True, "running": True}
     # "stop animations": nothing drawn, no loop, the frame stays, kept across a reload; "start animations" and the reset put them back
-    assert got["stopped"] | {"levels": None} == {"effects": ["radiation"], "levels": None, "running": False, "framed": ["UV index"],
+    assert got["stopped"] | {"levels": None} == {"effects": ["uv"], "levels": None, "running": False, "framed": ["UV index"],
                                                  "link": "start animations", "frames": 0, "ink": 0, "stored": False}, got["stopped"]
     assert got["reloaded"]["link"] == "start animations" and got["reloaded"]["frames"] == 0 and not got["reloaded"]["running"]
     for step in ("restarted", "reset"):
         assert got[step]["link"] == "stop animations" and got[step]["running"] and got[step]["frames"] > 10, (step, got[step])
     # the temporary test links: each its effect and frame (the gauges keep their readings), the URL following; smog steps through its
-    # bands, rain light then heavy; ice melts back; "clear" ends them all; "all" and ?fx= when the page opens
+    # bands, rain light then heavy; ice melts back; "clear" ends them all; no "all" link, but ?fx=all, and ?fx= when the page opens
     links = got["links"]
+    assert links["buttons"] == ["rain", "smog", "uv", "humidity", "wind", "heat", "ice", "clear"], links["buttons"]
     on = []
-    for name in ("radiation", "drips", "leaves", "heat", "ice"):
+    for name in ("uv", "humidity", "wind", "heat", "ice"):
         on.append(name)
         assert set(links[name]["effects"]) == set(on) and EFFECTS[name] in links[name]["framed"], (name, links[name])
         assert links[name]["url"] == "?fx=" + ",".join(on)
@@ -752,18 +753,28 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
     assert melting["grown"] > 2 and 0 < melting["reach"] < melting["grown"] and "ice" not in melting["effects"] and melting["running"], melting
     assert links["cleared"] | {"levels": None, "running": None} == {"effects": [], "levels": None, "running": None, "framed": [],
                                                                      "link": None, "url": ""}
-    every = ["smog", "heat", "radiation", "rain", "leaves", "drips", "ice"]
-    assert links["all"]["effects"] == every and links["all"]["url"] == "?fx=rain2,smog3,radiation,drips,leaves,heat,ice"
-    assert got["param"]["levels"] == {"smog": 3, "heat": 0, "radiation": 0, "rain": 0, "leaves": 1, "drips": 0, "ice": 5}
+    every = ["smog", "heat", "uv", "rain", "wind", "humidity", "ice"]
+    assert links["all"]["effects"] == every and links["all"]["url"] == "?fx=rain2,smog3,uv,humidity,wind,heat,ice"
+    assert got["param"]["levels"] == {"smog": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "ice": 5}
     assert sorted(got["param"]["framed"]) == ["Temperature", "US AQI", "Wind"] and got["param"]["errors"] == []
-    assert links["role"] == "group" and links["pressed"] == {"rain": "false", "smog": "false", "radiation": "true", "drips": "true",
-                                                             "leaves": "true", "heat": "true", "ice": "false"}, links["pressed"]
-    # on a phone, the strip with both its links: the test row beside it or above it, never over it
-    assert got["phone"]["strip"].endswith("reset preferences") and got["phone"]["apart"] and got["phone"]["onScreen"], got["phone"]
+    assert links["role"] == "group" and links["pressed"] == {"rain": "false", "smog": "false", "uv": "true", "humidity": "true",
+                                                             "wind": "true", "heat": "true", "ice": "false"}, links["pressed"]
+    # the particles: uv's beams none (no motes); the wind's leaves alone, and every effect's together, within the shared budget
+    assert got["particles"]["uv"] == {"uv": 0, "budget": got["particles"]["uv"]["budget"]}, got["particles"]
+    wind = got["particles"]["wind"]
+    assert 0 < wind["wind"] <= wind["budget"], wind
+    together = got["particles"]["all"]
+    assert together["uv"] == 0 and together["wind"] > 0 and together["rain"] > 0, together
+    assert sum(v for k, v in together.items() if k != "budget") <= together["budget"] + 3, together   # (each rounded)
+    # the strip at the bottom right: its links, then the time at the far right; on a phone with both its links, the test row
+    # beside it or above it, never over it
+    phone = got["phone"]
+    assert phone["strip"] == "reset preferences · stop animations · updated 18:42" and phone["right"], phone
+    assert phone["apart"] and phone["onScreen"], phone
     assert got["paramAll"]["effects"] == every and got["paramRain"]["levels"]["rain"] == 1
     # reduced motion: no loop, one still, faint frame (the ice as it would be), the frames and the link as ever
     still = got["still"]
-    assert still["effects"] == ["radiation", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still
+    assert still["effects"] == ["uv", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still
     assert still["ink"] > 0 and sorted(still["framed"]) == ["Temperature", "UV index"] and still["link"] == "stop animations", still
     assert got["cost"] < 8, got["cost"]
     # several at once no brighter than one strong one: every effect on, against Hazardous smog alone
