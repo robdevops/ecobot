@@ -704,6 +704,13 @@ async def test_a_click_on_a_gauge_zooms_its_tile_and_the_gallery_pages_by_keys_d
     assert not kb["esc"]["zoomed"] and kb["esc"]["focus"] == "Humidity" and kb["esc"]["reachable"] == default, kb
     assert kb["space"]["zoomed"] and kb["space"]["shown"] == "Humidity" == kb["space"]["focus"], kb
     # one tile: no zoom cursor, no zoom
+    # Esc mid-way through a zoom-in: back from where the tile is drawn (no jump on to the full size), its table hidden until it's in its
+    # grid place; the others keep their tables while they fade out (not all gone at once on the first frame)
+    esc = got["escMid"]
+    assert esc["others"] == ["visible 1"] and not esc["zoomed"], esc
+    assert esc["atEsc"] < full["width"] - 50 and esc["peakAfter"] < esc["atEsc"] * 1.15, esc
+    assert esc["tableWhileLarge"] == 0 and esc["tableEnd"] == 1, esc
+    assert esc["last"]["width"] == pytest.approx(got["gridRect"]["width"], abs=0.5), esc
     assert got["single"] == {"cursor": "auto", "zoomed": False}
 
 

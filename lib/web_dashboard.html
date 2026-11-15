@@ -103,7 +103,8 @@
      Yearly table hidden: gone at once as the tile grows, and while it shrinks back (never drawn large over the others), then fading
      in, in its place */
   .unit, .chip, .figure, .tablearea { transition: opacity 0.15s ease; }
-  body.zoomed .tile :is(.unit, .chip, .figure, .tablearea), .tile.zooming :is(.unit, .chip, .figure, .tablearea)
+  body.zoomed .tile.fading { height: var(--zfull); }   /* (fading out where they were: whole, their table too) */
+  body.zoomed .tile:not(.fading) :is(.unit, .chip, .figure, .tablearea), .tile.zooming :is(.unit, .chip, .figure, .tablearea)
     { opacity: 0; visibility: hidden; transition: none; }
   .tile.zooming { z-index: 2; }        /* (the tile zooming in or out, over the others) */
   body.paging, body.paging * { cursor: grabbing !important; -webkit-user-select: none !important; user-select: none !important; }
@@ -1502,6 +1503,7 @@ const Sky = (() => {
     const boxes = [...grid.children];
     const before = new Map(boxes.map((b) => [b, b.getBoundingClientRect()]));
     zoom = {id: box.dataset.id, index: 0, pitch: 0, x: 0, scrollY: window.scrollY};
+    if (!STILL) for (const b of boxes) b.classList.toggle("fading", b !== box);   // (before `zoomed`: their tables never hidden meanwhile)
     document.documentElement.classList.add("zoomed");
     document.body.classList.add("zoomed");
     layout();   // (the gallery's places, the strip at this tile)
@@ -1534,20 +1536,35 @@ const Sky = (() => {
     if (animate && box) flip(box, before, true);
   }
 
-  // The zoom's animation: `box` from its place before to its place now, the others fading out (zooming in) or in (zooming out)
+  // The zoom's animation: `box` from its place before to its place now, the others fading out (zooming in) or in (zooming out).
+  // Each tile's running zoom animation is cancelled first (Esc mid-zoom: `before` was taken mid-way, so the new one starts from where
+  // the tile is drawn, no jump), and only a tile's newest animation, on finishing, ends its `zooming` (the table hidden, over the
+  // others) or `fading` (the others, fading out in their grid places, set by zoomIn(): their table kept, fading with them, not gone at
+  // once)
   function flip(box, before, out) {
-    if (STILL) return;
+    const drawn = new Map();   // (a tile's opacity mid-way through the zoom cancelled: the fade back in from there)
+    for (const b of before.keys()) {
+      const running = b.getAnimations().filter((a) => a.id === "zoom");
+      if (running.length) drawn.set(b, getComputedStyle(b).opacity);
+      for (const a of running) a.cancel();
+      if (out) b.classList.remove("fading");
+    }
+    if (STILL) { box.classList.remove("zooming"); return; }
     zoomUntil = performance.now() + ZOOM_MS;
-    const timing = {duration: ZOOM_MS, easing: "ease-out"};
+    const timing = {duration: ZOOM_MS, easing: "ease-out", id: "zoom"};
+    const shown = new Map([...before.keys()].map((b) => [b, getComputedStyle(b).opacity]));
     for (const [b, was] of before) {
       const now = b.getBoundingClientRect();
       const from = `translate(${was.left - now.left}px, ${was.top - now.top}px) scale(${was.width / now.width})`;
-      const opacity = getComputedStyle(b).opacity;
+      const opacity = shown.get(b);
+      let anim;
       if (b === box) {
         b.classList.add("zooming");
-        b.animate([{transform: from}, {transform: "none"}], timing).finished.then(() => b.classList.remove("zooming"), () => {});
-      } else if (out) b.animate([{opacity: 0}, {opacity}], timing);
-      else b.animate([{transform: from, opacity}, {transform: from, opacity: 0}], timing);
+        anim = b.animate([{transform: from}, {transform: "none"}], timing);
+      } else if (out) anim = b.animate([{opacity: drawn.get(b) ?? 0}, {opacity}], timing);
+      else anim = b.animate([{transform: from, opacity}, {transform: from, opacity: 0}], timing);
+      b._zoomAnim = anim;
+      anim.finished.then(() => { if (b._zoomAnim === anim) b.classList.remove("zooming", "fading"); }, () => {});
     }
   }
 
@@ -1557,7 +1574,7 @@ const Sky = (() => {
     const boxes = [...grid.children], n = boxes.length;
     const aspect = L.cell[0] / TABLE_TOP, W = window.innerWidth, H = window.innerHeight - 2 * PAD - STATUS;
     const w = Math.min(W - 2 * PAD, H * aspect), h = w / aspect;
-    for (const [k, v] of Object.entries({"--zw": w, "--zh": h, "--zx": (W - w) / 2, "--zy": PAD + (H - h) / 2, "--pitch": W}))
+    for (const [k, v] of Object.entries({"--zw": w, "--zh": h, "--zfull": w * L.cell[1] / L.cell[0], "--zx": (W - w) / 2, "--zy": PAD + (H - h) / 2, "--pitch": W}))
       grid.style.setProperty(k, `${v}px`);
     grid.style.setProperty("--n", n);
     boxes.forEach((b, i) => b.style.setProperty("--i", i));

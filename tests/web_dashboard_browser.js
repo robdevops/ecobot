@@ -579,6 +579,23 @@ async function zoomMode(browser, url) {
   out.keyboard.space = await focusState();
   await page.keyboard.press("Escape");
   await page.waitForTimeout(400);
+  // Esc 100 ms into a zoom-in: back from where the tile is drawn (no jump to the full size), its table hidden until it's in its grid place
+  // (never drawn large); the others keep their tables as they fade out, gone only once they're in the gallery
+  await page.waitForTimeout(300);
+  {
+    const recording = page.evaluate(() => window.__record("Humidity", 700));
+    await page.waitForTimeout(50);
+    await page.mouse.click(...await at(page, "Humidity", 0.85, 0.3));
+    await page.waitForTimeout(30);
+    const others = await page.evaluate(() => window.__look("Temperature").table);
+    await page.waitForTimeout(70);
+    await page.keyboard.press("Escape");
+    const { frames: f, at: esc } = await recording, last = f[f.length - 1], after = f.filter((x) => x.t >= esc);
+    out.escMid = { others, last, zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")),
+                   atEsc: f.filter((x) => x.t < esc).pop().width, peakAfter: Math.max(...after.map((x) => x.width)),
+                   tableWhileLarge: Math.max(...after.filter((x) => x.width > last.width + 1).map((x) => x.table)), tableEnd: last.table };
+    await page.waitForTimeout(300);
+  }
   // one tile only: no zoom cursor, a click zooms nothing
   await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: [...document.querySelectorAll(".tile .title")].map((t) => t.textContent).filter((t) => t !== "Rain") })), KEY);
   await page.reload({ waitUntil: "load" });
