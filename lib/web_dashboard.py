@@ -2,7 +2,8 @@
 
   - GET /dashboard (and /dashboard/, the same page): one self-contained HTML5 page (web_dashboard.html: no framework, nothing fetched from elsewhere) whose script draws
     the gauges as inline SVG, with HTML titles and tables, in lib/gauge_look.py's colours and sizes, as the Status picture's PNG
-    (lib/gauges.py) draws its three, without the tables; its tiles laid out to fill the window, portrait or landscape;
+    (lib/gauges.py) draws its three, without the tables; its tiles laid out to fill the window, portrait or landscape, and arranged
+    in the browser (dragged to reorder, hidden, reset; kept in its localStorage by the tiles' titles, nothing told to the server);
   - GET /dashboard/icon.png: the page's sun (its original, at ICON_SIZE px: lib/web_dashboard_icon.png) as a file, the page's own
     icon (favicon and apple-touch-icon), named relative to the path the page was asked for (/dashboard: "dashboard/icon.png",
     /dashboard/: "icon.png"), so it is right whatever path a proxy serves the page at. A file, not a data: URI in the page, because a

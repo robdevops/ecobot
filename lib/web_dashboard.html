@@ -8,7 +8,9 @@
 <meta name="color-scheme" content="dark">
 <title>Weather Dashboard</title>
 <!-- The gauges, live (lib/web_dashboard.py): drawn here from /dashboard/data as the PNG (lib/gauges.py) draws them, in the same
-     colours and sizes (lib/gauge_look.py, sent with the data); redrawn on each /dashboard/events event, and every minute regardless. -->
+     colours and sizes (lib/gauge_look.py, sent with the data); redrawn on each /dashboard/events event, and every minute regardless.
+     The tiles can be rearranged in the browser: dragged to reorder (a long press on a touch screen), hidden with their × or the
+     remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server. -->
 <style>
   :root { --bg: #14191D; --ink: #E8EAED; --soft: #B8BDC2; }
   * { box-sizing: border-box; }
@@ -18,26 +20,57 @@
   body { overflow-x: hidden; overflow-y: auto; }
   #grid { display: grid; justify-content: center; align-content: center; padding: var(--pad, 8px);
     padding-bottom: calc(var(--pad, 8px) + var(--status, 18px)); min-height: 100%; }   /* (room under the tiles for the status line) */
-  .tile { position: relative; container-type: inline-size; overflow: hidden; transition: opacity 0.9s ease; }
+  /* A tile: its own background clear (whatever is behind the page shows through it), its foreground opaque; a thin opaque frame
+     (::before, inset, so neighbours don't share a line) keeps each a distinct area. Its gauge can be dragged (user-select none), its
+     title, reading and table keep their text selectable. transform-origin 0 0: the reflow animations' scale is from the corner. */
+  .tile { position: relative; container-type: inline-size; overflow: hidden; background: transparent; transform-origin: 0 0;
+    transition: opacity 0.9s ease, transform 0.22s ease; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .tile::before { content: ""; position: absolute; inset: 0.9cqw; border: 1px solid #262E34; border-radius: 2.5cqw; pointer-events: none; }
   .tile.faded { opacity: var(--fade, 0.4); }   /* no reading now: dimmed towards the card (as the PNG blends its colours) */
   .tile svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .tile svg text { font-family: inherit; }
+  .title, .unit, .chip, .figure, .tile svg text.reading { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
   .at { position: absolute; display: flex; align-items: center; justify-content: center; white-space: nowrap; line-height: 1; }
   .title { left: 0; right: 0; }
   .chip { border-radius: 1.875cqw; }
+  /* The grip and the × (hide), shown only on mouseover, on a tile picked up, or (touch) on one long-pressed and let go in place */
+  .grip, .close { position: absolute; top: 6px; z-index: 1; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; }
+  .grip { left: 8px; width: 10px; height: 15px; cursor: grab;
+    background: radial-gradient(circle, var(--soft) 1.1px, transparent 1.5px) 0 0 / 5px 5px; }
+  .close { right: 5px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--soft);
+    font: 18px/22px system-ui, sans-serif; cursor: pointer; }
+  .close:hover, .close:focus-visible { color: var(--ink); background: #262E34; outline: none; }
+  @media (hover: hover) { .tile:hover .grip, .tile:hover .close { opacity: 1; pointer-events: auto; } }
+  .tile.lifted .grip, .tile.lifted .close, .tile.armed .grip, .tile.armed .close, .tile:focus-within .close { opacity: 1; pointer-events: auto; }
+  body.dragging .tile:not(.lifted) .grip, body.dragging .tile:not(.lifted) .close { opacity: 0; }
+  .tile.lifted { z-index: 2; transition: opacity 0.9s ease; }    /* follows the pointer: no easing of its own */
+  .tile.lifted::before { border-color: #5A6670; }
+  .tile.doomed::before { border-color: #E5484D; }
+  body.dragging, body.dragging * { cursor: grabbing !important; -webkit-user-select: none !important; user-select: none !important; }
+  /* The remove zone: slides down from the top while a tile is dragged; a tile dropped on it is hidden */
+  #remove { position: fixed; left: 0; right: 0; top: 0; height: 56px; z-index: 3; display: flex; align-items: center; justify-content: center;
+    font-size: 15px; letter-spacing: 0.04em; color: #F2B8B5; background: rgba(58, 22, 26, 0.92); pointer-events: none;
+    transform: translateY(-100%); transition: transform 0.2s ease; }
+  #remove.on { transform: none; }
+  #remove.over { color: #FFFFFF; background: rgba(150, 34, 42, 0.95); }
   #status { position: fixed; right: 0; bottom: 0; height: var(--status, 18px); padding: 0 10px; font-size: 12px;
     line-height: var(--status, 18px); color: var(--soft); background: rgba(20, 25, 29, 0.85); border-top-left-radius: 6px; z-index: 1; }
+  #status .link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
+    text-decoration-color: #5A6670; text-underline-offset: 2px; }
+  #status .link:hover, #status .link:focus-visible { color: var(--ink); }
   html.scroll { scroll-snap-type: y proximity; scroll-padding-top: var(--pad, 8px); }
   .tile { scroll-snap-align: start; }
   #status.lost { color: #F4A93B; }
   #message { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; text-align: center;
     font-size: 20px; color: var(--soft); }
   body.unavailable #message { display: flex; }
+  @media (prefers-reduced-motion: reduce) { .tile, .grip, .close, #remove { transition: none; } }
 </style>
 </head>
 <body>
 <main id="grid" aria-live="polite"></main>
 <div id="message"></div>
+<div id="remove" aria-hidden="true">× remove</div>
 <div id="status">loading…</div>
 <script>
 "use strict";
@@ -53,8 +86,17 @@
   const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const PAD = 8, STATUS = 18;
   const NS = "http://www.w3.org/2000/svg";
+  const PREFS_KEY = "ecobot.dashboard.v1";   // the preferences (localStorage, one versioned key): {order, hidden} and later stages' own
+  const LONG_PRESS_MS = 450;           // touch: held this long without moving, a tile is picked up (Android's home screen)
+  const TOUCH_SLOP = 10, MOUSE_SLOP = 5;   // moved further (CSS px) first: a touch scrolls instead, a mouse press becomes a drag
+  const BUZZ_MS = 15;                  // the vibration as a long press picks a tile up (where navigator.vibrate exists: not iOS)
+  const LIFT = 1.04;                   // a picked-up tile, a little larger
+  const TABLE_TOP = 372;               // where the Daily/Monthly/Yearly table starts, in the tile's own pixels (table(): 378)
+  const EDGE = 48, EDGE_SPEED = 10;    // a drag this near the window's top or bottom scrolls a scrolling page, this many px a frame
   const grid = document.getElementById("grid"), statusLine = document.getElementById("status"), message = document.getElementById("message");
-  let L = null, tiles = [], asOf = null, lost = false, drawn = [], opening = true;   // drawn: each tile on the page, to be moved in place
+  const removeZone = document.getElementById("remove");
+  let L = null, tiles = [], asOf = null, lost = false, opening = true, unavailable = "";
+  const drawn = new Map();             // each tile drawn, by its id, to be moved in place (shown or hidden)
 
   // ---------- geometry (lib/gauges.py) ----------
   const rad = (d) => d * Math.PI / 180;
@@ -217,12 +259,20 @@
     const box = document.createElement("section");
     box.className = "tile" + (tile.faded ? " faded" : "");
     box.dataset.kind = tile.kind;
+    box.dataset.id = idOf(tile);
     box.setAttribute("aria-label", label(tile));
     const svg = el("svg", {viewBox: `0 0 ${L.cell[0]} ${L.cell[1]}`, preserveAspectRatio: "xMidYMid meet", "aria-hidden": "true"});
     box.appendChild(svg);
     const at = DRAW[tile.kind](svg, tile, ink, `clip${clips++}`);
     place(box, 0, 38 - 25, L.cell[0], 50, 38, tile.title, "title", {color: ink(L.ink)});
     const fill = table(box, tile, ink);
+    const grip = document.createElement("div");   // (the whole gauge drags; the grip is the cue)
+    grip.className = "grip";
+    const close = document.createElement("button");
+    Object.assign(close, {className: "close", type: "button", textContent: "×", title: "Hide"});
+    close.setAttribute("aria-label", `Hide ${tile.title}`);
+    close.addEventListener("click", () => hide(idOf(tile)));
+    box.append(grip, close);
     const drawnTile = {box, shape: shape(tile), value: shown(tile), frame: 0};
     drawnTile.update = (t) => {   // the same gauge at a new reading: the needle, mercury or water moves there, the figures change;
       box.setAttribute("aria-label", label(t));   // a reading come or gone: the tile brightens or dims, the gauge from or to its floor
@@ -249,23 +299,30 @@
   }
 
   // ---------- the layout: the columns that make the tiles largest with all of them on the screen ----------
+  // The visible tiles as large as fits (fewer visible: larger, a single one filling the window), never smaller than every tile of the
+  // data would be: where those scroll (a phone), fewer scroll at that size too rather than shrink to fit.
+  function columns(n, W, H, aspect) {
+    let best = {w: 0, cols: 1, scroll: false};
+    for (let cols = 1; cols <= n; cols++) {
+      const rows = Math.ceil(n / cols), w = Math.min(W / cols, H / rows * aspect);
+      if (w > best.w) best = {w, cols, scroll: false};
+    }
+    if (best.w < MIN_TILE) {   // too small to read on one screen: as many columns as fit at a readable size, and the page scrolls
+      const cols = Math.max(1, Math.min(n, Math.floor(W / MIN_SCROLL_TILE)));
+      best = {w: W / cols, cols, scroll: true};
+    }
+    return best;
+  }
+
   function layout() {
     const n = grid.children.length;
     if (!n || !L) return;
     const aspect = L.cell[0] / L.cell[1];
     const W = window.innerWidth - 2 * PAD, H = window.innerHeight - 2 * PAD - STATUS;
-    let best = {w: 0, cols: 1};
-    for (let cols = 1; cols <= n; cols++) {
-      const rows = Math.ceil(n / cols), w = Math.min(W / cols, H / rows * aspect);
-      if (w > best.w) best = {w, cols};
-    }
-    let {w, cols} = best, scroll = false;
-    if (w < MIN_TILE) {   // too small to read on one screen: as many columns as fit at a readable size, and the page scrolls
-      cols = Math.max(1, Math.min(n, Math.floor(W / MIN_SCROLL_TILE)));
-      w = W / cols;
-      scroll = true;
-    }
-    w = Math.max(Math.floor(w), 1);
+    let fit = columns(n, W, H, aspect);
+    const all = columns(Math.max(tiles.length, n), W, H, aspect);
+    if (fit.w < all.w) fit = all;   // (only where every tile scrolls: then these do too, at that size)
+    const w = Math.max(Math.floor(fit.w), 1), {cols, scroll} = fit;
     document.documentElement.style.setProperty("--pad", PAD + "px");
     document.documentElement.style.setProperty("--status", STATUS + "px");
     grid.style.gridTemplateColumns = `repeat(${cols}, ${w}px)`;
@@ -275,10 +332,122 @@
     document.documentElement.classList.toggle("scroll", scroll);   // (a scrolled page stops with a row at the top)
   }
 
+  // ---------- the preferences: the tiles' order and the hidden ones, kept in the browser ----------
+  // localStorage under one versioned key; missing, unreadable or blocked (a private window, storage off): the defaults, nothing saved.
+  // Keys this stage doesn't know (a later stage's) are kept as they are.
+  const idOf = (t) => t.id || t.title;   // a tile's stable id: its title (unique on the dashboard)
+  const blank = () => ({order: [], hidden: []});
+  const prefs = (() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PREFS_KEY));
+      if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+        const ids = (list) => Array.isArray(list) ? [...new Set(list.filter((id) => typeof id === "string"))] : [];
+        return {...saved, order: ids(saved.order), hidden: ids(saved.hidden)};
+      }
+    } catch (e) { /* unreadable or blocked: the defaults */ }
+    return blank();
+  })();
+  function save() {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* blocked or full: not saved */ }
+  }
+
+  // Every id in its order: the saved order (with the ids of tiles absent just now, so they come back where they were), and each tile
+  // new to it in its usual place: just after the tile before it in the default order (first, if none is).
+  function ordered() {
+    const out = [...prefs.order];
+    let before = null;
+    for (const id of tiles.map(idOf)) {
+      if (!out.includes(id)) out.splice(before === null ? 0 : out.indexOf(before) + 1, 0, id);
+      before = id;
+    }
+    return out;
+  }
+  function visibleIds() {
+    const present = new Set(tiles.map(idOf));
+    return ordered().filter((id) => present.has(id) && !prefs.hidden.includes(id));
+  }
+
+  // The tile `id` moved to place `to` among the visible ones (the hidden keep their places among the rest)
+  function moveTile(id, to) {
+    const visible = visibleIds(), from = visible.indexOf(id);
+    if (from < 0 || from === to) return;
+    const order = ordered().filter((x) => x !== id);
+    order.splice(order.indexOf(visible[to]) + (to > from ? 1 : 0), 0, id);
+    prefs.order = order;
+    save();
+    arrange();
+  }
+
+  function hideTile(id) {
+    if (!prefs.hidden.includes(id)) prefs.hidden.push(id);
+    save();
+    arrange();
+    showStatus();
+  }
+  const hide = (id) => reflow(() => hideTile(id));   // (the ×)
+
+  // What "reset preferences" puts back: every tile shown, in the default order (and whatever a later stage keeps)
+  const resettable = () => prefs.hidden.length > 0;
+  function reset() {
+    Object.keys(prefs).forEach((k) => delete prefs[k]);
+    Object.assign(prefs, blank());
+    try { localStorage.removeItem(PREFS_KEY); } catch (e) { /* blocked: nothing was saved */ }
+    reflow(arrange);
+    showStatus();
+  }
+
+  // The tile for this data, drawn (again if its shape changed)
+  function tileFor(t) {
+    let d = drawn.get(idOf(t));
+    if (!d || d.shape !== shape(t)) {
+      d = drawTile(t);
+      drawn.set(idOf(t), d);
+    }
+    return d;
+  }
+
+  // The visible tiles on the page in their order (moved, not drawn again), and laid out
+  function arrange() {
+    const byId = new Map(tiles.map((t) => [idOf(t), t]));
+    const boxes = visibleIds().map((id) => tileFor(byId.get(id)).box);
+    if (boxes.length !== grid.children.length || boxes.some((b, i) => grid.children[i] !== b)) grid.replaceChildren(...boxes);
+    if (drawn.size) opening = false;   // (only the first drawing rises from 0; a tile drawn later starts at its reading)
+    document.body.classList.toggle("unavailable", !boxes.length);
+    message.textContent = tiles.length ? "Every gauge is hidden." : unavailable;
+    layout();
+  }
+
+  // A change to the tiles' places (`change`), animated: each tile glides (transform only) from where it was to where it lands, and
+  // one newly shown grows in. The tiles are measured once before and once after.
+  function reflow(change) {
+    if (STILL) return change();
+    const before = new Map([...grid.children].map((b) => [b, b.getBoundingClientRect()]));
+    change();
+    const boxes = [...grid.children];
+    for (const b of boxes) {
+      const was = before.get(b), now = b.getBoundingClientRect();
+      b.style.transition = "none";
+      if (!was) b.style.transform = "translate(4%, 4%) scale(0.92)";
+      else if (Math.abs(was.left - now.left) + Math.abs(was.top - now.top) + Math.abs(was.width - now.width) > 0.5)
+        b.style.transform = `translate(${was.left - now.left}px, ${was.top - now.top}px) scale(${was.width / now.width})`;
+    }
+    void grid.offsetWidth;   // (the starting places applied, then eased away)
+    for (const b of boxes) { b.style.transition = ""; b.style.transform = ""; }
+  }
+
   // ---------- the data ----------
+  // The bottom strip: the time of the reading, then its links (only while they do something)
+  function link(words, action) {
+    const a = document.createElement("button");
+    Object.assign(a, {type: "button", className: "link", textContent: words});
+    a.addEventListener("click", action);
+    return a;
+  }
   function showStatus() {
     statusLine.classList.toggle("lost", lost);
-    statusLine.textContent = lost ? "reconnecting…" : asOf ? `updated ${asOf.slice(11, 16)}` : "";
+    const parts = [lost ? "reconnecting…" : asOf ? `updated ${asOf.slice(11, 16)}` : ""];
+    if (resettable()) parts.push(link("reset preferences", reset));
+    statusLine.replaceChildren(...parts.flatMap((p, i) => i && parts[0] ? [" · ", p] : [p]));
   }
 
   function render(data) {
@@ -286,16 +455,15 @@
     document.documentElement.style.setProperty("--fade", L.fade);
     tiles = data.tiles || [];
     asOf = data.as_of && data.as_of.time ? data.as_of.time : null;
-    document.body.classList.toggle("unavailable", !tiles.length);
-    message.textContent = data.unavailable || "";
-    if (drawn.length === tiles.length && tiles.every((t, i) => drawn[i].shape === shape(t))) {
-      tiles.forEach((t, i) => drawn[i].update(t));   // the usual case: every gauge moved where it is, nothing redrawn
-      return;
+    unavailable = data.unavailable || "";
+    const present = new Set(tiles.map(idOf));
+    for (const id of [...drawn.keys()]) if (!present.has(id)) drawn.delete(id);
+    for (const t of tiles) {   // the usual case: every gauge moved where it is, nothing redrawn
+      const d = drawn.get(idOf(t));
+      if (d && d.shape === shape(t)) d.update(t);
     }
-    drawn = tiles.map(drawTile);
-    grid.replaceChildren(...drawn.map((d) => d.box));
-    if (drawn.length) opening = false;   // (only the first drawing rises from 0; a tile drawn again later starts at its reading)
-    layout();
+    if (press && press.engaged) press.rearrange = true;   // (mid-drag: the page's tiles stay put until it's dropped)
+    else arrange();
   }
 
   let fetching = null;
@@ -315,6 +483,151 @@
       }
     })();
     return fetching;
+  }
+
+  // ---------- dragging: a tile picked up and moved to a new place, or dropped on the remove zone (Pointer Events: mouse, pen, touch) ----
+  // A mouse or pen press on the gauge (not its title, reading or table, which keep their text selectable) becomes a drag once it moves;
+  // a touch held still for LONG_PRESS_MS picks the tile up (moving first scrolls; a short tap is left alone, as is every click but the
+  // one ending a drag). While a tile is up the others make room (transform only) and the remove zone shows at the top.
+  let press = null;    // the press under way: {box, id, pointerId, touch, x0, y0, x, y, scroll0, engaged, moved, from, to, slots, over}
+  let swallowUntil = 0, autoscroll = 0;
+  const pagePoint = () => [press.x + window.scrollX, press.y + window.scrollY];
+
+  function draggable(e, box) {
+    if (e.target.closest(".close, .title, .unit, .chip, .figure")) return false;
+    const r = box.getBoundingClientRect();
+    if ((e.clientY - r.top) / r.height * L.cell[1] >= TABLE_TOP) return false;   // (the table, gaps between its chips too)
+    const reading = box.querySelector("svg text.reading");
+    const t = reading && reading.getBoundingClientRect();
+    return !(t && t.width && e.clientX >= t.left - 2 && e.clientX <= t.right + 2 && e.clientY >= t.top - 2 && e.clientY <= t.bottom + 2);
+  }
+
+  function disarm(except) {
+    for (const b of grid.querySelectorAll(".tile.armed")) if (b !== except) b.classList.remove("armed");
+  }
+
+  grid.addEventListener("pointerdown", (e) => {
+    const box = e.target.closest(".tile");
+    disarm(e.target.closest(".close") ? box : null);
+    if (press || !e.isPrimary || (e.pointerType !== "touch" && e.button !== 0) || !box || !draggable(e, box)) return;
+    press = {box, id: box.dataset.id, pointerId: e.pointerId, touch: e.pointerType === "touch", x0: e.clientX, y0: e.clientY,
+             x: e.clientX, y: e.clientY, scroll0: [window.scrollX, window.scrollY], engaged: false, moved: false};
+    if (press.touch) press.timer = setTimeout(engage, LONG_PRESS_MS);
+  });
+
+  window.addEventListener("pointermove", (e) => {
+    if (!press || e.pointerId !== press.pointerId) return;
+    press.x = e.clientX;
+    press.y = e.clientY;
+    const far = Math.hypot(press.x - press.x0, press.y - press.y0);
+    if (!press.engaged) {
+      if (press.touch && far > TOUCH_SLOP) release();   // (a swipe: the page scrolls)
+      else if (!press.touch && far > MOUSE_SLOP) engage();
+      return;
+    }
+    if (far > TOUCH_SLOP) press.moved = true;
+    dragTo();
+  });
+  window.addEventListener("pointerup", (e) => { if (press && e.pointerId === press.pointerId) press.engaged ? drop() : release(); });
+  window.addEventListener("pointercancel", (e) => { if (press && e.pointerId === press.pointerId) press.engaged ? drop(true) : release(); });
+  window.addEventListener("blur", () => { if (press) press.engaged ? drop(true) : release(); });
+  window.addEventListener("keydown", (e) => { if (e.key === "Escape" && press && press.engaged) drop(true); });
+  // A touch that has picked a tile up doesn't scroll the page (touch-action stays as it was, so an ordinary swipe still scrolls),
+  // nor opens the long press's menu
+  grid.addEventListener("touchmove", (e) => { if (press && press.engaged) e.preventDefault(); }, {passive: false});
+  grid.addEventListener("contextmenu", (e) => { if (press && press.touch) e.preventDefault(); });
+  // The click that ends a drag isn't a click on the tile
+  window.addEventListener("click", (e) => {
+    if (performance.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); swallowUntil = 0; }
+  }, true);
+
+  function release() {   // a press that never became a drag: nothing done
+    clearTimeout(press.timer);
+    press = null;
+  }
+
+  function engage() {
+    const {box} = press;
+    press.engaged = true;
+    clearTimeout(press.timer);
+    const boxes = [...grid.children];
+    press.boxes = boxes;
+    press.slots = boxes.map((b) => {   // each place, in page pixels (as the tiles sit now, unmoved)
+      const r = b.getBoundingClientRect();
+      return {left: r.left + window.scrollX, top: r.top + window.scrollY, width: r.width, height: r.height};
+    });
+    press.from = press.to = boxes.indexOf(box);
+    box.classList.add("lifted");
+    if (press.touch) {
+      box.classList.add("armed");
+      if (navigator.vibrate) try { navigator.vibrate(BUZZ_MS); } catch (e) { /* not allowed: no buzz */ }
+    }
+    try { box.setPointerCapture(press.pointerId); } catch (e) { /* (the pointer already gone) */ }
+    document.body.classList.add("dragging");
+    removeZone.classList.add("on");
+    autoscroll = requestAnimationFrame(scrollNearEdges);
+    dragTo();
+  }
+
+  // The tile under the pointer, the others making room, the remove zone lit when it's over it
+  function dragTo() {
+    const {box, slots, from} = press, slot = slots[from];
+    const [px, py] = pagePoint();
+    const dx = px - (press.x0 + press.scroll0[0]), dy = py - (press.y0 + press.scroll0[1]);
+    box.style.transform = `translate(${dx - slot.width * (LIFT - 1) / 2}px, ${dy - slot.height * (LIFT - 1) / 2}px) scale(${LIFT})`;
+    press.over = press.y <= removeZone.offsetHeight;
+    removeZone.classList.toggle("over", press.over);
+    box.classList.toggle("doomed", press.over);
+    if (press.over) return;
+    let to = slots.findIndex((s) => px >= s.left && px < s.left + s.width && py >= s.top && py < s.top + s.height);
+    if (to < 0) {   // (between or beyond the tiles: the nearest place)
+      const d = slots.map((s) => Math.hypot(px - s.left - s.width / 2, py - s.top - s.height / 2));
+      to = d.indexOf(Math.min(...d));
+    }
+    if (to === press.to) return;
+    press.to = to;
+    const order = slots.map((_, i) => i).filter((i) => i !== from);
+    order.splice(to, 0, from);
+    order.forEach((was, now) => {
+      if (was === from) return;
+      const a = slots[was], b = slots[now];
+      press.boxes[was].style.transform = now === was ? "" : `translate(${b.left - a.left}px, ${b.top - a.top}px)`;
+    });
+  }
+
+  function scrollNearEdges() {   // (only a page that scrolls: a phone's)
+    if (!press || !press.engaged) return;
+    if (document.documentElement.classList.contains("scroll")) {
+      const top = removeZone.offsetHeight;
+      const by = press.y > window.innerHeight - EDGE ? EDGE_SPEED : press.y > top && press.y < top + EDGE ? -EDGE_SPEED : 0;
+      if (by) {
+        const was = window.scrollY;
+        window.scrollBy(0, by);
+        if (window.scrollY !== was) dragTo();
+      }
+    }
+    autoscroll = requestAnimationFrame(scrollNearEdges);
+  }
+
+  // Let go: on the remove zone, the tile hidden; elsewhere, moved to the place it's over; cancelled (Esc, the pointer lost): put back
+  function drop(cancelled = false) {
+    const {box, id, from, to, over, touch, moved, boxes} = press;
+    cancelAnimationFrame(autoscroll);
+    swallowUntil = performance.now() + 400;
+    document.body.classList.remove("dragging");
+    removeZone.classList.remove("on", "over");
+    box.classList.remove("lifted", "doomed");
+    if (!touch || moved || cancelled) box.classList.remove("armed");   // (a long press let go in place keeps its grip and × showing)
+    const rearrange = press.rearrange;
+    press = null;
+    reflow(() => {
+      for (const b of boxes) { b.style.transition = "none"; b.style.transform = ""; }
+      if (cancelled) { if (rearrange) arrange(); }
+      else if (over) hideTile(id);
+      else if (to !== from) moveTile(id, to);
+      else if (rearrange) arrange();
+    });
+    for (const b of boxes) b.style.transition = "";   // (one hidden, out of the page: ready for when it's back)
   }
 
   // ---------- the events: a new reading, fetched and drawn in place ----------

@@ -3,7 +3,9 @@ data (the tiles gauge_sheet lays out from current with context), its events (one
 server's own change detection), no token and any Host for it while /mcp still asks for both, MCP_DASHBOARD off (404), the request log,
 and a shutdown that doesn't wait on an open stream. Then the page in a browser (Playwright's Chromium, through node, skipped without
 it) at a phone's, a tablet's and a desktop's sizes: every tile on the screen where the size allows, nothing wider than the window, no
-console error. With ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
+console error; the tiles rearranged (dragged with a mouse and with a touch's long press, hidden by the × and the remove zone, kept
+across reloads, reset), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds. With
+ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
 import base64
@@ -424,3 +426,111 @@ def test_what_the_events_compare_of_the_air_is_its_gauges_readings():
     assert air_readings_of(None) is None and air_readings_of({}) is None
     assert air_readings_of(row) == (12.0, 18.0, 7.0, 520, 112, None)           # PM2.5 (the AQI's too), PM10, PM1, CO2, VOC, NOx
     assert air_readings_of({**row, "atmp": 99}) == air_readings_of(row)         # its own temperature: no gauge
+
+
+# ---------- arranging the tiles (drag, hide, reset, preferences) and their fill ----------
+async def run_page(server, *args, timeout=120) -> dict:
+    """The page served, driven by the browser script with these arguments; its report."""
+    port = free_port()
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):
+        page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", *args,
+                                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = await asyncio.wait_for(page.communicate(), timeout)
+    assert page.returncode == 0, err.decode()
+    return json.loads(out)
+
+
+def titles_of(station) -> list[str]:
+    return [t.title for t in gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False})).tiles]
+
+
+def moved(titles, title, after):
+    """The titles with `title` taken out and put back just after `after`."""
+    out = [t for t in titles if t != title]
+    out.insert(out.index(after) + 1, title)
+    return out
+
+
+@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_kept_across_reloads_and_reset(server, station):
+    got = await run_page(server, "--arrange")
+    default = titles_of(station)
+    assert got["errors"] == [] and got["initial"] == default, got["errors"]
+    # mouseover: the grip and the × on the tile under the mouse only
+    assert got["hover"] == [{"grip": "0", "close": "0"}, {"grip": "1", "close": "1"}, {"grip": "0", "close": "0"}]
+    # dragged from its gauge: the others make room as it goes (transforms), the remove zone shows; the order kept
+    assert got["during"] == {"zone": "none", "over": False, "dragging": True, "moved": ["Humidity", "Atmospheric pressure"]}
+    reordered = moved(default, "Temperature", "Atmospheric pressure")
+    assert got["dragged"] == reordered and got["transforms"] == 0
+    assert got["storedAfterDrag"] == {"order": reordered, "hidden": []}
+    # a drag starting on the title, the table or the reading moves nothing: it selects the text
+    assert got["text"] == {"title": {"same": True, "dragging": False, "selected": "Rain"},
+                           "table": {"same": True, "dragging": False, "selected": "85"},
+                           "reading": {"same": True, "dragging": False, "selected": "70"}}
+    # the ×, then the remove zone, hide; the reset link shows beside the time
+    assert got["closed"] == {"titles": [t for t in reordered if t != "Rain"], "status": "updated 18:42 · reset preferences"}
+    assert got["removing"]["over"] and got["removing"]["zone"] == "none"
+    shown = [t for t in reordered if t not in ("Rain", "Wind")]
+    assert got["removed"] == {"titles": shown, "stored": {"order": reordered, "hidden": ["Rain", "Wind"]}}
+    assert got["reloaded"] == {"titles": shown, "status": "updated 18:42 · reset preferences"}
+    # reset: every tile, in the default order, nothing kept, no link
+    assert got["reset"] == {"titles": default, "status": "updated 18:42", "stored": None}
+    # unreadable preferences: the defaults; a tile new to the saved order (Rain) in its usual place, after Atmospheric pressure; an
+    # absent tile's place and a later stage's keys kept
+    assert got["corrupt"] == default
+    saved = [t for t in default if t not in ("Rain", "Temperature")] + ["Temperature"]
+    assert got["newTile"] == moved(saved, "Rain", "Atmospheric pressure")
+    assert got["keptOthers"] == {"order": moved(got["newTile"], "Humidity", "Rain") + ["Gone sensor"], "hidden": ["Gone sensor"], "later": True}
+    # storage blocked: it all works, nothing saved, no error
+    assert got["blocked"] == {"titles": [t for t in moved(default, "Temperature", "Humidity") if t != "Rain"], "errors": []}
+    # see-through: the tile's own background clear, its foreground (title, reading, frame) opaque, the page its dark colour
+    look_ = got["look"]
+    assert look_["background"] == "rgba(0, 0, 0, 0)" and look_["image"] == "none" and look_["grid"] == "rgba(0, 0, 0, 0)"
+    assert look_["opacity"] == "1" and look_["body"] == "rgb(20, 25, 29)"
+    assert all(look_[k].startswith("rgb(") for k in ("title", "reading", "frame")) and look_["frameWidth"] == "1px", look_
+
+
+@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swipe_is_left_alone(server, station):
+    got = await run_page(server, "--touch")
+    default = titles_of(station)
+    assert got["errors"] == [] and got["initial"] == default
+    # a short tap: a click (left for the zoom), nothing picked up; a swipe: the page scrolls
+    assert got["tap"] == {"buzz": [], "clicks": 1, "scrollY": 0, "zone": False, "armed": [], "close": None, "titles": default}
+    assert got["swipe"]["scrollY"] > 100 and got["swipe"]["armed"] == [] and got["swipe"]["titles"] == default
+    # held: a buzz, its grip and ×, the remove zone; moved without scrolling the page; dropped in its new place
+    assert got["held"] == {"buzz": [15], "clicks": 1, "scrollY": 0, "zone": True, "armed": ["Temperature"], "close": "1"}
+    assert got["moving"]["scrollY"] == 0 and got["moving"]["during"]["moved"] == ["Humidity", "Atmospheric pressure"]
+    reordered = moved(default, "Temperature", "Atmospheric pressure")
+    assert got["dropped"]["titles"] == reordered and not got["dropped"]["zone"] and got["dropped"]["clicks"] == 1
+    # held and let go in place: the grip and × stay, and a tap on the × hides it
+    assert got["armed"]["armed"] == ["Humidity"] and got["armed"]["close"] == "1"
+    assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "updated 18:42 · reset preferences"}
+
+
+@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+async def test_fewer_tiles_grow_evenly_to_fill_the_window_and_never_shrink_below_the_full_dashboards_size(server, station):
+    every = titles_of(station)
+    but = lambda *keep: [t for t in every if t not in keep]
+    cases = {"desktop-all": (1920, 1080, []), "desktop-one": (1920, 1080, but("Temperature")),
+             "tablet-all": (1024, 768, []), "tablet-three": (1024, 768, but("Temperature", "Wind", "US AQI")),
+             "tablet-many": (1024, 768, ["Rain", "Wind"]),
+             "phone-all": (390, 844, []), "phone-one": (390, 844, but("Humidity")), "phone-eight": (390, 844, every[:9])}
+    got = await run_page(server, "--fill", json.dumps(cases))
+    assert all(c["errors"] == [] and c["scrollWidth"] <= cases[name][0] for name, c in got.items()), got
+    width = lambda name: {round(r["width"]) for r in got[name]["rects"]}
+    aspect = look()["cell"][0] / look()["cell"][1]
+    # one tile fills the window: its whole height (less the margins and the strip), or its width on a phone, centred
+    (one,) = got["desktop-one"]["rects"]
+    assert one["height"] == pytest.approx(1080 - 16 - 18, abs=1) and one["width"] == pytest.approx(one["height"] * aspect, abs=1)
+    assert (one["left"] + one["right"]) / 2 == pytest.approx(1920 / 2, abs=1)
+    (one,) = got["phone-one"]["rects"]
+    assert one["width"] == pytest.approx(390 - 16, abs=1) and got["phone-one"]["scroll"] == "no"
+    # a few grow, evenly, all on the screen and centred
+    three = got["tablet-three"]["rects"]
+    assert len(width("tablet-three")) == 1 and min(width("tablet-three")) > 1.5 * min(width("tablet-all")), got["tablet-three"]
+    assert all(r["bottom"] <= 768 and r["right"] <= 1024 for r in three)
+    assert (min(r["left"] for r in three) + max(r["right"] for r in three)) / 2 == pytest.approx(512, abs=1)
+    # many: at least the full dashboard's size; a phone's scrolling tiles stay at theirs rather than shrink to fit
+    assert min(width("tablet-many")) >= min(width("tablet-all")) and len(got["tablet-many"]["rects"]) == len(every) - 2
+    assert width("phone-eight") == width("phone-all") and got["phone-eight"]["columns"] == "2" and len(got["phone-eight"]["rects"]) == 8

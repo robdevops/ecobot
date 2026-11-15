@@ -283,6 +283,14 @@ A tile whose reading is missing just now (the station or the air sensor not send
 scale's low end where 0 isn't on it: pressure 950 hPa, CO₂ 400 ppm) with its highs and lows still beside it; when the reading comes
 back the tile brightens and its gauge rises in place. A reading the station or the monitor has never sent has no tile.
 
+The tiles can be arranged to taste. Drag a tile by its gauge to move it (with a mouse, from anywhere on it but its title, its reading
+and its table, which stay selectable for copying; on a touch screen, a long press picks it up, with a short buzz on Android); the
+others make room. Its ×, shown on mouseover (or after a long press), hides it, as does dropping it on the "remove" zone that slides
+down from the top while dragging. With a tile hidden, "reset preferences" beside the time at the bottom brings every tile back in the
+usual order. Fewer tiles grow to fill the window (a single one fills it), never smaller than the whole dashboard's. The arrangement
+is kept in the browser (its local storage, per browser and device); nothing is sent to ecobot-mcp. A gauge added later takes its
+usual place among yours.
+
 It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
 Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To
