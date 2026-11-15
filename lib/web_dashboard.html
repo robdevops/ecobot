@@ -54,8 +54,9 @@
   body.dragging .tile:not(.lifted) .grip, body.dragging .tile:not(.lifted) .close { opacity: 0; }
   /* A tile whose reading calls up an effect behind the tiles (Sky): framed in red, its frame alone (thin, as the others'); before the
      drag's frames below, so a framed tile lifted, or over the remove zone, shows those as any other */
+  /* (Off for now, the class still set: to bring the red frames back, restore these two rules.)
   .tile.alert::before { border-color: #D9363E; }
-  .tile.alert:focus-visible:not(.lifted)::before { border-color: #FF9EA1; }
+  .tile.alert:focus-visible:not(.lifted)::before { border-color: #FF9EA1; } */
   .tile.lifted { z-index: 2; transition: opacity 0.9s ease; }    /* follows the pointer: no easing of its own */
   .tile.lifted::before { border-color: #5A6670; }
   .tile.doomed::before { border-color: #E5484D; }

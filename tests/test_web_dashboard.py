@@ -730,9 +730,9 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
     # the tiles see-through (what's behind shows in a tile's margin), their foreground opaque; zoomed too
     assert got["through"] == {"differs": True, "still": True}
     assert got["look"] == {"background": "rgba(0, 0, 0, 0)", "opacity": "1", "title": "rgb(232, 234, 237)", "frame": "rgba(0, 0, 0, 0)",
-                           "alertFrame": "rgb(217, 54, 62)",
+                           "alertFrame": "rgba(0, 0, 0, 0)",   # (the red frame off for now; the class still set)
                            # dragged, a framed tile shows the drag's frames as any other: lifted grey, then the remove zone's red
-                           "dragFrames": {"lifted": "rgb(90, 102, 112)", "doomed": "rgb(229, 72, 77)", "after": "rgb(217, 54, 62)"}}
+                           "dragFrames": {"lifted": "rgb(90, 102, 112)", "doomed": "rgb(229, 72, 77)", "after": "rgba(0, 0, 0, 0)"}}
     assert got["zoomed"] == {"zoomed": True, "title": "UV index", "background": "rgba(0, 0, 0, 0)", "grid": "rgba(0, 0, 0, 0)",
                              "alert": True, "running": True}
     # "stop animations": nothing drawn, no loop, the frame stays, kept across a reload; "start animations" and the reset put them back
