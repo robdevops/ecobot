@@ -727,7 +727,9 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
     # the tiles see-through (what's behind shows in a tile's margin), their foreground opaque; zoomed too
     assert got["through"] == {"differs": True, "still": True}
     assert got["look"] == {"background": "rgba(0, 0, 0, 0)", "opacity": "1", "title": "rgb(232, 234, 237)", "frame": "rgb(38, 46, 52)",
-                           "alertFrame": "rgb(217, 54, 62)"}
+                           "alertFrame": "rgb(217, 54, 62)",
+                           # dragged, a framed tile shows the drag's frames as any other: lifted grey, then the remove zone's red
+                           "dragFrames": {"lifted": "rgb(90, 102, 112)", "doomed": "rgb(229, 72, 77)", "after": "rgb(217, 54, 62)"}}
     assert got["zoomed"] == {"zoomed": True, "title": "UV index", "background": "rgba(0, 0, 0, 0)", "grid": "rgba(0, 0, 0, 0)",
                              "alert": True, "running": True}
     # "stop animations": nothing drawn, no loop, the frame stays, kept across a reload; "start animations" and the reset put them back
@@ -754,9 +756,15 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
     assert links["all"]["effects"] == every and links["all"]["url"] == "?fx=rain2,smog3,radiation,drips,leaves,heat,ice"
     assert got["param"]["levels"] == {"smog": 3, "heat": 0, "radiation": 0, "rain": 0, "leaves": 1, "drips": 0, "ice": 5}
     assert sorted(got["param"]["framed"]) == ["Temperature", "US AQI", "Wind"] and got["param"]["errors"] == []
+    assert links["role"] == "group" and links["pressed"] == {"rain": "false", "smog": "false", "radiation": "true", "drips": "true",
+                                                             "leaves": "true", "heat": "true", "ice": "false"}, links["pressed"]
+    # on a phone, the strip with both its links: the test row beside it or above it, never over it
+    assert got["phone"]["strip"].endswith("reset preferences") and got["phone"]["apart"] and got["phone"]["onScreen"], got["phone"]
     assert got["paramAll"]["effects"] == every and got["paramRain"]["levels"]["rain"] == 1
     # reduced motion: no loop, one still, faint frame (the ice as it would be), the frames and the link as ever
     still = got["still"]
     assert still["effects"] == ["radiation", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still
     assert still["ink"] > 0 and sorted(still["framed"]) == ["Temperature", "UV index"] and still["link"] == "stop animations", still
-    assert got["cost"] < 8, got["cost"]                                            # (ms of script a frame, every effect on)
+    assert got["cost"] < 8, got["cost"]
+    # several at once no brighter than one strong one: every effect on, against Hazardous smog alone
+    assert 0 < got["light"]["all"] <= got["light"]["smog5"], got["light"]

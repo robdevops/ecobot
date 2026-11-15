@@ -649,6 +649,7 @@ async function weatherPage(browser, url, options = {}) {
     const ask = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = (f) => { window.__frames++; return ask(f); };
   });
+  if (options.init) await context.addInitScript(options.init.fn, options.init.arg);
   await context.route(/\/dashboard\/data$/, async (route) => {
     const response = await route.fetch(), data = await response.json();
     const readings = { "US AQI": 40, ...state.readings };
@@ -683,6 +684,12 @@ const canvasInk = (page) => page.evaluate(() => {   // how many of the canvas's 
   let n = 0;
   for (let i = 3; i < d.length; i += 4) if (d[i]) n++;
   return n;
+});
+const canvasLight = (page) => page.evaluate(() => {   // how bright the canvas is, all told: its pixels' luminance by their alpha, averaged
+  const c = document.querySelector("#sky canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+  let sum = 0;
+  for (let i = 0; i < d.length; i += 4) sum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * d[i + 3] / 255;
+  return sum / (d.length / 4);
 });
 const framesIn = async (page, ms) => {   // the frames the page asked for in this long
   const before = await page.evaluate(() => window.__frames);
@@ -720,14 +727,21 @@ async function weatherMode(browser, url) {
   out.several = { ...await weatherSeen(page), canvases: await page.evaluate(() => document.querySelectorAll("canvas").length),
                   frames: await framesIn(page, 1000), ink: await canvasInk(page) };
   out.several.drawn = (await page.evaluate(() => Sky.state().frames)) - drawnBefore;
-  // the canvas: the window's size, fixed, first in the page, behind the tiles (which come after it), clicks through it
+  // the canvas: the window's size, fixed, first in the page, behind the tiles (which come after it), clicks through it. (Behind: its
+  // pointer-events on for a moment, so hit-testing sees it, a tile's middle is still the tile's)
   out.canvas = await page.evaluate(() => {
     const sky = document.getElementById("sky"), c = sky.querySelector("canvas"), r = sky.getBoundingClientRect(), cr = c.getBoundingClientRect();
     const st = getComputedStyle(sky);
     return { rect: [r.left, r.top, r.width, r.height], canvas: [cr.width >= innerWidth, cr.height >= innerHeight],
              position: st.position, z: st.zIndex, events: st.pointerEvents, first: document.body.firstElementChild === sky,
              pixelated: getComputedStyle(c).imageRendering,
-             under: document.elementFromPoint(innerWidth / 2, innerHeight / 2).closest("#grid") !== null };
+             under: (() => {
+               const r = [...document.querySelectorAll("#grid .tile")][3].getBoundingClientRect();
+               sky.style.pointerEvents = "auto";
+               const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+               sky.style.pointerEvents = "";
+               return hit !== null && hit.closest(".tile") !== null;
+             })() };
   });
   // the tiles see-through: a tile's blank margin shows what's drawn behind it (smog, Hazardous, over the bottom row)
   await reads({ "US AQI": 500 });
@@ -748,6 +762,15 @@ async function weatherMode(browser, url) {
   });
   await reads({ "UV index": 11 });
   out.look.alertFrame = await page.evaluate(() => getComputedStyle(document.querySelector(".tile.alert"), "::before").borderTopColor);
+  out.look.dragFrames = await page.evaluate(() => {   // a framed tile dragged: lifted, then over the remove zone, its frame as any other's
+    const tile = document.querySelector(".tile.alert"), frame = () => getComputedStyle(tile, "::before").borderTopColor;
+    tile.classList.add("lifted");
+    const lifted = frame();
+    tile.classList.add("doomed");
+    const doomed = frame();
+    tile.classList.remove("lifted", "doomed");
+    return { lifted, doomed, after: frame() };
+  });
   // zoomed: the tile still see-through, its frame still red, the effect still behind it
   const [zx, zy] = await at(page, "UV index", 0.85, 0.3);
   await page.mouse.click(zx, zy);
@@ -800,6 +823,9 @@ async function weatherMode(browser, url) {
   await fx("ice");   // (off: it melts back, the loop running on until it's gone)
   await page.waitForTimeout(300);
   out.links.melting = { grown, reach: await page.evaluate(() => Sky.state().iceReach), ...await weatherSeen(page) };
+  out.links.pressed = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#fxtest button[data-fx]")]
+    .map((b) => [b.dataset.fx, b.getAttribute("aria-pressed")])));
+  out.links.role = await page.evaluate(() => document.getElementById("fxtest").getAttribute("role"));
   await fx("clear");
   await page.waitForTimeout(100);
   out.links.cleared = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
@@ -807,6 +833,8 @@ async function weatherMode(browser, url) {
   out.links.all = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
   await page.waitForTimeout(3000);
   out.cost = await page.evaluate(() => Sky.state().cost);   // (ms of script a frame, with every effect on)
+  await page.waitForTimeout(5000);   // (the ice grown all the way in)
+  out.light = { all: await canvasLight(page) };
   out.errors = errors;
   await context.close();
   // ?fx= when the page opens
@@ -816,6 +844,21 @@ async function weatherMode(browser, url) {
     out[name] = { ...await weatherSeen(opened.page), errors: opened.errors };
     await opened.context.close();
   }
+  // the strongest single effect (Hazardous smog), as bright as "all" may be
+  const strongest = await weatherPage(browser, url, { query: "?fx=smog5" });
+  await strongest.page.waitForTimeout(2500);   // (faded in)
+  out.light.smog5 = await canvasLight(strongest.page);
+  await strongest.context.close();
+  // a phone, a tile hidden, an effect on: the test row and the strip (updated · stop animations · reset preferences) not over each other
+  const phone = await weatherPage(browser, url, { query: "?fx=rain", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
+    init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
+  await phone.page.waitForTimeout(300);
+  out.phone = await phone.page.evaluate(() => {
+    const a = document.getElementById("fxtest").getBoundingClientRect(), b = document.getElementById("status").getBoundingClientRect();
+    return { strip: document.getElementById("status").textContent,
+             apart: a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top, onScreen: a.left >= 0 && a.bottom <= innerHeight };
+  });
+  await phone.context.close();
   // reduced motion: no loop, one still, faint frame; the frames as ever
   const still = await weatherPage(browser, url, { context: { reducedMotion: "reduce" } });
   await still.reads({ "UV index": 11, Temperature: -4 });

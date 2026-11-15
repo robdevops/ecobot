@@ -51,6 +51,10 @@
   .tile:focus { outline: none; }
   .tile:focus-visible::before { border-color: var(--soft); }
   body.dragging .tile:not(.lifted) .grip, body.dragging .tile:not(.lifted) .close { opacity: 0; }
+  /* A tile whose reading calls up an effect behind the tiles (Sky): framed in red, its frame alone (thin, as the others'); before the
+     drag's frames below, so a framed tile lifted, or over the remove zone, shows those as any other */
+  .tile.alert::before { border-color: #D9363E; }
+  .tile.alert:focus-visible:not(.lifted)::before { border-color: #FF9EA1; }
   .tile.lifted { z-index: 2; transition: opacity 0.9s ease; }    /* follows the pointer: no easing of its own */
   .tile.lifted::before { border-color: #5A6670; }
   .tile.doomed::before { border-color: #E5484D; }
@@ -64,9 +68,6 @@
   /* The weather behind everything (Sky, below): one canvas, the window's size, fixed, first in the page; its pixels scaled up crisply */
   #sky { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
   #sky canvas { position: absolute; left: 0; top: 0; image-rendering: crisp-edges; image-rendering: pixelated; }
-  /* A tile whose reading calls up an effect behind the tiles (Sky): framed in red, its frame alone (thin, as the others') */
-  .tile.alert::before { border-color: #D9363E; }
-  .tile.alert:focus-visible::before { border-color: #FF9EA1; }
   #status { position: fixed; right: 0; bottom: 0; height: var(--status, 18px); padding: 0 10px; font-size: 12px;
     line-height: var(--status, 18px); color: var(--soft); background: rgba(20, 25, 29, 0.85); border-top-left-radius: 6px; z-index: 1; }
   #status .link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
@@ -596,9 +597,11 @@ const Sky = (() => {
                    mapped(["..3..", "..4..", "34543", "..4..", "..3.."], {3: ICE[3], 4: ICE[4], 5: ICE[5]})];
     let extent = 0, shownAt = -1, layer = null, img = null;
     let crystals = null, crystalReach = null, crystalShade = null, rim = null, rimReach = null, glints = [];
-    const most = () => Math.min(W, H) * 0.13;
+    const most = () => Math.min(W, H) * 0.1;   // (a little past the furthest reach, -10 °C)
+    // How far in (art px, along the edges; the corners about 1.8 times that): a thin rim just below 0 °C, 6 % of the window's shorter
+    // side at -5 °C, 9 % at -10 °C and colder (no further: the tables at the window's edges stay readable)
     const reachFor = (degrees) => degrees <= 0 ? 0 :
-      Math.min(W, H) * (0.025 + 0.065 * Math.min(1, degrees / 5) + 0.03 * clamp((degrees - 5) / 5, 0, 1));
+      Math.min(W, H) * (0.02 + 0.04 * Math.min(1, degrees / 5) + 0.03 * clamp((degrees - 5) / 5, 0, 1));
     function grow() {
       const reach = new Float32Array(W * H).fill(Infinity), shade = new Uint8Array(W * H), r = seeded(4242), m = Math.min(W, H);
       const mark = (x, y, far, s) => {
@@ -624,7 +627,7 @@ const Sky = (() => {
       const edges = [[W, (p) => [p, 0], Math.PI / 2], [W, (p) => [p, H - 1], -Math.PI / 2], [H, (p) => [0, p], 0], [H, (p) => [W - 1, p], Math.PI]];
       for (const [span, at, inward] of edges) {
         for (let p = r() * 5; p < span; p += 5 + r() * 7) {
-          const corner = Math.pow(clamp(1 - Math.min(p, span - p) / (0.4 * m), 0, 1), 1.5), k = 1 + 1.1 * corner;
+          const corner = Math.pow(clamp(1 - Math.min(p, span - p) / (0.4 * m), 0, 1), 1.5), k = 1 + 0.8 * corner;
           const toward = p < span / 2 ? -1 : 1;   // (in a corner, leaning along the diagonal, away from the other edge)
           const tilt = (r() - 0.5) * 1.1 + corner * 0.55 * toward * (inward === Math.PI || inward === Math.PI / 2 ? -1 : 1);
           const [x, y] = at(p);
@@ -666,7 +669,7 @@ const Sky = (() => {
       layer.getContext("2d").putImageData(img, 0, 0);
     }
     return {
-      strength: () => 0.6,
+      strength: () => 0.4,             // (faint: crystals cross the tiles at the window's edges; the glints brighter)
       want(v) { e.level = v; if (STILL) extent = reachFor(v); },
       fade() { e.amount = extent > 0 ? 1 : 0; },
       alive: () => e.level > 0 || extent > 0,
@@ -693,6 +696,7 @@ const Sky = (() => {
         if (shownAt !== extent) show();
         g.globalAlpha = alpha;
         g.drawImage(layer, 0, 0);
+        g.globalAlpha = Math.min(1, alpha * 1.8);
         for (const gl of glints) {
           const p = gl.age / gl.life, sprite = GLINT[p < 0.25 || p > 0.75 ? 0 : p < 0.4 || p > 0.6 ? 1 : 2];
           g.drawImage(sprite, gl.x - (sprite.width >> 1), gl.y - (sprite.height >> 1));
@@ -1724,7 +1728,7 @@ const Sky = (() => {
      ?fx=smog3,leaves,ice, ?fx=all (rain light, rain2 heavy, smog1-smog5, radiation, drips, leaves, heat, ice; "all"). To remove: delete
      from here to "END TEMPORARY" (this style, the row and its script). The page's own listener for "ecobot-fx" then simply hears nothing. -->
 <style>
-  #fxtest { position: fixed; left: 0; bottom: 0; z-index: 1; height: 18px; max-width: calc(100vw - 230px); overflow-x: auto; overflow-y: hidden;
+  #fxtest { position: fixed; left: 0; bottom: 0; z-index: 1; height: 18px; max-width: calc(100vw - 230px);   /* (set to fit, below) */ overflow-x: auto; overflow-y: hidden;
     padding: 0 8px; font-size: 11px; line-height: 18px; white-space: nowrap; scrollbar-width: none; color: var(--soft);
     background: rgba(20, 25, 29, 0.85); border-top-right-radius: 6px; opacity: 0.55; transition: opacity 0.15s ease; }
   #fxtest:hover, #fxtest:focus-within { opacity: 1; }
@@ -1733,7 +1737,7 @@ const Sky = (() => {
   #fxtest button.on { color: #FF9EA1; text-decoration: underline; text-underline-offset: 2px; }
   #fxtest button:hover, #fxtest button:focus-visible { color: var(--ink); outline: none; }
 </style>
-<div id="fxtest" aria-label="Effect test links">test:</div>
+<div id="fxtest" role="group" aria-label="Effect test links">test:</div>
 <script>
 "use strict";
 (() => {
@@ -1766,6 +1770,7 @@ const Sky = (() => {
       const k = b.dataset.fx;
       b.textContent = label(k);
       b.classList.toggle("on", k in on);
+      b.setAttribute("aria-pressed", String(k in on));
     }
   }
   const button = (words, fx, action) => {
@@ -1782,8 +1787,19 @@ const Sky = (() => {
   });
   button("all", null, () => { read("all"); apply(); });
   button("clear", null, () => { on = {}; apply(); });
+  // Beside the strip, in the room it leaves; where that's too little (a phone, the strip with its links), just above it instead
+  const strip = document.getElementById("status");
+  function fit() {
+    const room = window.innerWidth - strip.offsetWidth - 8;
+    const above = room < 140;
+    row.style.bottom = above ? `${strip.offsetHeight}px` : "0";
+    row.style.maxWidth = above ? "100vw" : `${room}px`;
+  }
+  new ResizeObserver(fit).observe(strip);
+  window.addEventListener("resize", fit);
   read(new URLSearchParams(location.search).get("fx"));
   apply();
+  fit();
 })();
 </script>
 <!-- END TEMPORARY: effect test links -->
