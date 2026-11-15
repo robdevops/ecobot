@@ -488,6 +488,7 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     # the × pressed from the keyboard: the focus moves on to the next tile's ×, or with no tile left, to the reset link
     order = moved(got["newTile"], "Humidity", "Rain")
     assert got["keyboardHide"] == [f"Hide {order[0]}", f"Hide {order[1]}", "Hide Rain", "reset preferences"]
+    assert got["keyboardTile"].startswith("Rain ")                              # (Tab reaches the tile itself before its ×)
     # storage blocked: it all works, nothing saved, no error
     assert got["blocked"] == {"titles": [t for t in moved(default, "Temperature", "Humidity") if t != "Rain"], "errors": []}
     # see-through: the tile's own background clear, its foreground (title, reading, frame) opaque, the page its dark colour
@@ -634,6 +635,22 @@ async def test_a_click_on_a_gauge_zooms_its_tile_and_the_gallery_pages_by_keys_d
     # Esc: back too, the order as it was
     assert got["esc"]["before"]["zoomed"] and got["esc"]["before"]["shown"] == "Wind" and not got["esc"]["after"]["zoomed"]
     assert got["esc"]["titles"] == default
+    # (a double-click: its second click ignored, so Esc above found it still zoomed; and a click on a gauge doesn't take the focus, so
+    # a key pressed after it shows no × on that tile)
+    assert got["esc"]["close"] == {"focused": False, "opacity": "0"}, got["esc"]
+    # the bounce past the last, cut short: by a key, that step slides from the start; by Esc, the dashboard at once in its place
+    cut = got["bounceCut"]
+    last_x = -1024 * (len(default) - 1)
+    assert cut["step"]["shown"] == default[-2] and cut["step"]["mid"] and all(last_x + 100 < x < last_x + 1024 for x in cut["step"]["mid"]), cut   # (on its way, ~100 ms in)
+    assert cut["esc"]["grid"] == "none" and not cut["esc"]["zoomed"] and 0 <= cut["esc"]["firstLeft"] < 100, cut
+    # the keyboard: Enter on a focused tile zooms it; the focus goes along, the other tiles out of reach (inert); Esc back, Space too
+    kb = got["keyboard"]
+    assert kb["tabbable"] and kb["focusedClose"] == "1", kb
+    assert kb["enter"] | {"track": 0} == {"zoomed": True, "shown": "Temperature", "track": 0, "focus": "Temperature", "reachable": ["Temperature"]}, kb
+    assert kb["right"]["shown"] == kb["right"]["focus"] == "Humidity" and kb["right"]["reachable"] == ["Humidity"], kb
+    assert kb["tab"]["focus"] != "Temperature" and kb["tab"]["focus"] not in default[2:] and kb["tab"]["zoomed"], kb
+    assert not kb["esc"]["zoomed"] and kb["esc"]["focus"] == "Humidity" and kb["esc"]["reachable"] == default, kb
+    assert kb["space"]["zoomed"] and kb["space"]["shown"] == "Humidity" == kb["space"]["focus"], kb
     # one tile: no zoom cursor, no zoom
     assert got["single"] == {"cursor": "auto", "zoomed": False}
 
@@ -646,9 +663,10 @@ async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_t
     t = default.index(got["tapped"])
     assert got["scrolled"] > 100
     assert got["zoomed"]["zoomed"] and got["zoomed"]["shown"] == got["tapped"]
+    assert not got["backStraight"]["zoomed"] and abs(got["backStraight"]["scrollY"] - got["scrolled"]) <= 2, got["backStraight"]
     assert near(got["zoomed"]["rect"] | {"left": got["zoomed"]["rect"]["x"], "top": got["zoomed"]["rect"]["y"]}, zoomed_rect(390, 844))
     assert [got[k]["shown"] for k in ("next", "previous", "flick", "fromTitle")] == [default[t + 1], default[t], default[t + 1], default[t + 2]], got
     assert got["vertical"]["shown"] == default[t + 2] and got["vertical"]["zoomed"]
     assert got["held"] == {"zoomed": True, "shown": default[t + 2], "track": got["vertical"]["track"], "buzz": [], "zone": False}
     assert got["backAt"]["shown"] == default[t - 1]
-    assert not got["out"]["zoomed"] and got["out"]["titles"] == default
+    assert not got["out"]["zoomed"] and got["out"]["titles"] == default and got["out"]["lastShown"], got["out"]

@@ -42,7 +42,12 @@
     font: 18px/22px system-ui, sans-serif; cursor: pointer; }
   .close:hover, .close:focus-visible { color: var(--ink); background: #262E34; outline: none; }
   @media (hover: hover) { .tile:hover .grip, .tile:hover .close { opacity: 1; pointer-events: auto; } }
-  .tile.lifted .grip, .tile.lifted .close, .tile.armed .grip, .tile.armed .close, .tile:focus-within .close { opacity: 1; pointer-events: auto; }
+  .tile.lifted .grip, .tile.lifted .close, .tile.armed .grip, .tile.armed .close, .tile:focus-visible .close, .tile:has(.close:focus-visible) .close
+    { opacity: 1; pointer-events: auto; }
+  /* A tile can take the keyboard's focus (Enter or Space zooms it): its frame lit then, rather than the browser's outline. (A click
+     on the text focuses it too, unseen: hence the × above shown for the keyboard's focus only.) */
+  .tile:focus { outline: none; }
+  .tile:focus-visible::before { border-color: var(--soft); }
   body.dragging .tile:not(.lifted) .grip, body.dragging .tile:not(.lifted) .close { opacity: 0; }
   .tile.lifted { z-index: 2; transition: opacity 0.9s ease; }    /* follows the pointer: no easing of its own */
   .tile.lifted::before { border-color: #5A6670; }
@@ -287,6 +292,7 @@
     box.dataset.kind = tile.kind;
     box.dataset.id = idOf(tile);
     box.setAttribute("aria-label", label(tile));
+    box.tabIndex = 0;   // (focused, Enter or Space zooms it)
     const svg = el("svg", {viewBox: `0 0 ${L.cell[0]} ${L.cell[1]}`, preserveAspectRatio: "xMidYMid meet", "aria-hidden": "true"});
     box.appendChild(svg);
     const at = DRAW[tile.kind](svg, tile, ink, `clip${clips++}`);
@@ -449,7 +455,11 @@
   function arrange() {
     const byId = new Map(tiles.map((t) => [idOf(t), t]));
     const boxes = visibleIds().map((id) => tileFor(byId.get(id)).box);
-    if (boxes.length !== grid.children.length || boxes.some((b, i) => grid.children[i] !== b)) grid.replaceChildren(...boxes);
+    if (boxes.length !== grid.children.length || boxes.some((b, i) => grid.children[i] !== b)) {
+      const focused = grid.contains(document.activeElement) && document.activeElement;
+      grid.replaceChildren(...boxes);   // (moving a node drops its focus: put back, if it's still here)
+      if (focused && grid.contains(focused)) focused.focus({preventScroll: true});
+    }
     if (drawn.size) opening = false;   // (only the first drawing rises from 0; a tile drawn later starts at its reading)
     if (zoom && boxes.length < 2) zoomOut(false);   // (the others gone from the readings, nothing to zoom between)
     document.body.classList.toggle("unavailable", !boxes.length);
@@ -698,6 +708,7 @@
   // (the page's scroll to go back to)}, or null
   let zoom = null;
   let zoomUntil = 0;   // (a zoom's animation runs until then: a click meanwhile is ignored)
+  let bounce = null;   // (a key's nudge past the first or last tile, under way: cancelled by whatever moves #grid next)
   let lastDown = {x: 0, y: 0, t: 0, touch: false};   // (the last press anywhere: was the click after it one without moving, how long
                                                      // held, and a touch?)
   const translate = (x) => `translate3d(${x.toFixed(1)}px, 0, 0)`;
@@ -726,8 +737,10 @@
     window.removeEventListener("wheel", wheeled);
     document.documentElement.classList.remove("zoomed");
     document.body.classList.remove("zoomed");
+    stopBounce();
     Object.assign(grid.style, {transform: "", transition: ""});
     for (const b of boxes) b.style.removeProperty("--i");
+    markShown();
     layout();
     window.scrollTo(0, scrollY);   // (where the page was; and if the tile shown last is off the screen, scrolled to it)
     if (box) {
@@ -768,10 +781,21 @@
     zoom.id = boxes[zoom.index].dataset.id;
     zoom.pitch = W;
     if (!pager && !wheel) slide(-zoom.index * W, 0);
+    markShown();
+  }
+
+  // Zoomed, only the tile shown can be reached (by the keyboard, by assistive technology): the others are inert until shown; the
+  // keyboard's focus, on a tile, goes along to the one shown (a click's, on a tile's text, doesn't: it'd show as the keyboard's at the
+  // next key). Not zoomed, every tile.
+  function markShown() {
+    const focused = grid.contains(document.activeElement) && document.activeElement.matches(":focus-visible");
+    [...grid.children].forEach((b, i) => { b.inert = !!zoom && i !== zoom.index; });
+    if (zoom && focused) grid.children[zoom.index].focus({preventScroll: true});
   }
 
   // #grid to offset x, in ms (0: at once, as a drag follows its pointer)
   function slide(x, ms) {
+    stopBounce();
     zoom.x = x;
     grid.style.transition = ms && !STILL ? `transform ${ms}ms ${EASE}` : "none";
     grid.style.transform = translate(x);
@@ -787,6 +811,7 @@
     zoom.index = i;
     zoom.id = grid.children[i].dataset.id;
     slide(-i * zoom.pitch, ms);
+    markShown();
   }
   // ... a drag or a swipe let go at velocity v (px/ms, + rightwards): to the nearest tile, or on to the next for a flick
   function settle(v) {
@@ -806,9 +831,18 @@
     const to = zoom.index + dir;
     if (to >= 0 && to < grid.children.length) return goTo(to, STEP_MS);
     if (STILL) return;
-    const rest = -zoom.index * zoom.pitch;
-    grid.animate([{transform: translate(trackX())}, {transform: translate(rest - dir * BOUNCE_PX), offset: 0.35}, {transform: translate(rest)}],
-                 {duration: BOUNCE_MS, easing: "ease-out"});
+    const rest = -zoom.index * zoom.pitch, from = trackX();
+    stopBounce();
+    bounce = grid.animate([{transform: translate(from)}, {transform: translate(rest - dir * BOUNCE_PX), offset: 0.35}, {transform: translate(rest)}],
+                          {duration: BOUNCE_MS, easing: "ease-out"});
+  }
+  function stopBounce() {   // (#grid held where the nudge has it, so whatever moves it next starts from there)
+    if (!bounce) return;
+    const x = trackX();
+    bounce.cancel();
+    bounce = null;
+    Object.assign(grid.style, {transition: "none", transform: translate(x)});
+    getComputedStyle(grid).transform;   // (applied: a transition set next starts from here)
   }
 
   // The keys: ←/→, Space forward, Backspace back (never the browser's back), Esc out. (A link focused in the strip keeps Enter and Space.)
@@ -822,10 +856,25 @@
     e.preventDefault();
   });
 
+  // A press on a gauge doesn't take the focus (only the keyboard's shows, and a key pressed after a click would show it: the × and the
+  // lit frame); on the text it does, as the text's selection needs.
+  grid.addEventListener("mousedown", (e) => {
+    const box = e.target.closest(".tile");
+    if (box && draggable(e, box)) e.preventDefault();
+  });
+
+  // Enter or Space on a tile focused (more than one shown): zoomed, as by a click. (Zoomed, the keys above page instead.)
+  grid.addEventListener("keydown", (e) => {
+    if (zoom || e.altKey || e.ctrlKey || e.metaKey || (e.key !== "Enter" && e.key !== " ")) return;
+    if (!e.target.classList.contains("tile") || grid.children.length < 2) return;
+    e.preventDefault();
+    zoomIn(e.target);
+  });
+
   // A click or a tap without moving: on a gauge, zooms its tile (more than one shown); zoomed, goes back (a mouse's on the text excepted).
-  // (A touch held as long as a long press isn't a tap.)
+  // (A touch held as long as a long press isn't a tap; the second click of a double-click, or tap of a double tap, isn't another.)
   grid.addEventListener("click", (e) => {
-    if (performance.now() < zoomUntil || Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) > MOUSE_SLOP) return;
+    if (e.detail > 1 || performance.now() < zoomUntil || Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) > MOUSE_SLOP) return;
     if (lastDown.touch && e.timeStamp - lastDown.t >= LONG_PRESS_MS) return;
     const box = e.target.closest(".tile");
     if (zoom) { if (lastDown.touch || !box || draggable(e, box)) zoomOut(); }
@@ -851,6 +900,7 @@
       p.ignored = Math.abs(dy) > Math.abs(dx) || (p.onText && e.timeStamp - p.t0 >= LONG_PRESS_MS);
       if (p.ignored) return;
       p.paging = true;
+      stopBounce();
       p.base = trackX();   // (from where it is, mid-slide too)
       document.body.classList.add("paging");
       try { grid.setPointerCapture(p.pointerId); } catch (err) { /* (the pointer already gone) */ }
@@ -880,7 +930,7 @@
     if (!wheel && Math.abs(dx) <= Math.abs(e.deltaY * unit)) return;   // (up and down: nothing to do here)
     e.preventDefault();
     if (pager) return;
-    if (!wheel) wheel = {base: trackX(), offset: 0, samples: []};
+    if (!wheel) { stopBounce(); wheel = {base: trackX(), offset: 0, samples: []}; }
     wheel.offset = Math.max(-zoom.pitch, Math.min(wheel.offset - dx, zoom.pitch));
     wheel.samples.push([e.timeStamp, wheel.offset]);
     while (wheel.samples.length > 2 && e.timeStamp - wheel.samples[0][0] > 100) wheel.samples.shift();

@@ -230,6 +230,8 @@ async function arrangeMode(browser, url) {
   await page.evaluate(([key, hidden]) => localStorage.setItem(key, JSON.stringify({ order: [], hidden })), [KEY, allBut]);
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
+  await page.keyboard.press("Tab");   // (the tile itself first, then its ×)
+  out.keyboardTile = await focused();
   await page.keyboard.press("Tab");
   out.keyboardHide.push(await focused());
   await page.keyboard.press("Enter");
@@ -474,14 +476,72 @@ async function zoomMode(browser, url) {
   // a click without moving on the gauge: back to the dashboard, in 200 ms, the tile in its place
   out.zoomOut = await zoomClick(page, shown, await at(page, shown, 0.85, 0.3));
   out.outRect = await tileOf(page, shown).boundingBox();
-  // Esc: back too
-  await page.mouse.click(...await at(page, "Wind", 0.85, 0.3));
+  // a double-click (its clicks 300 ms apart, slower than the zoom): zoomed, not zoomed and straight back out
+  const wind = await at(page, "Wind", 0.85, 0.3);
+  await page.mouse.move(...wind);
+  await page.mouse.down(); await page.mouse.up();
+  await page.waitForTimeout(300);
+  await page.mouse.down({ clickCount: 2 }); await page.mouse.up({ clickCount: 2 });
   await page.waitForTimeout(400);
+  // Esc: back too
   out.esc = { before: await page.evaluate(() => window.__state()) };
   await page.keyboard.press("Escape");
   await page.waitForTimeout(400);
   out.esc.after = await page.evaluate(() => window.__state());
   out.esc.titles = await titles(page);
+  // a click on the gauge doesn't take the focus: no × once the pointer has gone
+  await page.mouse.move(1020, 4);
+  await page.waitForTimeout(300);
+  out.esc.close = await page.evaluate(() => ({ focused: document.activeElement === window.__tile("Wind"),
+                                              opacity: getComputedStyle(window.__tile("Wind").querySelector(".close")).opacity }));
+  // the bounce at the last tile, cut short by Esc: the dashboard back in its place at once; or by a key: that step slides
+  const n2 = (await titles(page)).length;
+  await page.mouse.click(...await at(page, "Wind", 0.85, 0.3));
+  await page.waitForTimeout(400);
+  for (let i = 0; i < n2; i++) { await page.keyboard.press("ArrowRight"); await page.waitForTimeout(30); }
+  await page.waitForTimeout(500);
+  await page.keyboard.press("ArrowRight");   // (past the last: the bounce)
+  await page.waitForTimeout(30);
+  const cut = page.evaluate(() => window.__record(null, 300));
+  await page.keyboard.press("ArrowLeft");
+  const rec = await cut;
+  const near100 = rec.frames.filter((f) => f.t >= rec.at + 90 && f.t <= rec.at + 130).map((f) => Math.round(f.x));
+  await page.waitForTimeout(300);
+  out.bounceCut = { step: { mid: near100, ...await page.evaluate(() => window.__state()) } };
+  await page.keyboard.press("ArrowRight"); await page.waitForTimeout(400);
+  await page.keyboard.press("ArrowRight");   // (the bounce again)
+  await page.waitForTimeout(30);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(60);
+  out.bounceCut.esc = await page.evaluate(() => ({ grid: getComputedStyle(document.getElementById("grid")).transform,
+                                                   firstLeft: Math.round(document.querySelector("#grid .tile").getBoundingClientRect().left),
+                                                   zoomed: document.body.classList.contains("zoomed") }));
+  await page.waitForTimeout(400);
+  // the keyboard: every tile takes the focus; Enter on one zooms it, the focus going along as it pages, the others out of reach; Esc
+  // back, the focus on the tile shown last; Space zooms too
+  const focusState = () => page.evaluate(() => ({ ...window.__state(), focus: document.activeElement.classList.contains("tile") ? document.activeElement.querySelector(".title").textContent : document.activeElement.tagName,
+                                                   reachable: [...document.querySelectorAll("#grid .tile")].filter((t) => !t.inert).map((t) => t.querySelector(".title").textContent) }));
+  out.keyboard = { tabbable: await page.evaluate(() => [...document.querySelectorAll("#grid .tile")].every((t) => t.tabIndex === 0)) };
+  await page.evaluate(() => window.__tile("Temperature").focus());
+  await page.waitForTimeout(200);
+  out.keyboard.focusedClose = await page.evaluate(() => getComputedStyle(window.__tile("Temperature").querySelector(".close")).opacity);
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(400);
+  out.keyboard.enter = await focusState();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(400);
+  out.keyboard.right = await focusState();
+  await page.keyboard.press("Tab");
+  out.keyboard.tab = await focusState();
+  await page.evaluate(() => window.__tile("Humidity").focus());
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
+  out.keyboard.esc = await focusState();
+  await page.keyboard.press(" ");
+  await page.waitForTimeout(400);
+  out.keyboard.space = await focusState();
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
   // one tile only: no zoom cursor, a click zooms nothing
   await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: [...document.querySelectorAll(".tile .title")].map((t) => t.textContent).filter((t) => t !== "Rain") })), KEY);
   await page.reload({ waitUntil: "load" });
@@ -525,6 +585,12 @@ async function zoomTouchMode(browser, url) {
   out.tapped = await page.evaluate(() => document.elementFromPoint(100, 150).closest(".tile").querySelector(".title").textContent);
   await tap(await at(page, out.tapped, 0.85, 0.3));
   out.zoomed = { ...await page.evaluate(() => window.__state()), rect: await tileOf(page, out.tapped).boundingBox() };
+  // a tap straight back: the page scrolled where it was; then zoomed again
+  await page.waitForTimeout(400);   // (not a double tap)
+  await tap([200, 300]);
+  out.backStraight = { ...await page.evaluate(() => window.__state()), scrollY: await page.evaluate(() => scrollY) };
+  await page.waitForTimeout(400);
+  await tap(await at(page, out.tapped, 0.85, 0.3));
   out.next = await swipe([300, 300], -250);
   out.previous = await swipe([90, 300], 250);
   out.flick = await swipe([300, 300], -80, { steps: 4, pause: 0 });
@@ -542,9 +608,11 @@ async function zoomTouchMode(browser, url) {
   await swipe([90, 300], 250);
   await swipe([90, 300], 250);
   out.backAt = await page.evaluate(() => window.__state());
-  // a tap: back to the dashboard, scrolled where it was
+  // a tap, paged away: back to the dashboard, the tile shown last on the screen
+  await page.waitForTimeout(400);   // (not a double tap)
   await tap([200, 300]);
-  out.out = { ...await page.evaluate(() => window.__state()), scrollY: await page.evaluate(() => scrollY), titles: await titles(page) };
+  out.out = { ...await page.evaluate(() => window.__state()), scrollY: await page.evaluate(() => scrollY), titles: await titles(page),
+              lastShown: await page.evaluate((title) => { const r = window.__tile(title).getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }, out.backAt.shown) };
   out.errors = errors;
   await context.close();
   process.stdout.write(JSON.stringify(out));
