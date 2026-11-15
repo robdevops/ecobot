@@ -842,7 +842,8 @@ async function weatherMode(browser, url) {
   out.errors = errors;
   await context.close();
   // ?fx= when the page opens
-  for (const [name, query] of [["param", "?fx=smog3,wind,ice"], ["paramAll", "?fx=all"], ["paramRain", "?fx=rain2"]]) {
+  for (const [name, query] of [["param", "?fx=smog3,wind,ice"], ["paramAll", "?fx=all"], ["paramRain", "?fx=rain2"],
+                              ["paramOld", "?fx=leaves,radiation,drips"]]) {
     const opened = await weatherPage(browser, url, { query });
     await opened.page.waitForTimeout(200);
     out[name] = { ...await weatherSeen(opened.page), errors: opened.errors };

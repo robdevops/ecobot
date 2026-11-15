@@ -189,7 +189,8 @@ const Sky = (() => {
   }
 
   // An effect: its level (0 off), how present it is (0-1: fading in and out), its strength (how bright at full) and the particles it
-  // would like (at full), resized to the window, stepped and drawn each frame. Each one below fills in its own.
+  // would like (at full), resized to the window, stepped and drawn each frame. Each one below fills in its own. One that takes a
+  // share of the particles (need() above 0) says how many it has with count(), so the budget can be checked.
   function effect(own) {
     const e = {level: 0, amount: 0, strength: () => 0.8, need: () => 0, count: () => 0, resize() {}, step() {}, draw() {},
                want(v) { e.level = v; },
@@ -426,6 +427,7 @@ const Sky = (() => {
     // round and round, then flings them off as it dies away. A leaf eases toward the air's speed where it is (it has a little
     // weight), turning over faster the faster the air turns about it. A few wisps of the wind itself trace the same air.
     const LAYERS = [{speed: 40, alpha: 0.5, share: 0.4}, {speed: 60, alpha: 0.75, share: 0.35}, {speed: 85, alpha: 1, share: 0.25}];
+    const CALM = 0.6;                  // on narrow art (a phone's) the wind slower, down to this (else leaves cross before they loop)
     const DRIFT = 60;                  // the turbulence's own speed along (px/s, at no gust); the eddies lag it
     const EDDY_DRAW = 150;             // how hard an eddy draws leaves onto its ring, and flings them off (px/s, about)
     // Each layer's leaves: each shape in each colour turning each way, as its frames
@@ -439,7 +441,7 @@ const Sky = (() => {
       }));
     })));
     const WISP = ["#2E363D", "#45515B", "#5F6E7A"].map((c) => `rgb(${rgb(c)})`);
-    let flying = [], eddies = [], wisps = [], gust = 0, nextGust = 0, travelled = 0;
+    let flying = [], eddies = [], wisps = [], gust = 0, nextGust = 0, travelled = 0, calm = 1;
     // The air's velocity at (x, y) for a layer whose leaves the steady wind carries at `pace` (px/s): [vx, vy], and how fast it turns
     // there (its curl, 1/s)
     const air = [0, 0, 0];
@@ -449,7 +451,7 @@ const Sky = (() => {
       const X = x - travelled, a = 0.6 * t, A = 420 * (0.7 + 0.6 * gust) * k, B = 110 * k;
       const s1 = Math.sin(0.05 * X + a), c1 = Math.cos(0.05 * X + a), s2 = Math.sin(0.07 * y - 0.7 * a), c2 = Math.cos(0.07 * y - 0.7 * a);
       const s3 = Math.sin(0.11 * X + 1.3 - a), c3 = Math.cos(0.11 * X + 1.3 - a), s4 = Math.sin(0.13 * y - 0.9 * a), c4 = Math.cos(0.13 * y - 0.9 * a);
-      let vx = pace * (1 + gust) + A * 0.07 * s1 * c2 + B * 0.13 * s3 * c4;
+      let vx = pace * calm * (1 + gust) + A * 0.07 * s1 * c2 + B * 0.13 * s3 * c4;
       let vy = -A * 0.05 * c1 * s2 - B * 0.11 * c3 * s4;
       let curl = A * 0.0074 * s1 * s2 + B * 0.029 * s3 * s4;
       // eddies: each a vortex, still at its eye, swirling fastest a little way out, fading beyond; near it the air goes along with it.
@@ -467,11 +469,15 @@ const Sky = (() => {
       return air;
     }
     const eddy = (d, anywhere) => {
-      d.r = between(26, 46);
-      d.x = between(-d.r, W * 0.85);   // (springing up anywhere, spinning up in place)
-      d.y = between(H * 0.12, H * 0.88);
+      // (on narrow art, a phone's, an eddy's radius at most 0.3 of the art's narrower side, and drifting slower, so it lasts its life
+      // on screen rather than being swept across in a moment)
+      const narrow = clamp(W / 360, 0.35, 1);
+      d.r = Math.min(between(26, 46), 0.3 * Math.min(W, H));
+      const edge = Math.min(0.6 * d.r, 0.3 * W);
+      d.x = between(edge, anywhere ? W - edge : Math.max(edge, 0.6 * W));   // (springing up on screen, spinning up in place)
+      d.y = between(Math.max(H * 0.12, d.r * 0.6), Math.min(H * 0.88, H - d.r * 0.6));
       d.spin = (random() < 0.5 ? -1 : 1) * between(4.5, 6) * d.r;   // (its fastest swirl about 0.43 this, px/s: a turn in 2 s or so)
-      d.v = DRIFT * between(0.6, 0.85);   // (lagging the wind: swirling faster than it moves, so leaves loop)
+      d.v = DRIFT * between(0.6, 0.85) * narrow;   // (lagging the wind: swirling faster than it moves, so leaves loop)
       d.vx = d.v; d.vy = 0;
       d.age = anywhere ? between(0, 4) : 0;
       d.life = between(5, 9);
@@ -483,7 +489,7 @@ const Sky = (() => {
       f.frames = set[Math.floor(random() * set.length)];
       f.x = anywhere ? between(-10, W) : between(-30, -8);
       f.y = between(H * 0.05, H * 0.95);
-      f.vx = LAYERS[f.layer].speed; f.vy = 0;
+      f.vx = LAYERS[f.layer].speed * calm; f.vy = 0;
       f.weight = between(0.12, 0.3);   // (s: how long it takes to catch the air's speed)
       f.turn = between(0, 10);
       f.spin = between(4, 9);
@@ -502,6 +508,7 @@ const Sky = (() => {
       count: () => flying.length,
       resize() { flying = []; eddies = []; wisps = []; },
       step(dt, t, share) {
+        calm = clamp(W / 360, CALM, 1);
         const n = Math.round(this.need() * share);
         while (flying.length < n) {
           const k = flying.length / Math.max(n, 1);
@@ -514,8 +521,8 @@ const Sky = (() => {
         // gusts: a sudden push now and then, dying away
         if ((nextGust -= dt) <= 0) { gust += between(0.5, 1.1); nextGust = between(2.5, 6); }
         gust *= Math.exp(-0.9 * dt);
-        travelled += DRIFT * (1 + gust) * dt;
-        const want = Math.max(2, Math.round(W * H / 30000));
+        travelled += DRIFT * calm * (1 + gust) * dt;
+        const want = Math.max(4, Math.round(W * H / 30000));   // (at least four, a phone's too)
         while (eddies.length < want) { const d = {}; eddy(d, true); eddies.push(d); }
         for (const d of eddies) {
           d.age += dt;
@@ -1810,6 +1817,7 @@ const Sky = (() => {
   // smog: its band; ice: degrees below 0 °C)
   const STEPS = {rain: [0.35, 1], smog: [1, 2, 3, 4, 5], uv: [1], humidity: [1], wind: [1], heat: [1], ice: [5]};
   const ALL = {rain: 1, smog: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5};   // (?fx=all)
+  const OLD = {leaves: "wind", radiation: "uv", drips: "humidity"};   // (their earlier names, in links saved before)
   const row = document.getElementById("fxtest");
   let on = {};   // {effect: its step's index}
   const name = (k) => k === "rain" ? ["rain", "rain2"][on[k]] : k === "smog" ? `smog${on[k] + 1}` : k;   // (in the URL)
@@ -1823,6 +1831,7 @@ const Sky = (() => {
       else if (word === "rain2" || word === "heavyrain") on.rain = 1;
       else if (/^smog[1-5]?$/.test(word)) on.smog = Number(word.slice(4) || 1) - 1;
       else if (word in STEPS) on[word] = 0;
+      else if (word in OLD) on[OLD[word]] = 0;
     }
   }
   function apply() {

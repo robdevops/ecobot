@@ -757,6 +757,8 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
     assert links["all"]["effects"] == every and links["all"]["url"] == "?fx=rain2,smog3,uv,humidity,wind,heat,ice"
     assert got["param"]["levels"] == {"smog": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "ice": 5}
     assert sorted(got["param"]["framed"]) == ["Temperature", "US AQI", "Wind"] and got["param"]["errors"] == []
+    # (the effects' earlier names, in links saved before, still work: as wind, uv, humidity)
+    assert got["paramOld"]["effects"] == ["uv", "wind", "humidity"] and got["paramOld"]["errors"] == [], got["paramOld"]
     assert links["role"] == "group" and links["pressed"] == {"rain": "false", "smog": "false", "uv": "true", "humidity": "true",
                                                              "wind": "true", "heat": "true", "ice": "false"}, links["pressed"]
     # the particles: uv's beams none (no motes); the wind's leaves alone, and every effect's together, within the shared budget
