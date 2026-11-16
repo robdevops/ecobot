@@ -183,7 +183,7 @@
 //   of the window's shorter side, rim: the share of the window's outer 3 px frosted, fingers: in 32 stretches of the edges (between
 //   the corners) how far in the furthest crystal reaches, of the shorter side, sparkles: how many now, pixels: the crystals there
 //   could be, ink: its canvas's pixels showing anything, made: what was grown {forms: how many of each ({fern, plume, needles,
-//   star}), fronds: each fern's and plume's stem {kind, length, branches, spacing: its length a branch, angle: its branches' mean
+//   speck}), specks: each speck's size (px), fronds: each fern's and plume's stem {kind, length, branches, spacing: its length a branch, angle: its branches' mean
 //   to it, degrees}, seeds: [edge (0 top, 1 bottom, 2 left, 3 right), where along it] each along the edges, scratches: how many
 //   from a little way in}, shades: the crystals shown now (not the fresh tips) {mean, spread: their alphas' standard deviation,
 //   tints: how many tints, stem, side, barb: the mean alpha of each}} (null till first made); Sky.frost(true): only {extent,
@@ -1825,8 +1825,8 @@ const Sky = (() => {
   // stretches (and in the corners), sparse in others with bare glass between, a few a little way in (as if from a scratch), each
   // one of several forms: long feathery fern fronds (a wandering stem, side branches every pixel or few, mostly near 60° to it as
   // ice's hexagonal habit has them, shorter toward the tip, so it ends in a feathery point, with finer barbs on them, now and then
-  // forking into a frond of its own), short dense plumes, needles radiating from a point; and small six-armed stars and plates
-  // scattered on the glass ahead of the front. Each frond its own make: its branches' angle, spacing and length, how dense, how
+  // forking into a frond of its own), short dense plumes, needles radiating from a point; and ahead of the front a sparse
+  // dusting of tiny irregular specks (a pixel or two, no snowflake shapes) that the fronds grow into. Each frond its own make: its branches' angle, spacing and length, how dense, how
   // much it curves, how bold (a bold one's stem two pixels thick), its tint and brightness (some bold and bright, others fine and
   // faint), its ridge brighter than its branches, those than its barbs, the shade wandering a little along it; where fronds cross,
   // a touch brighter. Each pixel knows when the frost gets there (`extent`, on the ice's own measure: a stem's own pace times it is
@@ -1841,8 +1841,8 @@ const Sky = (() => {
                        ["#78B6C2", "#98D3D9", "#B9E7EA", "#D5F4F4", "#EDFCFC", "#FFFFFF"],
                        ["#97B6CA", "#B5CFDF", "#CDE2EE", "#E1EEF6", "#F1F8FB", "#FFFFFF"]].map((ramp) => ramp.map(rgb));
   const ice = effect((e) => {
-    // each pixel's look: 0, 1 the haze, 2 the bloom (each [colour, alpha]); a crystal's: 3 a barb, 4 a side branch (or a star's
-    // arm), 5 a stem (or a needle, a star's heart), 6 a fresh tip; a crystal's colour and alpha its own
+    // each pixel's look: 0, 1 the haze, 2 the bloom (each [colour, alpha]); a crystal's: 3 a barb (or a speck), 4 a side
+    // branch, 5 a stem (or a needle), 6 a fresh tip; a crystal's colour and alpha its own
     const LOOK = [[ICE[0], 95], [ICE[1], 135], [ICE[1], 90]];
     const BLOOM = 2, BARB = 3, SIDE = 4, STEM = 5, FRESH = 6;
     const GLINT = [mapped(["5"], {5: ICE[5]}), mapped([".4.", "454", ".4."], {4: ICE[3], 5: ICE[5]}),
@@ -1881,7 +1881,7 @@ const Sky = (() => {
       const n = W * H, r = seeded(4242), D = big(), m = Math.min(W, H), DEG = Math.PI / 180;
       crystalAt = new Float32Array(n).fill(Infinity); crystalLook = new Uint8Array(n); crystalAlpha = new Uint8Array(n);
       crystalTint = new Uint8Array(n); bloomAt = new Float32Array(n).fill(Infinity); hazeIn = new Float32Array(n);
-      made = {forms: {fern: 0, plume: 0, needles: 0, star: 0}, fronds: [], seeds: [], scratches: 0};
+      made = {forms: {fern: 0, plume: 0, needles: 0, speck: 0}, fronds: [], seeds: [], scratches: 0, specks: []};
       const mark = (x, y, at, look, alpha, tint) => {
         x = Math.round(x); y = Math.round(y);
         if (x < 0 || y < 0 || x >= W || y >= H) return;
@@ -1993,29 +1993,22 @@ const Sky = (() => {
         planted(x, y, inward + (r() - 0.5) * 2.6, d / 1.2, 0, r() < 0.6 ? "fern" : "needles");
         made.scratches++;
       }
-      // ... and the stars: small six-armed crystals scattered on the glass ahead of the front, more near the edges: plain stars,
-      // stars with twigs on their arms (at 60°) and little plates; each its own size, tilt, brightness and tint
-      for (let k = Math.round(W * H / 1200); k > 0; k--) {
-        const x = 2 + r() * (W - 4), y = 2 + r() * (H - 4), inward = Math.min(x, y, W - 1 - x, H - 1 - y);
-        if (inward > 0.45 * m || r() < inward / (0.45 * m) * 0.7) continue;
-        const from = inward / (1.5 + r() * 0.7) + r() * 3, turn = r() * Math.PI / 3, tint = (r() * FROST_TINTS.length) | 0;
-        const bright = 120 + r() * 100, kind = r(), arm = kind < 0.45 ? 2 + r() * 2 : kind < 0.85 ? 3.5 + r() * 2.5 : 1.2 + r() * 0.8;
-        mark(x, y, from, STEM, bright, tint);
-        for (let j = 0; j < 6; j++) {
-          const a = turn + j * Math.PI / 3, c = Math.cos(a), s = Math.sin(a);
-          for (let d = 0.5; d <= arm; d += 0.5) mark(x + c * d, y + s * d, from + d * 0.8, SIDE, bright * (1 - 0.25 * d / arm), tint);
-          if (kind >= 0.45 && kind < 0.85) for (const w of [-1, 1]) {   // (twigs, at 60° to the arm, two-thirds out)
-            const bx = x + c * arm * 0.6, by = y + s * arm * 0.6, b = a + w * Math.PI / 3;
-            for (let d = 0.5; d <= arm * 0.4; d += 0.5) mark(bx + Math.cos(b) * d, by + Math.sin(b) * d, from + arm * 0.5 + d, BARB, bright * 0.7, tint);
-          }
-          if (kind >= 0.85) {   // (a plate: its hexagon's rim, its middle fainter)
-            const b = a + Math.PI / 3, nx = x + Math.cos(b) * (arm + 1), ny = y + Math.sin(b) * (arm + 1);
-            const ex = x + c * (arm + 1), ey = y + s * (arm + 1);
-            for (let t = 0; t <= 1; t += 0.25) mark(ex + (nx - ex) * t, ey + (ny - ey) * t, from + 1.5, SIDE, bright, tint);
-            mark(x + c * 0.8, y + s * 0.8, from + 0.5, BARB, bright * 0.55, tint);
-          }
+      // ... and ahead of the front a sparse dusting of frost specks the fronds grow into: each a pixel or two (the second beside
+      // or slanting off the first, any way: nothing symmetric), faint, more near the edges, there a little before the front
+      const SPECK_NEXT = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
+      for (let k = Math.round(W * H / 1100); k > 0; k--) {
+        const x = Math.round(2 + r() * (W - 4)), y = Math.round(2 + r() * (H - 4)), inward = Math.min(x, y, W - 1 - x, H - 1 - y);
+        if (inward > 0.45 * m || r() < inward / (0.45 * m) * 0.75) continue;
+        const from = inward / (1.6 + r() * 0.8) + r() * 3, tint = (r() * FROST_TINTS.length) | 0, bright = 70 + r() * 60;
+        mark(x, y, from, BARB, bright, tint);
+        let size = 1;
+        if (r() < 0.55) {
+          const [dx, dy] = SPECK_NEXT[(r() * 8) | 0];
+          mark(x + dx, y + dy, from + 0.5 + r(), BARB, bright * (0.6 + r() * 0.3), tint);
+          size = 2;
         }
-        made.forms.star++;
+        made.forms.speck++;
+        made.specks.push(size);
       }
       const list = [];
       for (let i = 0; i < n; i++) if (crystalAt[i] < Infinity) list.push(i);

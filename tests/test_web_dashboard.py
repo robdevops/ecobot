@@ -1421,13 +1421,17 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     fingers = sorted(cold["fingers"])
     assert fingers[-1] > 0.35 and fingers[0] < 0.6 * fingers[-1] and fingers[-1] - fingers[len(fingers) // 2] > 0.05, fingers
     assert frost["sparkles"] >= 1, frost["sparkles"]
-    # ... and varied, as real frost on a window: fern fronds, short plumes, needles radiating from a point and small six-armed stars,
-    # a few from a little way in (as if from a scratch); the fronds' lengths and their branches' spacing spread widely, the
+    # ... and varied, as real frost on a window: fern fronds, short plumes, needles radiating from a point; ahead of the front only a
+    # sparse dusting of tiny specks (a pixel or two each: no snowflake-shaped stars or plates), a few fronds from a little way in (as if from a scratch); the fronds' lengths and their branches' spacing spread widely, the
     # branches mostly near 60° to their stems (ice's hexagonal habit), each frond its own; the seeds along the edges uneven, crowded
     # in some stretches with bare gaps in others; the shading uneven: ridges brighter than side branches, those than the fine
     # barbs, the shades spread widely and in several tints
     made, shades = cold["made"], cold["shades"]
-    assert all(made["forms"][k] >= 5 for k in ("fern", "plume", "needles", "star")) and made["scratches"] >= 1, made
+    assert set(made["forms"]) == {"fern", "plume", "needles", "speck"}, made["forms"]
+    assert all(made["forms"][k] >= 5 for k in ("fern", "plume", "needles")) and made["scratches"] >= 1, made["forms"]
+    specks = made["specks"]
+    assert len(specks) == made["forms"]["speck"] >= 5 and set(specks) <= {1, 2} and 1 in specks and 2 in specks, specks
+    assert len(specks) < cold["size"][0] * cold["size"][1] / 1000, (len(specks), cold["size"])   # (sparse)
     q = lambda v, p: sorted(v)[int(p * (len(v) - 1))]
     lengths = [f["length"] for f in made["fronds"]]
     spacings, angles = [f["spacing"] for f in made["fronds"] if f["spacing"]], [f["angle"] for f in made["fronds"] if f["angle"]]

@@ -1611,9 +1611,10 @@ const WEATHER = {
                     // (the leaves and the water, every frame: flying ones drawn touching it or under it; those stuck in it, and of them
                     // the ones seen flying just before (and how near the water they were then); any flying again, any above the surface
                     // or going back a state; flying ones vanishing other than into it, last seen near the water and away from the
-                    // window's edges; flying ones seen within 3 px of it; the rain's hits on leaves meanwhile)
+                    // window's edges (further than it went in a frame); flying ones seen within 3 px of it; the rain's hits on leaves meanwhile)
                     stuck: { touching: 0, wet: 0, seen: 0, lastGaps: [], back: 0, above: 0, backwards: 0, lost: [], near: 0, hits0: null, hits: 0 } };
         const flyers = new Map(), states = new Map(), ORDER = ["float", "sink", "rest"];
+        let then = null;   // (the clock the frame before)
         const step = () => {
           const s = Sky.state(), f = s.flood, w = s.wind, k = r.stuck;
           if (f.depth >= f.full) {
@@ -1633,10 +1634,15 @@ const WEATHER = {
               } else if (ORDER.indexOf(state) < ORDER.indexOf(states.get(id))) k.backwards++;
               states.set(id, state);
             }
-            for (const [id, [gap, x, y]] of flyers) {
+            // (away from the edges: 16 px, or further than it could have gone this frame, at 1.5 times its last frame's speed)
+            const dt = then === null ? 0 : s.clock - then;
+            for (const [id, [gap, x, y, speed]] of flyers) {
               if (now.has(id) || states.has(id)) continue;
-              if (gap !== null && gap <= 8 && x > 16 && x < f.width - 16) k.lost.push([id, gap, x, y]);
+              const edge = Math.max(16, 1.5 * speed * dt + 4);
+              if (gap !== null && gap <= 8 && x > edge && x < f.width - edge) k.lost.push([id, gap, x, y]);
             }
+            for (const [id, v] of now) v.push(flyers.has(id) && dt > 0 ? Math.abs(v[1] - flyers.get(id)[1]) / dt : 400);
+            then = s.clock;
             flyers.clear();
             for (const [id, v] of now) flyers.set(id, v);
           }
@@ -1832,6 +1838,7 @@ const WEATHER = {
       seen.cold = await frost();
       seen.cold.took = seen.cold.clock - from;
       seen.cold.pixels = await pixels();
+      seen.cold.size = await p.page.evaluate(() => { const c = document.querySelector("#sky canvas"); return [c.width, c.height]; });
       from = await fx({});
       await until((t) => Sky.state().clock >= t, from + 30);
       seen.melting = await frost();
