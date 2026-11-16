@@ -22,6 +22,9 @@
     (EcobotServer.publish_changes: nothing is fetched for it), so the page fetches the data again and moves its gauges in place. A
     comment every HEARTBEAT_SECONDS keeps a proxy from closing it.
 
+The page's weather drawn behind the gauges (its canvas, "stop animations", the test links) is there for every viewer unless
+MCP_DASHBOARD_ANIMATIONS is off: then the page is served with data-animations="off" on its <html> (ANIMATIONS), and draws none of it.
+
 No token is asked for (it is the weather and air readings only) and the Host isn't checked: a browser opens it by the machine's name. The MCP
 endpoint keeps both. MCP_DASHBOARD off: none of the four routes is served (404). `close()` ends the open streams, so uvicorn's
 graceful shutdown doesn't wait on them (ecobot_mcp's Uvicorn calls it once it stops accepting connections)."""
@@ -48,6 +51,7 @@ PAGE = Path(__file__).with_name("web_dashboard.html")
 ICON = Path(__file__).with_name("web_dashboard_icon.png")   # the page's sun, drawn large (its original, 534 px, at 512): WhatsApp asks 300 px, Facebook 200
 ICON_NAME, ICON_SIZE = "icon.png", 512
 ICON_URL = "https://raw.githubusercontent.com/robdevops/ecobot/main/lib/web_dashboard_icon.png"   # og:image: ICON as GitHub serves it (https, image/png)
+ANIMATIONS = 'data-animations="on"'   # on the page's <html>: "off" there with MCP_DASHBOARD_ANIMATIONS off (later: other values)
 PREVIEW = "<!--link preview-->"   # where the page's Open Graph tags go: first in its head, before its icons (Slack reads 32 KB of it)
 TITLE = "Weather Dashboard"
 DESCRIPTION = "The weather station's and the air sensor's gauges, live."
@@ -89,10 +93,11 @@ def air_readings_of(row: dict | None) -> tuple | None:
 
 class WebDashboard:
     """The page, its data and its event streams over an EcobotServer (its service's `current`, its bus and its context); `uris` the
-    resources whose updates are the station's live reading's and the air sensor's (ecobot://now/weather, ecobot://now/air)."""
+    resources whose updates are the station's live reading's and the air sensor's (ecobot://now/weather, ecobot://now/air);
+    `animations` (MCP_DASHBOARD_ANIMATIONS) off: the page draws no weather behind its gauges."""
 
-    def __init__(self, server, uris: tuple[str, ...] = ("ecobot://now/weather", "ecobot://now/air")):
-        self.server, self.uris = server, tuple(uris)
+    def __init__(self, server, uris: tuple[str, ...] = ("ecobot://now/weather", "ecobot://now/air"), animations: bool = True):
+        self.server, self.uris, self.animations = server, tuple(uris), animations
         self._streams: set[asyncio.Queue] = set()
         self._shown = self._readings()
         self.closed = False
@@ -180,6 +185,7 @@ class WebDashboard:
     # ---------- the routes ----------
     async def page(self, request: Request):
         page = PAGE.read_text(encoding="utf-8").replace(PREVIEW, self.preview(request.url.path), 1)
+        page = page.replace(ANIMATIONS, f'data-animations="{"on" if self.animations else "off"}"', 1)
         return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
     async def icon(self, request: Request):

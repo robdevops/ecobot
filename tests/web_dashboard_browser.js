@@ -868,7 +868,7 @@ const framesIn = async (page, ms) => {   // the frames the page asked for in thi
 // its mark and just short of it, smog's bands, rain's strength, the ice's depth), "several" (several at once, the canvas, the tiles see-
 // through, their look, zoomed), "stop" ("stop animations", a reload, "start animations", the reset), "links" (the temporary test links),
 // "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
-// and the wind alone, uv's beams over 40 s, a phone's strip, reduced motion)
+// and the wind alone, uv's beams over 40 s, a phone's strip, reduced motion), "off" (MCP_DASHBOARD_ANIMATIONS off: nothing drawn)
 const WEATHER = {
   async marks(browser, url, out) {
     const { context, page, errors, reads } = await weatherPage(browser, url);
@@ -1057,6 +1057,27 @@ const WEATHER = {
     out.light = { all: await canvasLight(page) };
     out.particles = { all: await particles(page) };
     out.light.smog5 = await strongest;
+    out.errors = errors;
+    await context.close();
+  },
+  async off(browser, url, out) {
+    // MCP_DASHBOARD_ANIMATIONS off (the test serves the page so): every effect asked for and called for, nothing drawn
+    const { context, page, errors, reads } = await weatherPage(browser, url, { query: "?fx=all" });
+    await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160 });
+    const seen = async () => ({ ...await weatherSeen(page), frames: await page.evaluate(() => Sky.state().frames), ink: await canvasInk(page),
+                                ...await page.evaluate(() => ({ sky: getComputedStyle(document.getElementById("sky")).display,
+                                                                corner: getComputedStyle(document.getElementById("corner")).display,
+                                                                row: !!document.getElementById("fxtest") && document.getElementById("fxtest").checkVisibility() })) });
+    await page.waitForTimeout(500);   // (time for frames, were any drawn)
+    out.off = await seen();
+    out.tiles = await titles(page);
+    out.strip = await statusText(page);
+    await page.mouse.move(...await at(page, "Rain", 0.5, 0.4));
+    await calm(page);
+    await tileOf(page, "Rain").locator(".close").click();
+    await page.waitForTimeout(300);
+    const { frames, ink, running } = await seen();
+    out.hidden = { strip: await statusText(page), frames, ink, running };
     out.errors = errors;
     await context.close();
   },

@@ -295,6 +295,11 @@ A click or tap on a gauge (or Enter or Space on a tile reached with Tab) zooms i
 back) to fill the window, a single tile shown too. Zoomed, page through the tiles like a photo gallery, each still live: ← and →, Space (next) and Backspace (previous), a
 swipe, a drag on the gauge, or a two-finger sideways swipe on a trackpad; it stops at the first and the last (with one tile, paging just nudges it and back). A click or tap (not on the text) or Esc goes back.
 
+Behind the gauges, the weather is drawn as faint pixel art while the readings call for it: rain while it rains, smog from the US
+AQI's Moderate band up, UV beams at a UV index of 11, drips at 90 % humidity, leaves blowing past above 15 km/h of wind, a heat
+haze from 35 °C and ice below 0 °C. "stop animations" at the bottom left stops them in that browser (kept with its arrangement);
+with reduced motion asked for, one still frame. To draw none of it for anyone, set `MCP_DASHBOARD_ANIMATIONS=off`.
+
 It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
 Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To

@@ -329,6 +329,34 @@ def test_mcp_dashboard_is_read_as_on_or_off(monkeypatch, tmp_path):
     assert Config.from_env(bot=False).mcp_dashboard is False
 
 
+def test_mcp_dashboard_animations_is_read_as_on_or_off_on_by_default_and_a_typo_keeps_it_on_with_a_warning(monkeypatch, tmp_path, caplog):
+    from lib.config import Config
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
+    monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
+    monkeypatch.delenv("MCP_DASHBOARD_ANIMATIONS", raising=False)
+    assert Config.from_env(bot=False).mcp_dashboard_animations is True
+    for value, want in (("off", False), ("OFF", False), ("on", True), ("", True)):
+        monkeypatch.setenv("MCP_DASHBOARD_ANIMATIONS", value)
+        assert Config.from_env(bot=False).mcp_dashboard_animations is want, value
+    caplog.set_level("WARNING", logger="lib.config")
+    monkeypatch.setenv("MCP_DASHBOARD_ANIMATIONS", "sometimes")
+    assert Config.from_env(bot=False).mcp_dashboard_animations is True
+    assert any("MCP_DASHBOARD_ANIMATIONS" in r.getMessage() and "'sometimes'" in r.getMessage() for r in caplog.records), caplog.records
+
+
+async def test_the_page_is_told_whether_to_draw_the_weather_behind_its_gauges(server):
+    """MCP_DASHBOARD_ANIMATIONS: the page served with data-animations="on" on its <html> (the default), or "off"; nothing else changes."""
+    pages = {}
+    for animations in (True, False):
+        port = free_port()
+        async with Serving(http_app(server, tokens=(TOKEN,), dashboard_animations=animations), port):
+            pages[animations] = (await get(f"http://127.0.0.1:{port}/dashboard")).text
+    assert pages[True].count('<html lang="en" data-animations="on">') == 1 and '<html lang="en" data-animations="off">' not in pages[True]
+    assert pages[False].count('<html lang="en" data-animations="off">') == 1
+    assert pages[False].replace('data-animations="off"', 'data-animations="on"', 1) == pages[True]
+
+
 # ---------- the page in a browser ----------
 SIZES = {"phone-portrait": (390, 844), "phone-landscape": (844, 390), "tablet-landscape": (1024, 768), "tablet-portrait": (768, 1024),
          "desktop": (1920, 1080)}
@@ -466,10 +494,10 @@ def test_what_the_events_compare_of_the_air_is_its_gauges_readings():
 
 
 # ---------- arranging the tiles (drag, hide, reset, preferences) and their fill ----------
-async def run_page(server, *args, timeout=120) -> dict:
-    """The page served, driven by the browser script with these arguments; its report."""
+async def run_page(server, *args, timeout=120, **app) -> dict:
+    """The page served (`app`: http_app's options), driven by the browser script with these arguments; its report."""
     port = free_port()
-    async with Serving(http_app(server, tokens=(TOKEN,)), port):
+    async with Serving(http_app(server, tokens=(TOKEN,), **app), port):
         page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", *args,
                                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = await asyncio.wait_for(page.communicate(), timeout)
@@ -794,9 +822,9 @@ EFFECTS = {"rain": "Rain", "smog": "US AQI", "uv": "UV index", "humidity": "Humi
            "ice": "Temperature"}
 
 
-async def weather(server, part: str) -> dict:
+async def weather(server, part: str, **app) -> dict:
     """One part of the weather behind the tiles, its own page in its own browser (the parts run side by side): its report, no error."""
-    got = await run_page(server, "--weather", part)
+    got = await run_page(server, "--weather", part, **app)
     assert got["errors"] == [], got["errors"]
     return got
 
@@ -883,6 +911,19 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_clear_them_the_u
 
 
 EVERY = ["smog", "heat", "uv", "rain", "wind", "humidity", "ice"]
+
+
+@needs_browser
+async def test_with_mcp_dashboard_animations_off_no_weather_is_drawn_behind_the_tiles_for_anyone_and_the_rest_is_as_ever(server, station):
+    got = await weather(server, "off", dashboard_animations=False)
+    # every effect asked for (?fx=all) and called for by the readings, the animations not stopped in the browser: no loop, nothing
+    # drawn, no link, no test links; the tiles and the strip as ever
+    assert got["off"] == {"effects": got["off"]["effects"], "levels": got["off"]["levels"], "running": False, "framed": got["off"]["framed"],
+                          "link": None, "frames": 0, "ink": 0, "sky": "none", "corner": "none", "row": False}, got["off"]
+    assert got["off"]["effects"] == EVERY, got["off"]                                    # (asked for all the same: just never drawn)
+    assert got["tiles"] == titles_of(station) and got["strip"] == "last reading 18:42", got
+    # a tile hidden: "reset preferences" in the strip as ever; still nothing drawn
+    assert got["hidden"] == {"strip": "reset preferences · last reading 18:42", "frames": 0, "ink": 0, "running": False}, got["hidden"]
 
 
 def just_right_of_clear(corner):

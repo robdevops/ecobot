@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-animations="on">
 <head>
 <meta charset="utf-8">
 <!--link preview-->
@@ -13,7 +13,9 @@
      remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server.
      A click or tap on a gauge zooms its tile (title and gauge, no table) to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
      Behind everything, the weather as pixel art on one canvas (Sky): rain, smog, uv, humidity, wind, heat and ice, each while the
-     readings call for it, its tile framed in red; "stop animations" at the bottom left stops them. -->
+     readings call for it, its tile framed in red; "stop animations" at the bottom left stops them. With MCP_DASHBOARD_ANIMATIONS off
+     the server sends data-animations="off" on <html> (lib/web_dashboard.py): none of it, for every viewer (no canvas drawn, no loop,
+     no link, no test links), the rest of the page as ever. -->
 <style>
   :root { --bg: #14191D; --ink: #E8EAED; --soft: #B8BDC2; }
   * { box-sizing: border-box; }
@@ -82,6 +84,8 @@
   #motion { flex: none; padding: 0 10px; font-size: 12px; line-height: var(--status, 18px); white-space: nowrap; color: var(--soft);
     background: rgba(20, 25, 29, 0.85); border-top-right-radius: 6px; }
   #motion:empty { display: none; }
+  /* MCP_DASHBOARD_ANIMATIONS off: no weather behind the tiles at all, nor its link or test links */
+  html[data-animations="off"] :is(#sky, #corner) { display: none; }
   html.scroll { scroll-snap-type: y proximity; scroll-padding-top: var(--pad, 8px); }
   .tile { scroll-snap-align: start; }
   html.scroll:has(body.dragging) { scroll-snap-type: none; }   /* (a drag's own scrolling stops where it stops) */
@@ -133,7 +137,8 @@
 // strength together, so several at once are no busier or brighter than one strong one. Nothing runs while no effect is on or fading
 // out; the tab hidden, it waits; with reduced motion, one still, faint frame and no loop.
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), uv, humidity, wind, heat: 0 or
-//   1, ice: how far below 0 °C it is (0: none)}; animate false (the page's "stop animations"): nothing drawn.
+//   1, ice: how far below 0 °C it is (0: none)}; animate false (the page's "stop animations", or MCP_DASHBOARD_ANIMATIONS off):
+//   nothing drawn.
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), size: [art width, art height, P], particles (each effect's
 //   now), budget (theirs together, at most), levels, iceReach (art px), wind (its leaves on screen: {vx: their mean speed across,
 //   negative leftward, against: how many go rightward})}, for the tests.
@@ -921,6 +926,9 @@ const Sky = (() => {
   const EASE = "cubic-bezier(0.25, 0.8, 0.3, 1)";   // (quick, then gently to rest)
   const grid = document.getElementById("grid"), statusLine = document.getElementById("status"), message = document.getElementById("message");
   const corner = document.getElementById("corner"), motion = document.getElementById("motion");
+  // The weather behind the tiles allowed: MCP_DASHBOARD_ANIMATIONS off, the page is served with data-animations="off": never any, for
+  // every viewer (Sky never started, no link)
+  const ALLOWED = document.documentElement.dataset.animations !== "off";
   const removeZone = document.getElementById("remove");
   let L = null, tiles = [], asOf = null, lost = false, opening = true, unavailable = "";
   const drawn = new Map();             // each tile drawn, by its id, to be moved in place (shown or hidden)
@@ -1298,7 +1306,7 @@ const Sky = (() => {
     const time = lost ? "reconnecting…" : asOf ? `last reading ${asOf.slice(11, 16)}` : "";
     if (time) parts.push(time);
     statusLine.replaceChildren(...parts.flatMap((p, i) => i ? [" · ", p] : [p]));
-    motion.replaceChildren(...calling() ? [link(animated() ? "stop animations" : "start animations", toggleAnimations, "animations")] : []);
+    motion.replaceChildren(...ALLOWED && calling() ? [link(animated() ? "stop animations" : "start animations", toggleAnimations, "animations")] : []);
     placeCorner();
   }
   // The bottom left corner beside the strip, in the room it leaves; where that's too little for the corner at its narrowest (a phone),
@@ -1801,7 +1809,7 @@ const Sky = (() => {
             ice: temperature !== null && temperature < 0 ? -temperature : 0};
   }
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop animations" shows)
-  const animated = () => prefs.animations !== false;
+  const animated = () => ALLOWED && prefs.animations !== false;
 
   // The effects called for, the readings' and the test links' together, to Sky and to the tiles' frames; "stop animations" as it changes
   function weather() {
