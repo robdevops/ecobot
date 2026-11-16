@@ -1158,7 +1158,7 @@ const Sky = (() => {
   // variation, no gaps or islands), dithered, a little denser toward the sides and the bottom corners; none in the top rows. How
   // thick follows the humidity (the effect's level: 90 % to 100 %, a light haze to a heavy fog), eased to a new level over a few s.
   // Then the beads, condensing out of the fog only (where it has formed and shows, not in a trail wiped through it; more often where
-  // it's thick, a little more toward the top), tiny (BORN: a px), fading in; a few a second (MISTING; the more humid, the more), on and
+  // it's thick, a little more toward the top), tiny (BORN: a px), fading in; a few a second (MISTING; the lighter the humidity, the more: heavier, its water goes to merging and running), on and
   // on, the glass more and more densely beaded, up to the most the budget allows (there, now and then the most isolated drying away
   // quietly for another). Tiny ones never run (nor grow, nor shrink): each stays where it condensed till it snaps together with
   // another close by (SNAP px between their edges or less, about a bead's width, not only touching): the higher one pulled into the
@@ -1221,7 +1221,7 @@ const Sky = (() => {
     const SNAP_V = [6, 30, 120];       // the one pulled in: px/s to start, at most, and how fast it gets quicker (px/s²): a px or two
                                        // ... in a few frames
     const POP = 0.12;                  // s a bead just snapped together bulges a size for (a tiny jump as they coalesce)
-    const MISTING = 0.02;              // tiny beads condensing a s, for each px of the window's width (heavy; light about a quarter)
+    const MISTING = 0.02;              // tiny beads condensing a s, for each px of the window's width (light 1.15 times this; heavy 0.3)
     const TINY_COST = 0.25;            // a tiny bead, a quarter of a particle of the budget (a px, still: cheap)
     const GRID = 4;                    // px: the cells the tiny beads are looked up in (the snaps' checks)
     const QUICK = 3;                   // px/s on fog: a condensed bead slower than this dries away as the fog clears where it is
@@ -1243,7 +1243,7 @@ const Sky = (() => {
     const RAIN_MOST = 5;               // ... a handful on the glass at most ...
     const RAIN_R = [3, 3.8];           // ... each landing this big (its radius) ...
     const SPLASH_S = 0.25;             // ... with a splash, bursting out and gone in this long
-    const PER_PX = 0.45;               // beads at most, for each px of the window's width (heavy: 100 %; light, 91 %: about a quarter)
+    const PER_PX = 0.45;               // beads at most, for each px of the window's width (light or heavy)
     // The beads, smallest to largest (one a size, as SIZES): plump, rounded below and heaviest there, the top a little narrower and
     // round too. Glass, lit from the top left: a white glint (4), the body barely there (2), a crescent low inside where the light
     // comes through (3), a darker rim on the right and below (1: the deep blue, a shade under the body's)
@@ -1753,7 +1753,7 @@ const Sky = (() => {
     const strength = () => (e.level > 0 || cover > 0 ? 0.85 : 0.3);   // (heavy rain's beads alone: fainter in the cap's sum ...
     return {
       strength,                                                         // ... drawn as bright all the same, see draw())
-      need: () => (e.level > 0 ? PER_PX * W * (0.2 + 0.8 * e.level) : used()) + (heavy() ? RAIN_MOST : 0),
+      need: () => (e.level > 0 ? PER_PX * W : used()) + (heavy() ? RAIN_MOST : 0),   // (as many at light humidity as heavy: its tiny ones pile up)
       count: () => Math.round(used()),
       want(v) {   // (on again after gone all the way: the glass fresh; reduced motion, off: gone at once)
         if ((v > 0 && !present() && e.amount <= 0) || (STILL && v <= 0)) clear();
@@ -1811,7 +1811,7 @@ const Sky = (() => {
         const rainy = all.filter((b) => b.kind === "rain").length, tiny = all.filter((b) => b.still).length;
         cap = Math.max(0, Math.floor((Math.min(most - room, most - rainy) - (all.length - tiny - rainy)) / TINY_COST));
         if (e.level > 0) {
-          mist += MISTING * W * (0.15 + 0.85 * e.level) * dt;
+          mist += MISTING * W * (1.15 - 0.85 * e.level) * dt;   // (light humidity beads up with tiny ones fastest; heavier, its water goes to merging and running)
           for (let n = tiny; mist >= 1; mist--) {
             if (n < cap) { all.push(condense()); n++; continue; }
             if (random() < 0.75) continue;
