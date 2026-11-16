@@ -1267,8 +1267,26 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
         # (nothing left showing on the fog's canvas where no trail is any more; no bead vanishing (each merged into another, run off
         # the bottom, shrunk to nothing or dried away)
         assert beads["stray"] == 0 and beads["popped"] == 0 and beads["landed"] == 0, (name, beads)
+        # (tiny beads never moving but to snap together, many snapping; condensing on and on, more and more of them, up to the most
+        # there may be (the cap; it shrinks as small beads take their room), never more; small ones (under r 1, not tiny) running)
+        assert beads["crept"] == 0 and beads["snaps"] >= 20, (name, beads["crept"], beads["snaps"])
+        tinies = [t["n"] for t in beads["tinies"]]
+        assert tinies[1] < tinies[4] < tinies[8], (name, beads["tinies"])
+        assert any(t["n"] >= t["cap"] - 3 for t in beads["tinies"]), (name, beads["tinies"])
+        assert all(t["n"] <= 1.05 * t["cap"] + 4 for t in beads["tinies"]), (name, beads["tinies"])
+        assert beads["sizes"][0][0] > 0, (name, beads["sizes"])
     # ... nothing at all drawn in the canvas's top two rows (humidity alone: no water along the top edge)
     assert got["humidity"]["alone"]["top"] == 0, got["humidity"]["alone"]
+    # ... two tiny beads put close together (not touching, within the snap): snapped into one small bead (not tiny) in a few frames,
+    # their water adding up (then growing on the fog as ever), where the lower one was (none pulled up the glass); two further apart, beside them: still there, unmoved
+    snapped = got["humidity"]["alone"]["snapped"]
+    assert snapped["spot"] and len(snapped["at"]) == 4 and all(b["r"] <= snapped["tinyR"] for b in snapped["at"]), snapped
+    pair, apart = snapped["placed"][:2], snapped["placed"][2:]
+    assert pair[0] is None and pair[1] and not pair[1]["tiny"] and pair[1]["r"] > snapped["tinyR"], snapped
+    together = snapped["at"][0]["vol"] + snapped["at"][1]["vol"]   # (and since, as it sat on the fog, growing a very little)
+    assert together <= pair[1]["vol"] < 1.05 * together, snapped
+    assert pair[1]["y"] >= snapped["at"][1]["y"] and len(snapped["near"]) == 1, snapped
+    assert [(b["x"], b["y"], b["tiny"]) for b in apart] == [(b["x"], b["y"], True) for b in snapped["at"][2:]], snapped
     # ... the fog: forming first (the first bead only once it has, there and on the glass at large), its trails wiped clear through it
     # about as wide as the bead was there (its edges ragged: a px in or out; a px more where another's beside it), clearer than the
     # fog beside them (where there is fog); the beads' colours as ever (the glass: the deep blue rim, a faint pale body, a crescent, a
