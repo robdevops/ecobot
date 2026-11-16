@@ -946,6 +946,43 @@ const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
   };
   requestAnimationFrame(step);
 }));
+// humidity's beads running down the glass, every frame over `frames` of Sky's (each 0.1 s of the page's time, its clock run on fast:
+// `pace`): how many ran; any that went up (between two frames, by more than nothing); the furthest one went down; the furthest one
+// wandered either side of where it began, and how many wandered 2 px or more; their mean offset from where they began (px, negative
+// leftward); the lowest any sprite reached (art px, its bottom row + 1) of the window's height; where those that ended were last seen
+// (lowest and highest, of the height); how often a bead that had moved had its track behind it; the most track pixels wet at once,
+// how many had dried by the end, and of a pixel of each bead's track (as it passed 20 px down), how many were drier by the end; and px
+// run and s taken on an earlier track and off one
+const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
+  const last = new Map(), ended = [], first = Sky.state().frames;
+  let n = 0, up = 0, down = 0, wander = 0, offset = 0, samples = 0, lowest = 0, moved = 0, behind = 0, wet = 0;
+  const wandered = new Set(), trails = new Map();
+  const step = () => {
+    const h = Sky.state().humidity, now = new Map(h.runners.map((d) => [d.id, d]));
+    for (const [id, d] of last) if (!now.has(id)) ended.push(d.y / h.height);
+    for (const d of h.runners) {
+      const before = last.get(d.id);
+      if (!before) n++;
+      else if (d.y < before.y - 1e-9) up++;
+      down = Math.max(down, d.y - 1);
+      wander = Math.max(wander, Math.abs(d.x - d.x0));
+      if (Math.abs(d.x - d.x0) >= 2) wandered.add(d.id);
+      offset += d.x - d.x0; samples++;
+      lowest = Math.max(lowest, d.bottom / h.height);
+      if (d.y > 12) { moved++; if (d.behind) behind++; }
+      if (d.y > 20 && d.trail && !trails.has(d.id)) trails.set(d.id, [...d.trail, h.wetAt(...d.trail)]);
+    }
+    wet = Math.max(wet, h.wet);
+    last.clear();
+    for (const [id, d] of now) last.set(id, d);
+    if (Sky.state().frames - first < frames) return requestAnimationFrame(step);
+    resolve({ runners: n, up, down, wander, meander: h.meander, wandered: wandered.size, offset: offset / Math.max(samples, 1), lowest,
+              ended: ended.length ? [Math.min(...ended), Math.max(...ended)] : null, behind: behind / Math.max(moved, 1), wet,
+              dried: h.dried, trails: trails.size, drier: [...trails.values()].filter(([x, y, w]) => h.wetAt(x, y) < w).length,
+              on: h.on, off: h.off });
+  };
+  requestAnimationFrame(step);
+}), frames);
 const framesIn = async (page, ms) => {   // the frames the page asked for in this long
   const before = await page.evaluate(() => window.__frames);
   await page.waitForTimeout(ms);
@@ -980,7 +1017,8 @@ async function animationsOff(browser, url, out) {
 // through, their look, zoomed), "stop" ("stop animations", a reload, "start animations", the reset), "links" (the temporary test links;
 // and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn),
 // "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
-// and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, a phone's strip, reduced motion)
+// and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, humidity's beads running down the
+// glass alone and in the wind, a phone's strip, reduced motion)
 const WEATHER = {
   async marks(browser, url, out) {
     const { context, page, errors, reads } = await weatherPage(browser, url);
@@ -1183,6 +1221,13 @@ const WEATHER = {
       await uv.context.close();
       return seen;
     })();
+    // humidity's beads running down the glass over 36 s of the page's time, alone and with the wind, beside the rest (small: cheap)
+    const beading = Promise.all(["humidity", "humidity,wind"].map(async (name) => {
+      const p = await weatherPage(browser, url, { query: `?fx=${name}`, pace: 10, context: { viewport: { width: 640, height: 480 } } });
+      const seen = { ...await humiditySeen(p.page, 360), errors: p.errors };
+      await p.context.close();
+      return seen;
+    }));
     // heavy rain, alone and in the wind (and in the wind on a phone), its drops watched for 3 s, beside the rest; with the wind, the
     // leaves the drops knocked. (In the wind, the window's size: first light rain, as it fades in, its first few hits on the leaves.)
     const phoneSize = { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true };
@@ -1226,6 +1271,7 @@ const WEATHER = {
     // for 3 s beside the rest
     out.particles = {};
     out.rain = {};
+    out.humidity = {};
     const alone = Promise.all(["uv", "wind"].map(async (name) => {
       const alone = await weatherPage(browser, url, { query: `?fx=${name}` });
       if (name === "wind") out.wind = await windSeen(alone.page, 3000);
@@ -1257,6 +1303,7 @@ const WEATHER = {
     await still.context.close();
     await Promise.all([params, alone, phoned]);
     out.uv = await swaying;
+    [out.humidity.alone, out.humidity.windy] = await beading;
     [out.rain.alone, out.rain.windy, out.rain.phone] = await raining;
     [out.bare, out.barePhone] = await bare;
     out.errors = [];

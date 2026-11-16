@@ -998,6 +998,19 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert windy["light"]["hits"] >= 3 and 0 < windy["light"]["push"] < 10, windy["light"]
     assert windy["light"]["kick"] == pytest.approx(windy["light"]["push"], rel=0.01), windy["light"]
     assert windy["leaves"]["kick"] > 2.5 * windy["light"]["kick"], (windy["leaves"], windy["light"])   # (heavy rain's knocks: far harder)
+    # humidity: its heavy beads run down the glass (36 s of it, on a small page): down only, never back up, well down; most wandering a
+    # little either side of where each began (never further than its bound), the lot not drifting either way; none reaching the
+    # window's bottom, each fading out in its lower half; its wet track behind it, drying (a pixel of each bead's track drier by the
+    # end, some dried out); faster on an earlier bead's track than off one. The same with the wind on: water on the glass isn't blown
+    for name, beads in got["humidity"].items():
+        assert beads["errors"] == [] and beads["runners"] >= 10 and beads["up"] == 0 and beads["down"] > 60, (name, beads)
+        assert 2 <= beads["wander"] <= beads["meander"] and beads["wandered"] >= beads["runners"] / 2, (name, beads)
+        assert abs(beads["offset"]) < 3, (name, beads)   # (about 1 or less; blown, many px)
+        assert beads["lowest"] < 0.95 and beads["ended"] and beads["ended"][0] >= 0.4 and beads["ended"][1] < 0.9, (name, beads)
+        assert beads["behind"] > 0.95 and beads["wet"] > 200 and beads["trails"] >= 10, (name, beads)
+        assert beads["drier"] >= 0.8 * beads["trails"] and beads["dried"] > 0, (name, beads)
+        (on_px, on_s), (off_px, off_s) = beads["on"], beads["off"]
+        assert on_s > 3 and on_px / on_s > 1.5 * off_px / off_s, (name, beads)   # (about 3 times as fast, its pauses fewer and shorter)
     # the wind blows right to left: its leaves leftward overall, as drawn on the canvas too (frame to frame); some caught in a loop
     # going rightward a moment (on a phone too)
     for seen in (got["wind"], got["phoneWind"]):
