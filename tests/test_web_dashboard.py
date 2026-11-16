@@ -1011,6 +1011,16 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
         assert beads["drier"] >= 0.8 * beads["trails"] and beads["dried"] > 0, (name, beads)
         (on_px, on_s), (off_px, off_s) = beads["on"], beads["off"]
         assert on_s > 3 and on_px / on_s > 1.5 * off_px / off_s, (name, beads)   # (about 3 times as fast, its pauses fewer and shorter)
+        # (a track dried out: gone from the canvas too, nothing left showing on dry glass; no bead cut short, none vanishing at the top)
+        assert beads["stray"] == 0 and beads["cut"] == 0 and beads["popped"] == 0, (name, beads)
+    # ... every other effect then on too, humidity's share of the budget shrinking: fewer beads, but none cut short mid-glass (each
+    # running its course) and none swelling at the top vanishing
+    squeezed = got["humidity"]["alone"]["squeezed"]
+    assert squeezed["count"][1] < squeezed["count"][0] and squeezed["cut"] == 0 and squeezed["popped"] == 0, squeezed
+    assert squeezed["stray"] == 0, squeezed
+    # ... then all off, faded out all the way (some track still wet as it went), and humidity on again: the glass fresh
+    again = got["humidity"]["alone"]["again"]
+    assert again["before"] > 0 and again == {"before": again["before"], "wet": 0, "runners": 0, "sites": 0, "stray": 0}, again
     # the wind blows right to left: its leaves leftward overall, as drawn on the canvas too (frame to frame); some caught in a loop
     # going rightward a moment (on a phone too)
     for seen in (got["wind"], got["phoneWind"]):
@@ -1034,3 +1044,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     still = got["still"]
     assert still["effects"] == ["uv", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still
     assert still["ink"] > 0 and sorted(still["framed"]) == ["Temperature", "UV index"] and still["link"] == "stop animations", still
+    # ... and humidity's still frame as it would be some seconds in: beads swelling at the top, some running down, their tracks wet
+    beading = still["humidity"]
+    assert beading["runners"] >= 2 and beading["swelling"] >= 1 and beading["wet"] > 30 and beading["stray"] == 0, beading
+    assert not beading["running"] and beading["frames"] == 0, beading

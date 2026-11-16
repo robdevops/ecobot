@@ -951,15 +951,22 @@ const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
 // wandered either side of where it began, and how many wandered 2 px or more; their mean offset from where they began (px, negative
 // leftward); the lowest any sprite reached (art px, its bottom row + 1) of the window's height; where those that ended were last seen
 // (lowest and highest, of the height); how often a bead that had moved had its track behind it; the most track pixels wet at once,
-// how many had dried by the end, and of a pixel of each bead's track (as it passed 20 px down), how many were drier by the end; and px
-// run and s taken on an earlier track and off one
+// how many had dried by the end, and of a pixel of each bead's track (as it passed 20 px down), how many were drier by the end; px
+// run and s taken on an earlier track and off one; how many pixels showed on the tracks' canvas where the glass was dry, at the end;
+// how many beads were cut short (gone more than 10 px above where they'd end: a frame's run at most is 8.4) and how many swelling
+// at the top vanished (gone at a radius of 1 or more: one dropped flattens back into the edge first); the beads (the top's and the
+// running ones) at the start and at the end
 const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
-  const last = new Map(), ended = [], first = Sky.state().frames;
-  let n = 0, up = 0, down = 0, wander = 0, offset = 0, samples = 0, lowest = 0, moved = 0, behind = 0, wet = 0;
+  const last = new Map(), lastSites = new Map(), ended = [], first = Sky.state().frames, count = Sky.state().particles.humidity;
+  let n = 0, up = 0, down = 0, wander = 0, offset = 0, samples = 0, lowest = 0, moved = 0, behind = 0, wet = 0, cut = 0, popped = 0;
   const wandered = new Set(), trails = new Map();
   const step = () => {
     const h = Sky.state().humidity, now = new Map(h.runners.map((d) => [d.id, d]));
-    for (const [id, d] of last) if (!now.has(id)) ended.push(d.y / h.height);
+    for (const [id, d] of last) if (!now.has(id)) { ended.push(d.y / h.height); if (d.end - d.y > 10) cut++; }
+    const sites = new Map(h.sites.map((s) => [s.id, s]));
+    for (const [id, s] of lastSites) if (!sites.has(id) && s.r >= 1) popped++;
+    lastSites.clear();
+    for (const [id, s] of sites) lastSites.set(id, s);
     for (const d of h.runners) {
       const before = last.get(d.id);
       if (!before) n++;
@@ -979,7 +986,7 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
     resolve({ runners: n, up, down, wander, meander: h.meander, wandered: wandered.size, offset: offset / Math.max(samples, 1), lowest,
               ended: ended.length ? [Math.min(...ended), Math.max(...ended)] : null, behind: behind / Math.max(moved, 1), wet,
               dried: h.dried, trails: trails.size, drier: [...trails.values()].filter(([x, y, w]) => h.wetAt(x, y) < w).length,
-              on: h.on, off: h.off });
+              on: h.on, off: h.off, stray: h.stray(), cut, popped, count: [count, Sky.state().particles.humidity] });
   };
   requestAnimationFrame(step);
 }), frames);
@@ -1224,7 +1231,21 @@ const WEATHER = {
     // humidity's beads running down the glass over 36 s of the page's time, alone and with the wind, beside the rest (small: cheap)
     const beading = Promise.all(["humidity", "humidity,wind"].map(async (name) => {
       const p = await weatherPage(browser, url, { query: `?fx=${name}`, pace: 10, context: { viewport: { width: 640, height: 480 } } });
-      const seen = { ...await humiditySeen(p.page, 360), errors: p.errors };
+      const seen = await humiditySeen(p.page, 360);
+      if (name === "humidity") {   // (then every other effect on too, its share of the budget shrinking: watched 4 s more)
+        await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1, smog: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5 } })));
+        seen.squeezed = await humiditySeen(p.page, 40);
+        // (then all off, faded out all the way, and humidity on again: the glass fresh, nothing left from before)
+        await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: {} })));
+        await p.page.waitForFunction(() => !Sky.state().running);
+        seen.again = await p.page.evaluate(() => {
+          const before = Sky.state().humidity.wet;
+          document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { humidity: 1 } }));
+          const h = Sky.state().humidity;
+          return { before, wet: h.wet, runners: h.runners.length, sites: h.sites.filter((s) => s.r > 0).length, stray: h.stray() };
+        });
+      }
+      seen.errors = p.errors;
       await p.context.close();
       return seen;
     }));
@@ -1299,7 +1320,14 @@ const WEATHER = {
     await still.reads({ "UV index": 11, Temperature: -4 });
     await still.page.waitForTimeout(500);
     out.still = { ...await weatherSeen(still.page), frames: await framesIn(still.page, 800), ink: await canvasInk(still.page),
-                  stateFrames: await still.page.evaluate(() => Sky.state().frames), errors: still.errors };
+                  stateFrames: await still.page.evaluate(() => Sky.state().frames) };
+    out.still.humidity = await still.page.evaluate(() => {   // (humidity on too: its still frame some seconds in)
+      document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { humidity: 1 } }));
+      const h = Sky.state().humidity;
+      return { runners: h.runners.length, swelling: h.sites.filter((s) => s.r > 0).length, wet: h.wet, stray: h.stray(),
+               running: Sky.state().running, frames: Sky.state().frames };
+    });
+    out.still.errors = still.errors;
     await still.context.close();
     await Promise.all([params, alone, phoned]);
     out.uv = await swaying;

@@ -147,8 +147,9 @@
 //   width: the art's, vx: their mean speed across}), humidity (its beads running down the glass: {height: the art's, meander: how
 //   far either side of where it began one may wander, wet: the track pixels wet now, dried: how many have dried, on and off: [px
 //   run, s taken] on an earlier track and off one, runners: [{id, x, x0: where it began, y, bottom: its sprite's lowest row + 1,
-//   end, on: following a track, behind: its track there behind it, trail: [x, y] a pixel of it, wet}], wetAt(x, y): a pixel's
-//   wetness, 0-1})}, for the tests.
+//   end, on: following a track, behind: its track there behind it, trail: [x, y] a pixel of it, wet}], sites: the beads at the top,
+//   [{id, r: its radius, 0 resting}], wetAt(x, y): a pixel's wetness, 0-1, stray(): pixels showing on the tracks' canvas where
+//   the glass is dry})}, for the tests.
 const Sky = (() => {
   const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
   const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -725,7 +726,10 @@ const Sky = (() => {
   // catching an earlier bead's still-wet track now and then and following it, faster and pausing less there. It leaves water in a
   // faint clear track behind it, so shrinks, and fades out somewhere in the window's lower half. The tracks: each wet pixel's
   // wetness (wet, a grid of the window's art px) drying over DRY s, the pixels dropping out as they dry; drawn to their own
-  // little canvas, rewritten a few times a second. The wind doesn't move them (water on the glass).
+  // little canvas, rewritten a few times a second; a pixel dried out cleared from it. The wind doesn't move them (water on the glass).
+// The shared budget shrinking (another effect on): no bead cut short, the running ones finishing their runs (no new one till there's
+// room), the beads at the top kept where they are (resting ones dropped, swelling ones flattening back into the edge). Faded out
+// all the way, then on again: the glass fresh. Reduced motion: the still frame as it would be some seconds in, beads and tracks.
   const WATER = ["#1A2E41", "#2C5573", "#5793BC", "#A6D7F2", "#EFFAFF"].map(rgb);
   const humidity = effect((e) => {
     const SIZES = [0.6, 1, 1.4, 1.9, 2.4, 2.9, 3.4];   // a bead's radius (its half-width), swelling
@@ -741,9 +745,33 @@ const Sky = (() => {
                    ["..222..", ".24422.", "2242222", "2222222", "2222221", "3222221", "3332211", ".31111."]];
     const beads = BEADS.map((rows) => mapped(rows, {1: WATER[1], 2: WATER[2], 3: WATER[3], 4: WATER[4]}));
     const sizeOf = (r) => { const i = SIZES.findIndex((size) => size >= r - 0.01); return i < 0 ? 0 : i; };
-    let film = null, sites = [], runners = [], wet = null, wetList = [], layer = null, img = null, since = 0, made = 0;
+    let film = null, sites = [], runners = [], wet = null, wetList = [], layer = null, img = null, since = 0, made = 0, seeded = false;
     const seen = {dried: 0, on: [0, 0], off: [0, 0]};   // (for the tests: pixels dried; px run and s taken, on a track and off one)
-    const site = (x) => ({home: x, x, state: "rest", wait: between(0, 2), r: 0, grow: between(0.5, 0.9), full: between(2.2, 3.4)});
+    const site = (x) => ({id: ++made, home: x, x, state: "rest", wait: between(0, 2), r: 0, grow: between(0.5, 0.9), full: between(2.2, 3.4)});
+    function places(n) {   // the beads along the top: n of them, those there kept where they are
+      for (const s of sites) if (s.retire && sites.length - sites.filter((o) => o.retire).length < n) s.retire = false;
+      let live = sites.filter((s) => !s.retire).length;
+      while (live > n) {   // (too many: a resting one dropped, else a swelling one left to flatten back into the edge)
+        const resting = sites.findIndex((s) => !s.retire && s.state === "rest");
+        if (resting >= 0) sites.splice(resting, 1);
+        else sites.find((s) => !s.retire).retire = true;
+        live--;
+      }
+      while (live < n) {   // (too few: one in the widest gap between those there)
+        const homes = sites.map((s) => s.home).sort((a, b) => a - b), edges = [0, ...homes, W];
+        let at = W / 2, gap = -1;
+        for (let i = 1; i < edges.length; i++) {
+          const wide = (edges[i] - edges[i - 1]) * (i === 1 || i === edges.length - 1 ? 2 : 1);   // (the ends: half a gap to the edge)
+          if (wide > gap) { gap = wide; at = i === 1 ? edges[1] / 2 : i === edges.length - 1 ? (edges[i - 1] + W) / 2 : (edges[i - 1] + edges[i]) / 2; }
+        }
+        sites.push(site(Math.round(clamp(at + between(-0.12, 0.12) * Math.min(gap, W), 2, W - 3))));
+        live++;
+      }
+    }
+    function clear() {   // the glass fresh: nothing beading, running or wet
+      sites = []; runners = []; wetList = []; since = 0; seeded = false;
+      if (wet) { wet.fill(0); img.data.fill(0); layer.getContext("2d").clearRect(0, 0, W, H); }
+    }
     const pace = (d) => {   // a run's next stretch: how fast, how far; then perhaps a pause
       d.speed = random() < 0.25 ? between(26, 42) : between(8, 18);
       d.run = between(3, 16);
@@ -759,7 +787,7 @@ const Sky = (() => {
     // dries, each at its own (fixed, random) threshold; fainter as it goes; a few catch a glint
     const paint = (i, v) => {
       const x = i % W, y = (i / W) | 0, k = i * 4, d = img.data, glint = hash(x, y, 7) < 0.08;
-      if (hash(x, y, 3) < 0.12 + 0.75 * (1 - v)) { d[k + 3] = 0; return; }
+      if (v <= 0 || hash(x, y, 3) < 0.12 + 0.75 * (1 - v)) { d[k + 3] = 0; return; }   // (dried out: none left at all)
       const c = WATER[glint ? 4 : 3];
       d[k] = c[0]; d[k + 1] = c[1]; d[k + 2] = c[2]; d[k + 3] = Math.round(glint ? 90 + 140 * v : (35 + 75 * v) * (0.7 + 0.6 * hash(x, y, 5)));
     };
@@ -775,7 +803,7 @@ const Sky = (() => {
         if (img.data[k + 3]) { g.fillStyle = `rgba(${img.data[k]},${img.data[k + 1]},${img.data[k + 2]},${img.data[k + 3] / 255})`; g.fillRect(x, y, 1, 1); }
       }
     };
-    function dry(dt) {   // every wet pixel a little drier, the tracks' canvas rewritten
+    function dry(dt) {   // every wet pixel a little drier, the tracks' canvas rewritten (those dried out this time, cleared)
       let x0 = W, y0 = H, x1 = -1, y1 = -1;
       const kept = [];
       for (const i of wetList) {
@@ -788,6 +816,7 @@ const Sky = (() => {
       }
       wetList = kept;
       if (x1 >= 0) layer.getContext("2d").putImageData(img, 0, 0, x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+      if (!wetList.length) layer.getContext("2d").clearRect(0, 0, W, H);
     }
     function run(d, dt) {
       let time = dt;
@@ -835,22 +864,28 @@ const Sky = (() => {
       strength: () => 0.85,
       need: () => W / 14,
       count: () => sites.length + runners.length,
+      want(v) { if (v > 0 && e.amount <= 0) clear(); e.level = v; },   // (on again after fading out all the way: the glass fresh)
       resize() {
         film = painted(W, 3, (x, y) => {   // the wet edge
           const s = shadeOf([0.75, 0.45, 0.2][y] + 0.15 * Math.sin(x * 0.21), x, y, 3);
           return s < 0 ? null : WATER[s + (y === 0 ? 1 : 0)];
         });
-        sites = []; runners = []; wetList = []; since = 0;
         wet = new Float32Array(W * H);
         layer = canvasOf(W, H);
         img = layer.getContext("2d").createImageData(W, H);
+        clear();
       },
       step(dt, t, share) {
+        if (STILL && !seeded) {   // (reduced motion: the glass as it would be 20 s in, for its one still frame)
+          seeded = true;
+          for (let i = 0; i < 200; i++) this.step(0.1, t, share);
+        }
         const all = Math.max(2, Math.round(this.need() * share)), n = Math.round(all * 0.4), most = all - n;   // (beads at the top; running)
-        if (sites.length !== n) sites = Array.from({length: n}, (_, i) => site(Math.round((i + between(0.25, 0.75)) * W / n)));
-        runners.splice(most);
+        places(n);
         for (const s of sites) {
-          if (s.state === "rest") {
+          if (s.retire) {   // (no room for it now: flattening back into the wet edge)
+            s.r -= 1.5 * dt;
+          } else if (s.state === "rest") {
             if ((s.wait -= dt) <= 0) { s.state = "swell"; s.r = SIZES[0]; s.x = s.home + Math.round(between(-2, 2)); }
           } else if (s.state === "swell") {
             s.r = Math.min(s.full, s.r + s.grow * dt);
@@ -860,12 +895,21 @@ const Sky = (() => {
             }
           }
         }
-        for (const d of runners) run(d, dt);
+        sites = sites.filter((s) => !s.retire || (s.state === "swell" && s.r >= SIZES[0]));
+        for (const d of runners) run(d, dt);   // (more than `most` now, the budget shrunk: each still runs its course)
         runners = runners.filter((d) => d.y < d.end);
         if ((since += dt) >= REDRAW) { dry(since); since = 0; }
       },
       probe: () => ({height: H, meander: MEANDER, wet: wetList.length, dried: seen.dried, on: seen.on.slice(), off: seen.off.slice(),
                      wetAt: (x, y) => wetAt(x, y),
+                     sites: sites.map((s) => ({id: s.id, r: s.state === "rest" ? 0 : s.r})),
+                     stray: () => {   // (pixels showing on the tracks' canvas where the glass is dry)
+                       if (!layer) return 0;
+                       const d = layer.getContext("2d").getImageData(0, 0, W, H).data;
+                       let n = 0;
+                       for (let i = 0; i < W * H; i++) if (d[i * 4 + 3] && !(wet[i] > 0)) n++;
+                       return n;
+                     },
                      runners: runners.map((d) => {
                        const h = beads[sizeOf(d.r)].height, cx = Math.round(d.x), top = Math.floor(d.y);
                        const trail = [-1, 0, 1].map((dx) => [cx + dx, top - 2]).find(([x, y]) => wetAt(x, y) > 0);
