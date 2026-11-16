@@ -1291,9 +1291,16 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     # ... every other effect then on too, humidity's share of the budget shrinking: fewer beads, none vanishing
     squeezed = got["humidity"]["alone"]["squeezed"]
     assert squeezed["count"][1] < squeezed["count"][0] and squeezed["popped"] == 0 and squeezed["stray"] == 0, squeezed
-    # ... then all off, faded out all the way (some trail still there as it went), and humidity on again: the glass fresh
+    # ... then all off (trails there as it went), faded out all the way: every trail and bead forgotten, its canvas clear; and
+    # humidity on again: the glass fresh
     again = got["humidity"]["alone"]["again"]
-    assert again["before"] > 0 and again == {"before": again["before"], "trails": 0, "beads": 0, "stray": 0}, again
+    assert again["before"] > 0 and again == {"before": again["before"], "trails": 0, "beads": 0, "stray": 0, "gone": again["gone"], "marks": again["marks"]}, again
+    clean_glass(again["gone"])
+    clean_glass(again["marks"])
+    # ... then its beads leaving trails, and "stop animation", "start animation", humidity on again: the glass fresh too
+    marked = got["humidity"]["alone"]["marked"]
+    assert marked["trails"] > 30 and marked["ink"] > 0 and marked["cover"] > 0, marked
+    started_afresh(got["humidity"]["alone"]["restarted"], "humidity")
     # BEAD_RULES, the physics every bead runs by: its speed on each glass, dry slowest, a trail medium (twice dry's), fog fastest
     # (5/3 of a trail's), for the same size; rising gradually with its size (tiny r 0.6 creeping extremely slowly, under 0.01 px/s on
     # fog; r 1 a little quicker; then faster and faster, no fastest); after 20 px in 5 s: on fog bigger (however big already: no
@@ -1347,6 +1354,20 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     # (each run off or shrunk to nothing, or merged into one that was: none dried away otherwise)
     assert gone["ranOff"] + gone["shrunk"] > eased["ranOff"] + eased["shrunk"] and eased["beads"] > 0, (eased, gone)
     assert gone["faded"] == eased["faded"], (eased, gone)
+    # ... their streaks, the rain still on, drying on their own time: there still 6 s after the last bead had gone
+    easing = sticking["easing"]
+    assert easing["at"]["beads"] == 0 and easing["at"]["trails"] > 0, easing
+    assert easing["after"]["trails"] > 0 and easing["after"]["ink"] > 0 and easing["after"]["amount"] == 1, easing
+    # heavy again, streaks on the glass; off, faded out all the way: every streak and stain forgotten, its canvas clear; heavy
+    # again: clean glass, nothing from before (no trail, no stain, no bead, no drop); and the same with the animations stopped
+    # and started between
+    for streaked in (sticking["streaked"], sticking["streakedAgain"]):
+        assert streaked["trails"] >= 30 and streaked["ink"] > 0, streaked
+    cleared = sticking["cleared"]
+    clean_glass(cleared["gone"])
+    clean_glass(cleared["again"])
+    assert cleared["stray"] == 0 and cleared["drops"] == 0, cleared
+    started_afresh(sticking["restarted"], "rain")
     # the wind blows right to left: its leaves leftward overall, as drawn on the canvas too (frame to frame); some caught in a loop
     # going rightward a moment (on a phone too)
     for seen in (got["wind"], got["phoneWind"]):
@@ -1395,6 +1416,12 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert melting["extent"] < cold["extent"] and melting["crystals"] < 0.9 * cold["crystals"], (melting, cold)
     assert melting["rim"] >= 0.97 * cold["rim"] and melting["fresh"] == 0, (melting, cold)
     assert frost["gone"]["extent"] == 0 and frost["gone"]["frosted"] == 0 and not frost["gone"]["running"], frost["gone"]
+    # ... and on again, nothing from before (its canvas clear, no sparkle); grown half a minute, then the animations stopped and
+    # started again, and on: the same
+    assert frost["again"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["again"]
+    assert frost["grown"]["extent"] > 0 and frost["grown"]["ink"] > 0, frost["grown"]
+    started_afresh(frost["restarted"], "ice")
+    assert frost["restarted"]["frost"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["restarted"]
     # reduced motion: no loop, one still, faint frame (the ice as it would be), the frames and the link as ever
     still = got["still"]
     assert still["effects"] == ["uv", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still
@@ -1409,6 +1436,20 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert flood["depth"] == flood["full"] > 0 and flood["frog"] is None and not flood["running"] and flood["frames"] == 0, flood
     # ... and a gust (the page's, the test link's, asked for by name): nothing blown across, no loop
     assert still["gust"] == {"fling": None, "sent": 0, "running": False, "frames": 0}, still["gust"]
+
+
+def clean_glass(marks):
+    """Nothing on the glass (Sky.state().humidity.marks()): no trail, no stain on its canvas, no bead, no fog"""
+    assert {k: marks[k] for k in ("trails", "listed", "ink", "beads", "cover")} == {"trails": 0, "listed": 0, "ink": 0, "beads": 0, "cover": 0}, marks
+
+
+def started_afresh(seen, effect):
+    """"stop animation", `effect` on, "start animation" (restarted() in the browser script): the loop stopped between,
+    and nothing from before: the glass clean, no drop, no stray pixel"""
+    assert seen["link"] == "stop animation" and seen["stopped"]["link"] == "start animation" and not seen["stopped"]["running"], seen
+    clean_glass(seen["stopped"]["marks"])
+    clean_glass(seen["marks"])
+    assert seen["stray"] == 0 and seen["drops"] == 0 and effect in seen["effects"], seen
 
 
 @needs_browser

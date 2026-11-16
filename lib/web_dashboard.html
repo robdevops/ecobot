@@ -163,7 +163,8 @@
 //   trails' time k times as fast (test-only), clock(): the trails', wetAt(x, y): how fresh a trail is there (1 just left, 0 none),
 //   lifeAt(x, y): its life, glassAt(x, y): "dry", "trail" or "fog", fogAt(x, y): [its fog as shown, its fog not wiped] (0-1),
 //   shownAt(x, y): what the fog's canvas shows there [r, g, b, alpha], trailOf(id): a bead's trail as it looks now, its latest rows
-//   ({y, w, left, wet, alpha, life, fog}: see the probe), fog(): {cover: how far formed, 0-1, dense, thickness,
+//   ({y, w, left, wet, alpha, life, fog}: see the probe), marks(): {trails, listed: trail pixels, ink: its canvas's pixels showing
+//   anything, beads, cover, amount}, fog(): {cover: how far formed, 0-1, dense, thickness,
 //   middle, edge: its mean shown, over the window, its middle and its edges, opacity: its mean alpha as drawn (0-1), most: its
 //   thickest shade's alpha, haze: its mean not wiped inside (the window less its outer sixth), spread: its standard deviation there
 //   over that, gaps: the pixels there under half that}, colours(): the beads' sprites' colours [r, g, b, alpha], stray(): pixels on
@@ -180,7 +181,7 @@
 //   any frost, under its crystals, fresh: the growth front's fresh tip pixels, deepest: the crystal furthest from its nearest edge,
 //   of the window's shorter side, rim: the share of the window's outer 3 px frosted, fingers: in 32 stretches of the edges (between
 //   the corners) how far in the furthest crystal reaches, of the shorter side, sparkles: how many now, pixels: the crystals there
-//   could be} (null till first made); Sky.frost(true): only {extent, target, sparkles}, cheap.
+//   could be, ink: its canvas's pixels showing anything} (null till first made); Sky.frost(true): only {extent, target, sparkles}, cheap.
 const Sky = (() => {
   const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
   const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -252,9 +253,11 @@ const Sky = (() => {
 
   // An effect: its level (0 off), how present it is (0-1: fading in and out), its strength (how bright at full) and the particles it
   // would like (at full), resized to the window, stepped and drawn each frame. Each one below fills in its own. One that takes a
-  // share of the particles (need() above 0) says how many it has with count(), so the budget can be checked.
+  // share of the particles (need() above 0) says how many it has with count(), so the budget can be checked. Gone all the way (faded
+  // out, or the animations stopped), it forgets whatever it had (forget(): its particles, and any marks it left, its layer cleared),
+  // so nothing hidden as it ended shows again when it next comes on.
   function effect(own) {
-    const e = {level: 0, amount: 0, strength: () => 0.8, need: () => 0, count: () => 0, resize() {}, step() {}, draw() {},
+    const e = {level: 0, amount: 0, strength: () => 0.8, need: () => 0, count: () => 0, resize() {}, step() {}, draw() {}, forget() {},
                want(v) { e.level = v; },
                fade(dt) { e.amount = STILL ? (e.level > 0 ? 1 : 0) : clamp(e.amount + (e.level > 0 ? dt : -dt) / FADE_S, 0, 1); },
                alive: () => e.level > 0 || e.amount > 0};
@@ -318,6 +321,7 @@ const Sky = (() => {
       probe: () => ({xs: drops.filter((d) => d.y > H / 2 && d.y < H && d.x >= 0 && d.x < W).map((d) => Math.round(d.x)), width: W,
                      under,   // (drawn last with its head below a flood's surface)
                      vx: drops.reduce((sum, d) => sum + d.vx, 0) / Math.max(drops.length, 1)}),
+      forget() { drops = []; splashes = []; under = 0; },
       resize() {
         drops = [];
         mist = painted(W, Math.ceil(H * 0.12), (x, y) => {   // heavy rain's spray, low down
@@ -727,6 +731,7 @@ const Sky = (() => {
         return false;
       },
       resize() { flying = []; eddies = []; wisps = []; splashes = []; },
+      forget() { flying = []; eddies = []; wisps = []; splashes = []; gust = 0; },   // (its leaves sunk in a flood too)
       step(dt, t, share) {
         calm = clamp(W / 360, CALM, 1);
         const n = Math.round(this.need() * share);
@@ -867,8 +872,9 @@ const Sky = (() => {
   // shades, dithered; a trail's streak), repainted whole only as it forms, clears or thickens (a few times a second), otherwise only
   // the pixels a bead wipes, and the trails a slice a frame (all of them every REDRAW s). The wind moves none of it (water on the
   // glass). The budget: a particle a bead; the shared budget shrinking (another effect on): beads yet to show dropped, then the
-  // smallest dried away. Gone all the way (no fog, no bead, heavy rain over: the trails fading with it), then on again: the glass
-  // fresh. Reduced motion: the still frame as it would be some seconds in.
+  // smallest dried away. The rain easing but still on, its streaks dry on their own time; gone all the way (no fog, no bead, the
+  // rain over: the trails fading with it), or the animations stopped, every trail, stain and bead forgotten (its canvas cleared),
+  // so on again it starts on clean glass. Reduced motion: the still frame as it would be some seconds in.
   const WATER = ["#1A2E41", "#2C5573", "#5793BC", "#A6D7F2", "#EFFAFF"].map(rgb);
   const FOG = ["#323C43", "#4A555C", "#66717A", "#8995A0", "#AFBAC2"].map(rgb);   // the fog, thin to thick: pale grey, the page's
   const FOG_ALPHA = [56, 69, 81, 91, 101];                                            // ... cool dark palette (alpha 0-255)
@@ -1257,7 +1263,9 @@ const Sky = (() => {
       if (listed) { listed.fill(0); key.fill(0); img.data.fill(0); drawn = [0, 0]; dirty = null; layer.getContext("2d").clearRect(0, 0, W, H); }
     }
     const heavy = () => rain.level >= HEAVY_RAIN;
-    const present = () => e.level > 0 || cover > 0 || all.length > 0 || heavy();
+    // (on while it's called for, its fog there, a bead on the glass, or heavy rain; and while the rain is still on, its streaks drying
+    // on their own time. The rain over, the streaks fade out with it, and are gone for good: see forget)
+    const present = () => e.level > 0 || cover > 0 || all.length > 0 || heavy() || (rain.level > 0 && trails.length > 0);
     // The fog's mean thickness (0-1, as shown): over the window, its middle (the central fifth each way) and its edges (the outer
     // tenth at the sides and the bottom); every other pixel each way. And how even it is, unwiped, inside (the window less its outer
     // sixth): its spread (the standard deviation over the mean) and its gaps (the pixels under half the mean)
@@ -1289,6 +1297,7 @@ const Sky = (() => {
       },
       fade(dt) { e.amount = present() ? 1 : STILL ? 0 : Math.max(0, e.amount - dt / FADE_S); },   // (the trails fading out last)
       alive: () => present() || e.amount > 0,
+      forget: clear,   // (faded out all the way: fog, beads, trails and stains gone, its layer cleared)
       resize() {
         till = new Float64Array(W * H);
         life = new Float32Array(W * H);
@@ -1408,6 +1417,13 @@ const Sky = (() => {
                          for (let i = 0; i < d.length; i += 4) if (d[i + 3]) found.add(`${d[i]},${d[i + 1]},${d[i + 2]},${d[i + 3]}`);
                        }
                        return [...found].sort().map((c) => c.split(",").map(Number));
+                     },
+                     // (what's on the glass: trail pixels listed, its canvas's pixels with anything on them, the beads, the fog)
+                     marks: () => {
+                       let ink = 0, wet = 0;
+                       if (layer) { const d = layer.getContext("2d").getImageData(0, 0, W, H).data; for (let i = 3; i < d.length; i += 4) if (d[i]) ink++; }
+                       if (listed) for (let i = 0; i < W * H; i++) wet += listed[i];
+                       return {trails: trails.length, listed: wet, ink, beads: all.length, cover, amount: e.amount};
                      },
                      stray: () => {   // (pixels left wiped, or wet, on the fog's canvas where no trail is any more)
                        if (!layer) return 0;
@@ -1565,6 +1581,7 @@ const Sky = (() => {
       },
       fade(dt) { e.amount = depth > 0 || e.level > 0 ? 1 : 0; },
       alive: () => e.level > 0 || depth > 0,
+      forget() { depth = 0; if (h) { h.fill(0); v.fill(0); far.fill(0); } frog = null; splashes = []; chop = 0; },
       resize() {
         full = Math.max(8, Math.round(H * SPAN));
         rows = full + TOP;
@@ -1834,6 +1851,10 @@ const Sky = (() => {
       want(v) { e.level = v; if (STILL) extent = reachFor(v); },
       fade() { e.amount = extent > 0 ? 1 : 0; },
       alive: () => e.level > 0 || extent > 0,
+      forget() {   // (melted away, or the animations stopped: no frost, no sparkle, its canvas clear)
+        extent = 0; glints = []; shownAt = -1;
+        if (img) { img.data.fill(0); layer.getContext("2d").clearRect(0, 0, W, H); }
+      },
       reach: () => extent,
       resize() { grow(); },
       step(dt) {
@@ -1879,7 +1900,10 @@ const Sky = (() => {
           const b = edge * 8 + Math.min(7, Math.floor((along - 0.15) / 0.7 * 8));
           most[b] = Math.max(most[b], inward);
         }
-        return {extent, target: reachFor(e.level), growing: grows, frosted: frosted / (W * H), crystals: crystal / (W * H), fresh,
+        const shown = layer.getContext("2d").getImageData(0, 0, W, H).data;   // (its canvas: the pixels with anything on them)
+        let ink = 0;
+        for (let i = 3; i < shown.length; i += 4) if (shown[i]) ink++;
+        return {extent, target: reachFor(e.level), growing: grows, frosted: frosted / (W * H), crystals: crystal / (W * H), fresh, ink,
                 deepest: deepest / m, rim: rimFrosted / rim, fingers: Array.from(most, (v) => v / m), sparkles: glints.length,
                 pixels: crystals.length};
       },
@@ -2099,6 +2123,7 @@ const Sky = (() => {
       want() {},                       // (no condition of its own: fling() sends one, and it's on while one is crossing)
       fade() { e.level = e.amount = flyers.length || bits.length ? 1 : 0; },
       clear() { flyers = []; bits = []; e.level = e.amount = 0; },
+      forget() { this.clear(); },
       fling(kind) {
         if (!KINDS.includes(kind)) {
           if (!bag.length) bag = KINDS.slice().sort(() => random() - 0.5);
@@ -2177,7 +2202,13 @@ const Sky = (() => {
   function tick(dt) {
     let need = 0;
     for (const k of ORDER) if (effects[k].alive() && !effects[k].sized) { effects[k].resize(); effects[k].sized = true; }
-    for (const k of ORDER) { effects[k].fade(dt); if (effects[k].amount > 0 || effects[k].level > 0) need += effects[k].need(); }
+    for (const k of ORDER) {
+      const fx = effects[k];
+      fx.fade(dt);
+      if (fx.alive()) fx.held = true;
+      else if (fx.held) { fx.held = false; fx.forget(); }   // (gone all the way: whatever it had, forgotten)
+      if (fx.amount > 0 || fx.level > 0) need += fx.need();
+    }
     const share = Math.min(1, W * H * BUDGET / Math.max(need, 1));
     for (const k of ORDER) if (effects[k].alive()) effects[k].step(dt, clock, share);
   }
@@ -2233,8 +2264,10 @@ const Sky = (() => {
   function set(want, on) {
     animate = on;
     if (!W) resize();
-    if (!on) effects.gust.clear();   // (anything blown across, gone)
     for (const k of ORDER) effects[k].want(want[k] || 0);
+    // (stopped: every effect gone at once, and all it had forgotten (anything blown across, the glass's streaks, the frost ...),
+    // so each starts afresh once the animations are on again)
+    if (!on) for (const k of ORDER) { const fx = effects[k]; fx.forget(); fx.amount = 0; fx.held = false; }
     start();
   }
 

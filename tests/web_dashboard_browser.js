@@ -1260,6 +1260,20 @@ const rainBeads = (page, light, heavy, after, scale, from = "light") => page.eva
   };
   requestAnimationFrame(step);
 }), [light, heavy, after, scale, from]);
+// "stop animation" (an effect on: the link shows; it ends the test links' effects), then `detail` on (stopped still: "start
+// animation" shows), then "start animation", all at once (no frame between): the loop and the glass (humidity's marks) as stopped,
+// and once started, the glass, the frost and the rain's drops then
+const restarted = (page, detail) => page.evaluate((detail) => {
+  const toggle = () => document.querySelector("#motion .animations").click(), seen = {};
+  seen.link = document.querySelector("#motion .animations").textContent;
+  toggle();
+  document.dispatchEvent(new CustomEvent("ecobot-fx", { detail }));
+  seen.stopped = { running: Sky.state().running, link: document.querySelector("#motion .animations").textContent, marks: Sky.state().humidity.marks() };
+  toggle();
+  const f = Sky.frost();
+  return { ...seen, marks: Sky.state().humidity.marks(), stray: Sky.state().humidity.stray(), drops: Sky.state().particles.rain,
+           frost: f && { extent: f.extent, ink: f.ink, sparkles: f.sparkles }, effects: Sky.state().effects };
+}, detail);
 const framesIn = async (page, ms) => {   // the frames the page asked for in this long
   const before = await page.evaluate(() => window.__frames);
   await page.waitForTimeout(ms);
@@ -1729,6 +1743,17 @@ const WEATHER = {
       seen.melting = await frost();
       await until(() => !Sky.state().running);
       seen.gone = await frost();
+      // (on again: nothing from before, its canvas clear, no sparkle; then grown half a minute, and "stop animation", "start
+      // animation" and on again: the same)
+      seen.again = await p.page.evaluate(() => {
+        document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { ice: 5 } }));
+        const f = Sky.frost();
+        return { extent: f.extent, ink: f.ink, sparkles: f.sparkles };
+      });
+      from = await p.page.evaluate(() => Sky.state().clock);
+      await until((t) => Sky.state().clock >= t, from + 30);
+      seen.grown = await frost();
+      seen.restarted = await restarted(p.page, { ice: 5 });
       return seen;
     };
     const swaying = (async () => {
@@ -1755,14 +1780,24 @@ const WEATHER = {
         await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1, smog: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5 } })));
         seen.squeezed = await humiditySeen(p.page, 40);
         // (then all off, faded out all the way, and humidity on again: the glass fresh, nothing left from before)
-        await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: {} })));
+        const before = await p.page.evaluate(() => {   // (the trails as it's turned off)
+          const trails = Sky.state().humidity.trails;
+          document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: {} }));
+          return trails;
+        });
         await p.page.waitForFunction(() => !Sky.state().running);
-        seen.again = await p.page.evaluate(() => {
-          const before = Sky.state().humidity.trails;
+        seen.again = await p.page.evaluate((before) => {
+          const gone = Sky.state().humidity.marks();   // (faded out all the way: forgotten)
           document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { humidity: 1 } }));
           const h = Sky.state().humidity;
-          return { before, trails: h.trails, beads: h.beads.length, stray: h.stray() };
-        });
+          return { before, trails: h.trails, beads: h.beads.length, stray: h.stray(), gone, marks: h.marks() };
+        }, before);
+        // (then its beads running and leaving trails (the weather's time 30 times as fast), and "stop animation", "start animation"
+        // and humidity on again: the glass fresh too)
+        await p.page.evaluate(() => Sky.timeScale(30));
+        await p.page.waitForFunction(() => Sky.state().humidity.trails > 30, null, { timeout: 20000 });
+        seen.marked = await p.page.evaluate(() => { Sky.timeScale(1); return Sky.state().humidity.marks(); });
+        seen.restarted = await restarted(p.page, { humidity: 1 });
         // (and the physics the beads run by: a bead's mean speed on each glass, by size; its size after running 20 px in 5 s there)
         seen.physics = await p.page.evaluate(() => {
           const { speed, after, gone } = Sky.state().humidity.physics, sizes = [0.6, 1, 1.4, 2, 2.8, 4, 6, 10];
@@ -1786,6 +1821,46 @@ const WEATHER = {
       let looks;
       ({ eased: seen.eased, after: seen.after, looks } = await rainBeads(p.page, 0, 0, 300, 6, "heavy"));
       seen.looks.push(...looks);   // (the trails' looks, those running on too)
+      // the rain easing, still on (light): its streaks drying on their own time, there still 6 s (of its weather's time) after
+      seen.easing = await p.page.evaluate(() => new Promise((resolve) => {
+        const at = Sky.state().humidity.marks(), from = Sky.state().clock;
+        Sky.timeScale(6);
+        const look = () => {
+          if (Sky.state().clock < from + 6) return requestAnimationFrame(look);
+          Sky.timeScale(1);
+          resolve({ at, after: Sky.state().humidity.marks() });
+        };
+        requestAnimationFrame(look);
+      }));
+      // heavy again (its weather's time 10 times as fast) till more streaks; off, faded out all the way (the loop over, its time 30
+      // times as fast); heavy
+      // again: the glass clean, nothing from before (its trails, its canvas, its beads; the rain's drops)
+      const heavyTill = (more) => p.page.evaluate((more) => new Promise((resolve) => {
+        const from = Sky.state().humidity.marks().trails;
+        document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1 } }));
+        Sky.timeScale(10);
+        let n = 0;
+        const look = () => {
+          const m = Sky.state().humidity.marks();
+          if (m.trails < from + more && n++ < 900) return requestAnimationFrame(look);
+          Sky.timeScale(1);
+          resolve(m);
+        };
+        requestAnimationFrame(look);
+      }), more);
+      seen.streaked = await heavyTill(30);
+      await p.page.evaluate(() => { document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: {} })); Sky.timeScale(30); });
+      await p.page.waitForFunction(() => !Sky.state().running, null, { timeout: 20000 });
+      seen.cleared = await p.page.evaluate(() => {
+        Sky.timeScale(1);
+        const gone = Sky.state().humidity.marks();
+        document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1 } }));
+        const s = Sky.state();
+        return { gone, again: s.humidity.marks(), stray: s.humidity.stray(), drops: s.particles.rain };
+      });
+      // ... and the same with "stop animation" and "start animation" between
+      seen.streakedAgain = await heavyTill(30);
+      seen.restarted = await restarted(p.page, { rain: 1 });
       seen.errors = p.errors;
       await p.context.close();
       return seen;
