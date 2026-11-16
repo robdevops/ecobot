@@ -25,7 +25,9 @@ async def test_a_new_reading_is_found_in_seconds_and_calls_the_rain_alert_each_t
         seen.append(time.time())
     eco.on_live.append(alert)
     task = asyncio.create_task(eco.watch_live())
-    await asyncio.sleep(1.1)                                                                  # the fake's readings are a second apart: two of them
+    deadline = time.monotonic() + 3                                                       # the fake's readings are a second apart: two of them
+    while len(seen) < 2 and time.monotonic() < deadline:                                 # (waited on, not slept for: under a busy machine's load
+        await asyncio.sleep(0.02)                                                         # the first poll can come late, past a fixed 1.1 s's reach)
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)                                    # (ended: no poll of its own still on its way)
     assert len(seen) >= 2 and eco._live and time.time() - eco._live[0] < 1               # a reading kept for "weather now" and the report
