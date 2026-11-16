@@ -162,7 +162,8 @@
 //   over), bands, physics: {speed(r, glass): px/s, after(r, glass, px, s, fog): its radius after (0: gone), gone}, hasten(k): the
 //   trails' time k times as fast (test-only), clock(): the trails', wetAt(x, y): how fresh a trail is there (1 just left, 0 none),
 //   lifeAt(x, y): its life, glassAt(x, y): "dry", "trail" or "fog", fogAt(x, y): [its fog as shown, its fog not wiped] (0-1),
-//   shownAt(x, y): what the fog's canvas shows there [r, g, b, alpha], fog(): {cover: how far formed, 0-1, dense, thickness,
+//   shownAt(x, y): what the fog's canvas shows there [r, g, b, alpha], trailOf(id): a bead's trail as it looks now, its latest rows
+//   ({y, w, left, wet, alpha, life, fog}: see the probe), fog(): {cover: how far formed, 0-1, dense, thickness,
 //   middle, edge: its mean shown, over the window, its middle and its edges, opacity: its mean alpha as drawn (0-1), most: its
 //   thickest shade's alpha, haze: its mean not wiped inside (the window less its outer sixth), spread: its standard deviation there
 //   over that, gaps: the pixels there under half that}, colours(): the beads' sprites' colours [r, g, b, alpha], stray(): pixels on
@@ -846,8 +847,12 @@ const Sky = (() => {
   //   Its size (its water: continuous, no largest): on fog it gathers the fog it passes (GATHER a px, CONDENSE a s as it sits; the
   //   fog wiped) and grows; on a trail it keeps its size; on dry glass, only there, it shrinks, leaving its water behind (LEAVE a px,
   //   EVAPORATE a s). Shrunk to nothing (GONE): gone. Two that touch merge, their water adding up (the fastest way to grow).
-  //   Its trail: as wide as it is, wherever it runs: through fog a clear streak wiped, on clear glass a faint wet one with a glint
-  //   down its lit side; each fogging over again (or drying) over its own LIFE (3 to 10 minutes; crisp for its first 1 - CRISP).
+  //   Its trail: through fog a streak wiped about as wide as it is (its width as it grew or shrank), its edges soft and ragged, a
+  //   little fog left in it in streaks down it, a few tiny droplets; on clear glass a thin, dirty wet streak (a px or two: a third
+  //   of its width or less), uneven along it (thicker, thinner, broken here and there), a greyish film with grime along an edge here
+  //   and there, a glint now and then, a few tiny droplets; where it paused, a slightly wider blob, never a gap. Each fogging over
+  //   again (from its ragged edges inward) or drying (its thin parts first) over its own LIFE (3 to 10 minutes; crisp for its first
+  //   1 - CRISP). (The beads feel it as before: the glass under them evenly wiped, see feltOf.)
   //   Reaching the window's bottom edge, it runs off it: gone.
   // The humidity falling below 90 % (the effect off): the fog clearing as from a demister, the middle first and the edges last over
   // CLEAR s, each condensed bead still slow (under QUICK px/s on fog) drying away (shrinking and fading) as the clearing reaches it,
@@ -935,8 +940,11 @@ const Sky = (() => {
     // 0-1); its canvas and image, as painted last (at drawn: [cover, dense]; key: what each pixel shows there, see look())
     let base = null, ring = null, cover = 0, dense = 0, drawn = [0, 0], layer = null, img = null, key = null;
     // The trails: each pixel's, on the trails' own clock (`clock`, its pace `hasten` for the tests): when it's gone (till) and how long
-    // it lasts all told (life), so how fresh it is now (wetOf, 1 just left, 0 gone); its lit side (shine); on the list or not
-    let till = null, life = null, listed = null, shine = null, trails = [], sweep = 0, clock = 0, hasten = 1;
+    // it lasts all told (life), so how fresh it is now (wetOf, 1 just left, 0 gone); on the list or not. How it looks (as left: see
+    // wipe()): on clear glass, its part in the thin streak (part: none, film, grime, glint, a droplet or a droplet's spark) and how
+    // thick the streak is there (thick, 0-255: the thin parts dry first); through fog, how near its ragged edge (rim, 0-255: the fog
+    // coming back there first) and the fog left unwiped there (smear, 0-255)
+    let till = null, life = null, listed = null, ghost = null, part = null, thick = null, rim = null, smear = null, trails = [], sweep = 0, clock = 0, hasten = 1;
     let dirty = null, painting = 0, level = 0, fresh = 0, quiet = false;
     // (for the tests, as Sky.state() gives them)
     const seen = {merges: 0, merged: [], absorbed: [], left: [], ranOff: 0, shrunk: 0, faded: 0, largest: 0, born: [], first: null,
@@ -948,12 +956,19 @@ const Sky = (() => {
     const thickness = (v) => 0.5 + 0.5 * v;   // the fog at a level (90 %: 0, 100 %: 1), at most
     const front = (i, c) => clamp((c - (1 - ring[i]) * 0.65) / 0.35, 0, 1);   // how far the fog has formed at a pixel (c: cover)
     const wetOf = (i) => (listed[i] ? Math.max(0, (till[i] - clock) / life[i]) : 0);   // how fresh a trail is there
+    // How far the fog has come back over a trail's pixel (0 wiped clear, 1 as if never wiped): clear while it's fresh (CRISP), then
+    // back gradually; at its ragged edges sooner (from the start right at them), so it closes in from the edges unevenly
+    // (rim 255: a px of the bead's own width its ragged edge left in, the fog barely wiped there)
+    const refog = (i) => Math.max(rim[i] === 255 ? 0.6 : 0, 1 - Math.min(1, wetOf(i) / Math.min(1.1, CRISP * 0.95 + 0.32 * rim[i] / 255)));
     // A pixel's fog (0-1), as it is (cover c, dense d; wiped: as a trail has left it) or, not wiped, as it would be
-    const fogOf = (i, c, d, wiped) => d * base[i] * front(i, c) * (wiped && listed[i] ? 1 - Math.min(1, wetOf(i) / CRISP) : 1);
+    const fogOf = (i, c, d, wiped) => d * base[i] * front(i, c) * (wiped && listed[i] ? refog(i) : 1);
+    // ... and as the beads feel it (the glass under them): the trail evenly wiped, the fog back evenly after its crisp start
+    // (its ragged edge's px out past the bead's width, ghost, not felt)
+    const feltOf = (i) => dense * base[i] * front(i, cover) * (listed[i] && !ghost[i] ? 1 - Math.min(1, wetOf(i) / CRISP) : 1);
     const at = (x, y) => Math.round(clamp(y, 0, H - 1)) * W + Math.round(clamp(x, 0, W - 1));
     const glassAt = (x, y) => {   // (a trail while it's less than half fogged over again)
-      const i = at(x, y), f = fogOf(i, cover, dense, true);
-      if (listed[i] && wetOf(i) > 0) { const full = fogOf(i, cover, dense, false); if (full < FOG_AT || f < 0.5 * full) return TRAIL; }
+      const i = at(x, y), f = feltOf(i);
+      if (listed[i] && !ghost[i] && wetOf(i) > 0) { const full = fogOf(i, cover, dense, false); if (full < FOG_AT || f < 0.5 * full) return TRAIL; }
       return f >= FOG_AT ? FOGGY : DRY;
     };
     function grain() {   // the fog's pattern for the window's size: a fairly even haze, gently varied, a little denser at the edges
@@ -971,18 +986,28 @@ const Sky = (() => {
       }
     }
     const LIFT = Float32Array.from({length: 257}, (_, j) => (j / 256) ** 0.8);   // (a thin haze still seen: t ** 0.8, looked up)
-    const WET = 8;   // (a wet streak's shades, faint to fresh)
+    // A trail's looks, each in WET shades (faint to fresh), [colour, alpha at the faintest, at the freshest]: on clear glass a thin wet
+    // film, greyish; grime, darker, along its edge here and there; a glint now and then; a tiny droplet left on it (or in a trail
+    // through the fog), now and then its spark
+    const WET = 8, FILM = 1, GRIME = 2, GLINT = 3, DROP = 4, SPARK = 5;
+    const LOOKS = [[rgb("#8E9DA8"), 8, 34], [rgb("#4C5861"), 22, 66], [WATER[4], 16, 78], [WATER[3], 34, 104], [WATER[4], 60, 150]];
     const SHOWS = [[0, 0, 0, 0], ...FOG.map((c, s) => [...c, FOG_ALPHA[s]]),
-                   ...Array.from({length: WET}, (_, k) => [...WATER[3], Math.round(3 + 11 * (k + 1) / WET)]),     // (its body)
-                   ...Array.from({length: WET}, (_, k) => [...WATER[4], Math.round(14 + 66 * (k + 1) / WET)])];   // (its glint)
-    // What a pixel shows (an index of SHOWS): nothing, a fog shade, or a trail's wet streak on clear glass (its glint down its lit side)
+                   ...LOOKS.flatMap(([c, a, b]) => Array.from({length: WET}, (_, k) => [...c, Math.round(a + (b - a) * k / (WET - 1))]))];
+    const showing = (p, k) => 1 + FOG.length + (p - 1) * WET + k - 1;   // (part p's shade k, 1 to WET)
+    // What a pixel shows (an index of SHOWS): nothing, a fog shade, or a trail's look. Through the fog: the fog shown as it is (wiped,
+    // coming back), a speck of it left here and there where the bead didn't wipe it clean (smear), a droplet left in it. On clear glass
+    // (no fog to wipe): its thin streak, each pixel there while the trail is fresher than the streak there is thin (the thin parts and
+    // its ends going first), fainter as it dries
     function look(i, x, y) {
       const t = base[i] > 0 ? fogOf(i, drawn[0], drawn[1], true) : 0;
+      const p = listed[i] ? part[i] : 0, wet = p ? wetOf(i) : 0, full = listed[i] && base[i] > 0 ? fogOf(i, drawn[0], drawn[1], false) : 0;
+      if (p >= DROP && wet > 0 && t <= 0.6 * full) return showing(p, clamp(Math.ceil(wet * WET), 1, WET));   // (till the fog's back)
       if (t > 0) { const s = shadeOf(LIFT[(t * 256) | 0], x, y, FOG.length); if (s >= 0) return 1 + s; }
       if (!listed[i]) return 0;
-      const bare = 1 - Math.min(1, (base[i] > 0 ? fogOf(i, drawn[0], drawn[1], false) : 0) / 0.1);   // (clear glass: no fog wiped)
-      const k = Math.min(WET, Math.ceil(wetOf(i) * bare * WET));
-      return k <= 0 ? 0 : 1 + FOG.length + (shine[i] ? WET : 0) + k - 1;
+      if (full >= FOG_AT) return smear[i] && hash(x, y, 77) * 255 < smear[i] ? 1 + (hash(x, y, 78) < 0.2 && full > 0.4 ? 1 : 0) : 0;
+      const q = wet * (1 - Math.min(1, full / 0.1)), s = thick[i] / 255;   // (clear glass: no fog wiped)
+      if (!p || q <= 0.85 * (1 - s)) return 0;
+      return showing(p, Math.min(WET, Math.max(1, Math.ceil(q * (0.45 + 0.55 * s) * 1.2 * WET))));
     }
     function put(i, x = i % W, y = (i / W) | 0) {   // a pixel of the fog's image, as it is now (as painted last: drawn)
       const k = look(i, x, y);
@@ -1002,21 +1027,55 @@ const Sky = (() => {
       for (let y = 0, i = 0; y < H; y++) for (let x = 0; x < W; x++, i++) put(i, x, y);
       flush();
     }
-    // A trail left at (x, y): fresh (v: 1, or a little less at its sides, gone sooner), lasting `span` s all told; lit (its glint).
-    // (The latest bead to pass, its trail there, whatever was before)
-    const lay = (x, y, v, span, lit) => {
+    // A trail left at (x, y): fresh (v: 1, or a little less at its sides, gone sooner), lasting `span` s all told; its looks (p: its
+    // part, k: thick, e: rim, m: smear, see above). (The latest bead to pass, its trail there, whatever was before)
+    const lay = (x, y, v, span, p, k, e, m, g = 0) => {   // (g: a ghost, its look only: never over a trail the beads feel)
       if (x < 0 || x >= W || y < 1 || y >= H) return;
       const i = y * W + x;
+      if (g && listed[i] && !ghost[i] && wetOf(i) > 0) return;
       if (!listed[i]) { listed[i] = 1; trails.push(i); }
-      till[i] = clock + v * span; life[i] = span; shine[i] = lit ? 1 : 0;
+      till[i] = clock + v * span; life[i] = span; ghost[i] = g; part[i] = p; thick[i] = k; rim[i] = e; smear[i] = m;
       put(i, x, y);
     };
-    // A bead's trail across one row: as wide as its sprite where it's drawn; its lit side (the left), glinting in dashes
+    // A bead's trail across one row, as it looks wherever it runs (the glass's own, clear or fogged, deciding which shows; see look()):
+    //   Through the fog: wiped as wide as its sprite where it's drawn, its edges ragged (each a px in or out, wandering down the
+    //   trail; a px wider or narrower at most), the fog coming back first right at them; specks of fog left unwiped in streaks down
+    //   it (columns of the bead's, faded in and out along it); now and then a tiny droplet left in it.
+    //   On clear glass: a thin streak (a third of its width or less: a px or two) down its middle, wandering a little within it; its
+    //   thickness rising and falling along it (thicker, thinner, now and then broken for a px or three: no regular pattern), so the
+    //   thin parts dry first; mostly a greyish film, grime here and there along its right edge, a glint now and then, a few tiny
+    //   droplets left on it. Where it paused: a little wider there (a blob, a droplet), never a gap.
     const wipe = (b, y) => {
-      const w = b.laidW = sprite(b.r).width, left = Math.round(b.x) - (w >> 1), mid = left + (w - 1) / 2;
-      for (let x = left; x < left + w; x++) {
-        lay(x, y, 1 - 0.1 * Math.abs(x - mid) / Math.max(1, w / 2), b.life, w >= 3 && x === left + 1 && ((y + 5 * b.id) % 11) < 3);
+      const w = b.laidW = sprite(b.r).width, left = Math.round(b.x) - (w >> 1), mid = left + (w - 1) / 2, id = b.id;
+      const jag = (s) => Math.round((noise(y / 2, id * 5 + s, 1 << 20, 61) - 0.5) * 3.2);   // (an edge: -1, 0 or 1 px, wandering)
+      let a = left + clamp(jag(0), -1, 1), c = left + w - 1 + clamp(jag(1), -1, 1);
+      if (c - a + 1 < Math.max(1, w - 1)) [a, c] = [left, left + w - 1];
+      else if (c - a + 1 > w + 1) c--;   // (a px wider than the bead at most)
+      const n = noise(y / 5.5, id * 3, 1 << 20, 62);
+      // (a break: 3 px at most, then 12 px at least unbroken)
+      const broken = noise(y / 3.1, id * 3, 1 << 20, 63) < 0.14 && (b.gap || 0) < 3 && !(b.solid > 0);
+      if (broken) b.gap = (b.gap || 0) + 1;
+      else { if (b.gap) b.solid = 12; b.gap = 0; b.solid = (b.solid || 0) - 1; }
+      const rest = b.rested || 0;
+      b.rested = 0;
+      const blob = rest > 0.35 ? 0.9 : 0;
+      const wide = broken && !blob ? 0 : clamp(Math.min(1.35, Math.max(0.8, w * 0.2)) * (0.25 + 1.4 * n) * (0.75 + 0.5 * hash(y, id, 68)), 0.5, 2.2) + blob;
+      const sway = (noise(y / 11, id * 3 + 1, 1 << 20, 64) - 0.5) * Math.max(0, w - 3) * 0.55, at = mid + sway;
+      const drop = hash(y, id, 65) < (blob ? 0.7 : 0.05) ? Math.round(at + (hash(y, id, 66) - 0.5) * Math.max(1, w * 0.45)) : null;
+      for (let x = Math.min(a, left); x <= Math.max(c, left + w - 1); x++) {   // (its own width, as the beads feel it; its ragged edge)
+        const cov = Math.max(clamp(wide / 2 + 0.5 - Math.abs(x - at), 0, 1), wide > 0 && x === Math.round(at) ? 0.45 : 0), h = hash(x, y, id);
+        let p = 0, k = 0;
+        if (cov >= 0.4) {
+          k = Math.round(255 * clamp(cov * (0.5 + 0.5 * n) + 0.25 * blob, 0.05, 1));
+          p = h < 0.045 ? GLINT : x > at && (cov < 1 || x >= at + wide / 2 - 0.5) && h < 0.4 ? GRIME : FILM;
+        }
+        if (x === drop) { p = hash(x, y, id + 9) < 0.35 ? SPARK : DROP; k = 255; }
+        const edge = Math.min(x - a, c - x), e = edge < 0 ? 1 : edge === 0 ? 0.75 + 0.24 * h : edge === 1 ? 0.1 + 0.15 * h : 0.1 * h;
+        const m = Math.max(0, noise((x - left) * 1.7 + id * 13, y / 9, 1 << 20, 67) - 0.58) * 2.4 + (edge <= 1 ? 0.08 : 0);
+        lay(x, y, 1 - 0.1 * Math.abs(x - mid) / Math.max(1, w / 2), b.life, p, k, Math.round(255 * e), Math.round(255 * Math.min(0.45, m)),
+            x < left || x >= left + w ? 1 : 0);
       }
+      if (b.rows) { b.rows.push([y, a, c, left, w]); if (b.rows.length > 80) b.rows.shift(); }
     };
     function age(dt) {   // the trails' clock on; a slice of them looked at again (all every REDRAW s): gone ones off the list
       clock += dt * hasten;
@@ -1024,7 +1083,7 @@ const Sky = (() => {
       while (todo-- > 0 && trails.length) {
         if (sweep >= trails.length) sweep = 0;
         const i = trails[sweep];
-        if (till[i] <= clock) { listed[i] = 0; shine[i] = 0; trails[sweep] = trails[trails.length - 1]; trails.pop(); seen.dried++; }
+        if (till[i] <= clock) { listed[i] = 0; trails[sweep] = trails[trails.length - 1]; trails.pop(); seen.dried++; }
         else sweep++;
         put(i);
       }
@@ -1068,7 +1127,7 @@ const Sky = (() => {
     const PAUSES = [[0.75, 0.6, 2.6], [0.25, 0.15, 0.8], [0.4, 0.3, 1.2]];   // (after a stretch, on each glass: how often, how long)
     function shows(b) {   // on the glass now: running from here
       b.vol = b.r ** 3;
-      Object.assign(b, {state: "on", x0: b.x, y0: b.y, slant: 0, bend: between(3, 10), pause: between(0, 1), on: false, v: 0, g: FOGGY,
+      Object.assign(b, {state: "on", x0: b.x, y0: b.y, slant: 0, bend: between(3, 10), pause: between(0, 1), on: false, v: 0, g: FOGGY, rows: [],
                         laid: Math.floor(b.y) + (heightOf(b.r) >> 1), shown: 0});
       pace(b);
     }
@@ -1108,9 +1167,9 @@ const Sky = (() => {
       let time = dt;
       while (time > 1e-6 && !b.gone) {
         const cx = Math.round(b.x), below = Math.floor(b.y) + heightOf(b.r), g = glassAt(cx, below);
-        const f = g === FOGGY ? fogOf(at(cx, below), cover, dense, true) : 0;
+        const f = g === FOGGY ? feltOf(at(cx, below)) : 0;
         b.g = g;
-        if (b.pause > 0) { const p = Math.min(b.pause, time); b.pause -= p; time -= p; b.v = 0; account(b, g, f, 0, p); }
+        if (b.pause > 0) { const p = Math.min(b.pause, time); b.pause -= p; time -= p; b.v = 0; b.rested = (b.rested || 0) + p; account(b, g, f, 0, p); }
         else {
           const v = speedFor(b.r, g) * b.base, dy = Math.min(v * time, 1, b.run + 1e-3), s = Math.min(time, dy / v);
           time -= s;
@@ -1181,7 +1240,7 @@ const Sky = (() => {
     const dries = (b) => { b.state = "fade"; b.fadeFor = b.left = fadeFor(b.r); b.r1 = b.r; };
     function clear() {   // the glass fresh: no fog, nothing beading, running or wet
       all = []; splashes = []; trails = []; sweep = 0; painting = 0; seeded = false; cover = 0; dense = 0; fresh = 0; seen.first = null;
-      if (listed) { listed.fill(0); shine.fill(0); key.fill(0); img.data.fill(0); drawn = [0, 0]; dirty = null; layer.getContext("2d").clearRect(0, 0, W, H); }
+      if (listed) { listed.fill(0); key.fill(0); img.data.fill(0); drawn = [0, 0]; dirty = null; layer.getContext("2d").clearRect(0, 0, W, H); }
     }
     const heavy = () => rain.level >= HEAVY_RAIN;
     const present = () => e.level > 0 || cover > 0 || all.length > 0 || heavy();
@@ -1220,7 +1279,11 @@ const Sky = (() => {
         till = new Float64Array(W * H);
         life = new Float32Array(W * H);
         listed = new Uint8Array(W * H);
-        shine = new Uint8Array(W * H);
+        part = new Uint8Array(W * H);
+        thick = new Uint8Array(W * H);
+        rim = new Uint8Array(W * H);
+        smear = new Uint8Array(W * H);
+        ghost = new Uint8Array(W * H);
         key = new Uint8Array(W * H);
         grain();
         layer = canvasOf(W, H);
@@ -1308,6 +1371,20 @@ const Sky = (() => {
                      glassAt: (x, y) => (base ? GLASSES[glassAt(x, y)] : null),
                      fogAt: (x, y) => (base && x >= 0 && x < W && y >= 0 && y < H ? [fogOf(y * W + x, cover, dense, true), fogOf(y * W + x, cover, dense, false)] : [0, 0]),
                      shownAt: (x, y) => (key && x >= 0 && x < W && y >= 0 && y < H ? SHOWS[key[y * W + x]].slice() : null),
+                     // (a bead's trail as it looks now, its latest rows (up to 80): each {y, w: the bead's width then, left: its
+                     // sprite's left then, wet: how fresh at its middle, mine: its own trail still there (not another bead's since, over
+                     // it), then from left - 3 to left + w + 2: alpha: as shown on the fog's
+                     // canvas, life: its trail's life (0 none: which trail it is), fog: [as shown, not wiped] (0-1)})
+                     trailOf: (id) => {
+                       const b = all.find((b) => b.id === id);
+                       return !b || !b.rows ? [] : b.rows.map(([y, , , left, w]) => {
+                         const xs = Array.from({length: w + 6}, (_, k) => left - 3 + k).map((x) => clamp(x, 0, W - 1));
+                         const m = at(left + (w - 1) / 2, y);
+                         return {y, w, left, wet: wetOf(m), mine: !!listed[m] && life[m] === Math.fround(b.life), alpha: xs.map((x) => SHOWS[key[y * W + x]][3]),
+                                 life: xs.map((x) => (listed[y * W + x] ? life[y * W + x] : 0)),
+                                 fog: xs.map((x) => [fogOf(y * W + x, cover, dense, true), fogOf(y * W + x, cover, dense, false)])};
+                       });
+                     },
                      fog: fogNow,
                      colours: () => {   // (every colour in the beads' sprites: [r, g, b, alpha])
                        const found = new Set();
@@ -1329,7 +1406,8 @@ const Sky = (() => {
                      },
                      beads: all.filter((b) => b.state !== "rest").map((b) => {
                        const h = heightOf(b.r), cx = Math.round(b.x), top = Math.floor(b.y);
-                       const trail = [0, -1, 1].map((dx) => [cx + dx, top - 1]).find(([x, y]) => x >= 0 && y >= 0 && wetOf(at(x, y)) > 0 && y < H);
+                       const near = [0, -1, 1].map((dx) => [cx + dx, top - 1]).filter(([x, y]) => x >= 0 && y >= 0 && wetOf(at(x, y)) > 0 && y < H);
+                       const trail = near.find(([x, y]) => rim[at(x, y)] !== 255 && !ghost[at(x, y)]) || near[0];   // (wiped: not its ragged edge)
                        return {id: b.id, kind: b.kind, x: b.x, x0: b.x0, y: b.y, y0: b.y0, cy: b.y + h / 2, r: b.r, vol: b.vol, w: sprite(b.r).width,
                                laidW: b.laidW || null, bottom: top + h, glass: GLASSES[b.g], v: b.state === "on" ? b.v : 0, fading: b.state === "fade",
                                alpha: (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR), drawn: b.drawn || null,

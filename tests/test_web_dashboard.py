@@ -968,6 +968,8 @@ async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_t
 
 
 # ---------- the weather behind the tiles ----------
+STREAK = [[142, 157, 168], [76, 88, 97], [239, 250, 255]]   # a trail's thin streak on clear glass: its film, grime, glint
+DROPLET = [[166, 215, 242], [239, 250, 255]]                   # a tiny droplet left on a trail, its spark
 EFFECTS = {"rain": "Rain", "smog": "US AQI", "uv": "UV index", "humidity": "Humidity", "wind": "Wind", "heat": "Temperature",
            "ice": "Temperature"}
 
@@ -1209,17 +1211,29 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     # ... nothing at all drawn in the canvas's top two rows (humidity alone: no water along the top edge)
     assert got["humidity"]["alone"]["top"] == 0, got["humidity"]["alone"]
     # ... the fog: forming first (the first bead only once it has, there and on the glass at large), its trails wiped clear through it
-    # as wide as the bead was there (a px more where another's beside it), clearer than the fog beside them (where there is fog); the
-    # beads' colours as ever (the glass: the deep blue rim, a faint pale body, a crescent, a white glint)
+    # about as wide as the bead was there (its edges ragged: a px in or out; a px more where another's beside it), clearer than the
+    # fog beside them (where there is fog); the beads' colours as ever (the glass: the deep blue rim, a faint pale body, a crescent, a
+    # white glint)
     for name, beads in got["humidity"].items():
         first = beads["first"]
         assert first["after"] >= 2 and first["cover"] >= 0.3 and first["fog"] > 0.2 and first["formed"]["edge"] > 0.2, (name, first)
         wiped = beads["wiped"]
-        assert len(wiped) >= 8 and all(t["shown"] == 0 and t["wet"] > 0.85 for t in wiped), (name, wiped)
-        assert all(0 <= t["across"] - t["w"] <= 1 for t in wiped), (name, [t for t in wiped if not 0 <= t["across"] - t["w"] <= 1])
+        # (wiped clear, or near its ragged edge all but: the fog already creeping back there a little)
+        assert len(wiped) >= 8 and all(t["shown"] <= 0.25 * t["fog"] and t["wet"] > 0.85 for t in wiped), (name, wiped)
+        assert sum(t["shown"] == 0 for t in wiped) >= 0.3 * len(wiped), (name, wiped)
+        assert all(-1 <= t["across"] - t["w"] <= 3 for t in wiped), (name, [t for t in wiped if not -1 <= t["across"] - t["w"] <= 3])
         fogged = [t for t in wiped if t["fog"] > 0.05 and t["beside"] > 0.05]
         assert len(fogged) >= 5 and all(t["beside"] > t["shown"] for t in fogged), (name, wiped)
         assert sum(t["end"]["wet"] < t["wet"] for t in wiped) >= 0.75 * len(wiped), (name, wiped)   # (fogging over again, slowly)
+        # (natural trails through the fog, as they look while fresh: about the bead's width all along (its width as it grew), never
+        # a gap; their edges ragged, each wandering a px in or out down the trail, not straight)
+        fog_trails = [t for t in beads["looks"] if t["kind"] == "fog"]
+        assert len(fog_trails) >= 6, (name, beads["looks"])
+        for t in fog_trails:
+            assert min(t["widths"]) >= 1 and abs(sum(t["widths"]) / len(t["widths"]) - t["w"]) <= 1.5, (name, t)
+            moves = [sum(a != b for a, b in zip(edge, edge[1:])) for edge in (t["lefts"], t["rights"])]
+            assert len(set(t["lefts"] + t["rights"])) >= 2 and sum(moves) >= 0.1 * len(t["lefts"]), (name, t)
+            assert len(set(t["widths"])) >= 2, (name, t)
         colours = sorted(beads["colours"], key=lambda c: c[3])
         assert len(colours) == len(BEAD_COLOURS) and all(c == pytest.approx(want, abs=3) for c, want in zip(colours, BEAD_COLOURS)), (name, colours)
     # ... the trails through the fog, their time run on fast: each fogging over again all the way in 3 to 10 minutes (each trail its
@@ -1229,7 +1243,11 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     lasted = [t["lasted"] for t in refog]
     assert len(refog) >= 10 and all(170 <= t <= 610 for t in lasted) and max(lasted) - min(lasted) > 150, refog
     assert all(t["crispTill"] is not None and t["crispTill"] < 0.25 * t["lasted"] for t in refog), refog
-    assert all(t["fog"][0] == t["fog"][1] > 0 and t["look"] == [0, 0, 0, 0] for t in refog), refog
+    assert all(t["fog"][0] == t["fog"][1] > 0 for t in refog), refog
+    # (as it was picked, inside the trail, fresh: wiped clear mostly; here and there a speck of the fog left unwiped (its two
+    # faintest shades) or a tiny droplet left in it, no more)
+    assert sum(t["look"] == [0, 0, 0, 0] for t in refog) >= 0.5 * len(refog), refog
+    assert all(t["look"] in ([0, 0, 0, 0], [50, 60, 67, 56], [74, 85, 92, 69]) or t["look"][:3] in DROPLET for t in refog), refog
     # ... light (91 %): a thinner fog than heavy (100 %), fewer beads, the fog first all the same
     light, heavy = got["humidityLight"], got["humidity"]["alone"]
     assert light["errors"] == [] and light["popped"] == 0 and light["stray"] == 0, light
@@ -1279,8 +1297,10 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     # heavy rain's beads: light rain none; heavy, a drop sticking now and then, a handful on the glass at most, each landing at once
     # (no fading in) as a large bead (r 3 or more) with a splash (a ring of 10 or more droplets); on dry glass slow (about 0.3 of its
     # speed on fog, the same size), shrinking only (its water left behind), never growing; none vanishing; their wet streaks on the
-    # clear glass (faint, pale: the glass's body colour, or its glint) drying over 3 to 10 minutes, each its own. The rain light again:
-    # none sticking; those there running off or shrinking away
+    # clear glass drying over 3 to 10 minutes, each its own: thin streaks (a third of the bead's width or less: a px or two), faint
+    # (a greyish film, grime along an edge, a glint, a tiny droplet), uneven along their length (thicker and thinner, now and then
+    # broken for a px or three, never more, no regular pattern of gaps: no dashes), their thin parts drying first (gone from view
+    # well before the trail is dry), the thick ones last. The rain light again: none sticking; those there running off or shrinking away
     sticking = got["rainBeads"]
     assert sticking["errors"] == [] and sticking["light"] == {"landed": 0, "levels": 0.35}, sticking
     heavy_rain = sticking["heavy"]
@@ -1292,7 +1312,20 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert heavy_rain["glass"]["fog"]["moves"] == 0, heavy_rain["glass"]   # (no fog: rain alone)
     drying = [t["lasted"] for t in sticking["drying"]]
     assert len(drying) >= 2 and all(170 <= t <= 610 for t in drying), sticking["drying"]
-    assert all(t["look"][:3] in ([166, 215, 242], [239, 250, 255]) and 0 < t["look"][3] <= 80 for t in sticking["drying"]), sticking["drying"]
+    assert all(t["look"][:3] in STREAK + DROPLET and 0 < t["look"][3] <= (150 if t["look"][:3] in DROPLET else 80) for t in sticking["drying"]), sticking["drying"]
+    hidden = sorted(t["hidden"] for t in sticking["drying"])
+    assert hidden[0] < 0.75 and hidden[-1] > 0.7, sticking["drying"]
+    streaks = list({t["id"]: t for t in sticking["looks"] if t["kind"] == "clear"}.values())   # (each bead's once)
+    assert len(streaks) >= 2 and all(t["kind"] == "clear" for t in sticking["looks"]), sticking["looks"]
+    for t in streaks:
+        widths = t["widths"]
+        assert sum(widths) / len(widths) <= max(1.6, t["w"] / 3) and max(widths) <= t["w"] / 2 + 1.5, t   # (thin: a px or two; a blob)
+        assert len(set(widths)) >= 2 and max(widths) - min(widths) >= 1, t                              # (uneven along it)
+        empty = [w == 0 for w in widths]
+        runs = [len(r) for r in "".join("x" if e else "." for e in empty).split(".") if r]
+        assert sum(empty) <= 0.25 * len(widths) and max(runs, default=0) <= 3, t                        # (broken a little, at most)
+        starts = [i for i, e in enumerate(empty) if e and (i == 0 or not empty[i - 1])]
+        assert len(starts) < 3 or len({b - a for a, b in zip(starts, starts[1:])}) > 1, t               # (no regular dashes)
     eased, gone = sticking["eased"], sticking["after"]
     assert gone["landed"] == eased["landed"] and gone["beads"] == 0 and gone["popped"] == 0, (eased, gone)
     # (each run off or shrunk to nothing, or merged into one that was: none dried away otherwise)
