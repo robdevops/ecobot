@@ -1027,18 +1027,25 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
         assert beads["drier"] >= 0.8 * beads["trails"] and beads["dried"] > 0, (name, beads)
         (on_px, on_s), (off_px, off_s) = beads["on"], beads["off"]
         assert on_s > 3 and off_px / off_s < 4.5 and on_px / on_s > 22 and on_px / on_s > 4 * off_px / off_s, (name, beads)
-        # (merges: each bead's water the two's together, as a radius (the cube root of their radii cubed, summed), unless at the
-        # largest; a running one's end no higher, and only past its lowest if it was already, its sprite now taller)
+        # (merges: each bead's water the two's together, as a radius (the cube root of their radii cubed, summed), however big: no
+        # largest bead; a running one's end no higher, and only past its lowest if it was already, its sprite now taller)
         assert beads["merges"] >= 3 and beads["merged"], (name, beads)
         for m in beads["merged"]:
             assert m["into"] > max(m["r"]), (name, m)
-            assert m["into"] == pytest.approx(beads["largest"]) or m["into"] ** 3 == pytest.approx(sum(r ** 3 for r in m["r"])), (name, m)
+            assert m["into"] ** 3 == pytest.approx(sum(r ** 3 for r in m["r"])), (name, m)
             if m["end"]:
                 assert m["end"][0] <= m["end"][1] <= max(m["end"][0], m["end"][2]) + 1e-9, (name, m)
+        assert beads["largest"] >= max(m["into"] for m in beads["merged"]) - 1e-9, (name, beads["largest"])
         # (looked at as drawn: the still beads whole, every 10th frame)
         assert beads["look"]["beads"] >= 20 and beads["look"]["mean"] < 110 and beads["look"]["most"] > 170, (name, beads["look"])
-        # (the glass well beaded: more beads condensing on it at a time than running, the tiny ones cheap in the budget)
+        # (the glass well beaded: more beads condensing on it at a time than running, the tiny ones cheap in the budget; many more
+        # than there were: about 50 still at once, there were about 18)
         assert beads["showing"]["still"] > beads["showing"]["running"] > 0, (name, beads["showing"])
+        assert beads["showing"]["still"] > 36, (name, beads["showing"])
+        # (lasting: a still bead resting long, its water staying (many on the glass 25 s or more by the end: before, none lasted
+        # 20 s); gone mostly by running down, shrinking as it leaves its water in its track, seldom drying away where it rests)
+        assert sum(age > 25 for age in beads["aged"]) >= 10, (name, sorted(beads["aged"]))
+        assert beads["ran"] >= 10 and beads["evaporated"] * 5 <= beads["ran"], (name, beads["ran"], beads["evaporated"])
         # (a track dried out: gone from the canvas too, nothing left showing on dry glass; no bead cut short, none vanishing (each
         # merged into another, running, or dried away))
         assert beads["stray"] == 0 and beads["cut"] == 0 and beads["popped"] == 0, (name, beads)
@@ -1068,9 +1075,12 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert 0.1 < light["fog"]["thickness"] < 0.7 * heavy["fog"]["thickness"], (light["fog"], heavy["fog"])
     assert 0 < light["showing"]["still"] < 0.5 * heavy["showing"]["still"], (light["showing"], heavy["showing"])
     assert light["first"]["after"] >= 2 and light["first"]["fog"] > 0.1 and light["first"]["formed"]["edge"] > 0.1, light["first"]
-    # ... in each, the fog patchy, heavier at the edges (the sides and the bottom) than in the middle
+    # ... in each, the fog patchy, heavier at the edges (the sides and the bottom) than in the middle; dense (its mean opacity as
+    # drawn half as much again as it was: heavy about 0.22, it was about 0.15; light about 0.18, it was about 0.12), see-through all
+    # the same (no fog pixel more than half opaque)
     for fog in (light["fog"], heavy["fog"]):
         assert fog["cover"] == 1 and fog["edge"] > 2 * fog["middle"] > 0, fog
+    assert heavy["fog"]["opacity"] > 0.19 and light["fog"]["opacity"] > 0.15 and heavy["fog"]["most"] < 0.5, (light["fog"], heavy["fog"])
     # ... and the humidity then below 90 % (heavy, in the wind): the fog clearing as from a demister, the middle first, the edges
     # still fogged then, all gone in the end (the effect off, the wind on); the still beads drying away (shrinking, fading: none
     # vanishing), those in the middle sooner than those at the edges
