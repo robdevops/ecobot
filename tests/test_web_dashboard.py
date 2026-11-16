@@ -7,8 +7,9 @@ console error; the tiles rearranged (dragged with a mouse and with a touch's lon
 across reloads, reset), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds; a tile zoomed to
 fill the window and the gallery through the others (keys, mouse drags, a trackpad's swipe, touch swipes, both ends, the text still
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
-one canvas behind the tiles, "stop animations", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place with no particles, the wind's leaves within the budget and blowing right to left), and the data's rain rate. With
-ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
+one canvas behind the tiles, "stop animations", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place
+with no particles, the wind's leaves within the budget and blowing right to left, rain in the wind bunched into curtains), and the
+data's rain rate. With ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
 import base64
@@ -958,6 +959,13 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert all(b["most"] - b["least"] <= 4 and b["turns"] <= 1 and b["bright"] - b["faint"] > 0.2 for b in uv["beams"]), uv
     assert any(b["most"] > b["least"] for b in uv["beams"]), uv   # (swaying all the same)
     assert all(a["most"] < b["least"] for a, b in zip(uv["beams"], uv["beams"][1:])), uv   # (each in its own place, apart)
+    # heavy rain in the wind: its drops blown leftward, faster than with no wind; bunched by the gust bands into curtains and gaps,
+    # their density across uneven, and changing as the bands pass, far more than the rain alone (scattered evenly: about 1)
+    alone, windy = got["rain"]["alone"], got["rain"]["windy"]
+    assert alone["errors"] == windy["errors"] == [] and alone["looks"] >= 20 and windy["looks"] >= 20, got["rain"]
+    assert windy["vx"] < alone["vx"] < 0 and alone["drops"] > 30 and windy["drops"] > 30, got["rain"]
+    assert alone["across"] < 1.4 and alone["overTime"] < 1.4, got["rain"]
+    assert windy["across"] > max(2, 1.6 * alone["across"]) and windy["overTime"] > max(2, 1.6 * alone["overTime"]), got["rain"]
     # the wind blows right to left: its leaves leftward overall, as drawn on the canvas too (frame to frame); some caught in a loop
     # going rightward a moment (on a phone too)
     for seen in (got["wind"], got["phoneWind"]):

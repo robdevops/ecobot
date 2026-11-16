@@ -843,6 +843,33 @@ const windSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
   };
   requestAnimationFrame(step);
 }), ms);
+// The rain's drops for `ms`, a look every 100 ms: where they are across in the window's lower half, counted in columns 32 art px
+// wide; how uneven that is across (each look's columns: their variance over their mean, averaged over the looks) and over time (each
+// column's counts, look to look: the same, averaged over the columns); scattered evenly at random both are about 1. And the drops'
+// mean speed across (px/s, negative leftward), averaged.
+const rainSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
+  const looks = [], vx = [];
+  let start = 0;
+  const spread = (counts) => {   // variance over mean
+    const mean = counts.reduce((a, b) => a + b, 0) / counts.length;
+    return mean ? counts.reduce((a, b) => a + (b - mean) ** 2, 0) / counts.length / mean : 0;
+  };
+  const look = () => {
+    start = start || performance.now();
+    const { xs, width, vx: v } = Sky.state().rain, counts = new Array(Math.floor(width / 32)).fill(0);
+    for (const x of xs) if (x < counts.length * 32) counts[Math.floor(x / 32)]++;
+    looks.push(counts);
+    vx.push(v);
+    if (performance.now() - start < ms) return setTimeout(look, 100);
+    const columns = looks[0].map((_, i) => looks.map((c) => c[i]));
+    resolve({ looks: looks.length, drops: looks.reduce((a, c) => a + c.reduce((x, y) => x + y, 0), 0) / looks.length,
+              across: looks.reduce((a, c) => a + spread(c), 0) / looks.length,
+              overTime: columns.reduce((a, c) => a + spread(c), 0) / columns.length, vx: vx.reduce((a, b) => a + b, 0) / vx.length });
+  };
+  // (from 50 frames in, 1.5 s or more of the page's time: the effects faded in, the wind's gusts under way)
+  const begun = () => Sky.state().frames >= 50 ? look() : setTimeout(begun, 50);
+  begun();
+}), ms);
 // uv's beams over 40 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame drawn 0.1 s on, Sky's
 // longest step): where each beam's halo was drawn (with uv alone, the glow, then each beam's halo and core), its least and greatest x
 // (art px), how many times it turned back (from going one way to the other), and how faint and bright it was
@@ -901,7 +928,7 @@ async function animationsOff(browser, url, out) {
 // through, their look, zoomed), "stop" ("stop animations", a reload, "start animations", the reset), "links" (the temporary test links;
 // and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn),
 // "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
-// and the wind alone, uv's beams over 40 s, a phone's strip, reduced motion)
+// and the wind alone, heavy rain alone and in the wind, uv's beams over 40 s, a phone's strip, reduced motion)
 const WEATHER = {
   async marks(browser, url, out) {
     const { context, page, errors, reads } = await weatherPage(browser, url);
@@ -1104,6 +1131,13 @@ const WEATHER = {
       await uv.context.close();
       return seen;
     })();
+    // heavy rain, alone and in the wind, its drops watched for 3 s, beside the rest
+    const raining = Promise.all(["rain2", "rain2,wind"].map(async (name) => {
+      const p = await weatherPage(browser, url, { query: `?fx=${name}` });
+      const seen = { ...await rainSeen(p.page, 3000), errors: p.errors };
+      await p.context.close();
+      return seen;
+    }));
     // without the temporary test links (the page as it will be), at 1024x768 and on a phone with a tile hidden: "stop animations" at
     // the bottom left on its own
     const bare = Promise.all([{}, { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true }].map(async (context) => {
@@ -1125,6 +1159,7 @@ const WEATHER = {
     // uv alone: its beams, no particles; the wind alone: its leaves within the budget, blowing right to left (and looping), watched
     // for 3 s beside the rest
     out.particles = {};
+    out.rain = {};
     await Promise.all(["uv", "wind"].map(async (name) => {
       const alone = await weatherPage(browser, url, { query: `?fx=${name}` });
       if (name === "wind") out.wind = await windSeen(alone.page, 3000);
@@ -1153,6 +1188,7 @@ const WEATHER = {
                   stateFrames: await still.page.evaluate(() => Sky.state().frames), errors: still.errors };
     await still.context.close();
     out.uv = await swaying;
+    [out.rain.alone, out.rain.windy] = await raining;
     [out.bare, out.barePhone] = await bare;
     out.errors = [];
   },
