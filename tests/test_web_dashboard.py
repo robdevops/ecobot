@@ -1212,12 +1212,14 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert got["particles"]["uv"] == {"uv": 0, "budget": got["particles"]["uv"]["budget"]}, got["particles"]
     wind = got["particles"]["wind"]
     assert 0 < wind["wind"] <= wind["budget"], wind
-    # uv's beams over 40 s: each swaying a pixel or so about its own place (not travelling on), so slowly that it turns back at most
-    # once in that time (a sway in 80 s or more), still brightening and dimming
+    # uv's beams over 400 s of the weather's time: each swaying a pixel over and back about its own place (a third of a pixel or so
+    # each way; it was a pixel or more: up to 4 px apart), never travelling on; every one swaying all the same (each sway's half
+    # 160-250 s, so each moves at least once in that time), so slowly that it moves at most once in 150 s, turning back at most
+    # twice (a sway in five minutes or more; it was one in 80-125 s); still brightening and dimming
     uv = got["uv"]
-    assert uv["errors"] == [] and uv["frames"] >= 300 and len(uv["beams"]) >= 4, uv
-    assert all(b["most"] - b["least"] <= 4 and b["turns"] <= 1 and b["bright"] - b["faint"] > 0.2 for b in uv["beams"]), uv
-    assert any(b["most"] > b["least"] for b in uv["beams"]), uv   # (swaying all the same)
+    assert uv["errors"] == [] and uv["frames"] >= 300 and uv["span"] >= 380 and len(uv["beams"]) >= 4, uv
+    assert all(b["most"] - b["least"] == 1 and b["turns"] <= 2 and b["bright"] - b["faint"] > 0.2 for b in uv["beams"]), uv
+    assert all(b["gap"] is None or b["gap"] >= 150 for b in uv["beams"]), uv
     assert all(a["most"] < b["least"] for a, b in zip(uv["beams"], uv["beams"][1:])), uv   # (each in its own place, apart)
     # ... their glow dithered irregularly: no grid in its pixels (as gridPeak sees it: under 100; ordered, about 660)
     assert uv["grid"] < 100, uv["grid"]

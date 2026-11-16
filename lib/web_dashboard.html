@@ -792,8 +792,9 @@ const Sky = (() => {
 
   // ---------- uv: soft shafts of violet light coming in from the top, slowly swaying and breathing ----------
   // Each shaft a dithered wedge, widening and fading as it comes down; drawn twice, a wide faint halo and a narrow bright core, the two
-  // breathing out of step, so it seems to waver. Each sways a pixel or so side to side about its own place, very slowly (a minute
-  // and a half to two a sway), never travelling on. A faint glow along the top.
+  // breathing out of step, so it seems to waver. Each sways side to side about its own place, a third of a pixel or so each way
+  // (its place set half a pixel off, so each sway shows: a pixel over and back), and very slowly (five to eight minutes a sway),
+  // never travelling on. A faint glow along the top.
   const RAD = ["#22153C", "#3C256A", "#6444A8", "#A287E6", "#EFE7FF"].map(rgb);
   const uv = effect((e) => {
     let shafts = [], glow = null;
@@ -815,7 +816,7 @@ const Sky = (() => {
           const halo = shaft(wide, long, slope, 0.6), core = shaft(narrow, Math.round(long * 0.8), slope, 0.75);
           return {halo, core, inset: wide - narrow,   // (the core down the halo's middle)
                   x: (i + r() * 0.6) * W / n - 10, phase: r() * 7, rate: 0.3 + r() * 0.25,
-                  sway: 0.85 + r() * 0.8, swayRate: 0.05 + r() * 0.03};   // (how far each way, art px; rad/s)
+                  sway: 0.28 + r() * 0.27, swayRate: 0.0125 + r() * 0.0075};   // (how far each way, art px; rad/s)
         });
         glow = painted(W, Math.ceil(H * 0.16), (x, y) => {
           const s = shadeOf(Math.pow(1 - y / (H * 0.16), 2.4) * 0.6, x, y, 3);
@@ -826,7 +827,7 @@ const Sky = (() => {
         g.globalAlpha = alpha * 0.8;
         g.drawImage(glow, 0, 0);
         for (const s of shafts) {
-          const x = Math.round(s.x - s.halo.width / 2 + s.sway * Math.sin(t * s.swayRate + s.phase * 3));
+          const x = Math.round(Math.floor(s.x - s.halo.width / 2) + 0.5 + s.sway * Math.sin(t * s.swayRate + s.phase * 3));
           g.globalAlpha = alpha * (0.3 + 0.4 * Math.pow(Math.sin(t * s.rate + s.phase), 2));
           g.drawImage(s.halo, x, 0);
           g.globalAlpha = alpha * (0.15 + 0.55 * Math.pow(Math.sin(t * s.rate * 1.7 + s.phase * 2), 4));
