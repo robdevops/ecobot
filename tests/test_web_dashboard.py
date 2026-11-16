@@ -1293,6 +1293,16 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
             moves = [sum(a != b for a, b in zip(edge, edge[1:])) for edge in (t["lefts"], t["rights"])]
             assert len(set(t["lefts"] + t["rights"])) >= 2 and sum(moves) >= 0.1 * len(t["lefts"]), (name, t)
             assert len(set(t["widths"])) >= 2, (name, t)
+            # (clean inside: no droplet, glint or other trail's look in it, only the fog's faintest two shades as residue; and no
+            # dots: whatever shows inside it, not touching the fog beside it, is a streak of residue down it (3 rows or more, 2 px
+            # wide at most, taller than wide), never a lone pixel or a small blob)
+            inside = t["inside"]
+            assert inside["odd"] == [] and all(set(d["shows"]) <= {1, 2} for d in inside["patches"]), (name, t["id"], inside)
+            dots = [d for d in inside["patches"] if d["tall"] < 3 or d["wide"] > 2 or d["tall"] <= d["wide"]]
+            assert dots == [], (name, t["id"], dots)
+        # (a little streaky residue in them all told: some, under a tenth of the wiped px)
+        residue, px = sum(t["inside"]["residue"] for t in fog_trails), sum(t["inside"]["px"] for t in fog_trails)
+        assert 0 < residue < 0.1 * px, (name, residue, px)
         colours = sorted(beads["colours"], key=lambda c: c[3])
         assert len(colours) == len(BEAD_COLOURS) and all(c == pytest.approx(want, abs=3) for c, want in zip(colours, BEAD_COLOURS)), (name, colours)
     # ... the trails through the fog, their time run on fast: each fogging over again all the way in 3 to 10 minutes (each trail its
@@ -1303,10 +1313,10 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert len(refog) >= 10 and all(170 <= t <= 610 for t in lasted) and max(lasted) - min(lasted) > 150, refog
     assert all(t["crispTill"] is not None and t["crispTill"] < 0.25 * t["lasted"] for t in refog), refog
     assert all(t["fog"][0] == t["fog"][1] > 0 for t in refog), refog
-    # (as it was picked, in the middle of the trail's row, fresh: wiped clear mostly; here and there a speck of the fog left unwiped
-    # (its two faintest shades) or a tiny droplet left in it, no more)
+    # (as it was picked, in the middle of the trail's row, fresh: wiped clear mostly; here and there a streak of the fog left
+    # unwiped (its two faintest shades), no more: no droplet left in it)
     assert sum(t["look"] == [0, 0, 0, 0] for t in refog) >= 0.5 * len(refog), refog
-    assert all(t["look"] in ([0, 0, 0, 0], [50, 60, 67, 56], [74, 85, 92, 69]) or t["look"][:3] in DROPLET for t in refog), refog
+    assert all(t["look"] in ([0, 0, 0, 0], [50, 60, 67, 56], [74, 85, 92, 69]) for t in refog), refog
     # ... light (91 %): a thinner fog than heavy (100 %), fewer beads, the fog first all the same
     light, heavy = got["humidityLight"], got["humidity"]["alone"]
     assert light["errors"] == [] and light["popped"] == 0 and light["stray"] == 0, light

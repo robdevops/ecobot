@@ -1266,7 +1266,8 @@ const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
 // there, not wiped, 0.1 or more at its middle), each row's wiped pixels (its own: the fog shown under half what it'd be): how many, the first
 // and the last against the sprite's left and right; each kind with 12 rows or more (a streak on clear glass 16: a thin one's mean
 // width needs them): {id, kind ("clear", "fog"), w: the bead's mean
-// width, widths, lefts, rights, ys}. (Put in the page as window.__trailLook, see lookable())
+// width, widths, lefts, rights, ys, and through the fog inside: what shows inside it, see inside()}. (Put in the page as
+// window.__trailLook, see lookable())
 const trailLook = (h, b) => {
   const kinds = { clear: [], fog: [] };
   for (const r of h.trailOf(b.id)) {
@@ -1277,12 +1278,48 @@ const trailLook = (h, b) => {
     } else if (r.fog[mid][1] >= 0.1) {
       const wiped = r.fog.map(([s, f], k) => (f > 0 && s < 0.5 * f && r.life[k] === r.life[mid] ? k : -1)).filter((k) => k >= 0);
       kinds.fog.push({ y: r.y, w: r.w, width: wiped.length, left: wiped.length ? wiped[0] - 3 : null,
-                       right: wiped.length ? wiped[wiped.length - 1] - 3 - (r.w - 1) : null });
+                       right: wiped.length ? wiped[wiped.length - 1] - 3 - (r.w - 1) : null,
+                       // (each px across, at x: wiped (its own), what it shows)
+                       px: r.fog.map((_, k) => ({ x: r.left - 3 + k, wiped: wiped.includes(k), shows: r.shows[k], residue: r.residue[k] > 0 })),
+                       shades: r.fogShades });
     }
   }
+  // (through the fog, what shows inside the wiped streak: each patch of it (8-connected) not touching the fog beside it (not
+  // wiped: the ragged edge, its fog dithered as ever) and wholly within the rows looked at: {px, tall, wide, shows: what its
+  // pixels show, at: a pixel of it}; anything else than a fog shade shown in the wiped streak; its residue shown (px) and its px
+  // wiped)
+  const inside = (rows) => {
+    const byY = new Map(rows.map((r) => [r.y, new Map(r.px.map((p) => [p.x, p]))]));
+    const patches = [], done = new Set(), odd = [];
+    for (const r of rows) for (const p of r.px) if (p.wiped && p.shows > r.shades) odd.push(p.shows);
+    for (const r of rows) for (const p of r.px) {
+      if (!p.wiped || !p.shows || done.has(`${p.x},${r.y}`)) continue;
+      const todo = [[p.x, r.y]], got = [];
+      let whole = true;
+      done.add(`${p.x},${r.y}`);
+      while (todo.length) {
+        const [x, y] = todo.pop();
+        got.push([x, y]);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const q = byY.get(y + dy)?.get(x + dx);
+          if (!q) { whole = false; continue; }   // (beyond the rows or columns looked at: can't tell)
+          if (!q.wiped) { whole = false; continue; }   // (at the ragged edge: the fog's own dither coming back)
+          if (!q.shows) continue;
+          if (!done.has(`${x + dx},${y + dy}`)) { done.add(`${x + dx},${y + dy}`); todo.push([x + dx, y + dy]); }
+        }
+      }
+      if (!whole) continue;
+      const gx = got.map(([x]) => x), gy = got.map(([, y]) => y);
+      patches.push({ px: got.length, tall: Math.max(...gy) - Math.min(...gy) + 1, wide: Math.max(...gx) - Math.min(...gx) + 1,
+                     shows: got.map(([x, y]) => byY.get(y).get(x).shows), at: got[0] });
+    }
+    const residue = rows.reduce((n, r) => n + r.px.filter((p) => p.wiped && p.residue && p.shows).length, 0);
+    return { patches, odd, residue, px: rows.reduce((n, r) => n + r.px.filter((p) => p.wiped).length, 0) };
+  };
   return Object.entries(kinds).filter(([kind, rows]) => rows.length >= (kind === "clear" ? 16 : 12)).map(([kind, rows]) => ({
     id: b.id, kind, w: rows.reduce((s, r) => s + r.w, 0) / rows.length, widths: rows.map((r) => r.width), ys: rows.map((r) => r.y),
-    lefts: rows.map((r) => r.left), rights: rows.map((r) => r.right) }));
+    lefts: rows.map((r) => r.left), rights: rows.map((r) => r.right), ...(kind === "fog" ? { inside: inside(rows) } : {}) }));
 };
 const lookable = (page) => page.evaluate(`window.__trailLook = ${trailLook.toString()}`);
 const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
