@@ -1171,8 +1171,8 @@ const Sky = (() => {
   // Every bead, condensed or rain, one set of rules (a merged one too):
   //   The glass under it (the row just below it): FOG (fog shown there: FOG_AT or more), a TRAIL (a streak a bead has left: wiped
   //   through the fog, or wet on clear glass) or DRY (clear glass, no trail).
-  //   Its speed: none under RUN_R; from there its water (r³) times SPEED times the glass's PACE (dry slowest, a trail medium, fog
-  //   fastest); so it rises gradually with its size (tiny and small ones not at all, large ones creeping extremely slowly at
+  //   Its speed: none under RUN_R; from there its water (r³) times SPEED times the glass's PACE (dry slowest, fog quicker, a trail
+  //   fastest: water on water); so it rises gradually with its size (tiny and small ones not at all, large ones creeping extremely slowly at
   //   first, larger ones faster and faster: no fastest), each
   //   stretch of a run a little quicker or slower than that, stop-start (a pause after a stretch now and then, most often on dry
   //   glass), wandering a little (a kink here, a slant there, kept a while; never more than MEANDER px from where it began); on dry
@@ -1205,7 +1205,7 @@ const Sky = (() => {
     const SIZES = [0.6, 1, 1.4, 1.9, 2.4, 2.9, 3.4, 3.9, 4.5];   // a bead's radius (its half-width), growing (and past the last:
                                                                  // ... drawn as wide as it is, however big, see sprite())
     const DRY = 0, TRAIL = 1, FOGGY = 2, GLASSES = ["dry", "trail", "fog"];   // the glass under a bead
-    const PACE = [0.3, 0.6, 1];        // how fast a bead runs on each (dry slowest, a trail medium, fog fastest) ...
+    const PACE = [0.3, 1.6, 1];        // how fast a bead runs on each [dry, trail, fog]: dry slowest, fog quicker, a trail fastest (water on water) ...
     const SPEED = 13;                  // ... times this, px/s, for a bead of r 2.8; from RUN_R up, rising gradually with its size, ever
                                        // ... faster (r 0.87: about 0.04 px/s on fog, r 1: 0.08, r 1.4: 0.4, r 2: 2.4, r 2.8: 13, r 4: 38)
     const GATHER = 0.1;                // water a bead gathers for each px it runs through fog, for each px of its width (fog at 1) ...
@@ -1239,8 +1239,8 @@ const Sky = (() => {
     const REPAINT = 0.1;               // s between the fog's repaints while it forms, clears or thickens
     const APPEAR = 0.4;                // s for a condensed bead to fade in as it appears
     const HEAVY_RAIN = 0.75;           // rain this strong or more (about 5 mm/h): heavy, a drop sticking to the glass now and then ...
-    const LANDING = 0.1;               // ... about this many a second (one in 10 s) ...
-    const RAIN_MOST = 5;               // ... a handful on the glass at most ...
+    const LANDING = 0.35;              // ... about this many a second (one in 3 s) ...
+    const RAIN_MOST = 14;              // ... a dozen or so on the glass at most ...
     const RAIN_R = [3, 3.8];           // ... each landing this big (its radius) ...
     const SPLASH_S = 0.25;             // ... with a splash, bursting out and gone in this long
     const PER_PX = 0.45;               // beads at most, for each px of the window's width (light or heavy)
