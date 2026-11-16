@@ -803,7 +803,7 @@ const WEATHER = {
     out.nothing = { ...await weatherSeen(page), frames: await framesIn(page, 800), ink: await canvasInk(page) };
     // each mark: just short of it, then at it
     const marks = { rain: [{ rain_rate: 0 }, { rain_rate: 0.1 }], smog: [{ "US AQI": 50 }, { "US AQI": 51 }],
-                    uv: [{ "UV index": 10.9 }, { "UV index": 11 }], humidity: [{ Humidity: 94.9 }, { Humidity: 95 }],
+                    uv: [{ "UV index": 10.9 }, { "UV index": 11 }], humidity: [{ Humidity: 89.9 }, { Humidity: 90 }],
                     wind: [{ Wind: 50 }, { Wind: 50.1 }], heat: [{ Temperature: 39.9 }, { Temperature: 40 }],
                     ice: [{ Temperature: 0.1 }, { Temperature: -0.1 }], iceAtZero: [{ Temperature: 0 }, { Temperature: -0.1 }] };
     out.marks = {};
