@@ -966,6 +966,10 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert windy["vx"] < alone["vx"] < 0 and alone["drops"] > 30 and windy["drops"] > 30, got["rain"]
     assert alone["across"] < 1.4 and alone["overTime"] < 1.4, got["rain"]
     assert windy["across"] > max(2, 1.6 * alone["across"]) and windy["overTime"] > max(2, 1.6 * alone["overTime"]), got["rain"]
+    # ... on a phone too (its art narrow, the bands shorter so a curtain and a gap still fit across: about 1.6-3; alone there, about 0.8)
+    rain_phone = got["rain"]["phone"]
+    assert rain_phone["errors"] == [] and rain_phone["looks"] >= 20 and rain_phone["drops"] > 5, rain_phone
+    assert rain_phone["vx"] < alone["vx"] and rain_phone["across"] > 1.3 and rain_phone["overTime"] > 1.3, rain_phone
     # the wind blows right to left: its leaves leftward overall, as drawn on the canvas too (frame to frame); some caught in a loop
     # going rightward a moment (on a phone too)
     for seen in (got["wind"], got["phoneWind"]):

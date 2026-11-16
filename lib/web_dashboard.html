@@ -258,7 +258,7 @@ const Sky = (() => {
                     [[-3, -1, 2], [3, -2, 1]],
                     [[-4, 0, 1], [3, -1, 1]]].map((dots) =>
       painted(9, 5, (x, y) => { const d = dots.find(([dx, dy]) => dx + 4 === x && dy + 4 === y); return d && RAIN[d[2]]; }));
-    let drops = [], splashes = [], mist = null, carried = [0, 0, 0];   // (carried: how far each layer's drops have carried the wind's bands)
+    let drops = [], splashes = [], mist = null;
     const spawn = (d, anywhere) => {
       const l = LAYERS[d.layer];
       d.sprites = sprites[d.layer][random() < 0.5 ? 0 : 1];
@@ -266,7 +266,7 @@ const Sky = (() => {
       d.v = l.speed * between(0.85, 1.15);
       d.y = anywhere ? between(-10, H) : between(-H * 0.25, -10);
       // (far enough right to come in across the whole window on its way down; with the wind, further: its steady push on this drop)
-      d.x = between(0, W + H * (SLANT + wind.steady(l.speed / FASTEST) / l.speed));
+      d.x = between(0, W + H * (SLANT + wind.steady(l.speed / FASTEST) / (d.v * (0.8 + 0.4 * e.level))));
       d.vx = 0;
       d.floor = l.splash ? between(H * 0.8, H + 2) : H + 12;
     };
@@ -296,13 +296,15 @@ const Sky = (() => {
         if (drops.length > n) drops.length = n;
         drops.sort((a, b) => a.layer - b.layer);
         const pace = 0.8 + 0.4 * e.level, sway = SLANT * (1 + 0.12 * Math.sin(t * 0.37)), windy = wind.amount > 0;
-        if (windy) LAYERS.forEach((l, i) => { carried[i] += (l.speed * pace * sway + wind.steady(l.speed / FASTEST)) * dt; });
+        // (the wind's gust bands, one air with the leaves', carried along as fast as the near drops go across: so they bunch, and the
+        // far ones, slower, are overtaken by them, and bunch too)
+        if (windy) wind.ride(LAYERS[1].speed * pace * sway + wind.steady(LAYERS[1].speed / FASTEST));
         for (const d of drops) {
           const fall = d.v * pace * dt;
           d.y += fall;
           if (windy) {   // (the wind's air where it is, leftward px/s; the streak leaning to match: sideways over down)
             // (in a lull it can blow back against the drop's own lean, so they fall almost straight down; never back up the window)
-            const own = d.v * pace * sway, air = Math.max(wind.across(d.x, LAYERS[d.layer].speed / FASTEST, carried[d.layer]), -0.7 * own);
+            const own = d.v * pace * sway, air = Math.max(wind.across(d.x, LAYERS[d.layer].speed / FASTEST), -0.7 * own);
             const lean = sway + air / (d.v * pace);
             d.vx = -(own + air);
             d.x += d.vx * dt;
@@ -481,8 +483,8 @@ const Sky = (() => {
     // never piles up); and a few eddies drifting along behind it, each a vortex that draws leaves near it onto a ring and sweeps them
     // round and round, then flings them off as it dies away. A leaf eases toward the air's speed where it is (it has a little
     // weight), turning over faster the faster the air turns about it. A few wisps of the wind itself trace the same air. Gust bands
-    // roll along with it: the air faster in a band, slower between, harder after a gust; the rain rides them (across(), below), the
-    // leaves a little.
+    // roll along with it, one set for everything: the air faster in a band, slower between, harder after a gust; the rain rides them
+    // (across(), below), the leaves a little (with or without the rain).
     // (All of it is worked out downwind along +x, from the left edge, and drawn mirrored: on screen x is W - x, the sprites mirrored
     // too, so everything, the gusts, turbulence and eddies, goes right to left, the leaves and wisps coming in at the right edge.)
     const LAYERS = [{speed: 40, alpha: 0.5, share: 0.4}, {speed: 60, alpha: 0.75, share: 0.35}, {speed: 85, alpha: 1, share: 0.25}];
@@ -503,11 +505,16 @@ const Sky = (() => {
       }));
     })));
     const WISP = ["#2E363D", "#45515B", "#5F6E7A"].map((c) => `rgb(${rgb(c)})`);
-    let flying = [], eddies = [], wisps = [], gust = 0, nextGust = 0, travelled = 0, calm = 1;
-    // The gust bands at x (downwind): -1 (a lull) to 1 (a band's heart), two waves rolling along a little ahead of the turbulence (in
-    // the rain, along with the drops they carry, each layer's as fast as its drops, so they bunch); and how strongly, more after a gust
-    const bandAt = (X) => 0.62 * Math.sin(0.024 * X) + 0.38 * Math.sin(0.041 * X + 1.7);
-    const band = (x) => bandAt(x - travelled * 1.15);
+    let flying = [], eddies = [], wisps = [], gust = 0, nextGust = 0, travelled = 0, calm = 1, swept = 0, riding = 0;
+    // The gust bands at x (downwind): -1 (a lull) to 1 (a band's heart), two waves rolling along (`swept` px on), the same for the
+    // leaves and the rain: a little ahead of the turbulence, or, in the rain, as fast as the near drops they carry (ride()), so the
+    // drops bunch; on narrow art (a phone's) shorter, so a curtain and a gap or two still fit across. And how strongly, more after a gust
+    const NARROW = 360;                // (art px: narrower than this, the bands shorter, in proportion, down to 1 / 2.6)
+    const bandAt = (X) => {
+      const s = clamp(NARROW / Math.max(W, 1), 1, 2.6);
+      return 0.62 * Math.sin(0.024 * s * X) + 0.38 * Math.sin(0.041 * s * X + 1.7);
+    };
+    const band = (x) => bandAt(x - swept);
     const gusting = () => 0.7 + gust;
     // The air's velocity at (x, y) for a layer whose leaves the steady wind carries at `pace` (px/s): [vx, vy], and how fast it turns
     // there (its curl, 1/s)
@@ -573,10 +580,11 @@ const Sky = (() => {
       strength: () => 0.8,
       need: () => W * H / 2600,
       count: () => flying.length,
-      // The air across, on screen at x (art px), on something `k` (0-1) as near as the nearest rain, its gust bands carried `carried`
-      // px on (with what they carry): leftward, px/s (none without the wind); and its steady part
-      across: (x, k, carried) => e.amount * k * calm * (STEADY * (1 + gust) + BANDS * gusting() * bandAt(W - x - carried)),
+      // The air across, on screen at x (art px), on something `k` (0-1) as near as the nearest rain: leftward, px/s (none without the
+      // wind); and its steady part. (Its bands not slowed on narrow art: there they are what's left of the wind in the rain.)
+      across: (x, k) => e.amount * k * (calm * STEADY * (1 + gust) + BANDS * gusting() * bandAt(W - x - swept)),
       steady: (k) => e.amount * k * calm * STEADY * (1 + gust),
+      ride: (v) => { riding = v; },   // (this frame, the gust bands carried along at v px/s: the rain's)
       // (on screen: the leaves' mean speed across, px/s, negative leftward; how many go rightward, against the wind, in a loop)
       probe: () => ({vx: -flying.reduce((sum, f) => sum + f.vx, 0) / Math.max(flying.length, 1),
                      against: flying.filter((f) => f.vx < 0).length}),
@@ -596,6 +604,8 @@ const Sky = (() => {
         if ((nextGust -= dt) <= 0) { gust += between(0.5, 1.1); nextGust = between(2.5, 6); }
         gust *= Math.exp(-0.9 * dt);
         travelled += DRIFT * calm * (1 + gust) * dt;
+        swept += (riding || DRIFT * calm * (1 + gust) * 1.15) * dt;
+        riding = 0;
         const want = Math.max(4, Math.round(W * H / 30000));   // (at least four, a phone's too)
         while (eddies.length < want) { const d = {}; eddy(d, true); eddies.push(d); }
         for (const d of eddies) {

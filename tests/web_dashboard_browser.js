@@ -928,7 +928,7 @@ async function animationsOff(browser, url, out) {
 // through, their look, zoomed), "stop" ("stop animations", a reload, "start animations", the reset), "links" (the temporary test links;
 // and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn),
 // "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
-// and the wind alone, heavy rain alone and in the wind, uv's beams over 40 s, a phone's strip, reduced motion)
+// and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, a phone's strip, reduced motion)
 const WEATHER = {
   async marks(browser, url, out) {
     const { context, page, errors, reads } = await weatherPage(browser, url);
@@ -1131,9 +1131,10 @@ const WEATHER = {
       await uv.context.close();
       return seen;
     })();
-    // heavy rain, alone and in the wind, its drops watched for 3 s, beside the rest
-    const raining = Promise.all(["rain2", "rain2,wind"].map(async (name) => {
-      const p = await weatherPage(browser, url, { query: `?fx=${name}` });
+    // heavy rain, alone and in the wind (and in the wind on a phone), its drops watched for 3 s, beside the rest
+    const phoneSize = { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true };
+    const raining = Promise.all([["rain2"], ["rain2,wind"], ["rain2,wind", phoneSize]].map(async ([name, context]) => {
+      const p = await weatherPage(browser, url, { query: `?fx=${name}`, context });
       const seen = { ...await rainSeen(p.page, 3000), errors: p.errors };
       await p.context.close();
       return seen;
@@ -1188,7 +1189,7 @@ const WEATHER = {
                   stateFrames: await still.page.evaluate(() => Sky.state().frames), errors: still.errors };
     await still.context.close();
     out.uv = await swaying;
-    [out.rain.alone, out.rain.windy] = await raining;
+    [out.rain.alone, out.rain.windy, out.rain.phone] = await raining;
     [out.bare, out.barePhone] = await bare;
     out.errors = [];
   },
