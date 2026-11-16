@@ -21,6 +21,8 @@ from typing import NamedTuple
 
 import httpx
 
+from ..tls import ssl_context
+
 log = logging.getLogger(__name__)
 
 BASE = "https://api.ecowitt.net/api/v3/device"
@@ -167,7 +169,7 @@ class _TurnLock:
 class EcowittAPI:
     def __init__(self, api_key: str, app_key: str, transport: httpx.AsyncBaseTransport | None = None):
         self.keys = {"application_key": app_key, "api_key": api_key}
-        self.client = httpx.AsyncClient(timeout=30, transport=transport)
+        self.client = httpx.AsyncClient(timeout=30, transport=transport, verify=ssl_context())
         self._turn = _TurnLock()  # one request at a time, spaced out; a person's request goes first
         self._last = 0.0
         self.requests = 0  # sent so far, including retries

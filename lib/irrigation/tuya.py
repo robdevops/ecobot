@@ -16,6 +16,7 @@ import uuid
 import httpx
 
 from ..config import Config
+from ..tls import ssl_context
 from .common import DELAYS, MAX_MINUTES, IrrigationError, is_paused  # noqa: F401 (is_paused: named here too)
 
 log = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ class Tuya:
     def __init__(self, cfg: Config, transport=None):
         self.device = cfg.tuya_device_id
         self.client_id, self.secret = cfg.tuya_client_id, cfg.tuya_client_secret
-        self.http = httpx.AsyncClient(base_url=cfg.tuya_base_url, timeout=20, transport=transport)
+        self.http = httpx.AsyncClient(base_url=cfg.tuya_base_url, timeout=20, transport=transport, verify=ssl_context())
         self.token = ""
         self.token_expires = 0.0
 

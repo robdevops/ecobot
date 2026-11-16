@@ -11,6 +11,7 @@ import httpx
 from ..config import Config
 from ..snapshots import Snapshots
 from ..sources import Source
+from ..tls import ssl_context
 from ..warm import Warmer, in_sync_hours
 
 log = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ class Forecast(Source):
         if configured != (None, None) and None in configured:
             log.warning("MCP_FORECAST_LAT and MCP_FORECAST_LON go together: with only one set, the weather station's location is used")
         self.location = configured if None not in configured else location if location and None not in location else None
-        self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
+        self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport, verify=ssl_context())
         self.days: list[dict] | None = None
         self.fetched_at = 0.0
         self.requests = 0

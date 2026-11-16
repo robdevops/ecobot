@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..netenv import local_name_hint
+from ..tls import ssl_context
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class LocalSensor:
         self.base = url if "//" in url else f"http://{url}"
         parts = urlsplit(self.base)
         self.host, self.port = parts.hostname or "", parts.port
-        self.client = httpx.AsyncClient(timeout=TIMEOUT, transport=transport)
+        self.client = httpx.AsyncClient(timeout=TIMEOUT, transport=transport, verify=ssl_context())
         self.resolve, self.clock, self.cloud = resolve, clock, cloud
         self.address: tuple[str, float] | None = None   # (IP, when looked up)
         self.retry_at = 0.0

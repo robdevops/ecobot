@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 
 from ..netenv import local_name_hint
 from ..series import derives_range
+from ..tls import ssl_context
 from .hass_map import ANCHOR, ENTITIES, NO_RANGE, convert, entity_ids
 from .live import BUCKET
 
@@ -97,7 +98,8 @@ class HomeAssistant:
     """Home Assistant's REST API: the station's entities (found by name), their states now and their history."""
 
     def __init__(self, url: str, token: str, transport=None):
-        self.client = httpx.AsyncClient(base_url=url.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=60, transport=transport)
+        self.client = httpx.AsyncClient(base_url=url.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=60, transport=transport,
+                                        verify=ssl_context())
         self.trouble = Trouble(url)
         self.prefix: str | None = None
         self.units: dict[str, str] = {}   # entity id -> the unit Home Assistant shows it in (read with its states)

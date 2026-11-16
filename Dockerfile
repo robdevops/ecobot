@@ -61,10 +61,14 @@ RUN if [ -n "$COMMIT" ]; then echo "$COMMIT" > .git/HEAD; fi
 ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1
 
 # ecobot-mcp. Importing it once writes the bytecode of every module it loads at start, and only those, and checks it needs nothing
-# but its own packages (no Telegram, no model client: they are not in this venv)
+# but its own packages (no Telegram, no model client: they are not in this venv). Besides the program's own imports, what main() and
+# the first requests import (the tools, lib.service.*; uvicorn's HTTP protocol and lifespan; anyio's asyncio backend; the HTTP clients'
+# connection pool and certificates): without their bytecode each start compiled them again before listening (its user can't write any)
 FROM app AS ecobot-mcp
 COPY --from=venv-mcp /opt/venv /opt/venv
-RUN DATA_DIR=/tmp/build python -c "import sys, importlib.util; import ecobot_mcp.__main__, lib.mcp_server; \
+RUN DATA_DIR=/tmp/build python -c "import sys, importlib, importlib.util, pkgutil; import ecobot_mcp.__main__, lib.mcp_server, lib.service; \
+[importlib.import_module('lib.service.' + m.name) for m in pkgutil.iter_modules(lib.service.__path__)]; \
+import uvicorn.protocols.http.h11_impl, uvicorn.lifespan.on, anyio._backends._asyncio, httpcore, truststore, certifi; \
 assert not {'telegram', 'openai'} & set(sys.modules), 'ecobot-mcp imported the bot'; \
 assert importlib.util.find_spec('telegram') is None and importlib.util.find_spec('openai') is None" \
  && rm -rf /tmp/build

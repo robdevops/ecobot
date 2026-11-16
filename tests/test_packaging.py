@@ -4,6 +4,8 @@ its own, and the systemd units: ecobot-mcp's without the bot's
 secrets, by their new and old names, and the bot's wanting and started after ecobot-mcp's. (Read as text: the CI workflow docker.yml
 builds and runs the images themselves.)"""
 
+import json
+import os
 import re
 from dataclasses import fields
 from pathlib import Path
@@ -67,6 +69,26 @@ def test_compose_runs_each_program_from_its_own_image():
     assert "image: ecobot-mcp" in mcp and "target: ecobot-mcp" in mcp and "hostname: ecobot-mcp" in mcp and "- 8765:8765" in mcp
     assert "image: ecobot\n" in bot and "target: ecobot\n" in bot and "profiles: [bot]" in bot and "depends_on: [ecobot-mcp]" in bot
     assert "BOT_MCP_URL=http://ecobot-mcp:8765/mcp" in (ROOT / "docker" / "bot.env").read_text()
+
+
+def test_the_ecobot_mcp_image_compiles_what_its_start_and_first_requests_import(tmp_path):
+    """The image's user can't write bytecode, so what the build step doesn't import is compiled again at every start: the tools
+    (lib.service.*), uvicorn's HTTP protocol and lifespan, anyio's asyncio backend, the clients' connection pool and certificates. The
+    step itself is run here (bar its check that Telegram and the model client are not installed, which they are in a dev venv)."""
+    import subprocess
+    import sys
+    text = (ROOT / "Dockerfile").read_text().split("FROM app AS ecobot-mcp")[1].split("FROM app AS irrigation-mcp")[0]
+    program = re.search(r'RUN DATA_DIR=/tmp/build python -c "(.*?)" \\\n', text, re.S)[1].replace("\\\n", "")
+    program = program.split("; assert importlib.util.find_spec")[0]
+    shown = "import json; print(json.dumps(sorted(sys.modules)))"
+    out = subprocess.run([sys.executable, "-c", f"{program}; {shown}"], cwd=ROOT, env={**os.environ, "DATA_DIR": str(tmp_path)},
+                         capture_output=True, text=True, check=True).stdout
+    loaded = set(json.loads(out.splitlines()[-1]))
+    service = {f"lib.service.{p.stem}" for p in (ROOT / "lib" / "service").glob("*.py") if p.stem != "__init__"}
+    assert service <= loaded
+    assert {"uvicorn.protocols.http.h11_impl", "uvicorn.lifespan.on", "anyio._backends._asyncio", "httpcore", "truststore", "certifi",
+            "ecobot_mcp.__main__", "lib.mcp_server"} <= loaded
+    assert not {"telegram", "openai"} & loaded
 
 
 def test_the_ecobot_mcp_unit_drops_the_bots_secrets_by_their_new_and_old_names():

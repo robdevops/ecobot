@@ -108,6 +108,19 @@ async def test_warm_summary(tmp_path):
     await air.close()
 
 
+async def test_the_warm_right_after_start_does_not_fetch_the_current_reading_again(tmp_path):
+    from lib.airgradient.source import JUST_FETCHED_SECONDS
+    air, calls = await make(tmp_path)
+    assert calls.count("current") == 1
+    await air.warm(True)                     # (start fetched it a moment ago)
+    assert calls.count("current") == 1
+    row, at = air._current
+    air._current = (row, at - JUST_FETCHED_SECONDS - 1)
+    await air.warm(True)                     # older than that: a timed refresh fetches it
+    assert calls.count("current") == 2
+    await air.close()
+
+
 async def test_history_is_capped_at_14_days(tmp_path):
     air, _ = await make(tmp_path)
     out = json.loads(await engines.air_history(air, {"start_date": "2026-01-01 00:00:00", "chart": False, "end_date": "2026-03-01 00:00:00"}))

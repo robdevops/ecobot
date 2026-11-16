@@ -224,6 +224,22 @@ async def test_a_missing_holidays_package_is_explained_not_guessed(station, monk
     assert "pip install holidays" in out["error"]
 
 
+def test_the_holiday_calendar_is_built_on_first_use_not_by_the_start_up_check(monkeypatch):
+    """Ecowitt's start asks problem(): only whether the package is there and the time zone has a region. Building the calendar loads
+    every country's module (most of a second where the image has no bytecode for them), so it waits for the first holiday question."""
+    from datetime import date
+    from lib import public_holidays as calendar
+    built = []
+    real = calendar.holidays.country_holidays
+    monkeypatch.setattr(calendar.holidays, "country_holidays", lambda *a, **k: built.append(a) or real(*a, **k))
+    melbourne = calendar.PublicHolidays(TZ)
+    assert melbourne.problem() == "" and melbourne.available and built == []
+    assert melbourne.name(date(2026, 12, 25)) == "Christmas Day" and melbourne.name(date(2026, 12, 23)) is None
+    assert built == [("AU",)]                                            # once, for the station's state
+    monkeypatch.setattr(calendar, "holidays", None)
+    assert "pip install holidays" in calendar.PublicHolidays(TZ).problem()
+
+
 async def test_one_known_day_can_be_looked_up_with_no_conditions(station):
     """'Did it rain on Sat 5 Sep?': the day's own figures, not a search of the month that says nothing about it."""
     eco, _ = station

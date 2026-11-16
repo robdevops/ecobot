@@ -40,6 +40,7 @@ from ..panels import panel_for
 from ..specs import Chart, Line
 from ..storage import Storage
 from ..storage.catalogue import BOT, CLOUD, HOME_ASSISTANT
+from ..tls import ssl_context
 from ..timeutil import day_bounds, day_text, local_date, local_epoch, parse_local, to_local, when
 from ..tools import Turn
 from ..warm import Warmer
@@ -57,6 +58,7 @@ MAX_DAYS = 400                    # longest history period per question
 MAX_REQUEST_DAYS = 9              # the API allows 10 days per request; a day of margin for clock changes
 MAX_INLINE_DAYS = 30              # missing days fetched while answering; more are left to the backfill
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
+JUST_FETCHED_SECONDS = 30         # a refresh (warm) leaves a current reading this new as it is: start() has just fetched it
 HA_RECENT_SECONDS = 3 * 3600      # Home Assistant's ranges are read back for the last few hours each time (RANGE_KEEP_DAYS the first time)
 SAMPLE_SECONDS = 60               # with the monitor's own server, or Home Assistant's states of it: how often it is read (the keep-warm interval)
 MIN_SAMPLES = 3                   # a 5-minute average of fewer readings than this is not kept (the cloud fills that gap)
@@ -98,7 +100,7 @@ class AirGradient(Source):
         self.token = cfg.airgradient_token
         self.cloud = cfg.airgradient_cloud    # without an account (or with MCP_AIRGRADIENT_SOURCE saying not) the cloud is never asked
         self.link = ("live chart", cfg.airgradient_dashboard) if cfg.airgradient_dashboard else None
-        self.client = httpx.AsyncClient(timeout=15, transport=transport)
+        self.client = httpx.AsyncClient(timeout=15, transport=transport, verify=ssl_context())
         self.local = LocalSensor(cfg.airgradient_local_url, cloud=self.cloud) if cfg.airgradient_local else None   # the monitor's own server
         owned = (storage is None) if owned is None else owned
         storage = storage or Storage(cfg.storage_path, cfg.tz)
@@ -495,7 +497,8 @@ class AirGradient(Source):
         """Current reading, today, and the last week of finished days."""
         before, today = self.requests, self.now().date()
         if not ((self.local or self._ha_ids) and await self._record()):   # (the monitor, or Home Assistant's states of it: the reading is also kept)
-            await self._current_row(fresh)
+            just = self._current is not None and time.time() - self._current[1] < JUST_FETCHED_SECONDS
+            await self._current_row(fresh and not just)
         await self._day_rows(today, fresh)
         week = [today - timedelta(days=n) for n in range(1, WARM_DAYS + 1)]
         await self._fetch_days((await self._held(week))[1])  # one request for all of them

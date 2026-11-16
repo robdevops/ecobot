@@ -15,6 +15,7 @@ from ..config import Config
 from ..snapshots import Snapshots
 from ..sources import Source
 from ..timeutil import day_text, local_date
+from ..tls import ssl_context
 from ..warm import Warmer, in_sync_hours
 from .parse import DISTRICTS, LEVEL_EMOJI, parse_melbourne_pollen
 
@@ -41,7 +42,7 @@ class Pollen(Source):
 
     def __init__(self, cfg: Config, transport=None):
         self.tz, self.district, self.place = cfg.tz, _district(cfg.pollen_district), cfg.place
-        self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
+        self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport, verify=ssl_context())
         self.data: dict | None = None        # the parsed page
         self.fetched_at = 0.0                # when (epoch)
         self._validators: dict = {}          # ETag / Last-Modified for the conditional request
