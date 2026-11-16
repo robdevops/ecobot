@@ -12,7 +12,7 @@
      The tiles can be rearranged in the browser: dragged to reorder (a long press on a touch screen), hidden with their × or the
      remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server.
      A click or tap on a gauge zooms its tile (title and gauge, no table) to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
-     Behind everything, the weather as pixel art on one canvas (Sky): rain, smog, uv, humidity, wind, heat and ice, each while the
+     Behind everything, the weather as pixel art on one canvas (Sky): rain, haze, uv, humidity, wind, heat and ice, each while the
      readings call for it, its tile framed in red; "stop animation" at the bottom left stops them. With MCP_DASHBOARD_ANIMATIONS off
      the server sends data-animations="off" on <html> (lib/web_dashboard.py): none of it, for every viewer (no canvas drawn, no loop,
      no link, no test links), the rest of the page as ever. -->
@@ -136,7 +136,7 @@
 // for every effect, each frame cleared once and drawn back to front (ORDER). The effects share a particle budget and a cap on their
 // strength together, so several at once are no busier or brighter than one strong one. Nothing runs while no effect is on or fading
 // out; the tab hidden, it waits; with reduced motion, one still, faint frame and no loop.
-//   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
+//   Sky.set(want, animate): want {rain: 0-1 (its strength), haze: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
 //   100 %), uv, wind, heat: 0 or 1, ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
 //   sooner)}; animate false (the page's "stop animation", or
 //   MCP_DASHBOARD_ANIMATIONS off): nothing drawn (and anything blown across gone).
@@ -197,7 +197,7 @@ const Sky = (() => {
   const BUDGET = 1 / 400;              // the particles of every effect together: this many per art pixel² (480 x 300: 360)
   const CAP = 1.5;                     // ... and their strengths together at most this (one strong effect: about 0.8)
   const STILL_HINT = 0.5;              // reduced motion: the still frame this faint
-  const ORDER = ["gust", "smog", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"];   // back to front
+  const ORDER = ["gust", "haze", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"];   // back to front
   let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
 
   // ---------- tools: seeded randomness, colours, dithering, noise, little canvases ----------
@@ -401,54 +401,101 @@ const Sky = (() => {
     };
   });
 
-  // ---------- smog: banks of haze drifting low across the window, three deep; thicker, higher and redder with each AQI band ----------
-  const SMOG = [   // each band's four shades, dark to light: Moderate (ochre), USG (amber), Unhealthy (rust), Very Unhealthy, Hazardous (maroon)
+  // ---------- haze: the particulates the air sensor measures, an even veil over the whole window; denser and redder with each AQI band ----------
+  // Fine dust hangs evenly in the air, not in banks: an even dithered tint (its density the band's, faint at Moderate, heavy at
+  // Hazardous) with only a very gentle, large-scale swell in it, and a sparse grain of tiny motes (dust, three deep: the far ones
+  // dimmer and slower). Both drift right to left, the wind's way: slowly in calm air, faster with the wind on, quickening in its
+  // gusts (wind.breeze()). In a flood, none below its surface. (The veil is one texture, wrapping sideways: dithered evenly, its
+  // swell in its pixels' alpha, slid in steps of its dither's 4 px, so its dots stay put and only its swell moves; the motes, a few
+  // dozen 1 px rectangles.)
+  const HAZE = [   // each band's four shades, dark to light: Moderate (ochre), USG (amber), Unhealthy (rust), Very Unhealthy, Hazardous (maroon)
     ["#2A2616", "#433C21", "#5F552D", "#7C6E38"], ["#2D2216", "#4A3420", "#6A4A29", "#8A6132"],
     ["#2B1B17", "#462820", "#62352B", "#7C4335"], ["#28181F", "#3E2330", "#563040", "#6C3C4E"],
     ["#22101A", "#371722", "#4E1F2C", "#652938"]].map((r) => r.map(rgb));
-  const smog = effect((e) => {
-    const LAYERS = [{cell: 120, flat: 0.32, drift: 1.2, depth: 0.55, seed: 11}, {cell: 80, flat: 0.36, drift: 2.6, depth: 0.8, seed: 23},
-                    {cell: 52, flat: 0.42, drift: 5, depth: 1, seed: 37}];
-    let built = 0, textures = [];
+  const haze = effect((e) => {
+    const DENSITY = [0.36, 0.52, 0.68, 0.84, 0.97];   // the veil's cover, each band (of its pixels)
+    const SWELL = 0.6;                 // its gentle large-scale variation: its alpha's, for each 1 of the noise's own (about 6 % either way)
+    const CALM = 3, BREEZE = 7;        // its drift leftward, px/s (the middle motes'): in calm air; more for the wind (its breeze 1-3)
+    const DEPTHS = [{pace: 0.55, alpha: 0.4, share: 0.45}, {pace: 1, alpha: 0.6, share: 0.35}, {pace: 1.6, alpha: 0.85, share: 0.2}];
+    let built = 0, veil = null, span = 0, slide = 0, speed = 0, motes = [], born = 0, dust = [];
     function build(level) {
       built = level;
-      const shades = SMOG[level - 1], reach = [0.45, 0.58, 0.72, 0.86, 1][level - 1], thick = [0.62, 0.72, 0.82, 0.92, 1][level - 1];
-      textures = LAYERS.map((l) => {
-        const cells = Math.max(2, Math.round(W / l.cell)), across = cells / W, down = 1 / (l.cell * l.flat);
-        const top = H * (1 - reach * (1.1 - 0.25 * l.depth));   // (the far banks reach higher)
-        const density = (x, y) => {   // 0-1: the banks, denser lower down
-          const low = clamp((y - top) / (H - top), 0, 1);   // (0 at the smog's top, 1 at the window's bottom)
-          const n = 0.65 * noise(x * across, y * down, cells, l.seed) + 0.35 * noise(x * across * 2, y * down * 2, cells * 2, l.seed + 1);
-          return clamp((n - 0.58 + low * 0.55) * 2.2, 0, 1) * Math.pow(low, 0.3) * thick * l.depth;
-        };
-        return painted(W, H, (x, y) => {
-          if (y < top) return null;
-          const v = density(x, y);
-          let s = shadeOf(v * 0.8, x, y, 4);
-          if (s >= 0 && v > 0.12 && density(x, y - 3) < v - 0.1) s = Math.min(3, s + 1);   // (a bank's top, catching the light)
-          return s < 0 ? null : shades[s];
-        });
+      const shades = HAZE[level - 1], cover = DENSITY[level - 1];
+      span = Math.ceil(W / 4) * 4;     // (a whole number of dither tiles across: it wraps seamlessly)
+      const cells = Math.max(2, Math.round(span / 150)), across = cells / span;
+      // (its swell: soft noise, each row's mean taken out, so every height is as dense as any other, on the whole: no band anywhere)
+      const swell = new Float32Array(span * H);
+      for (let y = 0; y < H; y++) {
+        let mean = 0;
+        for (let x = 0; x < span; x++) {
+          const n = 0.65 * noise(x * across, y / 150, cells, 41) + 0.35 * noise(x * across * 2, y / 75, cells * 2, 43);
+          swell[y * span + x] = n;
+          mean += n / span;
+        }
+        for (let x = 0; x < span; x++) swell[y * span + x] -= mean;
+      }
+      veil = painted(span, H, (x, y) => {
+        const b = BAYER[(y & 3) * 4 + (x & 3)];
+        if (b >= cover) return null;
+        // (its tone: mostly the band's third shade, a sprinkle of the lightest, more of it the denser; the second where it thins)
+        const tone = BAYER[((y + 2) & 3) * 4 + ((x + 1) & 3)];
+        return [...shades[tone < 0.1 + 0.2 * cover ? 3 : b > cover - 0.13 ? 1 : 2], Math.round(255 * clamp(0.84 + SWELL * swell[y * span + x], 0.5, 1))];
       });
+      // (the motes: the band's lightest, paler still, as dust catching the light)
+      dust = [0.1, 0.22, 0.36].map((k) => `rgb(${shades[3].map((c) => Math.round(c + (225 - c) * k)).join(",")})`);
     }
+    const place = (m, anywhere) => {
+      m.id = ++born;
+      m.x = anywhere ? between(0, W) : W + between(0, 6);
+      m.y = between(0, H);
+      m.phase = between(0, 7);
+      m.bob = between(0.6, 2);         // (px/s: a slow wander up and down)
+    };
     return {
       strength: () => [0.4, 0.48, 0.56, 0.64, 0.72][Math.max(1, built || e.level) - 1],
-      resize() { built = 0; },
-      step() { if (e.level > 0 && (e.level !== built || !textures.length)) build(e.level); },
-      draw(g, alpha, t) {
+      need: () => (W * H / 1800) * (0.6 + 0.2 * Math.max(1, e.level || built)),   // (sparse: about 65 at Moderate on a laptop, 130 at Hazardous)
+      count: () => motes.length,
+      forget() { motes = []; slide = 0; },
+      resize() { built = 0; motes = []; },
+      // (for the tests: its band as drawn, how far its veil has slid leftward (px), its drift now (px/s, leftward), its motes [id, x, y])
+      probe: () => ({level: built, slide, speed, motes: motes.map((m) => [m.id, m.x, m.y])}),
+      step(dt, t, share) {
+        if (e.level > 0 && (e.level !== built || !veil)) build(e.level);
+        speed = CALM + BREEZE * wind.breeze();
+        slide += speed * dt;
+        const n = Math.round(this.need() * share);
+        while (motes.length < n) {   // (the depths in their shares, far first: drawn back to front)
+          const k = motes.length / Math.max(n, 1), m = {depth: k < DEPTHS[0].share ? 0 : k < DEPTHS[0].share + DEPTHS[1].share ? 1 : 2};
+          place(m, true);
+          motes.push(m);
+        }
+        if (motes.length > n) motes.length = n;
+        for (const m of motes) {
+          m.x -= speed * DEPTHS[m.depth].pace * dt;
+          m.y += Math.sin(t * 0.45 + m.phase) * m.bob * dt;
+          if (m.x < -1 || m.y < -2 || m.y > H + 2) place(m, false);
+        }
+      },
+      draw(g, alpha) {
         if (!built) return;
-        flood.above(g, () => LAYERS.forEach((l, i) => {
-          const x = Math.floor((t * l.drift + i * W / 3) % W), y = Math.round(Math.sin(t * 0.07 + i * 2) * 1.5 - flood.sunk());
-          g.globalAlpha = alpha * (0.6 + 0.4 * l.depth);
-          g.drawImage(textures[i], x - W, y);
-          g.drawImage(textures[i], x, y);
-        }));
+        flood.above(g, () => {
+          const x = -(Math.floor(slide / 4) * 4 % span);
+          g.globalAlpha = alpha;
+          g.drawImage(veil, x, 0);
+          if (x + span < W) g.drawImage(veil, x + span, 0);
+          let depth = -1;
+          for (const m of motes) {
+            if (m.depth !== depth) { depth = m.depth; g.fillStyle = dust[depth]; g.globalAlpha = alpha * DEPTHS[depth].alpha; }
+            g.fillRect(Math.round(m.x), Math.round(m.y), 1, 1);
+          }
+        });
       },
     };
   });
 
   // ---------- heat: a shimmering amber glow rising from the bottom, its ripples riding up and wavering sideways ----------
   // (In a flood, from its surface: from as low as its troughs go, flood.sunk(), and kept above() it, so its edge is the wavy surface;
-  // the smog's banks sit on it too, and neither is drawn below it)
+  // the haze is drawn above it too, and neither below it)
   const HEAT = ["#3A1C0A", "#62300E", "#955015", "#C97B24", "#EFB05A"].map(rgb);
   const heat = effect((e) => {
     const SPAN = 0.34, PERIOD = 13, LINES = 7, RISE = 9, SPARE = 4;   // its height (of the window's); its ripples' spacing (px), how many
@@ -682,6 +729,8 @@ const Sky = (() => {
       // wind); and its steady part. (Its bands not slowed on narrow art: there they are what's left of the wind in the rain.)
       across: (x, k) => e.amount * k * (calm * STEADY * (1 + gust) + BANDS * gusting() * bandAt(W - x - swept)),
       steady: (k) => e.amount * k * calm * STEADY * (1 + gust),
+      // How hard it blows now, for the haze's drift: 0 without the wind, 1 at its steady pace, more in a gust
+      breeze: () => e.amount * calm * (1 + gust),
       ride: (v) => { riding = v; },   // (this frame, the gust bands carried along at v px/s: the rain's)
       // (on screen: the leaves' mean speed across, px/s, negative leftward; how many go rightward, against the wind, in a loop)
       // (and the rain's hits on them so far, and their mean push, px/s, and the mean change it made in a hit leaf's own velocity, px/s;
@@ -1469,8 +1518,8 @@ const Sky = (() => {
   // spreading both ways, and a tiny splash), a drip running into it, a restless chop while it pours, now and then a bigger slosh from
   // one side; calming slowly as the rain eases. Rain, the drips and the wind's wisps end at it, none ever drawn below; every one of
   // the wind's leaves its surface reaches (its waves as they are, wherever a leaf meets them) sticks there, floats, then sinks and
-  // rests on the bottom, the flood's own from then on: there while it lasts, the wind gone or not, gone as it drains away; the smog
-  // and the heat's shimmer rise above it (lift()). Rarely (about every FROG_EVERY s on
+  // rests on the bottom, the flood's own from then on: there while it lasts, the wind gone or not, gone as it drains away; the haze
+  // and the heat's shimmer are drawn above it (above(): the haze down to its surface, the heat from as low as its troughs go). Rarely (about every FROG_EVERY s on
   // average, never in its first FROG_FIRST s) a bemused frog on a lily pad floats across, right to left with the wind, bobbing; the
   // test link's flood (level 2) sends its first one FROG_FIRST s after the water starts rising. Drawn after the drips and the
   // leaves (the sunken ones show through it, tinted and dimmed), before the ice.
@@ -2375,7 +2424,7 @@ const Sky = (() => {
     };
   });
 
-  const effects = {gust, smog, heat, uv, rain, wind, humidity, flood, ice};
+  const effects = {gust, haze, heat, uv, rain, wind, humidity, flood, ice};
 
   // ---------- the loop ----------
   let animate = true, frame = 0, last = 0, clock = 0, frames = 0, cost = 0, scale = 1;
@@ -2485,7 +2534,7 @@ const Sky = (() => {
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: !!frame, frames, cost, clock, size: [W, H, P],
                               particles: Object.fromEntries(ORDER.map((k) => [k, effects[k].count()])), budget: W * H * BUDGET,
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
-                              wind: effects.wind.probe(), rain: effects.rain.probe(),
+                              wind: effects.wind.probe(), rain: effects.rain.probe(), haze: effects.haze.probe(),
                               humidity: effects.humidity.probe(), flood: effects.flood.probe(),
                               gust: effects.gust.probe()})};
 })();
@@ -3484,11 +3533,11 @@ const Sky = (() => {
   // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animation" (bottom left) ----------
   // (And with each new live gust reading over 99 km/h, something big blown across once: gusting(), below.)
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
-  // stronger to 8 mm/h), smog from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
+  // stronger to 8 mm/h), haze from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
   // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust), heat at 35 °C, ice below 0 °C (how far below), a flash flood
   // over 30 mm/h (the rain's too). A tile
   // with no reading now calls for nothing.
-  const CALLED_BY = {rain: "Rain", smog: "US AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
+  const CALLED_BY = {rain: "Rain", haze: "US AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
                      ice: "Temperature", flood: "Rain"};
   const BANDS = [50, 100, 150, 200, 300];   // the US AQI's bands' upper edges, Good to Very Unhealthy (the tile's own bounds if it has them)
   let real = {}, simulated = {}, conditions = {};
@@ -3502,7 +3551,7 @@ const Sky = (() => {
     const aqiTile = (data.tiles || []).find((t) => idOf(t) === "US AQI"), bands = aqiTile && aqiTile.bounds && aqiTile.bounds.length > 2
       ? aqiTile.bounds.slice(1, -1) : BANDS;
     return {rain: rate > 0 ? 0.3 + 0.7 * Math.min(1, rate / 8) : 0,
-            smog: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),
+            haze: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),
             uv: uvi !== null && uvi >= 11 ? 1 : 0,
             humidity: humidity !== null && humidity >= 90 ? Math.max(0.05, Math.min(1, (humidity - 90) / 10)) : 0,
             wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 1 : 0,
@@ -3584,8 +3633,8 @@ const Sky = (() => {
 <!-- TEMPORARY: effect test links. A "test:" row at the bottom left (in the corner, before "stop animation", which also ends them all: its
      "ecobot-fx-stop"), one link per effect, simulating its condition (the effect and its
      tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
-     ?fx=smog3,wind,ice, ?fx=all (rain light, rain2 heavy (now and then a drop sticking to the glass), rain3 heavy with a flash
-     flood (its first frog 30 s after the water starts rising; off: it drains), smog1-smog5, uv, humidity light (91 %), humidity2 heavy (100 %), wind, heat, ice; ?fx=all every one, no link of its own); and "gust" (?fx=gust), not
+     ?fx=haze3,wind,ice, ?fx=all (rain light, rain2 heavy (now and then a drop sticking to the glass), rain3 heavy with a flash
+     flood (its first frog 30 s after the water starts rising; off: it drains), haze1-haze5 (or smog1-smog5, its earlier name), uv, humidity light (91 %), humidity2 heavy (100 %), wind, heat, ice; ?fx=all every one, no link of its own); and "gust" (?fx=gust), not
      on or off: each click (and ?fx=gust as the page opens) sends one cow, barn or chicken across, as a gust over 99 km/h does. To remove: delete
      from here to "END TEMPORARY" (this style, the row and its script). The page's own listener for "ecobot-fx" then simply hears nothing. -->
 <style>
@@ -3608,10 +3657,10 @@ const Sky = (() => {
 "use strict";
 (() => {
   // Each effect's simulated levels, one click a step (back to off after the last): as the page's conditions (rain: its strength;
-  // smog: its band; ice: degrees below 0 °C). Rain's third, heavy with a flash flood (FLOOD: the flood's level too, the test's own)
-  const STEPS = {rain: [0.35, 1, 1], smog: [1, 2, 3, 4, 5], uv: [1], humidity: [0.1, 1], wind: [1], heat: [1], ice: [5]};
+  // haze: its band; ice: degrees below 0 °C). Rain's third, heavy with a flash flood (FLOOD: the flood's level too, the test's own)
+  const STEPS = {rain: [0.35, 1, 1], haze: [1, 2, 3, 4, 5], uv: [1], humidity: [0.1, 1], wind: [1], heat: [1], ice: [5]};
   const FLOOD = 2;
-  const ALL = {rain: 1, smog: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5};   // (?fx=all)
+  const ALL = {rain: 1, haze: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5};   // (?fx=all)
   const OLD = {leaves: "wind", radiation: "uv", drips: "humidity"};   // (their earlier names, in links saved before)
   const row = document.getElementById("fxtest");
   document.getElementById("motion").before(row);   // (into the page's bottom left corner, just left of "stop animation")
@@ -3625,10 +3674,10 @@ const Sky = (() => {
   }
   new ResizeObserver(fit).observe(row);
   let on = {}, gusted = false;   // {effect: its step's index}; whether "gust" has been asked for (?fx=gust, its link), until stopped
-  const name = (k) => k === "rain" || k === "humidity" ? [k, `${k}2`, `${k}3`][on[k]] : k === "smog" ? `smog${on[k] + 1}` : k;   // (in the URL)
-  const label = (k) => k in on ? (k === "rain" || k === "humidity" ? `${k}: ${["light", "heavy", "flood"][on[k]]}` : k === "smog" ? `smog ${on[k] + 1}` : k) : k;
+  const name = (k) => k === "rain" || k === "humidity" ? [k, `${k}2`, `${k}3`][on[k]] : k === "haze" ? `haze${on[k] + 1}` : k;   // (in the URL)
+  const label = (k) => k in on ? (k === "rain" || k === "humidity" ? `${k}: ${["light", "heavy", "flood"][on[k]]}` : k === "haze" ? `haze ${on[k] + 1}` : k) : k;
   // On a phone (the row above the strip, across the window): no "test:", and a link's step as a small raised figure (rain¹ light, rain²
-  // heavy, smog³), so every link and "stop animation" fit, with room for one more
+  // heavy, haze³), so every link and "stop animation" fit, with room for one more
   const PHONE = matchMedia("(max-width: 480px)"), RAISED = "¹²³⁴⁵";
   const shown = (k) => !PHONE.matches || !(k in on) || STEPS[k].length === 1 ? label(k) : k + RAISED[on[k]];
 
@@ -3641,7 +3690,7 @@ const Sky = (() => {
       else if (word === "rain3" || word === "flood") on.rain = 2;
       else if (word === "humidity1") on.humidity = 0;
       else if (word === "humidity2") on.humidity = 1;
-      else if (/^smog[1-5]?$/.test(word)) on.smog = Number(word.slice(4) || 1) - 1;
+      else if (/^(haze|smog)[1-5]?$/.test(word)) on.haze = Number(word.slice(4) || 1) - 1;   // (smog: its earlier name)
       else if (word in STEPS) on[word] = 0;
       else if (word in OLD) on[OLD[word]] = 0;
       else if (word === "gust") gusted = true;

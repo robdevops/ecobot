@@ -491,7 +491,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         got = report[name]
         assert got["errors"] == [], (name, got["errors"])
         assert got["tiles"] == n and got["scrollWidth"] <= width, (name, got)
-        assert got["status"] == "last reading 18:42", (name, got)   # (the US AQI's 56, Moderate: smog behind the tiles)
+        assert got["status"] == "last reading 18:42", (name, got)   # (the US AQI's 56, Moderate: haze behind the tiles)
         assert all(r["right"] <= width + 0.5 and r["left"] >= -0.5 for r in got["rects"]), (name, got)
         assert (shots / f"dashboard-{name}.png").exists() and (shots / f"dashboard-{name}-zoomed.png").exists()
         assert got["zoomed"]["zoomed"], (name, got["zoomed"])
@@ -986,7 +986,7 @@ async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_t
 # ---------- the weather behind the tiles ----------
 STREAK = [[142, 157, 168], [76, 88, 97], [239, 250, 255]]   # a trail's thin streak on clear glass: its film, grime, glint
 DROPLET = [[166, 215, 242], [239, 250, 255]]                   # a tiny droplet left on a trail, its spark
-EFFECTS = {"rain": "Rain", "smog": "US AQI", "uv": "UV index", "humidity": "Humidity", "wind": "Wind", "heat": "Temperature",
+EFFECTS = {"rain": "Rain", "haze": "US AQI", "uv": "UV index", "humidity": "Humidity", "wind": "Wind", "heat": "Temperature",
            "ice": "Temperature"}
 
 
@@ -1011,7 +1011,7 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
                                                      "link": None}, (name, mark)
         assert mark["at"]["effects"] == [effect] and mark["at"]["framed"] == [EFFECTS[effect]], (name, mark)
         assert mark["at"]["link"] == "stop animation" and mark["at"]["running"], (name, mark)
-    assert got["smogBands"] == [2, 3, 4, 5, 5]                                   # thicker with each band: USG to Hazardous
+    assert got["hazeBands"] == [2, 3, 4, 5, 5]                                   # thicker with each band: USG to Hazardous
     assert got["rainStrength"][0] < 0.4 and got["rainStrength"][1:] == [1, 1]    # light at 0.5 mm/h, heavy from 8
     assert got["humidityStrength"] == pytest.approx([0.1, 0.5, 1])              # heavier from 90 % to 100 %
     assert got["iceDepth"] == [0.5, 5]                                           # further in the colder
@@ -1022,7 +1022,7 @@ async def test_several_effects_share_one_canvas_behind_the_see_through_tiles_zoo
     got = await weather(server, "several")
     # several at once: one canvas, one loop, at most 30 frames drawn a second
     several = got["several"]
-    assert several["effects"] == ["smog", "uv", "rain", "wind", "humidity", "ice"] and several["canvases"] == 1, several
+    assert several["effects"] == ["haze", "uv", "rain", "wind", "humidity", "ice"] and several["canvases"] == 1, several
     assert sorted(several["framed"]) == sorted({EFFECTS[k] for k in several["effects"]}) and several["ink"] > 0, several
     assert 20 <= several["drawn"] <= 32 and several["frames"] <= 64, several    # (a second's: one request a display frame, every other one drawn)
     # the canvas: filling the window, fixed, first, behind the tiles, never in the pointer's way, its pixels crisp
@@ -1057,10 +1057,10 @@ async def test_the_weather_can_be_stopped_kept_stopped_across_a_reload_and_start
 @needs_browser
 async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_ends_them_and_with_animations_off_nothing_is_drawn(server, station):
     got = await weather(server, "links")
-    # the temporary test links: each its effect and frame (the gauges keep their readings), the URL following; smog steps through its
+    # the temporary test links: each its effect and frame (the gauges keep their readings), the URL following; haze steps through its
     # bands, rain light then heavy; ice melts back; "stop animation" ends them all (no "clear"); no "all" link, but ?fx=all
     links = got["links"]
-    assert links["buttons"] == ["rain", "smog", "uv", "humidity", "wind", "heat", "ice", "gust"], links["buttons"]
+    assert links["buttons"] == ["rain", "haze", "uv", "humidity", "wind", "heat", "ice", "gust"], links["buttons"]
     on = []
     for name in ("uv", "humidity", "wind", "heat", "ice"):
         on.append(name)
@@ -1074,18 +1074,18 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
     just_right_of_the_row(corner)
     assert corner["tag"] and corner["fits"], corner
     assert corner["row"]["left"] == 0 and corner["motion"]["bottom"] == corner["window"][1] == corner["strip"]["bottom"], corner
-    assert links["smog"] == [1, 2, 3, 4, 5, 0]
+    assert links["haze"] == [1, 2, 3, 4, 5, 0]
     assert links["rain"] == [[0.35, 0], [1, 0], [1, 2], [0, 0]]   # (light, heavy, heavy with a flash flood (the test's own), off)
     melting = links["melting"]
     assert melting["grown"] > 2 and 0 < melting["reach"] < melting["grown"] and "ice" not in melting["effects"] and melting["running"], melting
     # "stop animation" with only test links on: every one off, ?fx= gone, the animations stopped (kept), the link gone with them
     assert links["cleared"] | {"levels": None, "running": None} == {"effects": [], "levels": None, "running": None, "framed": [],
                                                                      "link": None, "url": "", "pressed": 0, "stored": False}
-    assert links["all"]["effects"] == EVERY and links["all"]["url"] == "?fx=rain2,smog3,uv,humidity2,wind,heat,ice"
+    assert links["all"]["effects"] == EVERY and links["all"]["url"] == "?fx=rain2,haze3,uv,humidity2,wind,heat,ice"
     # humidity light (91 %) first, then heavy (100 %), then off
     assert links["humiditySteps"] == [{"level": 1, "url": "?fx=uv,humidity2,wind,heat", "label": "humidity: heavy"},
                                       {"level": 0, "url": "?fx=uv,wind,heat", "label": "humidity"}], links["humiditySteps"]
-    assert links["role"] == "group" and links["pressed"] == {"rain": "false", "smog": "false", "uv": "true", "humidity": "true",
+    assert links["role"] == "group" and links["pressed"] == {"rain": "false", "haze": "false", "uv": "true", "humidity": "true",
                                                              "wind": "true", "heat": "true", "ice": "false"}, links["pressed"]
     # on a phone (360x740, 390x844), every effect on (its links' longest): no "test:", each link ("gust" too) and "stop animation" in sight,
     # unscrolled, with room for one more short link (some 30 px); a link's step a raised figure, its full words its label
@@ -1094,8 +1094,8 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
         just_right_of_the_row(phone)
     for phone in (got["phone360"], got["phone390"]):
         assert phone["errors"] == [] and phone["link"] == "stop animation", phone
-        assert phone["buttons"] == ["rain²", "smog³", "uv", "humidity²", "wind", "heat", "ice", "gust"], phone["buttons"]
-        assert phone["labels"] == ["rain: heavy", "smog 3", "uv", "humidity: heavy", "wind", "heat", "ice", "gust"], phone["labels"]
+        assert phone["buttons"] == ["rain²", "haze³", "uv", "humidity²", "wind", "heat", "ice", "gust"], phone["buttons"]
+        assert phone["labels"] == ["rain: heavy", "haze 3", "uv", "humidity: heavy", "wind", "heat", "ice", "gust"], phone["labels"]
         assert phone["motion"]["bottom"] == pytest.approx(phone["strip"]["top"], abs=0.5), phone              # (above the strip)
         assert phone["flood"] == ["rain³", "rain: flood"], phone["flood"]                                   # (rain's third step)
     # MCP_DASHBOARD_ANIMATIONS off (the page as served then, data-animations="off"), every effect asked for (?fx=all) and called for by
@@ -1110,7 +1110,7 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
     assert off["hidden"] == {"strip": "reset preferences · last reading 18:42", "frames": 0, "ink": 0, "running": False}, off["hidden"]
 
 
-EVERY = ["smog", "heat", "uv", "rain", "wind", "humidity", "ice"]
+EVERY = ["haze", "heat", "uv", "rain", "wind", "humidity", "ice"]
 # humidity's beads' colours, [r, g, b, alpha] (alpha 0-255): the glass's pale body (#A6D7F2, 34) and crescent (105), the white glint
 # (#EFFAFF, 240), the deep blue rim (#2C5573, 110); the faintest first
 BEAD_COLOURS = [[166, 215, 242, 34], [166, 215, 242, 105], [44, 85, 115, 110], [239, 250, 255, 240]]
@@ -1130,8 +1130,21 @@ async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alon
     assert got["cost"] < 8 and got["flying"] == 1, (got["cost"], got["flying"])   # (something blown across too: ?fx=all,gust)
     # ... the ice grown all the way in too, its frost across much of the glass: as cheap
     assert got["costFrosted"]["cost"] < 8 and got["costFrosted"]["crystals"] > 0.15, got["costFrosted"]
-    # several at once no brighter than one strong one: every effect on (the ice grown all the way in), against Hazardous smog alone
-    assert 0 < got["light"]["all"] <= got["light"]["smog5"], got["light"]
+    # several at once no brighter than one strong one: every effect on (the ice grown all the way in), against Hazardous haze alone
+    assert 0 < got["light"]["all"] <= got["light"]["haze5"], got["light"]
+    # the haze (the particulates), each band alone: an even veil over the whole window (its blocks' spread under 0.15 of their mean;
+    # the banks it was spread over 1), no heavier near the ground (its bottom fifth, and its top, within 5 % of the whole window's
+    # mean: the banks' bottom was over 2, their top 0), denser with each band
+    levels = got["haze"]["levels"]
+    assert [lv["level"] for lv in levels] == [1, 2, 3, 4, 5], levels
+    assert all(lv["spread"] < 0.15 and 0.95 <= lv["bottom"] / lv["mean"] <= 1.05 and 0.95 <= lv["top"] / lv["mean"] <= 1.05
+               for lv in levels), [(round(lv["spread"], 3), round(lv["bottom"] / lv["mean"], 3), round(lv["top"] / lv["mean"], 3)) for lv in levels]
+    assert all(a["mean"] * 1.2 < b["mean"] for a, b in zip(levels, levels[1:])) and levels[0]["mean"] > 15, levels
+    assert max(lv["spread"] for lv in levels) > 0.02, levels                 # (its gentle swell there, though)
+    # ... its grain drifting right to left, the wind's way: every mote leftward (about 3 px/s), its veil too; faster in the wind
+    calm, windy = got["haze"]["calm"], got["haze"]["windy"]
+    assert calm["n"] >= 20 and calm["left"] == calm["n"] and 1.5 < calm["speed"] < 6 and calm["slide"] > 2, calm
+    assert windy["n"] >= 20 and windy["left"] == windy["n"] and windy["speed"] > 2 * calm["speed"] and windy["slide"] > 2 * calm["slide"], windy
     together = got["particles"]["all"]
     assert together["uv"] == 0 and together["wind"] > 0 and together["rain"] > 0, together
     assert sum(v for k, v in together.items() if k != "budget") <= together["budget"] + 3, together   # (each rounded)
@@ -1141,10 +1154,11 @@ async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alon
 async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_reduced_motion(server, station):
     got = await weather(server, "opened")
     # ?fx= when the page opens
-    assert got["param"]["levels"] == {"gust": 0, "smog": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "flood": 0, "ice": 5}
+    assert got["param"]["levels"] == {"gust": 0, "haze": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "flood": 0, "ice": 5}
     assert sorted(got["param"]["framed"]) == ["Temperature", "US AQI", "Wind"] and got["param"]["errors"] == []
-    # (the effects' earlier names, in links saved before, still work: as wind, uv, humidity)
-    assert got["paramOld"]["effects"] == ["uv", "wind", "humidity"] and got["paramOld"]["errors"] == [], got["paramOld"]
+    # (the effects' earlier names, in links saved before, still work: as wind, uv, humidity, and smog4 as haze4)
+    assert got["paramOld"]["effects"] == ["haze", "uv", "wind", "humidity"] and got["paramOld"]["errors"] == [], got["paramOld"]
+    assert got["paramOld"]["levels"]["haze"] == 4, got["paramOld"]
     assert got["paramAll"]["effects"] == EVERY and got["paramRain"]["levels"]["rain"] == 1
     # the particles: uv's beams none (no motes); the wind's leaves alone within the shared budget
     assert got["particles"]["uv"] == {"uv": 0, "budget": got["particles"]["uv"]["budget"]}, got["particles"]
@@ -1504,7 +1518,7 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     linked = got["linked"]
     assert [(s["url"].split(",")[-1], s["label"], s["rain"], s["flood"]) for s in linked["steps"]] == [
         ("rain", "rain: light", 0.35, 0), ("rain2", "rain: heavy", 1, 0), ("rain3", "rain: flood", 1, 2)], linked["steps"]
-    assert linked["off"]["url"] == "?fx=smog3,uv,humidity2,heat,ice" and linked["off"]["flood"] == linked["off"]["rain"] == 0, linked["off"]
+    assert linked["off"]["url"] == "?fx=haze3,uv,humidity2,heat,ice" and linked["off"]["flood"] == linked["off"]["rain"] == 0, linked["off"]
     # ... its first frog some 30 s after the water started rising, not before; one, crossing right to left, on the waves (bobbing)
     assert 29 <= linked["before"] < 30 <= linked["first"] <= 31 and linked["frogs"] == 1, linked
     track = linked["track"]
@@ -1535,7 +1549,7 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     assert joins and all(j["bottom"] >= j["surface"] for j in joins), joins
     assert all(j["trail"] == j["bottom"] and j["wet"] > 0 for j in joins if j["trail"] is not None) and any(j["trail"] for j in joins), joins
     # ... and nothing on the glass cut off in a straight line at its level: where a trough dips 3 px or more under it, the rows just
-    # under the level as drawn on as those just above (the smog, the heat, the rain's spray, the fog, all down to the wavy surface)
+    # under the level as drawn on as those just above (the haze, the heat, the rain's spray, the fog, all down to the wavy surface)
     cut = linked["cut"]
     assert cut["n"] >= 100 and cut["at"] >= 0.8 * cut["above"], cut
     # ... the wind off (and gone): the leaves in the water its own, staying (those resting still resting, none fading), the floating
@@ -1550,12 +1564,12 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     drained = linked["drained"]
     assert 5 <= drained["took"] <= 7 and drained["wet"] == drained["all"] == 0 and drained["frog"] is None, drained
     assert drained["low"] == drained["n0"] == len(after), drained
-    assert drained["effects"] == ["smog", "heat", "uv", "humidity", "ice"], drained
+    assert drained["effects"] == ["haze", "heat", "uv", "humidity", "ice"], drained
     again = linked["again"]
     assert again["url"].endswith(",rain3") and again["leaves"]["all"] == 0 and again["leaves"]["wet"] == [], again
     # every effect on with the flood (full): as cheap as ever (about 3 ms), within the budget
     costly = linked["costly"]
-    assert costly["effects"] == ["smog", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"] and costly["cost"] < 8, costly
+    assert costly["effects"] == ["haze", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"] and costly["cost"] < 8, costly
     assert sum(costly["particles"].values()) <= costly["budget"] + 3, costly
 
 

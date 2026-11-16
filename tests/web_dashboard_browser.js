@@ -961,6 +961,46 @@ const canvasLight = (page) => page.evaluate(() => {   // how bright the canvas i
   for (let i = 0; i < d.length; i += 4) sum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * d[i + 3] / 255;
   return sum / (d.length / 4);
 });
+// The haze alone (faded in), at each band in turn, 1 to 5 (each a frame or two on, as drawn): over the window in blocks of 16 art px,
+// the canvas's mean alpha (0-255) in each: their mean, and their spread (standard deviation) over that; the mean alpha of the window's
+// bottom fifth and its top fifth. Then on a clock 4 times as fast, the haze 5 with no wind, then with it (faded in): its motes' moves
+// over 20 frames (each the same mote, not come in again at the right), how many went left, right; their mean speed leftward (px/s of
+// the weather's time); and its veil's slide, the same
+const hazeSeen = (page) => page.evaluate(async () => {
+  const frames = (n) => new Promise((resolve) => { const end = Sky.state().frames + n; const on = () => Sky.state().frames >= end ? resolve() : requestAnimationFrame(on); on(); });
+  const fx = (detail) => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail }));
+  const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), B = 16, out = { levels: [] };
+  for (let level = 1; level <= 5; level++) {
+    fx({ haze: level });
+    await frames(2);
+    const d = g.getImageData(0, 0, c.width, c.height).data, w = Math.floor(c.width / B), h = Math.floor(c.height / B), blocks = [];
+    for (let by = 0; by < h; by++) for (let bx = 0; bx < w; bx++) {
+      let sum = 0;
+      for (let y = by * B; y < (by + 1) * B; y++) for (let x = bx * B; x < (bx + 1) * B; x++) sum += d[(y * c.width + x) * 4 + 3];
+      blocks.push(sum / (B * B));
+    }
+    const mean = blocks.reduce((a, b) => a + b, 0) / blocks.length;
+    const spread = Math.sqrt(blocks.reduce((a, b) => a + (b - mean) ** 2, 0) / blocks.length) / mean;
+    const rows = (y0, y1) => { let sum = 0; for (let y = y0; y < y1; y++) for (let x = 0; x < c.width; x++) sum += d[(y * c.width + x) * 4 + 3]; return sum / ((y1 - y0) * c.width); };
+    const fifth = Math.floor(c.height / 5);
+    out.levels.push({ level: Sky.state().haze.level, mean, spread, bottom: rows(c.height - fifth, c.height), top: rows(0, fifth) });
+  }
+  Sky.timeScale(4);
+  const moves = async () => {
+    const a = Sky.state(), was = new Map(a.haze.motes.map(([id, x, y]) => [id, x]));
+    await frames(20);
+    const b = Sky.state(), dt = b.clock - a.clock, dx = [];
+    for (const [id, x] of b.haze.motes) if (was.has(id)) dx.push(x - was.get(id));
+    return { n: dx.length, left: dx.filter((v) => v < 0).length, right: dx.filter((v) => v > 0).length,
+             speed: -dx.reduce((s, v) => s + v, 0) / Math.max(dx.length, 1) / dt, slide: (b.haze.slide - a.haze.slide) / dt };
+  };
+  out.calm = await moves();
+  fx({ haze: 5, wind: 1 });
+  await frames(15);   // (the wind faded in: 1.5 s of the weather's time)
+  out.windy = await moves();
+  Sky.timeScale(1);
+  return out;
+});
 // The wind's leaves for `ms`, every frame: their mean speed across on screen (negative: leftward), how many at most went against the
 // wind (rightward: in a loop); and where each was drawn on the canvas (with the wind alone, every sprite drawn is a leaf), frame to
 // frame: how many steps it made leftward and how many rightward
@@ -1305,10 +1345,10 @@ async function animationsOff(browser, url, out) {
 }
 
 // The weather in parts, each its own page (and process: the tests run them side by side): "marks" (nothing called for, each effect at
-// its mark and just short of it, smog's bands, rain's strength, the ice's depth), "several" (several at once, the canvas, the tiles see-
+// its mark and just short of it, haze's bands, rain's strength, the ice's depth), "several" (several at once, the canvas, the tiles see-
 // through, their look, zoomed), "stop" ("stop animation", a reload, "start animation", the reset), "links" (the temporary test links;
 // and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn),
-// "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
+// "all" (?fx=all: its frame time, its brightness against Hazardous haze alone, its particles), "opened" (?fx= when the page opens, uv
 // and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, humidity's beads running down the
 // glass alone and in the wind, a phone's strip, reduced motion), "flood" (a flash flood: its mark, its rise, its surface and waves,
 // what ends at it, the test link's rain3, its leaves and its frog, its cost), "gust" (something big blown across in a gust over 99 km/h)
@@ -1318,7 +1358,7 @@ const WEATHER = {
     await calm(page, 5000);   // (the gauges' rise)
     out.nothing = { ...await weatherSeen(page), frames: await framesIn(page, 800), ink: await canvasInk(page) };
     // each mark: just short of it, then at it
-    const marks = { rain: [{ rain_rate: 0 }, { rain_rate: 0.1 }], smog: [{ "US AQI": 50 }, { "US AQI": 51 }],
+    const marks = { rain: [{ rain_rate: 0 }, { rain_rate: 0.1 }], haze: [{ "US AQI": 50 }, { "US AQI": 51 }],
                     uv: [{ "UV index": 10.9 }, { "UV index": 11 }], humidity: [{ Humidity: 89.9 }, { Humidity: 90 }],
                     wind: [{ Wind: 15 }, { Wind: 15.1 }], heat: [{ Temperature: 34.9 }, { Temperature: 35 }],
                     ice: [{ Temperature: 0.1 }, { Temperature: -0.1 }], iceAtZero: [{ Temperature: 0 }, { Temperature: -0.1 }] };
@@ -1329,8 +1369,8 @@ const WEATHER = {
       await reads(at);
       out.marks[name] = { below: short, at: await weatherSeen(page) };
     }
-    out.smogBands = [];
-    for (const aqi of [101, 151, 201, 301, 500]) { await reads({ "US AQI": aqi }); out.smogBands.push((await weatherSeen(page)).levels.smog); }
+    out.hazeBands = [];
+    for (const aqi of [101, 151, 201, 301, 500]) { await reads({ "US AQI": aqi }); out.hazeBands.push((await weatherSeen(page)).levels.haze); }
     out.rainStrength = [];
     for (const rate of [0.5, 8, 20]) { await reads({ rain_rate: rate }); out.rainStrength.push((await weatherSeen(page)).levels.rain); }
     out.humidityStrength = [];
@@ -1372,19 +1412,19 @@ const WEATHER = {
                  return hit !== null && hit.closest(".tile") !== null;
                })() };
     });
-    // the tiles see-through: a tile's blank margin shows what's drawn behind it (smog, Hazardous, over the bottom row)
+    // the tiles see-through: a tile's blank margin shows what's drawn behind it (haze, Hazardous, over the bottom row)
     await reads({ "US AQI": 500 });
     await page.waitForTimeout(1800);
     const margin = async () => {
       const r = await tileOf(page, "PM10").boundingBox();
       return page.screenshot({ clip: { x: r.x + r.width * 0.04, y: r.y + r.height * 0.45, width: r.width * 0.12, height: r.height * 0.15 } });
     };
-    const smoggy = await margin();
+    const hazegy = await margin();
     await reads({});
     await page.waitForFunction(() => !Sky.state().running);   // (faded out: the loop ended)
     await calm(page);
     const clear1 = await margin(), clear2 = await margin();
-    out.through = { differs: !smoggy.equals(clear1), still: clear1.equals(clear2) };
+    out.through = { differs: !hazegy.equals(clear1), still: clear1.equals(clear2) };
     out.look = await page.evaluate(() => {
       const tile = document.querySelector(".tile"), before = getComputedStyle(tile, "::before");
       return { background: getComputedStyle(tile).backgroundColor, opacity: getComputedStyle(tile).opacity,
@@ -1477,8 +1517,8 @@ const WEATHER = {
     }
     out.links.label = await label();
     out.links.corner = await cornerSeen(page);
-    out.links.smog = [];
-    for (let i = 0; i < 6; i++) { await fx("smog"); out.links.smog.push((await weatherSeen(page)).levels.smog); }
+    out.links.haze = [];
+    for (let i = 0; i < 6; i++) { await fx("haze"); out.links.haze.push((await weatherSeen(page)).levels.haze); }
     out.links.rain = [];   // (rain: light, heavy, heavy with a flash flood (the test's own flood level), off: [rain, flood])
     for (let i = 0; i < 4; i++) { await fx("rain"); const { levels } = await weatherSeen(page); out.links.rain.push([levels.rain, levels.flood]); }
     await page.waitForFunction(() => Sky.state().iceReach > 2.5);   // (the ice grown in a little)
@@ -1515,12 +1555,13 @@ const WEATHER = {
     await page.waitForTimeout(3000);
     out.cost = await page.evaluate(() => Sky.state().cost);   // (ms of script a frame, with every effect on, and something blown across)
     out.flying = await page.evaluate(() => Sky.state().gust.flyers.length);
-    // the strongest single effect (Hazardous smog), as bright as "all" may be: faded in while the ice grows on
+    // the strongest single effect (Hazardous haze), as bright as "all" may be: faded in while the ice grows on
     const strongest = (async () => {
-      const smog = await weatherPage(browser, url, { query: "?fx=smog5" });
-      await smog.page.waitForFunction(() => Sky.state().frames >= 56);   // (faded in: 1.5 s, each frame 29 ms or more on)
-      const light = await canvasLight(smog.page);
-      await smog.context.close();
+      const haze = await weatherPage(browser, url, { query: "?fx=haze5" });
+      await haze.page.waitForFunction(() => Sky.state().frames >= 56);   // (faded in: 1.5 s, each frame 29 ms or more on)
+      const light = await canvasLight(haze.page);
+      out.haze = await hazeSeen(haze.page);   // (meanwhile, the ice growing on the other page)
+      await haze.context.close();
       return light;
     })();
     // (the ice grown all the way in, over some minutes: the weather's time 100 times as fast meanwhile; then as ever, the cost again
@@ -1533,7 +1574,7 @@ const WEATHER = {
     out.costFrosted = await page.evaluate(() => ({ cost: Sky.state().cost, crystals: Sky.frost().crystals }));
     out.light = { all: await canvasLight(page) };
     out.particles = { all: await particles(page) };
-    out.light.smog5 = await strongest;
+    out.light.haze5 = await strongest;
     out.errors = errors;
     await context.close();
   },
@@ -1546,7 +1587,7 @@ const WEATHER = {
   // starts rising, drifting right to left on the waves; off, draining.
   async flood(browser, url, out) {
     const linked = (async () => {
-      const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=smog3,uv,humidity2,wind,heat,ice" });
+      const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=haze3,uv,humidity2,wind,heat,ice" });
       const seen = { steps: [] };
       const rain = () => page.evaluate(() => {
         const b = document.querySelector("#fxtest button[data-fx='rain']");
@@ -1830,7 +1871,7 @@ const WEATHER = {
         seen.clears = await humidityClears(p.page, 300);
       }
       if (name === "humidity2") {   // (then every other effect on too, its share of the budget shrinking: watched 8 s more)
-        await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1, smog: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5 } })));
+        await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1, haze: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5 } })));
         seen.squeezed = await humiditySeen(p.page, 40);
         // (then all off, faded out all the way, and humidity on again: the glass fresh, nothing left from before)
         const before = await p.page.evaluate(() => {   // (the trails as it's turned off)
@@ -1950,8 +1991,8 @@ const WEATHER = {
       return seen;
     }));
     // ?fx= when the page opens (each a page of its own, side by side, beside the rest)
-    const params = Promise.all([["param", "?fx=smog3,wind,ice"], ["paramAll", "?fx=all"], ["paramRain", "?fx=rain2"],
-                                ["paramOld", "?fx=leaves,radiation,drips"]].map(async ([name, query]) => {
+    const params = Promise.all([["param", "?fx=haze3,wind,ice"], ["paramAll", "?fx=all"], ["paramRain", "?fx=rain2"],
+                                ["paramOld", "?fx=leaves,radiation,drips,smog4"]].map(async ([name, query]) => {
       const opened = await weatherPage(browser, url, { query });
       await opened.page.waitForTimeout(200);
       out[name] = { ...await weatherSeen(opened.page), errors: opened.errors };
