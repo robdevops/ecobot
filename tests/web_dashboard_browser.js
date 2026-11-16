@@ -7,20 +7,22 @@
 //   node web_dashboard_browser.js URL --arrive TITLE: the page open at 1024x768; prints the tile's state ({label, faded, opacity, shown,
 //     needle}), waits for a line on stdin (the test has given it a reading, or taken it away), then, once its label changes, samples it
 //     every frame for 1.5 s and prints {before, after, frames: [{opacity, number}], same_tile, errors}.
-//   node web_dashboard_browser.js URL --arrange: the page at 1024x768 with a mouse: dragging to reorder, the drag's text zones, the grip
-//     and the × on mouseover, the remove zone, the reset link, the preferences across reloads (corrupt, blocked, a tile new to them) and
-//     the tiles' see-through look, a click soon after a drop, the focus after the × pressed from the keyboard; prints {step: what was
-//     seen}.
-//   node web_dashboard_browser.js URL --touch: the page at 390x844 with touch (CDP touch events): a long press picks a tile up (buzz,
-//     grip and ×, remove zone) and moves it; a short tap is a click; a swipe scrolls; held at the bottom edge it scrolls to the page's
-//     end only; prints {step: what was seen}.
+//   node web_dashboard_browser.js URL --arrange PART: the page at 1024x768 with a mouse, a part of the arranging (arrangeMode):
+//     "dragged" (dragging to reorder, the drag's text zones, the grip and the × on mouseover, the remove zone, the reset link, the
+//     preferences across a reload, the tiles' see-through look), "prefs" (the preferences corrupt or from elsewhere (a tile new to
+//     them), a click soon after a drop, the focus after the × pressed from the keyboard; beside it, storage blocked); prints {step: what
+//     was seen}.
+//   node web_dashboard_browser.js URL --touch PART: the page at 390x844 with touch (CDP touch events), a part (touchMode): "taps" (a
+//     short tap is a click; a swipe scrolls; held at the bottom edge it scrolls to the page's end only), "held" (a long press picks a
+//     tile up (buzz, grip and ×, remove zone) and moves it; held in place, its × hides it); prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --zoom PART: the page at 1024x768 with a mouse and keys, a part of the zoom (zoomMode): "in" (the
 //     zoom cursors, a click zooming a tile; zoomed, prints {label} (Temperature's, beside the tile shown), waits for a line on stdin (the
 //     test has changed its reading), then pages with the keys past the first), "pager" (mouse drags and wheel deltaX), "last" (past the
-//     last, drags across the text, a click back; then a single tile zoomed, paging bouncing, back by a click and by Esc), "out" (a
-//     double-click, Esc, the bounce cut short, the keyboard, Esc mid-zoom); prints {step: what was seen}.
-//   node web_dashboard_browser.js URL --zoom-touch: the page at 390x844 with touch: a tap zooms, swipes (slow, a flick, on the text)
-//     page, a vertical swipe and a long press do nothing, a tap goes back where the page was scrolled; prints {step: what was seen}.
+//     last, drags across the text, a click back), "single" (a single tile zoomed, paging bouncing, back by a click and by Esc), "out" (a
+//     double-click, Esc, the bounce cut short), "keys" (the keyboard, Esc mid-zoom); prints {step: what was seen}.
+//   node web_dashboard_browser.js URL --zoom-touch PART: the page at 390x844 with touch, a part (zoomTouchMode): "back" (a tap zooms, a
+//     tap goes back where the page was scrolled), "swipes" (zoomed by a tap, swipes (slow, a flick, on the text) page, a vertical swipe
+//     and a long press do nothing, a tap back from another tile); prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --weather PART: the page at 1024x768, its data altered on the way, a part of the weather behind the
 //     tiles (WEATHER): each reading at, and just short of, the mark that calls up its effect; the canvas behind the tiles and the tiles'
 //     red frames; "stop animations"; the temporary test links; every effect at once (?fx=all: the frame time, the light, the particles);
@@ -175,8 +177,17 @@ const midDrag = (page) => page.evaluate(() => ({
   moved: [...document.querySelectorAll("#grid .tile:not(.lifted)")].filter((t) => t.style.transform).map((t) => t.querySelector(".title").textContent),
 }));
 
-async function arrangeMode(browser, url) {
-  const out = {};
+// In two parts (each its own process: the tests run them side by side): "dragged" (dragged, hidden, reloaded and reset) and "prefs"
+// (preferences unreadable or from elsewhere, a click soon after a drop and the × from the keyboard; then storage blocked, on a page of
+// its own beside it).
+async function arrangeMode(browser, url, part) {
+  const out = {}, errors = [];
+  if (part === "dragged") await arranged(browser, url, out, errors);
+  else await Promise.all([arrangedFromPrefs(browser, url, out, errors), arrangedBlocked(browser, url, out)]);
+  out.errors = errors;
+  process.stdout.write(JSON.stringify(out));
+}
+async function arranged(browser, url, out, allErrors) {
   const { context, page, errors } = await open(browser, url, 1024, 768);
   await calm(page, 5000);   // (the gauges' rise)
   out.initial = await titles(page);
@@ -227,12 +238,18 @@ async function arrangeMode(browser, url) {
   await page.getByText("reset preferences").click();
   await calm(page);
   out.reset = { titles: await titles(page), status: await statusText(page), stored: await stored(page) };
+  allErrors.push(...errors);
+  await context.close();
+}
+async function arrangedFromPrefs(browser, url, out, allErrors) {
+  const { context, page, errors } = await open(browser, url, 1024, 768);
+  const initial = await titles(page);
   // preferences corrupt: the defaults; a tile new to the saved order: in its usual place (after the tile before it by default)
   await page.evaluate((key) => localStorage.setItem(key, "{not json"), KEY);
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
   out.corrupt = await titles(page);
-  const saved = out.initial.filter((t) => t !== "Rain" && t !== "Temperature").concat(["Temperature", "Gone sensor"]);
+  const saved = initial.filter((t) => t !== "Rain" && t !== "Temperature").concat(["Temperature", "Gone sensor"]);
   await page.evaluate(([key, order]) => localStorage.setItem(key, JSON.stringify({ order, hidden: ["Gone sensor"], later: true })), [KEY, saved]);
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
@@ -261,7 +278,7 @@ async function arrangeMode(browser, url) {
   await page.keyboard.press("Enter");
   await calm(page);
   out.keyboardHide.push(await focused());
-  const allBut = out.initial.filter((t) => t !== "Rain");
+  const allBut = initial.filter((t) => t !== "Rain");
   await page.evaluate(([key, hidden]) => localStorage.setItem(key, JSON.stringify({ order: [], hidden })), [KEY, allBut]);
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
@@ -272,8 +289,10 @@ async function arrangeMode(browser, url) {
   await page.keyboard.press("Enter");
   await calm(page);
   out.keyboardHide.push(await focused());
-  out.errors = errors;
+  allErrors.push(...errors);
   await context.close();
+}
+async function arrangedBlocked(browser, url, out) {
   // storage blocked: the page works, nothing saved, no error
   const blocked = await open(browser, url, 1024, 768, { init: { fn: () => {
     Object.defineProperty(window, "localStorage", { get() { throw new DOMException("blocked", "SecurityError"); } });
@@ -286,12 +305,18 @@ async function arrangeMode(browser, url) {
   await calm(blocked.page);
   out.blocked = { titles: await titles(blocked.page), errors: blocked.errors };
   await blocked.context.close();
-  process.stdout.write(JSON.stringify(out));
 }
 
-// Touch through the browser's own input (CDP), as a finger: the browser decides on scrolling, long presses and taps
-async function touchMode(browser, url) {
-  const out = {};
+// Touch through the browser's own input (CDP), as a finger: the browser decides on scrolling, long presses and taps. In two parts (each
+// its own page in its own process: the tests run them side by side): "taps" (a tap, a swipe and a long press at the bottom edge) and
+// "held" (a tile picked up, moved and dropped, then one held in place and hidden by its ×).
+async function touchMode(browser, url, part) {
+  const out = {}, errors = [];
+  await touchPage(browser, url, part, out, errors);
+  out.errors = errors;
+  process.stdout.write(JSON.stringify(out));
+}
+async function touchPage(browser, url, part, out, allErrors) {
   const { context, page, errors } = await open(browser, url, 390, 844, {
     context: { hasTouch: true, isMobile: true },
     init: { fn: () => {
@@ -310,7 +335,16 @@ async function touchMode(browser, url) {
     close: (() => { const c = document.querySelector(".tile.armed .close"); return c ? getComputedStyle(c).opacity : null; })(),
   }));
   await calm(page, 5000);   // (the gauges' rise)
-  out.initial = await titles(page);
+  if (part === "held") {
+    await touchHeld(page, touch, state, out);
+  } else {
+    out.initial = await titles(page);
+    await touchTaps(page, touch, state, out);
+  }
+  allErrors.push(...errors);
+  await context.close();
+}
+async function touchTaps(page, touch, state, out) {
   // a short tap: a click, nothing picked up
   const t0 = await at(page, "Temperature", 0.85, 0.3);
   await touch("touchStart", [t0]);
@@ -327,8 +361,21 @@ async function touchMode(browser, url) {
   await touch("touchEnd", []);
   await page.waitForTimeout(700);
   out.swipe = { ...await state(), titles: await titles(page) };
+  // held near the bottom edge: the page scrolls to its end and no further (the lifted tile mustn't stretch it without end)
   await page.evaluate(() => window.scrollTo(0, 0));
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(200);
+  const end = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
+  const e0 = await at(page, "Temperature", 0.85, 0.3);
+  await touch("touchStart", [e0]);
+  await page.waitForTimeout(700);
+  for (let i = 1; i <= 6; i++) { await touch("touchMove", [[e0[0], e0[1] + (830 - e0[1]) * i / 6]]); await page.waitForTimeout(16); }
+  const seen = [];
+  for (let i = 0; i < 12; i++) { await page.waitForTimeout(250); seen.push(await page.evaluate(() => window.scrollY)); }
+  await touch("touchEnd", []);
+  await calm(page);
+  out.edge = { end, seen, after: await page.evaluate(() => window.scrollY) };
+}
+async function touchHeld(page, touch, state, out) {
   // a long press: picked up (buzz, grip and ×, the remove zone), then moved to Atmospheric pressure's place
   const p0 = await at(page, "Temperature", 0.85, 0.3), p1 = await at(page, "Atmospheric pressure", 0.5, 0.4);
   await touch("touchStart", [p0]);
@@ -353,22 +400,6 @@ async function touchMode(browser, url) {
   await touch("touchEnd", []);
   await calm(page);
   out.closed = { titles: await titles(page), status: await statusText(page) };
-  // held near the bottom edge: the page scrolls to its end and no further (the lifted tile mustn't stretch it without end)
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.waitForTimeout(200);
-  const end = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
-  const e0 = await at(page, "Temperature", 0.85, 0.3);
-  await touch("touchStart", [e0]);
-  await page.waitForTimeout(700);
-  for (let i = 1; i <= 6; i++) { await touch("touchMove", [[e0[0], e0[1] + (830 - e0[1]) * i / 6]]); await page.waitForTimeout(16); }
-  const seen = [];
-  for (let i = 0; i < 12; i++) { await page.waitForTimeout(250); seen.push(await page.evaluate(() => window.scrollY)); }
-  await touch("touchEnd", []);
-  await calm(page);
-  out.edge = { end, seen, after: await page.evaluate(() => window.scrollY) };
-  out.errors = errors;
-  await context.close();
-  process.stdout.write(JSON.stringify(out));
 }
 
 // ---------- the zoomed view and its gallery ----------
@@ -451,12 +482,17 @@ async function pagerDrag(page, [x0, y], dx, { steps = 12, pause = 300 } = {}) { 
 const swiped = async (page) => { await page.waitForTimeout(160); await calm(page); };
 const cursorAt = (page, [x, y]) => page.evaluate(([x, y]) => getComputedStyle(document.elementFromPoint(x, y)).cursor, [x, y]);
 
-// The zoom in four parts, each its own page (and process: the tests run them side by side): "in" (the cursors, a click zooming a
+// The zoom in six parts, each its own page in its own process (the tests run them side by side): "in" (the cursors, a click zooming a
 // tile, the live reading beside it, the keys), "pager" (zoomed: mouse drags, a trackpad's swipes), "last" (zoomed: the last tile, a
-// drag across the text, a click back out; then a single tile zoomed, paging only bouncing), "out" (a double-click, Esc, the bounce cut
-// short, the keyboard, Esc mid-way through a zoom-in)
+// drag across the text, a click back out), "single" (a single tile zoomed, paging only bouncing), "out" (a double-click, Esc, the
+// bounce cut short), "keys" (the keyboard, Esc mid-way through a zoom-in)
 async function zoomMode(browser, url, part) {
-  const out = {};
+  const out = {}, errors = [];
+  await zoomPage(browser, url, part, out, errors);
+  out.errors = errors;
+  process.stdout.write(JSON.stringify(out) + "\n");
+}
+async function zoomPage(browser, url, part, out, allErrors) {
   const { context, page, errors } = await open(browser, url, 1024, 768, { init: { fn: ZOOM_HELPERS } });
   await calm(page, 5000);   // (the gauges' rise)
   out.initial = await titles(page);
@@ -544,6 +580,7 @@ async function zoomMode(browser, url, part) {
     out.zoomOut = await zoomClick(page, shown, await at(page, shown, 0.85, 0.3));
     out.outRect = await tileOf(page, shown).boundingBox();
     out.outTable = await page.evaluate((shown) => window.__look(shown).table, shown);   // (its table back)
+  } else if (part === "single") {
     // one tile only: the zoom cursor, a click zooms it (title and gauge, no table); the keys, a drag and a trackpad's swipe only
     // bounce (a gallery of one); a click goes back, Esc too
     await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: [...document.querySelectorAll(".tile .title")].map((t) => t.textContent).filter((t) => t !== "Humidity") })), KEY);
@@ -611,6 +648,8 @@ async function zoomMode(browser, url, part) {
                                                      firstLeft: Math.round(document.querySelector("#grid .tile").getBoundingClientRect().left),
                                                      zoomed: document.body.classList.contains("zoomed") }));
     await calm(page);
+  } else if (part === "keys") {
+    await page.keyboard.press("Shift");   // (the keyboard in use: a focused tile's × shown as by the keyboard)
     // the keyboard: every tile takes the focus; Enter on one zooms it, the focus going along as it pages, the others out of reach; Esc
     // back, the focus on the tile shown last; Space zooms too
     const focusState = () => page.evaluate(() => ({ ...window.__state(), focus: document.activeElement.classList.contains("tile") ? document.activeElement.querySelector(".title").textContent : document.activeElement.tagName,
@@ -643,9 +682,17 @@ async function zoomMode(browser, url, part) {
       const recording = page.evaluate(() => window.__record("Humidity", 700));
       await page.waitForTimeout(50);
       await page.mouse.click(...await at(page, "Humidity", 0.85, 0.3));
-      await page.waitForTimeout(30);
-      const others = await page.evaluate(() => window.__look("Temperature").table);
-      await page.waitForTimeout(70);
+      // (timed in the page from the click, frame by frame, rather than by waits around round trips to it: the others' tables 30 ms
+      // in, then Esc ~100 ms in, its own round trip aside)
+      const others = await page.evaluate(() => new Promise((resolve) => {
+        let seen = null;
+        const step = () => {
+          const since = performance.now() - window.__at;
+          if (!seen && since >= 30) seen = window.__look("Temperature").table;
+          if (since >= 90) resolve(seen); else requestAnimationFrame(step);
+        };
+        step();
+      }));
       await page.keyboard.press("Escape");
       const { frames: f, at: esc } = await recording, last = f[f.length - 1], after = f.filter((x) => x.t >= esc);
       out.escMid = { others, last, zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")),
@@ -654,13 +701,14 @@ async function zoomMode(browser, url, part) {
       await calm(page);
     }
   }
-  out.errors = errors;
+  allErrors.push(...errors);
   await context.close();
-  process.stdout.write(JSON.stringify(out) + "\n");
 }
 
 // The zoomed view on a phone, with a finger (CDP touch events)
-async function zoomTouchMode(browser, url) {
+// In two parts (each its own page in its own process: the tests run them side by side): "back" (a tap zooming the tile, a tap straight
+// back) and "swipes" (the same tile zoomed by a tap, then the swipes, a long press, and a tap back from another tile).
+async function zoomTouchMode(browser, url, part) {
   const out = {};
   const { context, page, errors } = await open(browser, url, 390, 844, { context: { hasTouch: true, isMobile: true }, init: { fn: () => {
     window.__buzz = [];
@@ -691,14 +739,20 @@ async function zoomTouchMode(browser, url) {
   out.scrolled = scrolled;
   out.tapped = await page.evaluate(() => document.elementFromPoint(100, 150).closest(".tile").querySelector(".title").textContent);
   await tap(await at(page, out.tapped, 0.85, 0.3));
-  out.zoomed = { ...await page.evaluate(() => window.__state()), rect: await tileOf(page, out.tapped).boundingBox(),
-                 look: await page.evaluate((title) => window.__look(title), out.tapped) };
-  // a tap straight back: the page scrolled where it was; then zoomed again
-  await page.waitForTimeout(400);   // (not a double tap)
-  await tap([200, 300]);
-  out.backStraight = { ...await page.evaluate(() => window.__state()), scrollY: await page.evaluate(() => scrollY) };
-  await page.waitForTimeout(400);
-  await tap(await at(page, out.tapped, 0.85, 0.3));
+  if (part === "back") {
+    out.zoomed = { ...await page.evaluate(() => window.__state()), rect: await tileOf(page, out.tapped).boundingBox(),
+                   look: await page.evaluate((title) => window.__look(title), out.tapped) };
+    // a tap straight back: the page scrolled where it was
+    await page.waitForTimeout(400);   // (not a double tap)
+    await tap([200, 300]);
+    out.backStraight = { ...await page.evaluate(() => window.__state()), scrollY: await page.evaluate(() => scrollY) };
+  } else await zoomTouchSwipes(page, touch, tap, swipe, out);
+  out.errors = errors;
+  await context.close();
+  process.stdout.write(JSON.stringify(out));
+}
+async function zoomTouchSwipes(page, touch, tap, swipe, out) {
+  out.swipesTapped = out.tapped;
   out.next = await swipe([300, 300], -250);
   out.previous = await swipe([90, 300], 250);
   out.flick = await swipe([300, 300], -80, { steps: 4, pause: 0 });
@@ -721,9 +775,6 @@ async function zoomTouchMode(browser, url) {
   await tap([200, 300]);
   out.out = { ...await page.evaluate(() => window.__state()), scrollY: await page.evaluate(() => scrollY), titles: await titles(page),
               lastShown: await page.evaluate((title) => { const r = window.__tile(title).getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }, out.backAt.shown) };
-  out.errors = errors;
-  await context.close();
-  process.stdout.write(JSON.stringify(out));
 }
 
 async function fillMode(browser, url, cases) {
@@ -1144,10 +1195,11 @@ const WEATHER = {
         await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1, wind: 1 } })));
       }
       const seen = { ...await rainSeen(p.page, 3000), leaves: await p.page.evaluate(() => Sky.state().wind), errors: p.errors };
-      if (light) {   // (the heavy rain's hits alone: how many, their mean push)
-        const { hits, push } = seen.leaves;
-        seen.leaves = { ...seen.leaves, hits: hits - light.hits, push: (hits * push - light.hits * light.push) / Math.max(hits - light.hits, 1) };
-        seen.light = { hits: light.hits, push: light.push };
+      if (light) {   // (the heavy rain's hits alone: how many, their mean push, the mean change they made in a leaf's velocity)
+        const { hits, push, kick } = seen.leaves, heavy = Math.max(hits - light.hits, 1);
+        seen.leaves = { ...seen.leaves, hits: hits - light.hits, push: (hits * push - light.hits * light.push) / heavy,
+                        kick: (hits * kick - light.hits * light.kick) / heavy };
+        seen.light = { hits: light.hits, push: light.push, kick: light.kick };
       }
       await p.context.close();
       return seen;
@@ -1162,19 +1214,19 @@ const WEATHER = {
       await p.context.close();
       return seen;
     }));
-    // ?fx= when the page opens
-    for (const [name, query] of [["param", "?fx=smog3,wind,ice"], ["paramAll", "?fx=all"], ["paramRain", "?fx=rain2"],
-                                ["paramOld", "?fx=leaves,radiation,drips"]]) {
+    // ?fx= when the page opens (each a page of its own, side by side, beside the rest)
+    const params = Promise.all([["param", "?fx=smog3,wind,ice"], ["paramAll", "?fx=all"], ["paramRain", "?fx=rain2"],
+                                ["paramOld", "?fx=leaves,radiation,drips"]].map(async ([name, query]) => {
       const opened = await weatherPage(browser, url, { query });
       await opened.page.waitForTimeout(200);
       out[name] = { ...await weatherSeen(opened.page), errors: opened.errors };
       await opened.context.close();
-    }
+    }));
     // uv alone: its beams, no particles; the wind alone: its leaves within the budget, blowing right to left (and looping), watched
     // for 3 s beside the rest
     out.particles = {};
     out.rain = {};
-    await Promise.all(["uv", "wind"].map(async (name) => {
+    const alone = Promise.all(["uv", "wind"].map(async (name) => {
       const alone = await weatherPage(browser, url, { query: `?fx=${name}` });
       if (name === "wind") out.wind = await windSeen(alone.page, 3000);
       else await alone.page.waitForFunction(() => Sky.state().frames >= 20);   // (under way)
@@ -1183,17 +1235,19 @@ const WEATHER = {
       await alone.context.close();
     }));
     // a phone, a tile hidden, an effect on (the wind, its leaves looping there too): the strip (reset preferences · last reading) at
-    // the bottom right, the time last; the test row and "stop animations" not over it
-    const phone = await weatherPage(browser, url, { query: "?fx=wind", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
-      init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
-    out.phoneWind = await windSeen(phone.page, 2500);
-    out.phoneCorner = await cornerSeen(phone.page);
-    out.phone = await phone.page.evaluate(() => {
-      const a = document.getElementById("fxtest").getBoundingClientRect(), b = document.getElementById("status").getBoundingClientRect();
-      return { strip: document.getElementById("status").textContent, right: Math.abs(b.right - innerWidth) < 1 && Math.abs(b.bottom - innerHeight) < 1,
-               apart: a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top, onScreen: a.left >= 0 && a.bottom <= innerHeight };
-    });
-    await phone.context.close();
+    // the bottom right, the time last; the test row and "stop animations" not over it (beside the rest)
+    const phoned = (async () => {
+      const phone = await weatherPage(browser, url, { query: "?fx=wind", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
+        init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
+      out.phoneWind = await windSeen(phone.page, 2500);
+      out.phoneCorner = await cornerSeen(phone.page);
+      out.phone = await phone.page.evaluate(() => {
+        const a = document.getElementById("fxtest").getBoundingClientRect(), b = document.getElementById("status").getBoundingClientRect();
+        return { strip: document.getElementById("status").textContent, right: Math.abs(b.right - innerWidth) < 1 && Math.abs(b.bottom - innerHeight) < 1,
+                 apart: a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top, onScreen: a.left >= 0 && a.bottom <= innerHeight };
+      });
+      await phone.context.close();
+    })();
     // reduced motion: no loop, one still, faint frame; the frames as ever
     const still = await weatherPage(browser, url, { context: { reducedMotion: "reduce" } });
     await still.reads({ "UV index": 11, Temperature: -4 });
@@ -1201,6 +1255,7 @@ const WEATHER = {
     out.still = { ...await weatherSeen(still.page), frames: await framesIn(still.page, 800), ink: await canvasInk(still.page),
                   stateFrames: await still.page.evaluate(() => Sky.state().frames), errors: still.errors };
     await still.context.close();
+    await Promise.all([params, alone, phoned]);
     out.uv = await swaying;
     [out.rain.alone, out.rain.windy, out.rain.phone] = await raining;
     [out.bare, out.barePhone] = await bare;
@@ -1220,11 +1275,11 @@ async function weatherMode(browser, url, part) {
   try {
     if (second === "--live") await live(browser, url);
     else if (second === "--arrive") await arrive(browser, url, third);
-    else if (second === "--arrange") await arrangeMode(browser, url);
-    else if (second === "--touch") await touchMode(browser, url);
+    else if (second === "--arrange") await arrangeMode(browser, url, third);
+    else if (second === "--touch") await touchMode(browser, url, third);
     else if (second === "--fill") await fillMode(browser, url, JSON.parse(third));
     else if (second === "--zoom") await zoomMode(browser, url, third);
-    else if (second === "--zoom-touch") await zoomTouchMode(browser, url);
+    else if (second === "--zoom-touch") await zoomTouchMode(browser, url, third);
     else if (second === "--weather") await weatherMode(browser, url, third);
     else await sizes(browser, url, second, JSON.parse(third));
   } finally {

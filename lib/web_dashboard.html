@@ -142,6 +142,7 @@
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), size: [art width, art height, P], particles (each effect's
 //   now), budget (theirs together, at most), levels, iceReach (art px), wind (its leaves on screen: {vx: their mean speed across,
 //   negative leftward, against: how many go rightward, hits: how many the rain's drops have hit, push: their mean push, px/s,
+//   kick: the mean change in a hit leaf's own velocity a hit made, px/s,
 //   whirl: the most spin knocks have left on one now}), rain (its drops: {xs: where across, those in the window's lower half,
 //   width: the art's, vx: their mean speed across})}, for the tests.
 const Sky = (() => {
@@ -515,7 +516,7 @@ const Sky = (() => {
     }))));
     const WISP = ["#2E363D", "#45515B", "#5F6E7A"].map((c) => `rgb(${rgb(c)})`);
     let flying = [], eddies = [], wisps = [], gust = 0, nextGust = 0, travelled = 0, calm = 1, swept = 0, riding = 0;
-    let splashes = [], hits = 0, pushed = 0;
+    let splashes = [], hits = 0, pushed = 0, kicked = 0;
     const KNOCK = 60;                  // a heavy drop's push on a near leaf (px/s, along its fall); farther leaves less (parallax)
     // A splash on a leaf, frame by frame: a bead where the drop struck, then two droplets thrown up off it, falling away ([dx, dy, shade])
     const SPLASH = [[[0, 0, 4], [0, -1, 3]], [[-1, -1, 3], [1, -2, 4], [0, 0, 2]], [[-2, -2, 2], [2, -2, 3]], [[-2, -1, 1], [3, -1, 2]]]
@@ -602,22 +603,26 @@ const Sky = (() => {
       steady: (k) => e.amount * k * calm * STEADY * (1 + gust),
       ride: (v) => { riding = v; },   // (this frame, the gust bands carried along at v px/s: the rain's)
       // (on screen: the leaves' mean speed across, px/s, negative leftward; how many go rightward, against the wind, in a loop)
-      // (and the rain's hits on them so far, and their mean push, px/s; the most spin knocks have left on one now, frames/s)
+      // (and the rain's hits on them so far, and their mean push, px/s, and the mean change it made in a hit leaf's own velocity, px/s;
+      // the most spin knocks have left on one now, frames/s)
       probe: () => ({vx: -flying.reduce((sum, f) => sum + f.vx, 0) / Math.max(flying.length, 1),
                      against: flying.filter((f) => f.vx < 0).length, hits, push: pushed / Math.max(hits, 1),
+                     kick: kicked / Math.max(hits, 1),
                      whirl: flying.reduce((most, f) => Math.max(most, f.whirl), 0)}),
       // A drop of rain layer `layer` going from (x0, y0) to (x1, y1) this frame (its head, on screen, art px), at vx across and vy down
       // (px/s): if it hits a leaf as far off as itself, the leaf knocked (`hard` 0-1: how heavy the rain) and true (the drop ends)
       knock(layer, x0, y0, x1, y1, vx, vy, hard) {
-        if (e.amount <= 0) return false;
+        if (e.amount <= 0 || y1 <= y0) return false;   // (a drop that didn't fall this frame, a still frame redrawn: no hit)
         for (const f of flying) {
           if (f.layer !== layer || f.hw < 0 || f.y + f.hh < y0 || f.y - f.hh > y1) continue;
-          const sx = W - f.x, k = y1 > y0 ? clamp((f.y - f.hh - y0) / (y1 - y0), 0, 1) : 0, x = x0 + (x1 - x0) * k;   // (where it meets the top)
+          const sx = W - f.x, k = clamp((f.y - f.hh - y0) / (y1 - y0), 0, 1), x = x0 + (x1 - x0) * k;   // (where it meets the top)
           if (Math.abs(x - sx) > f.hw) continue;
           const push = KNOCK * hard * LAYERS[layer].speed / LAYERS[2].speed * between(0.7, 1.3), v = Math.hypot(vx, vy);
+          const was = [f.vx, f.vy];
           f.vx -= vx * push / v;   // (downwind: leftward on screen)
           f.vy += vy * push / v;
           pushed += push;
+          kicked += Math.hypot(f.vx - was[0], f.vy - was[1]);   // (the leaf's own speed, as it changed)
           f.whirl = Math.min(f.whirl + between(5, 12) * hard, 40);
           f.batter = Math.min(f.batter + between(8, 16) * hard, 70);
           hits++;
