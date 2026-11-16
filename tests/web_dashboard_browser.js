@@ -785,6 +785,31 @@ const canvasLight = (page) => page.evaluate(() => {   // how bright the canvas i
   for (let i = 0; i < d.length; i += 4) sum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * d[i + 3] / 255;
   return sum / (d.length / 4);
 });
+// The wind's leaves for `ms`, every frame: their mean speed across on screen (negative: leftward), how many at most went against the
+// wind (rightward: in a loop); and where each was drawn on the canvas (with the wind alone, every sprite drawn is a leaf), frame to
+// frame: how many steps it made leftward and how many rightward
+const windSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
+  const g = document.querySelector("#sky canvas").getContext("2d"), drawImage = g.drawImage, clearRect = g.clearRect, drawn = [];
+  g.clearRect = function (...args) { drawn.push([]); return clearRect.apply(this, args); };   // (a frame begins)
+  g.drawImage = function (...args) { if (drawn.length) drawn[drawn.length - 1].push(args[1]); return drawImage.apply(this, args); };
+  const vx = [], start = performance.now();
+  let against = 0;
+  const step = (now) => {
+    const w = Sky.state().wind;
+    vx.push(w.vx);
+    against = Math.max(against, w.against);
+    if (now - start < ms) return requestAnimationFrame(step);
+    delete g.drawImage; delete g.clearRect;
+    let left = 0, right = 0;
+    for (let i = 1; i < drawn.length; i++) {
+      const [a, b] = [drawn[i - 1], drawn[i]];
+      if (a.length !== b.length) continue;
+      for (let j = 0; j < a.length; j++) { const dx = b[j] - a[j]; if (Math.abs(dx) < 30) { if (dx < 0) left++; else if (dx > 0) right++; } }
+    }
+    resolve({ vx: vx.reduce((a, b) => a + b, 0) / vx.length, against, left, right, frames: drawn.length });
+  };
+  requestAnimationFrame(step);
+}), ms);
 const framesIn = async (page, ms) => {   // the frames the page asked for in this long
   const before = await page.evaluate(() => window.__frames);
   await page.waitForTimeout(ms);
@@ -986,20 +1011,21 @@ const WEATHER = {
       out[name] = { ...await weatherSeen(opened.page), errors: opened.errors };
       await opened.context.close();
     }
-    // uv alone: its beams, no particles; the wind alone: its leaves within the budget
+    // uv alone: its beams, no particles; the wind alone: its leaves within the budget, blowing right to left (and looping)
     out.particles = {};
     for (const name of ["uv", "wind"]) {
       const alone = await weatherPage(browser, url, { query: `?fx=${name}` });
-      await alone.page.waitForTimeout(1500);
+      if (name === "wind") out.wind = await windSeen(alone.page, 1500);
+      else await alone.page.waitForTimeout(1500);
       const p = await particles(alone.page);
       out.particles[name] = { [name]: p[name], budget: p.budget };
       await alone.context.close();
     }
-    // a phone, a tile hidden, an effect on: the strip (reset preferences · stop animations · last reading) at the bottom right, the time last;
-    // the test row not over it
-    const phone = await weatherPage(browser, url, { query: "?fx=rain", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
+    // a phone, a tile hidden, an effect on (the wind, its leaves looping there too): the strip (reset preferences · stop animations ·
+    // last reading) at the bottom right, the time last; the test row not over it
+    const phone = await weatherPage(browser, url, { query: "?fx=wind", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
       init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
-    await phone.page.waitForTimeout(300);
+    out.phoneWind = await windSeen(phone.page, 1500);
     out.phone = await phone.page.evaluate(() => {
       const a = document.getElementById("fxtest").getBoundingClientRect(), b = document.getElementById("status").getBoundingClientRect();
       return { strip: document.getElementById("status").textContent, right: Math.abs(b.right - innerWidth) < 1 && Math.abs(b.bottom - innerHeight) < 1,

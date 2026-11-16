@@ -128,7 +128,8 @@
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), uv, humidity, wind, heat: 0 or
 //   1, ice: how far below 0 °C it is (0: none)}; animate false (the page's "stop animations"): nothing drawn.
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), size: [art width, art height, P], particles (each effect's
-//   now), budget (theirs together, at most), levels, iceReach (art px)}, for the tests.
+//   now), budget (theirs together, at most), levels, iceReach (art px), wind (its leaves on screen: {vx: their mean speed across,
+//   negative leftward, against: how many go rightward})}, for the tests.
 const Sky = (() => {
   const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
   const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -418,7 +419,7 @@ const Sky = (() => {
     };
   });
 
-  // ---------- wind: autumn leaves blowing past left to right, three deep, caught in eddies and gusts; wisps of the wind itself ----------
+  // ---------- wind: autumn leaves blowing past right to left, three deep, caught in eddies and gusts; wisps of the wind itself ----------
   const LEAF_COLOURS = [   // [shadow, base, light] for: red, amber, ochre, green, brown; and the stem
     ["#5A1915", "#922B20", "#C24C34"], ["#66290F", "#A94B1B", "#D87A33"], ["#62420F", "#9E7024", "#D2A142"],
     ["#2C3F17", "#52702D", "#82A047"], ["#3B2816", "#664629", "#8C6840"]].map((r) => r.map(rgb));
@@ -432,21 +433,24 @@ const Sky = (() => {
      ["..l.l...", ".lmlmld.", "lmmvmmd.", ".lvmmvmd", "lmmvmmd.", ".dmvmd..", "..dsd...", "...s...."]]];
   const TURN = [1, 0.7, 0.35, -0.35, -0.7, -1, -0.7, -0.35, 0.35, 0.7];   // a leaf turning over and back (negative: its underside)
   const wind = effect((e) => {
-    // The air: a steady wind to the right, pulsing with gusts; slow turbulence over it (the curl of a few drifting waves: it swirls,
+    // The air: a steady wind to the left, pulsing with gusts; slow turbulence over it (the curl of a few drifting waves: it swirls,
     // never piles up); and a few eddies drifting along behind it, each a vortex that draws leaves near it onto a ring and sweeps them
     // round and round, then flings them off as it dies away. A leaf eases toward the air's speed where it is (it has a little
     // weight), turning over faster the faster the air turns about it. A few wisps of the wind itself trace the same air.
+    // (All of it is worked out downwind along +x, from the left edge, and drawn mirrored: on screen x is W - x, the sprites mirrored
+    // too, so everything, the gusts, turbulence and eddies, goes right to left, the leaves and wisps coming in at the right edge.)
     const LAYERS = [{speed: 40, alpha: 0.5, share: 0.4}, {speed: 60, alpha: 0.75, share: 0.35}, {speed: 85, alpha: 1, share: 0.25}];
     const CALM = 0.6;                  // on narrow art (a phone's) the wind slower, down to this (else leaves cross before they loop)
     const DRIFT = 60;                  // the turbulence's own speed along (px/s, at no gust); the eddies lag it
     const EDDY_DRAW = 150;             // how hard an eddy draws leaves onto its ring, and flings them off (px/s, about)
     // Each layer's leaves: each shape in each colour turning each way, as its frames
     const transposed = (rows) => rows[0].split("").map((_, x) => rows.map((row) => row[x]).join(""));
+    const mirrored = (rows) => rows.map((row) => [...row].reverse().join(""));   // (drawn mirrored: see above)
     const sprites = LEAF_SHAPES.map((shapes) => shapes.flatMap((rows) => LEAF_COLOURS.flatMap(([d, m, l]) => {
       const under = [d, d, m];   // (its underside: darker)
       // turning about its length, or end over end (squeezed on its side, then stood up again)
       return [rows, transposed(rows)].map((map, axis) => TURN.map((k) => {
-        const squashed = axis ? transposed(squeezed(map, k)) : squeezed(map, k);
+        const squashed = mirrored(axis ? transposed(squeezed(map, k)) : squeezed(map, k));
         return mapped(squashed, k > 0 ? {d, m, l, v: l, s: STEM} : {d: under[0], m: under[1], l: under[2], v: under[1], s: STEM});
       }));
     })));
@@ -516,6 +520,9 @@ const Sky = (() => {
       strength: () => 0.8,
       need: () => W * H / 2600,
       count: () => flying.length,
+      // (on screen: the leaves' mean speed across, px/s, negative leftward; how many go rightward, against the wind, in a loop)
+      probe: () => ({vx: -flying.reduce((sum, f) => sum + f.vx, 0) / Math.max(flying.length, 1),
+                     against: flying.filter((f) => f.vx < 0).length}),
       resize() { flying = []; eddies = []; wisps = []; },
       step(dt, t, share) {
         calm = clamp(W / 360, CALM, 1);
@@ -574,7 +581,7 @@ const Sky = (() => {
             if (lit < 0.15 || (i & 1)) continue;
             g.globalAlpha = alpha * 0.45 * lit;
             g.fillStyle = WISP[lit > 0.8 ? 2 : lit > 0.45 ? 1 : 0];
-            g.fillRect(w.trail[2 * i], w.trail[2 * i + 1], 1, 1);
+            g.fillRect(W - 1 - w.trail[2 * i], w.trail[2 * i + 1], 1, 1);
           }
         }
         let layer = -1;
@@ -582,7 +589,7 @@ const Sky = (() => {
           if (f.layer !== layer) { layer = f.layer; g.globalAlpha = alpha * LAYERS[layer].alpha; }
           const frame = f.frames[Math.floor(f.turn) % f.frames.length];
           const y = f.y + Math.sin(t * 2.3 + f.phase) * 1.2;   // (a flutter)
-          g.drawImage(frame, Math.round(f.x - frame.width / 2), Math.round(y - frame.height / 2));
+          g.drawImage(frame, Math.round(W - f.x - frame.width / 2), Math.round(y - frame.height / 2));
         }
       },
     };
@@ -871,7 +878,8 @@ const Sky = (() => {
 
   return {set, state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: !!frame, frames, cost, size: [W, H, P],
                               particles: Object.fromEntries(ORDER.map((k) => [k, effects[k].count()])), budget: W * H * BUDGET,
-                              levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach()})};
+                              levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
+                              wind: effects.wind.probe()})};
 })();
 </script>
 <script>

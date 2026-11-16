@@ -7,7 +7,7 @@ console error; the tiles rearranged (dragged with a mouse and with a touch's lon
 across reloads, reset), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds; a tile zoomed to
 fill the window and the gallery through the others (keys, mouse drags, a trackpad's swipe, touch swipes, both ends, the text still
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
-one canvas behind the tiles, "stop animations", reduced motion, the temporary test links and ?fx=, uv's beams with no particles, the wind's leaves within the budget), and the data's rain rate. With
+one canvas behind the tiles, "stop animations", reduced motion, the temporary test links and ?fx=, uv's beams with no particles, the wind's leaves within the budget and blowing right to left), and the data's rain rate. With
 ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
@@ -881,6 +881,10 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert got["particles"]["uv"] == {"uv": 0, "budget": got["particles"]["uv"]["budget"]}, got["particles"]
     wind = got["particles"]["wind"]
     assert 0 < wind["wind"] <= wind["budget"], wind
+    # the wind blows right to left: its leaves leftward overall, as drawn on the canvas too (frame to frame); some caught in a loop
+    # going rightward a moment (on a phone too)
+    for seen in (got["wind"], got["phoneWind"]):
+        assert seen["vx"] < -10 and seen["against"] > 0 and seen["frames"] > 20 and seen["left"] > 3 * seen["right"] > 0, seen
     # the strip at the bottom right: its links, then the time at the far right; on a phone with both its links, the test row
     # beside it or above it, never over it
     phone = got["phone"]
