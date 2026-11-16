@@ -645,15 +645,16 @@ def test_what_the_events_compare_of_the_air_is_its_gauges_readings():
 
 
 # ---------- arranging the tiles (drag, hide, reset, preferences) and their fill ----------
-async def run_page(server, *args, timeout=120, weather=True, parts=None) -> dict:
+async def run_page(server, *args, timeout=120, weather=True, parts=None, nice=0) -> dict:
     """The page served, driven by the browser script with these arguments; its report. With `parts`, each part after the arguments,
     side by side (each its own page, in one browser: one script's start, not one a part): their reports in one, the first part's
     where two report the same, their errors together. (`weather` False: served as with MCP_DASHBOARD_ANIMATIONS off, no weather drawn
     behind the tiles: for the pages that drive the tiles and time their moves, not the weather, so the machine's time goes to those
-    moves. The weather's own tests drive the tiles over it, zoomed too.)"""
+    moves. The weather's own tests drive the tiles over it, zoomed too.) `nice`: the browser run at that lower priority."""
     port = free_port()
     async with Serving(http_app(server, tokens=(TOKEN,), dashboard_animations=weather), port):
-        page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", *args,
+        lower = ["nice", "-n", str(nice)] if nice and shutil.which("nice") else []
+        page = await asyncio.create_subprocess_exec(*lower, "node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", *args,
                                                     *(["+".join(parts)] if parts else []), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = await asyncio.wait_for(page.communicate(), timeout)
     assert page.returncode == 0, err.decode()
@@ -999,9 +1000,15 @@ EFFECTS = {"rain": "Rain", "haze": "US AQI", "uv": "UV index", "humidity": "Humi
            "ice": "Temperature"}
 
 
+# The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
+# their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
+# moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
+DRIVEN = {"all", "flood", "opened", "gust"}
+
+
 async def weather(server, part: str) -> dict:
     """One part of the weather behind the tiles, its own page in its own browser (the parts run side by side): its report, no error."""
-    got = await run_page(server, "--weather", part)
+    got = await run_page(server, "--weather", part, nice=5 if part in DRIVEN else 0)
     assert got["errors"] == [], got["errors"]
     return got
 
@@ -1147,6 +1154,7 @@ def just_right_of_the_row(corner):
 @needs_browser
 async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alone_and_within_the_particle_budget(server, station):
     got = await weather(server, "all")
+    # (the cost: the script's own time a frame, the main thread's CPU time, however busy the machine: about 1.5 ms)
     assert got["cost"] < 8 and got["flying"] == 1, (got["cost"], got["flying"])   # (something blown across too: ?fx=all,gust)
     # ... the ice grown all the way in too, its frost across much of the glass: as cheap
     assert got["costFrosted"]["cost"] < 8 and got["costFrosted"]["crystals"] > 0.15, got["costFrosted"]
@@ -1295,8 +1303,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert len(refog) >= 10 and all(170 <= t <= 610 for t in lasted) and max(lasted) - min(lasted) > 150, refog
     assert all(t["crispTill"] is not None and t["crispTill"] < 0.25 * t["lasted"] for t in refog), refog
     assert all(t["fog"][0] == t["fog"][1] > 0 for t in refog), refog
-    # (as it was picked, inside the trail, fresh: wiped clear mostly; here and there a speck of the fog left unwiped (its two
-    # faintest shades) or a tiny droplet left in it, no more)
+    # (as it was picked, in the middle of the trail's row, fresh: wiped clear mostly; here and there a speck of the fog left unwiped
+    # (its two faintest shades) or a tiny droplet left in it, no more)
     assert sum(t["look"] == [0, 0, 0, 0] for t in refog) >= 0.5 * len(refog), refog
     assert all(t["look"] in ([0, 0, 0, 0], [50, 60, 67, 56], [74, 85, 92, 69]) or t["look"][:3] in DROPLET for t in refog), refog
     # ... light (91 %): a thinner fog than heavy (100 %), fewer beads, the fog first all the same
@@ -1403,8 +1411,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     clean_glass(cleared["again"])
     assert cleared["stray"] == 0 and cleared["drops"] == 0, cleared
     started_afresh(sticking["restarted"], "rain")
-    # the wind blows right to left: its leaves leftward overall, as drawn on the canvas too (frame to frame); some caught in a loop
-    # going rightward a moment (on a phone too)
+    # the wind blows right to left: its leaves leftward overall, as drawn on the canvas too (each one's middle, frame to frame, over 20 s
+    # of its time: its gusts and lulls); some caught in a loop going rightward a moment (on a phone too)
     for seen in (got["wind"], got["phoneWind"]):
         assert seen["vx"] < -10 and seen["against"] > 0 and seen["frames"] > 20 and seen["left"] > 3 * seen["right"] > 0, seen
         assert seen["hits"] == 0 and seen["whirl"] == 0, seen   # (no rain: nothing knocks the leaves)
@@ -1593,7 +1601,8 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     assert drained["effects"] == ["haze", "heat", "uv", "humidity", "ice"], drained
     again = linked["again"]
     assert again["url"].endswith(",rain3") and again["leaves"]["all"] == 0 and again["leaves"]["wet"] == [], again
-    # every effect on with the flood (full): as cheap as ever (about 3 ms), within the budget
+    # every effect on with the flood (full): as cheap as ever (the script's own time a frame, the main thread's CPU time, whatever else
+    # the machine is doing: about 2 ms), within the budget
     costly = linked["costly"]
     assert costly["effects"] == ["haze", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"] and costly["cost"] < 8, costly
     assert sum(costly["particles"].values()) <= costly["budget"] + 3, costly

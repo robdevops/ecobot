@@ -10,8 +10,12 @@ python -m pytest -m ""                 # every test, the slow ones too (as CI ru
 python -m pytest -m slow               # the slow ones alone
 python scripts/eval_prompts.py         # the saved questions: the reasoning effort (made in code) and the tools' expectations, no key needed
 ```
-Plain `pytest` takes about 19 s on four cores; everything (`-m ""`) about 53 s, and must stay under a minute: the browser tests are split
-into parts that run side by side, and wait on the page (`calm` in `tests/web_dashboard_browser.js`) rather than for fixed times. The slow tests, 0.5 s or more each run alone (the browser
+Plain `pytest` takes about 19 s on four cores; everything (`-m ""`) about 51 s, and must stay under a minute: the browser tests are split
+into parts that run side by side, and wait on the page (`calm` in `tests/web_dashboard_browser.js`) rather than for fixed times.
+The weather's tests count its own frames and time, never the machine's: each of its frames is a fixed step of its time however long it
+took to draw (`window.__skyTest`, see `weatherPage`), and most of its pages are driven (`driven`: the test makes the frames, one after
+another, from the same start whatever the load, its randomness seeded: the same frames every run; `SKY_SEED=n` seeds it otherwise, to
+see how near a check is to failing). A frame's cost is the page script's own CPU time (`frameCost`), not the clock's. The slow tests, 0.5 s or more each run alone (the browser
 tests of the web page, the service evals over every tool, the tests that start servers, the archive's own), are listed in
 `tests/slow_tests.txt` and marked `slow` by `tests/conftest.py`; `python scripts/slow_tests.py` measures every test again and rewrites the
 list (about two and a half minutes). The slowest fixture, the fake station's 18-month archive (`archived_cache` in `tests/conftest.py`),

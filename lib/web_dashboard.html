@@ -179,7 +179,8 @@
 //   flood (a flash flood: its depth, its surface, its frog and its waves, as flood.probe() gives them; the wind's water, fading,
 //   floating, resting, wet: its leaves in it, as flood.leaves() gives them (the flood's too, as leaves), and flyers: the leaves
 //   flying, each [id, its lowest row over the water under it or null, x, y]; the rain's under: drops drawn below its surface), gust (what's blown across: gust.probe()), for the tests. Sky.timeScale(k): the
-//   weather's time k times as fast, each frame (test-only). Sky.frost() (test-only):
+//   weather's time k times as fast, each frame (test-only). Sky.advance(n) (test-only): n frames now (window.__skyTest: see the
+//   loop); Sky.clock() (test-only): {frames, clock, running}, as Sky.state() has them, cheaply. Sky.frost() (test-only):
 //   the ice now, {extent, target: where it's going (on its own measure), growing, frosted, crystals: the share of the window under
 //   any frost, under its crystals, fresh: the growth front's fresh tip pixels, deepest: the crystal furthest from its nearest edge,
 //   of the window's shorter side, rim: the share of the window's outer 3 px frosted, fingers: in 32 stretches of the edges (between
@@ -209,7 +210,8 @@ const Sky = (() => {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  const random = seeded(1115);
+  const TEST = window.__skyTest || {};   // (test-only, set before the page loads: {step, driven} (see the loop), seed)
+  const random = seeded(TEST.seed || 1115);
   const between = (a, b) => a + (b - a) * random();
   const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
   const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
@@ -502,7 +504,12 @@ const Sky = (() => {
   const heat = effect((e) => {
     const SPAN = 0.34, PERIOD = 13, LINES = 7, RISE = 9, SPARE = 4;   // its height (of the window's); its ripples' spacing (px), how many
     // differ before they repeat, their speed (px/s); the spare px each side for wavering
-    let glow = null, ripples = null, band = 0;
+    let glow = null, ripples = null, band = 0, glowRows = null, rippleRows = null;
+    const inked = (c) => {   // (which of a texture's rows have anything in them: the empty ones never drawn)
+      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, rows = new Uint8Array(c.height);
+      for (let i = 3; i < d.length; i += 4) if (d[i]) rows[(i >> 2) / c.width | 0] = 1;
+      return rows;
+    };
     return {
       strength: () => 0.75,
       resize() {
@@ -522,16 +529,30 @@ const Sky = (() => {
           if (lit < 0.5) return null;
           return row === 0 ? HEAT[lit > 0.72 ? 4 : 3] : HEAT[1];
         });
+        glowRows = inked(glow);
+        rippleRows = inked(ripples);
       },
       draw(g, alpha, t) {
         const top = Math.round(H - band - flood.sunk()), rows = PERIOD * LINES, scroll = Math.floor(t * RISE) % rows;   // (a flood: from its surface)
+        const shift = (y) => Math.round(Math.sin(y * 0.5 - t * 3.1) * (0.5 + 1.8 * y / band));   // (wavering more lower down)
         flood.above(g, () => {
-          for (let y = 0; y < band; y++) {
-            const k = y / band, dx = Math.round(Math.sin(y * 0.5 - t * 3.1) * (0.5 + 1.8 * k));   // (wavering more lower down)
-            g.globalAlpha = alpha * 0.85;
-            g.drawImage(glow, SPARE - dx, y, W, 1, 0, top + y, W, 1);
-            g.globalAlpha = alpha * Math.pow(k, 1.3) * 0.7;
-            g.drawImage(ripples, SPARE + dx, (y + scroll) % rows, W, 1, 0, top + y, W, 1);
+          // each row shifted its own way, the glow's rows shifted alike drawn together (and empty rows not at all): drawn as it
+          // would be row by row, the glow under the wisps in each
+          for (let y = 0; y < band;) {
+            const dx = shift(y);
+            let n = 1;
+            while (y + n < band && glowRows[y + n] === glowRows[y] && shift(y + n) === dx) n++;
+            if (glowRows[y]) {
+              g.globalAlpha = alpha * 0.85;
+              g.drawImage(glow, SPARE - dx, y, W, n, 0, top + y, W, n);
+            }
+            for (let r = y; r < y + n; r++) {
+              const from = (r + scroll) % rows;
+              if (!rippleRows[from]) continue;
+              g.globalAlpha = alpha * Math.pow(r / band, 1.3) * 0.7;
+              g.drawImage(ripples, SPARE + dx, from, W, 1, 0, top + r, W, 1);
+            }
+            y += n;
           }
         });
       },
@@ -1569,6 +1590,7 @@ const Sky = (() => {
                     [[-2, -1, FAR], [3, -1, FAR]]]
       .map((dots) => painted(7, 4, (x, y) => { const d = dots.find(([dx, dy]) => dx + 3 === x && dy + 3 === y); return d && d[2]; }));
     let h = null, v = null, a = null, far = null, slap = null, depth = 0, full = 0, rows = 0, layer = null, img = null, px = null, body = null;
+    let surfaceRow = null;   // (each column's surface row in its layer, as drawn)
     let chop = 0, nextSlosh = 0, since = 0, test = false, nextFrog = Infinity, frog = null, frogs = 0, splashes = [];
     let hits = 0, sloshes = 0, drops = 0;
     // The leaves in it (the wind's, once they touch it: wind.wade()): its own from then on, the wind on or not. Each floats on the
@@ -1714,7 +1736,7 @@ const Sky = (() => {
       resize() {
         full = Math.max(8, Math.round(H * SPAN));
         rows = full + TOP;
-        h = new Float32Array(W); v = new Float32Array(W); a = new Float32Array(W); far = new Float32Array(W);
+        h = new Float32Array(W); v = new Float32Array(W); a = new Float32Array(W); far = new Float32Array(W); surfaceRow = new Int32Array(W);
         slap = Float32Array.from({length: W}, (_, x) => 1 + 0.8 * Math.exp(-Math.min(x, W - 1 - x) / 3));   // (running up the sides)
         depth = Math.min(depth, full);
         layer = canvasOf(W, rows);
@@ -1726,7 +1748,7 @@ const Sky = (() => {
         for (let r = 0; r < rows; r++) for (let x = 0; x < W; x++) {
           const k = Math.min(1, r / full), n = noise(x / 22, r / 7, Math.max(1, Math.ceil(W / 22)), 41) - 0.5;
           const s = Math.max(0, shadeOf(clamp(0.04 + 0.9 * Math.pow(k, 1.3) + 0.3 * n, 0, 1), x, r, FLOOD.length));
-          body[r * W + x] = pack(FLOOD[s], Math.round(190 - 75 * k));
+          body[(rows - 1 - r) * W + x] = pack(FLOOD[s], Math.round(190 - 75 * k));   // (stored top down, as the layer is)
         }
         frog = null;
         splashes = [];
@@ -1788,12 +1810,21 @@ const Sky = (() => {
           }
         }
         const top = H - rows, k = calm();
-        px.fill(0);
+        // the body from each column's surface down: whole rows copied below the lowest surface, nothing above the highest, column
+        // by column between
+        let high = rows, low = 0;
         for (let x = 0; x < W; x++) {
-          const y = Math.round(H - depth - h[x] * slap[x] * k) - top;
+          const y = surfaceRow[x] = Math.round(H - depth - h[x] * slap[x] * k) - top;
+          high = Math.min(high, y); low = Math.max(low, y);
+        }
+        high = clamp(high, 0, rows); low = clamp(low, 0, rows);
+        px.fill(0, 0, high * W);
+        for (let r = high; r < low; r++) for (let x = 0, i = r * W; x < W; x++, i++) px[i] = r >= surfaceRow[x] ? body[i] : 0;
+        px.set(body.subarray(low * W), low * W);
+        for (let x = 0; x < W; x++) {
+          const y = surfaceRow[x];
           if (y >= rows) continue;
           const f = Math.round(H - depth + 3 - far[x] * slap[x] * k * 0.7) - top;
-          for (let r = Math.max(0, y), i = r * W + x; r < rows; r++, i += W) px[i] = body[(rows - 1 - r) * W + x];
           if (y < 0) continue;
           const crest = h[x] > 2.5 && h[x] >= h[Math.max(0, x - 1)] && h[x] >= h[Math.min(W - 1, x + 1)];   // (a crest catching the light)
           px[y * W + x] = pack(crest ? LIT : SURFACE, crest ? 230 : 205);
@@ -1868,6 +1899,7 @@ const Sky = (() => {
     // the haze
     let crystalAt = null, crystalLook = null, crystalAlpha = null, crystalTint = null, bloomAt = null, hazeIn = null;
     let crystals = null, crystalKeys = null, blooms = null, bloomKeys = null, hazes = null, hazeKeys = null;   // (each sorted by its key)
+    let shades = [];   // (the haze's pixels by the depth at which each takes its fainter shade, and its brighter: [order, keys] each)
     let made = null;   // (for the tests: what was grown: its forms, its fronds, its seeds)
     const big = () => Math.max(W, H);
     // How far the frost creeps (on its own measure; a stem goes its own pace times it, about 0.6 to 1.9): just below 0 °C a fringe,
@@ -2051,6 +2083,18 @@ const Sky = (() => {
       [crystals, crystalKeys] = sorted(list, crystalAt);
       [blooms, bloomKeys] = sorted(bloomed, bloomAt);
       [hazes, hazeKeys] = sorted(hazed, hazeIn);
+      // (as the haze deepens, a pixel of it changes only where its dithered shade does: at the depth its level (lookOf's) reaches
+      // its dither's threshold for the fainter shade, and for the brighter; so only those pixels repainted, not all of it)
+      shades = [0, 1].map((s) => {
+        const at = new Float32Array(n), list = [];
+        for (const i of hazed) {
+          const b = BAYER[(((i / W) | 0) & 3) * 4 + ((i % W) & 3)], c = (s ? 2 - b : 1 - b) / 2 / 0.62;
+          if (c >= 1) continue;
+          at[i] = hazeIn[i] / (1 - Math.pow(c, 1 / 1.3));
+          if (at[i] <= deepest + 1) list.push(i);
+        }
+        return sorted(list, at);
+      });
       layer = canvasOf(W, H);
       img = layer.getContext("2d").createImageData(W, H);
       shownAt = -1;
@@ -2085,7 +2129,8 @@ const Sky = (() => {
       };
       span(crystals, crystalKeys, all ? -1 : lo - 5, hi);   // (the front's 5 px: their shades with it)
       span(blooms, bloomKeys, all ? -1 : lo, hi);
-      if (all || hazeDepth(lo) < hazeDepth(Math.min(W, H))) span(hazes, hazeKeys, -1, hazeDepth(hi));   // (while it deepens)
+      if (all) span(hazes, hazeKeys, -1, hazeDepth(hi));
+      else if (hazeDepth(lo) < hazeDepth(hi)) for (const [order, keys] of shades) span(order, keys, hazeDepth(lo), hazeDepth(hi));   // (while it deepens)
       shownAt = extent;
       shownGrowing = grows;
       layer.getContext("2d").putImageData(img, 0, 0);
@@ -2436,11 +2481,17 @@ const Sky = (() => {
   const effects = {gust, haze, heat, uv, rain, wind, humidity, flood, ice};
 
   // ---------- the loop ----------
+  // (test-only, window.__skyTest (see TEST): {step: s}, each frame the weather's time steps exactly s (times timeScale), however
+  // long the frame really took, so a busy machine changes how soon a test sees a thing, never what it sees; {driven: true} too, no
+  // frames of its own: only those Sky.advance(n) makes)
+  const DRIVEN = !!TEST.driven;
   let animate = true, frame = 0, last = 0, clock = 0, frames = 0, cost = 0, scale = 1;
   const alive = () => ORDER.some((k) => effects[k].alive());
 
-  function resize() {
-    P = Math.max(3, Math.round(Math.max(window.innerWidth, window.innerHeight) / ART_PX));
+  function resize() {   // (the art made again for the window's size: only if that has changed)
+    const p = Math.max(3, Math.round(Math.max(window.innerWidth, window.innerHeight) / ART_PX));
+    if (W && p === P && W === Math.ceil(window.innerWidth / p) && H === Math.ceil(window.innerHeight / p)) return;
+    P = p;
     W = Math.ceil(window.innerWidth / P);
     H = Math.ceil(window.innerHeight / P);
     canvas.width = W;
@@ -2475,21 +2526,31 @@ const Sky = (() => {
     ctx.globalAlpha = 1;
   }
 
+  function step(dt) {   // one frame, dt s of the weather's time on
+    clock += dt;
+    const start = performance.now();
+    tick(dt);
+    draw();
+    cost = frames ? cost * 0.95 + (performance.now() - start) * 0.05 : performance.now() - start;
+    frames++;
+  }
   function loop(now) {
     frame = 0;
     if (!animate || document.hidden) return;
     if (now - last >= FRAME_MS - 4) {   // (30 a second: every other frame at 60 Hz)
-      const dt = Math.min((now - last) / 1000, 0.1) * scale;   // (scale: 1, but for the tests)
+      step((TEST.step || Math.min((now - last) / 1000, 0.1)) * scale);   // (scale: 1, but for the tests)
       last = now;
-      clock += dt;
-      const start = performance.now();
-      tick(dt);
-      draw();
-      cost = frames ? cost * 0.95 + (performance.now() - start) * 0.05 : performance.now() - start;
-      frames++;
     }
     if (alive()) frame = requestAnimationFrame(loop);
     else ctx.clearRect(0, 0, W, H);
+  }
+  // (test-only: n frames now, one after another, each TEST.step (or a 30th of a second) times timeScale on, as the loop would
+  // make them, ending as it would once nothing is left; how many were made)
+  function advance(n = 1) {
+    let made = 0;
+    for (; made < n && animate && !STILL && alive(); made++) step((TEST.step || FRAME_MS / 1000) * scale);
+    if (!alive()) ctx.clearRect(0, 0, W, H);
+    return made;
   }
 
   function start() {
@@ -2505,6 +2566,7 @@ const Sky = (() => {
       draw(STILL_HINT);
       return;
     }
+    if (DRIVEN) return;   // (the tests' frames only: Sky.advance)
     if (!frame && !document.hidden) {
       last = performance.now() - FRAME_MS;
       frame = requestAnimationFrame(loop);
@@ -2538,9 +2600,11 @@ const Sky = (() => {
     return sent;
   }
 
+  const running = () => DRIVEN ? animate && !STILL && alive() : !!frame;
   return {set, fling, timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
-          frost: (quick) => effects.ice.probe(quick),   // (test-only: the frost as it is now)
-          state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: !!frame, frames, cost, clock, size: [W, H, P],
+          advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
+          clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
+          state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: running(), frames, cost, clock, size: [W, H, P],
                               particles: Object.fromEntries(ORDER.map((k) => [k, effects[k].count()])), budget: W * H * BUDGET,
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
                               wind: effects.wind.probe(), rain: effects.rain.probe(), haze: effects.haze.probe(),
