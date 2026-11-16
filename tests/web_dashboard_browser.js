@@ -1394,7 +1394,7 @@ const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
 // there, not wiped, 0.1 or more at its middle), each row's wiped pixels (its own: the fog shown under half what it'd be): how many, the first
 // and the last against the sprite's left and right; each kind with 12 rows or more (a streak on clear glass 16: a thin one's mean
 // width needs them): {id, kind ("clear", "fog"), w: the bead's mean
-// width, widths, lefts, rights, ys, and through the fog inside: what shows inside it, see inside()}. (Put in the page as
+// width, widths, paused: each row where it had paused (a blob there), lefts, rights, ys, and through the fog inside: what shows inside it, see inside()}. (Put in the page as
 // window.__trailLook, see lookable())
 const trailLook = (h, b) => {
   const kinds = { clear: [], fog: [] };
@@ -1402,7 +1402,7 @@ const trailLook = (h, b) => {
     if (!(r.wet > 0.88) || !r.mine) continue;   // (fresh, its own: not another bead's since, over it)
     const mid = 3 + ((r.w - 1) >> 1), fogs = r.fog.slice(2, r.w + 4);
     if (fogs.every(([, f]) => f < 0.06)) {
-      kinds.clear.push({ y: r.y, w: r.w, width: r.alpha.filter((a, k) => k >= 2 && k < r.w + 4 && a > 0 && r.life[k] === r.life[mid]).length });
+      kinds.clear.push({ y: r.y, w: r.w, paused: r.paused, width: r.alpha.filter((a, k) => k >= 2 && k < r.w + 4 && a > 0 && r.life[k] === r.life[mid]).length });
     } else if (r.fog[mid][1] >= 0.1) {
       const wiped = r.fog.map(([s, f], k) => (f > 0 && s < 0.5 * f && r.life[k] === r.life[mid] ? k : -1)).filter((k) => k >= 0);
       kinds.fog.push({ y: r.y, w: r.w, width: wiped.length, left: wiped.length ? wiped[0] - 3 : null,
@@ -1447,12 +1447,84 @@ const trailLook = (h, b) => {
   };
   return Object.entries(kinds).filter(([kind, rows]) => rows.length >= (kind === "clear" ? 16 : 12)).map(([kind, rows]) => ({
     id: b.id, kind, w: rows.reduce((s, r) => s + r.w, 0) / rows.length, widths: rows.map((r) => r.width), ys: rows.map((r) => r.y),
-    lefts: rows.map((r) => r.left), rights: rows.map((r) => r.right), ...(kind === "fog" ? { inside: inside(rows) } : {}) }));
+    paused: rows.map((r) => !!r.paused), lefts: rows.map((r) => r.left), rights: rows.map((r) => r.right), ...(kind === "fog" ? { inside: inside(rows) } : {}) }));
 };
-const lookable = (page) => page.evaluate(`window.__trailLook = ${trailLook.toString()}`);
+// The beads followed frame by frame (window.__beadWatch(), see lookable(); each frame .step(Sky.state()), then .result()):
+//   stretches: each time one elongated (its stretch from 0 to more), {r: its radius then, most: its stretch at most (0-1), rows: the
+//     most rows its sprite was drawn taller than its own, cols: the most columns narrower, low: the most its drawn lower edge was off
+//     its own (px), lasted: s (the weather's) till round again (null: gone first)}, small: frames a bead under 2.5 showed elongated
+//     with none set going while it was 2.5 or more;
+//   splashes: each heavy-rain splash's droplet left on the glass {r: its radius at most, tiny: tiny always while it was one, moved:
+//     frames it moved (not snapping), glass: the glass under it as it last sat (before fading), fogged: s on fog, aged: s shown in
+//     all, fadedAt: its age as it began drying away (null: never), end: "faded" (dried away), "taken" (merged into another: snapped
+//     or swept up by a runner), "on" (still there at the end) or "other"}
+const beadWatch = () => {
+  const stretching = new Map(), stretches = [], splashes = new Map(), last = new Map();
+  let small = 0, clock = null;
+  return {
+    step(state) {
+      const h = state.humidity, t = state.clock, dt = clock === null ? 0 : t - clock, absorbed = new Set(h.absorbed), now = new Set();
+      clock = t;
+      for (const b of h.beads) {
+        now.add(b.id);
+        let e = stretching.get(b.id);
+        if (b.stretch > 0 && !b.fading) {
+          if (!e) { e = { r: b.r, most: 0, rows: 0, cols: 0, low: 0, from: t, lasted: null }; stretching.set(b.id, e); stretches.push(e); }
+          e.most = Math.max(e.most, b.stretch);
+          if (b.drawn && b.drawn[2] <= b.w) {   // (as drawn: not its pop, a size bigger, after a merge)
+            const [, y, w, hh] = b.drawn;
+            e.rows = Math.max(e.rows, hh - (b.bottom - Math.floor(b.y)));
+            e.cols = Math.max(e.cols, b.w - w);
+            e.low = Math.max(e.low, Math.abs(y + hh - b.bottom));
+          }
+          if (b.r < 2.5 && e.r < 2.5) small++;
+        } else if (e) { e.lasted = t - e.from; stretching.delete(b.id); }
+        if (b.kind === "splash") {
+          let d = splashes.get(b.id);
+          const before = last.get(b.id);
+          if (!d) { d = { r: b.r, tiny: true, moved: 0, glass: null, fogged: 0, aged: 0, fadedAt: null, end: "other" }; splashes.set(b.id, d); }
+          d.r = Math.max(d.r, b.r);
+          if (!b.tiny) d.tiny = false;
+          if (before && b.tiny && !b.snapping && !before.snapping && (b.x !== before.x || b.y !== before.y)) d.moved++;
+          if (b.fading) { if (d.fadedAt === null) d.fadedAt = b.age; }
+          else { d.glass = b.glass; if (b.glass === "fog") d.fogged += dt; }
+          d.aged = b.age;
+        }
+      }
+      for (const id of last.keys()) if (!now.has(id)) {
+        stretching.delete(id);
+        const d = splashes.get(id);
+        if (d && d.end === "other") d.end = absorbed.has(id) ? "taken" : d.fadedAt !== null ? "faded" : "other";
+      }
+      last.clear();
+      for (const b of h.beads) last.set(b.id, b);
+    },
+    result() {
+      for (const id of last.keys()) { const d = splashes.get(id); if (d && d.end === "other") d.end = "on"; }
+      return { stretches: stretches.map(({ from, ...e }) => e), small, splashes: [...splashes.values()] };
+    },
+  };
+};
+// The beads followed (window.__beadWatch()) for `frames` frames: what it saw, the weather's s taken, the drops landed, and the
+// biggest beads' restarts after a pause and their stretches set going the while (begun)
+const beadsWatched = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
+  const watch = window.__beadWatch(), from = Sky.state();
+  let n = 0;
+  const step = () => {
+    const state = Sky.state();
+    watch.step(state);
+    if (++n < frames) return __next(step);
+    const h = state.humidity, h0 = from.humidity;
+    resolve({ ...watch.result(), s: state.clock - from.clock, landed: h.landed - h0.landed, restarts: h.restarts - h0.restarts,
+              begun: h.stretches - h0.stretches });   // (begun: the stretches set going)
+  };
+  __next(step);
+}), frames);
+const lookable = (page) => page.evaluate(`window.__trailLook = ${trailLook.toString()}; window.__beadWatch = ${beadWatch.toString()}`);
 const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
   const last = new Map(), first = Sky.state().frames, count = Sky.state().particles.humidity, h0 = Sky.state().humidity;
-  const from = { ranOff: h0.ranOff, merges: h0.merges, glass: h0.glass, sizes: h0.sizes };
+  const from = { ranOff: h0.ranOff, merges: h0.merges, glass: h0.glass, sizes: h0.sizes, restarts: h0.restarts, stretches: h0.stretches };
+  const watch = window.__beadWatch ? window.__beadWatch() : null;
   let up = 0, down = 0, wander = 0, offset = 0, samples = 0, lowest = 0, moved = 0, behind = 0, trails = 0, popped = 0, under = 0;
   let top = 0, inked = 0, alphas = 0, most = 0, looked = 0, still = 0, running = 0, counts = 0, crept = 0, tinies = [];
   const snaps = h0.snaps;
@@ -1461,6 +1533,7 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
   const step = () => {
     const state = Sky.state(), h = state.humidity, now = new Map(h.beads.map((b) => [b.id, b])), absorbed = new Set(h.absorbed), left = new Set(h.left);
     for (const [id, b] of last) if (!now.has(id) && !absorbed.has(id) && !left.has(id) && b.r >= 1 && b.alpha > 0.15) popped++;
+    if (watch) watch.step(state);
     for (const b of h.beads) {
       const before = last.get(b.id);
       if (before && b.y < before.y - 1e-9) up++;
@@ -1523,7 +1596,8 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
               showing: { still: still / Math.max(counts, 1), running: running / Math.max(counts, 1) },
               wiped: [...wiped.values()].map((t) => ({ ...t, end: { shown: h.fogAt(...t.at)[0], wet: h.wetAt(...t.at) } })),
               fog: h.fog(), first: h.first, colours: h.colours(), aged: h.beads.filter((b) => !b.fading).map((b) => b.age),
-              landed: h.landed, looks, crept, tinies, snaps: h.snaps - snaps, tiny: h.tiny });
+              landed: h.landed, looks, crept, tinies, snaps: h.snaps - snaps, tiny: h.tiny,
+              restarts: h.restarts - from.restarts, stretches: h.stretches - from.stretches, watched: watch && watch.result() });
   };
   __next(step);
 }), frames);
@@ -1632,11 +1706,17 @@ const trailsAge = (page, k, through, most) => page.evaluate(([k, through, most])
 // clock held the while, so they're no older for it)) the rain light again: no new one sticking, and those there run off or
 // shrunk away
 const rainBeads = (page, light, heavy, after, scale, from = "light") => page.evaluate(([light, heavy, after, scale, from]) => new Promise((resolve) => {
-  const out = { stuck: [], looks: [] }, seenIds = new Set(), last = new Map(), looked = new Set();
+  const out = { stuck: [], looks: [] }, seenIds = new Set(), last = new Map(), looked = new Set(), h0 = Sky.state().humidity;
+  const watch = window.__beadWatch ? window.__beadWatch() : null, counts = { restarts: h0.restarts, stretches: h0.stretches };
   let n = 0, phase = from, popped = 0, start = Sky.state().frames;
+  const end = () => {   // (the beads followed, and the biggest's restarts after a pause and their stretches the while)
+    const h = Sky.state().humidity;
+    return { watched: watch && watch.result(), restarts: h.restarts - counts.restarts, stretches: h.stretches - counts.stretches };
+  };
   const step = () => {
     const state = Sky.state(), h = state.humidity, absorbed = new Set(h.absorbed), left = new Set(h.left), now = new Map(h.beads.map((b) => [b.id, b]));
     for (const [id, b] of last) if (!now.has(id) && !absorbed.has(id) && !left.has(id) && b.r >= 1 && b.alpha > 0.15) popped++;
+    if (watch) watch.step(state);
     last.clear();
     for (const b of h.beads) {
       last.set(b.id, b);
@@ -1647,7 +1727,7 @@ const rainBeads = (page, light, heavy, after, scale, from = "light") => page.eva
       if (b.kind === "rain" && !seenIds.has(b.id)) {
         seenIds.add(b.id);
         const s = h.splashes.find((s) => s.id === b.id);
-        out.stuck.push({ r: s ? s.r : 0, alpha: b.alpha, dots: s ? s.dots : 0, phase });   // (r: as it landed)
+        out.stuck.push({ r: s ? s.r : 0, alpha: b.alpha, dots: s ? s.dots : 0, stay: s ? s.stay : 0, phase });   // (r: as it landed)
       }
     }
     n = state.frames - start;
@@ -1660,7 +1740,7 @@ const rainBeads = (page, light, heavy, after, scale, from = "light") => page.eva
     } else if (phase === "heavy" && n >= heavy) {
       h.hasten(1);
       out.heavy = { landed: h.landed, rainMost: h.rainMost, glass: h.glass, trails: h.trails, beads: h.beads.length, popped };
-      if (!after) return resolve(out);
+      if (!after) return resolve({ ...out, ...end() });
       document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 0.35 } }));
       Sky.timeScale(scale);
       out.eased = { landed: h.landed, beads: h.beads.length, ranOff: h.ranOff, shrunk: h.shrunk, faded: h.faded };
@@ -1668,7 +1748,7 @@ const rainBeads = (page, light, heavy, after, scale, from = "light") => page.eva
     } else if (phase === "after" && (n >= after || !h.beads.length)) {
       Sky.timeScale(1);
       out.after = { landed: h.landed, beads: h.beads.length, frames: n, ranOff: h.ranOff, shrunk: h.shrunk, faded: h.faded, popped };
-      return resolve(out);
+      return resolve({ ...out, ...end() });
     }
     __next(step);
   };
@@ -1747,6 +1827,10 @@ async function lowMotion(browser, url, out) {
   const called = { "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160, gust: 130, hour: { "UV index": 9 } };
   await reads(called);   // (the page asks at once: fetched LOW_EVERY after the last)
   out.called = { ...await seen(), hand: await hand() };
+  out.beads = await page.evaluate(() => {   // (humidity's still frame: its biggest beads set off again, none elongating)
+    const h = Sky.state().humidity;
+    return { beads: h.beads.length, restarts: h.restarts, stretches: h.stretches, stretched: h.beads.filter((b) => b.stretch > 0).length };
+  });
   // asked for again and again (each event, the page shown again): fetched once, LOW_EVERY after the last; the same conditions: no new frame
   await page.evaluate(() => { for (let i = 0; i < 5; i++) document.dispatchEvent(new Event("visibilitychange")); });
   await reads(called);
@@ -2340,10 +2424,20 @@ const WEATHER = {
       if (name !== "humidity") await drive(p.page, 150);   // (beaded up a while first: beads run only from about large)
       const seen = await humiditySeen(p.page, name === "humidity" ? 200 : 540);   // (beads run only from about large: watched longer)
       if (name === "humidity2") seen.grid = (await gridPeak(p.page)).ratio;   // (its fog's dithering)
+      if (name === "humidity") {   // (then heavy rain too, its weather's time as fast: its splashes' droplets left on the fog)
+        await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { humidity: 1, rain: 1 } })));
+        seen.splashed = await beadsWatched(p.page, 300);
+      }
       await p.page.evaluate((k) => Sky.timeScale(k), name === "humidity2,wind" ? 1 : 2);
       if (name === "humidity2") seen.snapped = await snapped(p.page);
       if (name === "humidity2,wind") {   // (then its trails' time 60 times as fast, through the fog; then humidity off: the fog clearing)
-        seen.refog = await trailsAge(p.page, 60, true, 60);
+        // (beads running only from about large, a few at a time: the fresh trails then, a few, and again after the beads have run on
+        // a while (their weather's time 6 times as fast), till a dozen or so)
+        seen.refog = [];
+        for (let k = 0; k < 4 && seen.refog.length < 12; k++) {
+          if (k) { await p.page.evaluate(() => Sky.timeScale(6)); await drive(p.page, 60); await p.page.evaluate(() => Sky.timeScale(1)); }
+          seen.refog.push(...await trailsAge(p.page, 60, true, 60));
+        }
         await p.page.evaluate(() => Sky.timeScale(2));
         seen.clears = await humidityClears(p.page, 300);
       }
@@ -2371,7 +2465,7 @@ const WEATHER = {
         seen.restarted = await restarted(p.page, { humidity: 1 });
         // (and the physics the beads run by: a bead's mean speed on each glass, by size; its size after running 20 px in 5 s there)
         seen.physics = await p.page.evaluate(() => {
-          const { speed, after, gone, run } = Sky.state().humidity.physics, sizes = [0.6, 1, 1.1, 1.4, 2, 2.8, 4, 6, 10];
+          const { speed, after, gone, run } = Sky.state().humidity.physics, sizes = [0.6, 1, 1.1, 1.3, 1.4, 2, 2.8, 3, 3.4, 4, 6, 10];
           return { sizes, gone, run, speed: Object.fromEntries(["dry", "trail", "fog"].map((g) => [g, sizes.map((r) => speed(r, g))])),
                    after: Object.fromEntries(["dry", "trail", "fog"].map((g) => [g, sizes.map((r) => after(r, g, 20, 5))])) };
         });
@@ -2388,10 +2482,12 @@ const WEATHER = {
       await lookable(p.page);
       const seen = await rainBeads(p.page, 100, 250, 0, 1);
       await p.page.evaluate(() => Sky.timeScale(1));
+      // (heavy still, its weather's own time (a frame 0.1 s: a stretch over a few), 30 s: the biggest setting off again after pauses)
+      seen.stretching = await beadsWatched(p.page, 300);
       let looks;
       // (the rain eased: watched till the last bead has gone, up to 1100 frames (11 minutes of its weather's time): one shrunk on
       // dry glass under the run size and sitting on a wet trail keeps its size till that trail dries, 3 to 10 minutes)
-      ({ eased: seen.eased, after: seen.after, looks } = await rainBeads(p.page, 0, 0, 1100, 6, "heavy"));
+      ({ eased: seen.eased, after: seen.after, looks, watched: seen.afterWatched } = await rainBeads(p.page, 0, 0, 1100, 6, "heavy"));
       seen.looks.push(...looks);   // (the trails' looks, those running on too)
       // the rain easing, still on (light): its streaks drying on their own time, there still 6 s (of its weather's time) after
       // (the heavy rain's streaks: a minute old at most, none dried yet)
@@ -2520,7 +2616,8 @@ const WEATHER = {
       document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { humidity: 1 } }));
       const h = Sky.state().humidity;
       return { beads: h.beads.length, ran: h.beads.filter((b) => b.y - b.y0 >= 10).length + h.ranOff, trails: h.trails, stray: h.stray(),
-               fog: h.fog().cover, running: Sky.state().running, frames: Sky.state().frames };
+               fog: h.fog().cover, running: Sky.state().running, frames: Sky.state().frames,
+               restarts: h.restarts, stretches: h.stretches, stretched: h.beads.filter((b) => b.stretch > 0).length };   // (none elongating)
     });
     out.still.flood = await still.page.evaluate(() => {   // (a flood: full at once, still; no frog)
       document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1, flood: 1 } }));

@@ -171,13 +171,14 @@
 //   first: the first bead to show since the glass was fresh {after: s, cover, fog: the fog where it showed (not wiped), formed:
 //   fog() then} or null, landed: heavy rain's drops stuck, rainMost: the most of them at once, splashes: the latest {id, r, dots, stay: its droplets left on the glass},
 //   glass: {dry, trail, fog: each {px, s: run and taken there by beads of r 1.8-3.2, band: what they'd have run on fog (each at its
-//   size then), gained, lost: water, moves: steps, all, norm:
-//   px run by any, and what they'd have run on fog in that time}}, sizes: [px, s] on fog by size (under bands[0], ..., the last and
+//   size then), gained, lost: water, moves: steps, all, norm, pace:
+//   px run by any, what they'd have run on fog in that time, and at that glass's own mean speed}}, restarts: the biggest beads (STRETCH_R
+//   up) setting off again after a pause, stretches: those of them elongating as they did, sizes: [px, s] on fog by size (under bands[0], ..., the last and
 //   over), bands, swept: the trail pixels the latest frame's sweep looked at again (sweepMost at most), physics: {speed(r, glass):
 //   px/s (0 under run), after(r, glass, px, s, fog): its radius after (0: gone), gone, run: the size a bead runs from}, hasten(k): the
 //   trails' time k times as fast (test-only), clock(): the trails', wetAt(x, y): how fresh a trail is there (1 just left, 0 none),
 //   lifeAt(x, y): its life, glassAt(x, y): "dry", "trail" or "fog", fogAt(x, y): [its fog as shown, its fog not wiped] (0-1),
-//   shownAt(x, y): what the fog's canvas shows there [r, g, b, alpha], trailOf(id): a bead's trail as it looks now, its latest rows
+//   shownAt(x, y): what the fog's canvas shows there [r, g, b, alpha], trailOf(id): a bead's trail as it looks now, its latest rows (paused: one it had paused at, a blob)
 //   ({y, w, left, wet, alpha, life, fog}: see the probe), marks(): {trails, listed: trail pixels, ink: its canvas's pixels showing
 //   anything, beads, cover, amount}, fog(): {cover: how far formed, 0-1, dense, thickness,
 //   middle, edge: its mean shown, over the window, its middle and its edges, opacity: its mean alpha as drawn (0-1), most: its
@@ -1344,8 +1345,8 @@ const Sky = (() => {
     let dirty = null, painting = 0, level = 0, fresh = 0, quiet = false;
     // (for the tests, as Sky.state() gives them)
     const seen = {merges: 0, merged: [], absorbed: [], left: [], ranOff: 0, shrunk: 0, faded: 0, largest: 0, born: [], first: null,
-                  dried: 0, landed: 0, rainMost: 0, snaps: 0, splashes: [], joined: 0, joins: [],
-                  glass: [0, 1, 2].map(() => ({px: 0, s: 0, band: 0, gained: 0, lost: 0, moves: 0, all: 0, norm: 0})),   // (px, s, band: r 1.8-3.2)
+                  dried: 0, landed: 0, rainMost: 0, snaps: 0, splashes: [], joined: 0, joins: [], restarts: 0, stretches: 0,
+                  glass: [0, 1, 2].map(() => ({px: 0, s: 0, band: 0, gained: 0, lost: 0, moves: 0, all: 0, norm: 0, pace: 0})),   // (px, s, band: r 1.8-3.2)
                   sizes: [0, 1, 2, 3, 4].map(() => [0, 0])};                                     // (on fog: px and s, by size)
     const BANDS = [1, 1.6, 2.4, 3.2];
     const heightOf = (r) => sprite(r).height;
@@ -1497,7 +1498,7 @@ const Sky = (() => {
         if (r[0] > 0) { m = r[0] === r[1] || r[0] === 1 ? 128 : 255; r[0]--; }
         lay(x, y, 1 - 0.1 * Math.abs(x - mid) / Math.max(1, w / 2), b.life, p, k, Math.round(255 * e), m, x < left || x >= left + w ? 1 : 0);
       }
-      if (b.rows) { b.rows.push([y, a, c, left, w]); if (b.rows.length > 80) b.rows.shift(); }
+      if (b.rows) { b.rows.push([y, a, c, left, w, blob > 0]); if (b.rows.length > 80) b.rows.shift(); }
     };
     function age(dt) {   // the trails' clock on; a slice of them looked at again (all every REDRAW s of it, SWEEP_MOST a frame at
                          // most): gone ones off the list
@@ -1528,7 +1529,7 @@ const Sky = (() => {
       if (b.vol > was) o.gained += b.vol - was; else o.lost += was - b.vol;
       o.moves++;
       if (px > 0 && r >= 1.8 && r <= 3.2) { o.px += px; o.s += s; o.band += s * speedFor(r, FOGGY); }   // (band: px it'd have run on fog)
-      if (px > 0) { o.all += px; o.norm += s * speedFor(r, FOGGY); }   // (any size: px run, against what it'd have run on fog)
+      if (px > 0) { o.all += px; o.norm += s * speedFor(r, FOGGY); o.pace += s * speedFor(r, g); }   // (any size: px run, against what it'd have run on fog, and there)
       if (px > 0 && g === FOGGY) { const band = seen.sizes[BANDS.filter((x) => r >= x).length]; band[0] += px; band[1] += s; }
     }
     // A bead to condense somewhere: unseen till the fog has formed and shows there (and a moment more), then tiny. Where: anywhere in
@@ -1570,13 +1571,15 @@ const Sky = (() => {
       const cy = y + heightOf(r) / 2, n = 10 + Math.floor(random() * 4);
       const dots = Array.from({length: n}, (_, j) => ({a: (j + between(-0.3, 0.3)) * 2 * Math.PI / n, v: between(14, 24), s: random() < 0.4 ? 1 : 0}));
       // (a few of them, spread round it, thrown out to varied distances and left there: tiny beads once the splash is gone, as many
-      // as the beads' own most has room for)
+      // as the beads' own most has room for, none in a flood; that far past its edge every way, the ring's flattening (0.8 down and
+      // up) made up for, so none thrown up or down lands on it, or close enough to snap back into it at once)
       const stay = STAY[0] + Math.floor(random() * (STAY[1] - STAY[0] + 1)), from = Math.floor(random() * n);
       let kept = 0;
       for (let j = 0; j < stay; j++) {
-        const d = dots[(from + Math.round(j * n / stay)) % n], far = r + 1 + between(...STAY_AT);
+        const d = dots[(from + Math.round(j * n / stay)) % n], far = (r + 1 + between(...STAY_AT)) / Math.hypot(Math.cos(d.a), 0.8 * Math.sin(d.a));
         const px = Math.round(x + Math.cos(d.a) * far), py = Math.round(cy + Math.sin(d.a) * far * 0.8);
         if (px < 1 || px > W - 2 || py < 1 || py > H - 2 || used() + (kept + 1) * TINY_COST > most) continue;
+        if (py + heightOf(BORN[0] + 0.05) >= flood.surface(px) - 1) continue;   // (none left in a flood: thrown into its water)
         Object.assign(d, {stay: far, px, py});
         kept++;
       }
@@ -1698,7 +1701,8 @@ const Sky = (() => {
         else {
           if (b.waited) {   // (setting off again after a pause: the biggest now and then elongating a little as they go)
             b.waited = false;
-            if (!STILL && b.r >= STRETCH_R && random() < STRETCHES) { b.surge = 0; b.st = b.st || 0; }
+            if (b.r >= STRETCH_R) seen.restarts++;
+            if (!STILL && b.r >= STRETCH_R && random() < STRETCHES) { b.surge = 0; b.st = b.st || 0; seen.stretches++; }
           }
           const v = speedFor(b.r, g) * b.base, dy = Math.min(v * time, 1, b.run + 1e-3), s = Math.min(time, dy / v);
           time -= s;
@@ -1825,6 +1829,9 @@ const Sky = (() => {
       fade(dt) { e.amount = present() ? 1 : STILL ? 0 : Math.max(0, e.amount - dt / FADE_S); },   // (the trails fading out last)
       alive: () => present() || e.amount > 0,
       forget: clear,   // (faded out all the way: fog, beads, trails and stains gone, its layer cleared)
+      // (once every effect has stepped: a flood risen over a bead since it moved (the flood steps after it), joined there now, not
+      // drawn in its water this frame)
+      settle() { if (flood.alive()) { for (const b of all) if (!b.gone) drowned(b); all = all.filter((b) => !b.gone); } },
       resize() {
         till = new Float64Array(W * H);
         life = new Float32Array(W * H);
@@ -1931,7 +1938,7 @@ const Sky = (() => {
                      merges: seen.merges, merged: seen.merged.slice(), absorbed: seen.absorbed.slice(), left: seen.left.slice(),
                      ranOff: seen.ranOff, shrunk: seen.shrunk, faded: seen.faded, largest: seen.largest, born: seen.born.slice(),
                      first: seen.first, landed: seen.landed, rainMost: seen.rainMost, splashes: seen.splashes.slice(), joined: seen.joined,
-                     joins: seen.joins.slice(),
+                     joins: seen.joins.slice(), restarts: seen.restarts, stretches: seen.stretches,
                      glass: Object.fromEntries(GLASSES.map((name, g) => [name, {...seen.glass[g]}])), sizes: seen.sizes.map((s) => s.slice()),
                      bands: BANDS,
                      // (the physics as the beads run by it: a bead's mean speed, px/s, of radius r on glass g ("dry", "trail", "fog"),
@@ -1969,10 +1976,10 @@ const Sky = (() => {
                      // left unwiped there (0 none), life: its trail's life (0 none: which trail it is), fog: [as shown, not wiped] (0-1)})
                      trailOf: (id) => {
                        const b = all.find((b) => b.id === id);
-                       return !b || !b.rows ? [] : b.rows.map(([y, , , left, w]) => {
+                       return !b || !b.rows ? [] : b.rows.map(([y, , , left, w, paused]) => {
                          const xs = Array.from({length: w + 6}, (_, k) => left - 3 + k).map((x) => clamp(x, 0, W - 1));
                          const m = at(left + (w - 1) / 2, y);
-                         return {y, w, left, wet: wetOf(m), mine: !!listed[m] && life[m] === Math.fround(b.life), alpha: xs.map((x) => SHOWS[key[y * W + x]][3]),
+                         return {y, w, left, paused, wet: wetOf(m), mine: !!listed[m] && life[m] === Math.fround(b.life), alpha: xs.map((x) => SHOWS[key[y * W + x]][3]),
                                  shows: xs.map((x) => key[y * W + x]), fogShades: FOG.length, residue: xs.map((x) => (listed[y * W + x] ? smear[y * W + x] : 0)),
                                  life: xs.map((x) => (listed[y * W + x] ? life[y * W + x] : 0)),
                                  fog: xs.map((x) => [fogOf(y * W + x, cover, dense, true), fogOf(y * W + x, cover, dense, false)])};
@@ -3058,6 +3065,7 @@ const Sky = (() => {
     }
     const share = Math.min(1, W * H * BUDGET / Math.max(need, 1));
     for (const k of ORDER) if (effects[k].alive()) effects[k].step(dt, clock, OWN_BUDGET.has(k) ? 1 : share);
+    for (const k of ORDER) if (effects[k].settle && effects[k].alive()) effects[k].settle();   // (after them all: see humidity's)
   }
   function draw(faint = 1) {
     ctx.globalAlpha = 1;
