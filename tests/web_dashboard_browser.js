@@ -1925,7 +1925,10 @@ const WEATHER = {
       // every frame, until the first frog has crossed (or 100 s of the page's time): the frog, the leaves in the water, the drips
       Object.assign(seen, await page.evaluate(() => new Promise((resolve) => {
         const r = { before: null, first: null, track: [], leaves: { float: 0, sink: 0, rest: 0 }, gaps: [], resting: [], wet: 0, most: 0,
-                    over: 0, under: 0, joined: 0, joins: [], frogs: 0, fullAt: null,
+                    over: 0, under: 0, joined: 0, joins: [], frogs: 0, fullAt: null, fewest: Infinity, flown: [],
+                    // (every leaf it took, by id: still in it at the end, or not; its count of them, those come to rest, those resting
+                    // shown on the bottom (and its px) each 5 frames (each 5 s of its time here): any not shown, any look with fewer px than the last)
+                    kept: { ids: new Set(), missing: [], took: 0, rested: 0, float: 0, sink: 0, looks: [], hidden: 0, shrank: 0 },
                     // (the leaves and the water, every frame: flying ones drawn touching it or under it; those stuck in it, and of them
                     // the ones seen flying just before (and how near the water they were then); any flying again, any above the surface
                     // or going back a state; flying ones vanishing other than into it, last seen near the water and away from the
@@ -1974,9 +1977,17 @@ const WEATHER = {
           for (const k of ["float", "sink", "rest"]) r.leaves[k] = Math.max(r.leaves[k], w.water[k]);
           r.gaps.push(...w.floating);
           r.resting.push(...w.resting);
-          const wet = w.water.float + w.water.sink + w.water.rest;
+          const wet = w.water.float + w.water.sink;   // (those resting: drawn on the bottom, no particles)
           r.wet = Math.max(r.wet, wet);
           r.most = Math.max(r.most, wet / w.leaves);
+          if (f.depth >= f.full) { r.fewest = Math.min(r.fewest, w.flyers.length / w.leaves); r.flown.push(w.flyers.length / w.leaves); }
+          for (const [id] of w.wet) r.kept.ids.add(id);
+          if (s.frames % 5 === 0 && w.rested) {
+            const shows = w.shows(), last = r.kept.looks.at(-1);
+            if (shows.shown < shows.of) r.kept.hidden++;
+            if (last && shows.px < last.px) r.kept.shrank++;
+            r.kept.looks.push(shows);
+          }
           const used = Object.values(s.particles).reduce((a, b) => a + b, 0);
           r.over = Math.max(r.over, used - s.budget);
           if (f.depth >= f.full) {   // (the drips: none below the surface, beyond a crest's rise in a frame on this fast clock)
@@ -1987,6 +1998,12 @@ const WEATHER = {
           r.frogs = f.frogs;
           if ((r.first && !f.frog) || f.since > 100) {
             r.gaps = r.gaps.slice(-400); r.resting = r.resting.slice(-400); r.stuck.lastGaps = r.stuck.lastGaps.slice(-200);
+            r.flying = r.flown.reduce((a, b) => a + b, 0) / Math.max(r.flown.length, 1);
+            delete r.flown;
+            const now = new Set(w.wet.map(([id]) => id)), k = r.kept;
+            k.missing = [...k.ids].filter((id) => !now.has(id));
+            Object.assign(k, { ids: k.ids.size, took: w.took, rested: w.rested, float: w.water.float, sink: w.water.sink,
+                               looks: k.looks.length, last: k.looks.at(-1), first: k.looks[0] });
             return resolve(r);
           }
           __next(step);
@@ -2013,16 +2030,18 @@ const WEATHER = {
       const [cw, ch] = await page.evaluate(() => Sky.state().size);
       seen.grid = (await gridPeak(page, [Math.floor((cw - 256) / 2), ch - 32, 256, 32])).ratio;
       // the wind off, some leaves resting on the bottom and some floating: those in the water staying, the floating ones sinking
-      // (once the wind is gone and none is fading: then the weather's time 20 times as fast for 16 s of it)
+      // (once the wind is gone: then the weather's time 20 times as fast for 16 s of it, and on till every one has come to rest)
       await driveUntil(page, () => { const w = Sky.state().wind.water; return w.rest >= 1 && w.float >= 2; });
       await page.locator("#fxtest button[data-fx='wind']").click();
-      await driveUntil(page, () => !Sky.state().effects.includes("wind") && Sky.state().particles.wind === 0 && !Sky.state().flood.leaves.fading);
+      await driveUntil(page, () => !Sky.state().effects.includes("wind") && Sky.state().particles.wind === 0);
       seen.windOff = { before: await page.evaluate(() => Sky.state().flood.leaves.wet) };
       await page.evaluate(() => Sky.timeScale(20));
       const gone = await page.evaluate(() => Sky.state().clock);
       await driveUntil(page, (c) => Sky.clock().clock >= c + 16, gone);
       Object.assign(seen.windOff, await page.evaluate(() => ({ after: Sky.state().flood.leaves.wet, flyers: Sky.state().wind.flyers.length,
-                                                               effects: Sky.state().effects, fading: Sky.state().flood.leaves.fading })));
+                                                               effects: Sky.state().effects })));
+      await driveUntil(page, () => { const w = Sky.state().flood.leaves.water; return w.float + w.sink === 0; });
+      seen.windOff.settled = await page.evaluate(() => { const l = Sky.state().flood.leaves; return { took: l.took, rested: l.rested, all: l.all, shows: l.shows(), particles: Sky.state().particles.flood ?? 0 }; });
       // off: draining, the leaves in it staying till it's nearly gone, then gone with it (the weather's time four times as fast)
       await page.evaluate(() => Sky.timeScale(4));
       const n0 = await page.evaluate(() => Sky.state().flood.leaves.all);
@@ -2040,7 +2059,7 @@ const WEATHER = {
           __next(() => __next(() => {
             const w = Sky.state().wind;
             resolve({ took: s.clock - c0, depth0, effects: Sky.state().effects, wet: w.water.float + w.water.sink + w.water.rest,
-                      fading: w.fading, all: Sky.state().flood.leaves.all, frog: Sky.state().flood.frog, n0, low });
+                      all: Sky.state().flood.leaves.all, frog: Sky.state().flood.frog, n0, low });
           }));
         };
         __next(step);

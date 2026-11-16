@@ -1614,13 +1614,21 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     assert len(track) > 15 and track[0][0] > 0.9 * got["rising"]["width"] and track[-1][0] < 0.1 * got["rising"]["width"], track[::10]
     assert all(b[0] <= a[0] for a, b in zip(track, track[1:])), track   # (two looks a frame drawn, at times)
     assert all(abs(y - surface) <= 1 for _, y, surface in track) and max(t[1] for t in track) - min(t[1] for t in track) >= 2, track
-    # ... the leaves: landing on it and lying there (on the surface line, or a px into it), then sinking and resting on the bottom; no
-    # more than 40 % of them in the water, within the budget
+    # ... the leaves: landing on it and lying there (on the surface line, or a px into it), then sinking and resting on the bottom (on
+    # the pile of those before, 6 px high at most); within the budget (those resting none of it), a third of them or more flying on the whole
     leaves = linked["leaves"]
     assert leaves["float"] >= 2 and leaves["sink"] >= 1 and leaves["rest"] >= 1, leaves
     assert linked["gaps"] and set(linked["gaps"]) <= {0, 1}, sorted(set(linked["gaps"]))
-    assert linked["resting"] and all(-4 <= r <= 0 for r in linked["resting"]), sorted(set(linked["resting"]))
-    assert 0 < linked["most"] <= 0.42 and linked["over"] <= 3, (linked["most"], linked["over"], linked["wet"])
+    assert linked["resting"] and all(-8 <= r <= 0 for r in linked["resting"]), sorted(set(linked["resting"]))
+    assert 0 < linked["most"] < 1 and linked["over"] <= 3, (linked["most"], linked["over"])
+    assert linked["fewest"] > 0 and linked["flying"] >= 1 / 3, (linked["fewest"], linked["flying"])   # (never all in the water)
+    # ... every one stuck on it sinking and resting on the bottom, none lost over the long run (the wind's, the heavy rain's, 100 s
+    # and more): every one it took still in it at the end, those it took all resting but those still floating or sinking; and every
+    # one resting showing on the bottom all along (its px never fewer)
+    kept = linked["kept"]
+    assert kept["took"] >= 30 and kept["ids"] == kept["took"] and kept["missing"] == [], kept
+    assert kept["took"] == kept["rested"] + kept["float"] + kept["sink"] and kept["rested"] >= 20, kept
+    assert kept["looks"] >= 10 and kept["hidden"] == 0 and kept["shrank"] == 0 and kept["last"]["shown"] == kept["last"]["of"] >= 20, kept
     # ... every leaf its wavy surface reaches stuck on it (many, in the wind, the heavy rain knocking them about): none flying drawn
     # touching it or under it, none flying again, above it or going back a state (floating, sinking, resting, in that order); those
     # seen flying the frame before it took them, all of them above it then (some well above: crossing it between frames); none
@@ -1643,14 +1651,16 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     assert cut["n"] >= 100 and cut["at"] >= 0.8 * cut["above"], cut
     # ... its body dithered irregularly: no grid in its pixels (as gridPeak sees it, its bottom 32 rows: under 100; ordered, about 200)
     assert linked["grid"] < 100, linked["grid"]
-    # ... the wind off (and gone): the leaves in the water its own, staying (those resting still resting, none fading), the floating
-    # ones sinking or resting by 16 s on, none flying
+    # ... the wind off (and gone): the leaves in the water its own, staying (those resting still resting), the floating ones sinking
+    # or resting by 16 s on, none flying; then every one resting, showing on the bottom, none of them particles
     off = linked["windOff"]
     before, after = {i: st for i, st, _ in off["before"]}, {i: st for i, st, _ in off["after"]}
-    assert "wind" not in off["effects"] and off["flyers"] == 0 and off["fading"] == 0, off
+    assert "wind" not in off["effects"] and off["flyers"] == 0, off
     assert "rest" in before.values() and "float" in before.values() and set(before) <= set(after), off
     assert all(after[i] == "rest" for i, st in before.items() if st == "rest"), off
     assert all(after[i] in ("sink", "rest") for i, st in before.items() if st == "float"), off
+    settled = off["settled"]
+    assert settled["took"] == settled["rested"] == settled["all"] == len(after) == settled["shows"]["shown"] and settled["particles"] == 0, settled
     # ... off: draining in about 6 s, its leaves all there till its last few px, then gone with it; a new flood: none from before
     drained = linked["drained"]
     assert 5 <= drained["took"] <= 7 and drained["wet"] == drained["all"] == 0 and drained["frog"] is None, drained

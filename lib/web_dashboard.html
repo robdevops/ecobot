@@ -176,8 +176,8 @@
 //   age: s shown, behind: its trail there behind it, trail: [x, y] a pixel of it}]}), joined: how many have run into a flood, joins: the latest of them
 //   (each {x, bottom: its sprite's lowest row + 1, surface: the flood's surface there then, level: the flood's level, trail: its trail's
 //   last row + 1, or null: not running, wet: its trail there, in its middle)},
-//   flood (a flash flood: its depth, its surface, its frog and its waves, as flood.probe() gives them; the wind's water, fading,
-//   floating, resting, wet: its leaves in it, as flood.leaves() gives them (the flood's too, as leaves), and flyers: the leaves
+//   flood (a flash flood: its depth, its surface, its frog and its waves, as flood.probe() gives them; the wind's water, took, rested,
+//   floating, resting, wet, all, shows(): its leaves in it, as flood.leaves() gives them (the flood's too, as leaves), and flyers: the leaves
 //   flying, each [id, its lowest row over the water under it or null, x, y]; the rain's under: drops drawn below its surface), gust (what's blown across: gust.probe()), for the tests. Sky.timeScale(k): the
 //   weather's time k times as fast, each frame (test-only). Sky.advance(n) (test-only): n frames now (window.__skyTest: see the
 //   loop); Sky.clock() (test-only): {frames, clock, running}, as Sky.state() has them, cheaply. Sky.frost() (test-only):
@@ -977,7 +977,7 @@ const Sky = (() => {
     };
     return {
       strength: () => 0.8,
-      need: () => W * H / 2600,
+      need: () => W * H / 2600 + flood.count(),   // (as many flying as ever, a flood's floating and sinking ones on top: its own)
       count: () => flying.length,
       // The air across, on screen at x (art px), on something `k` (0-1) as near as the nearest rain: leftward, px/s (none without the
       // wind); and its steady part. (Its bands not slowed on narrow art: there they are what's left of the wind in the rain.)
@@ -1940,7 +1940,7 @@ const Sky = (() => {
   // spreading both ways, and a tiny splash), a drip running into it, a restless chop while it pours, now and then a bigger slosh from
   // one side; calming slowly as the rain eases. Rain, the drips and the wind's wisps end at it, none ever drawn below; every one of
   // the wind's leaves its surface reaches (its waves as they are, wherever a leaf meets them) sticks there, floats, then sinks and
-  // rests on the bottom, the flood's own from then on: there while it lasts, the wind gone or not, gone as it drains away; the haze
+  // rests on the bottom, every one, the flood's own from then on: there while it lasts, the wind gone or not, gone as it drains away; the haze
   // and the heat's shimmer are drawn above it (above(): the haze down to its surface, the heat from as low as its troughs go). Rarely (about every FROG_EVERY s on
   // average, never in its first FROG_FIRST s) a bemused frog on a lily pad floats across, right to left with the wind, bobbing; the
   // test link's flood (level 2) sends its first one FROG_FIRST s after the water starts rising. Drawn after the drips and the
@@ -1980,13 +1980,15 @@ const Sky = (() => {
     let hits = 0, sloshes = 0, drops = 0;
     // The leaves in it (the wind's, once they touch it: wind.wade()): its own from then on, the wind on or not. Each floats on the
     // surface ("float"), bobbing with the waves, drifting a little (more in the wind); after FLOATS s it sinks slowly ("sink"),
-    // rocking side to side, to the bottom, and rests there ("rest"), on those already resting there too. They pile up there; only
-    // past the most (WET_MOST of the wind's share of the budget) one fades out (FADE s): once the pile on the bottom is PILE of the
-    // most, the oldest resting there, else the one floating longest (one sinking only when none floats), so it builds up
-    // however fast they come and is slowly renewed. All of them gone as it drains away (fading with its last few px). The rain
-    // passes them by. Drawn under its water, which tints and dims them.
-    const FLOATS = [5, 15], WET_MOST = 0.4, PILE = 0.6, FADE = 1.2, LEAF_ALPHA = 0.8 / 0.6;   // (LEAF_ALPHA: as bright as the wind's own)
-    let leaves = [];
+    // rocking side to side, to the bottom, and rests there ("rest"), on those already resting there: the pile under it a px higher
+    // with each (PILED at most). Every one: none fades or is dropped on the way, however many come, the wind gone or the budget
+    // shrunk. Come to rest, it's drawn once onto the bottom (`floor`, its own canvas, FLOOR rows high, drawn under the water's tint
+    // as the rest are) and leaves the list: those resting cost nothing a frame and take none of the shared budget (those floating
+    // and sinking do: the wind's share). There till the flood has drained away (fading with its last few px), then all gone with
+    // it. The rain passes them by. Drawn under its water, which tints and dims them.
+    const FLOATS = [5, 15], LEAF_ALPHA = 0.8 / 0.6;   // (LEAF_ALPHA: as bright as the wind's own)
+    const FLOOR = 24, PILED = 6;       // rows: the bottom's canvas; px: the pile of leaves on it at most this high
+    let leaves = [], floor = null, floorG = null, pile = null, bed = [], took = 0, lastH = 0;
     const calm = () => Math.min(1, depth / 10);   // (shallow: its waves smaller)
     const surfaceAt = (x) => {   // the surface's height at x on screen (art px, a float: its row there, rounded, as drawn)
       if (depth <= 0) return Infinity;
@@ -1995,50 +1997,64 @@ const Sky = (() => {
     };
     const expo = (mean) => -mean * Math.log(1 - random());
     const floats = (l) => surfaceAt(l.sx) - Math.floor(l.flat[2].height / 2) + 1;   // (a leaf's middle, lying on the surface)
-    const bedFor = (l) => {   // (where it comes to rest: on the bottom, a px up on one already resting there)
-      const on = leaves.some((o) => o.state === "rest" && Math.abs(o.sx - l.sx) < 6) ? 1 : 0;
-      return H - 1 - Math.ceil(l.flat[2].height / 2) - Math.min(2, Math.floor(between(0, 2)) + on);
+    const span = (l) => { const w = l.flat[2].width, x0 = Math.round(l.sx - w / 2); return [Math.max(0, x0), Math.min(W - 1, x0 + w - 1)]; };
+    const bedFor = (l) => {   // (where it comes to rest: on the bottom, on the pile there, its middle row)
+      const [a, b] = span(l);
+      let high = 0;
+      for (let x = a; x <= b; x++) high = Math.max(high, pile[x]);
+      return H - 1 - Math.ceil(l.flat[2].height / 2) - Math.min(PILED, Math.floor(high + between(0, 1.5)));
     };
-    const leafProbe = () => ({water: Object.fromEntries(["float", "sink", "rest"].map((k) => [k, leaves.filter((l) => !l.fade && l.state === k).length])),
-                              fading: leaves.filter((l) => l.fade > 0).length,
-                              floating: leaves.filter((l) => !l.fade && l.state === "float")
-                                .map((l) => Math.round(floats(l) - l.flat[2].height / 2) + l.flat[2].height - 1 - Math.round(surfaceAt(l.sx))),
-                              resting: leaves.filter((l) => l.state === "rest").map((l) => Math.round(l.y - l.flat[2].height / 2) + l.flat[2].height - H),
-                              wet: leaves.map((l) => [l.id, l.state, Math.round((l.state === "float" ? floats(l) : l.y) - l.flat[2].height / 2) +
-                                                      l.flat[2].height - 1 - Math.round(surfaceAt(l.sx))]),
-                              all: leaves.length});
-    function crowded(share) {   // (too many: one faded at a time, see above)
-      const most = Math.max(3, Math.round(wind.need() * share * WET_MOST));
-      for (let over = leaves.filter((l) => !l.fade).length - most; over > 0; over--) {
-        const pile = leaves.filter((l) => !l.fade && l.state === "rest").length >= PILE * most;
-        let oldest = null;
-        for (const l of leaves) {
-          if (l.fade || (pile ? l.state !== "rest" : l.state === "rest")) continue;
-          if (!oldest || (l.state === "float") > (oldest.state === "float") || ((l.state === "float") === (oldest.state === "float") && l.age > oldest.age)) oldest = l;
-        }
-        if (!oldest) break;
-        oldest.fade = FADE;
-      }
+    function rest(l) {   // (come to rest: drawn onto the bottom, the pile there higher, out of the list)
+      const frame = l.flat[2], x = Math.round(l.sx - frame.width / 2), y = Math.round(l.bed - frame.height / 2);
+      floorG.globalAlpha = l.alpha;
+      floorG.drawImage(frame, x, y - (H - FLOOR));
+      const [a, b] = span(l);
+      for (let i = a; i <= b; i++) pile[i] = Math.min(PILED, pile[i] + (i > a && i < b ? 0.5 : 0.25));
+      bed.push({id: l.id, x, y, w: frame.width, h: frame.height});
     }
+    const leafProbe = () => ({water: {float: leaves.filter((l) => l.state === "float").length, sink: leaves.filter((l) => l.state === "sink").length,
+                                      rest: bed.length},
+                              took, rested: bed.length,
+                              floating: leaves.filter((l) => l.state === "float")
+                                .map((l) => Math.round(floats(l) - l.flat[2].height / 2) + l.flat[2].height - 1 - Math.round(surfaceAt(l.sx))),
+                              resting: bed.slice(-20).map((r) => r.y + r.h - H),
+                              wet: [...leaves.map((l) => [l.id, l.state, Math.round((l.state === "float" ? floats(l) : l.y) - l.flat[2].height / 2) +
+                                                           l.flat[2].height - 1 - Math.round(surfaceAt(l.sx))]),
+                                    ...bed.map((r) => [r.id, "rest", r.y + r.h - 1 - Math.round(surfaceAt(r.x + (r.w >> 1)))])],
+                              all: leaves.length + bed.length,
+                              // (each resting one showing on the bottom's canvas: some px of it opaque where it lies; how many px
+                              // of the bottom's canvas are, all told)
+                              shows: () => {
+                                if (!floor || !bed.length) return {shown: 0, of: bed.length, px: 0};
+                                const d = floorG.getImageData(0, 0, W, FLOOR).data, at = (x, y) => d[((y - (H - FLOOR)) * W + x) * 4 + 3];
+                                let shown = 0, px = 0;
+                                for (let i = 3; i < d.length; i += 4) if (d[i]) px++;
+                                for (const r of bed) {
+                                  let seen = false;
+                                  for (let y = Math.max(r.y, H - FLOOR); y < Math.min(r.y + r.h, H) && !seen; y++)
+                                    for (let x = Math.max(r.x, 0); x < Math.min(r.x + r.w, W) && !seen; x++) seen = at(x, y) > 0;
+                                  if (seen) shown++;
+                                }
+                                return {shown, of: bed.length, px};
+                              }});
     function soaking(dt, t) {
       const drift = wind.amount > 0 ? 1 : 0.3;
       let kept = 0;
       for (const l of leaves) {
-        l.age += dt;
-        if (l.fade > 0 && (l.fade -= dt) <= 0) continue;
-        leaves[kept++] = l;
         if (l.state === "float") {   // (on the surface, bobbing)
           l.sx = clamp(l.sx - l.drift * drift * dt, 4, W - 4);
           l.y = floats(l);
           if ((l.left -= dt) <= 0) { l.state = "sink"; l.bed = bedFor(l); }
-        } else if (l.state === "sink") {   // (down slowly, swinging side to side; never above the surface, as it drains)
+        } else {   // (sinking: down slowly, swinging side to side; never above the surface, as it drains)
           l.sx = clamp(l.sx - Math.cos(t * l.rock + l.phase) * 4 * dt, 4, W - 4);
           l.y = Math.max(floats(l), l.y + l.sink * dt);
-          if (l.y >= l.bed) { l.y = l.bed; l.state = "rest"; }
+          if (l.y >= l.bed) { l.y = l.bed; rest(l); continue; }
         }
+        leaves[kept++] = l;
       }
       leaves.length = kept;
     }
+    function emptied() { leaves = []; bed = []; if (pile) pile.fill(0); if (floorG) floorG.clearRect(0, 0, W, FLOOR); }
     // The waves dt s on: a damped wave equation, the window's sides reflecting (in a few steps a frame, each short enough to be
     // stable; at most 12, so with the tests' time run on fast they lag), its level kept, and never past MOST either way
     function waves(h, v, a, dt) {
@@ -2070,16 +2086,17 @@ const Sky = (() => {
       // A leaf of the wind's touching it (wind.wade()), at x on screen: its own now, lying on the surface there, a ripple and splash
       take(f, x, alpha) {
         const l = {id: f.id, sx: clamp(x, 4, W - 4), y: 0, flat: f.flat, alpha, state: "float", left: between(...FLOATS),
-                   drift: between(-1, 2.5), age: 0, fade: 0, sink: between(2.5, 4.5), rock: between(1.2, 2), phase: between(0, 7), bed: H};
+                   drift: between(-1, 2.5), sink: between(6, 9), rock: between(1.2, 2), phase: between(0, 7), bed: H};
         l.y = floats(l);
         leaves.push(l);
+        took++;
         this.hit(l.sx, 0.8, true);
       },
-      count: () => leaves.length,
+      count: () => leaves.length,   // (floating and sinking: those resting are drawn on the bottom, no particles)
       need: () => (wind.alive() ? 0 : leaves.length),   // (with the wind on, its share: see wind.step)
-      // (for the tests: its leaves floating, sinking, resting on the bottom (not fading), fading out; each floating one's bottom row
-      // against the surface there (px, + below it); the resting ones' bottom rows against the window's bottom; each one [id, state,
-      // its bottom row against the surface at its middle]; all of them)
+      // (for the tests: its leaves floating, sinking, resting on the bottom; how many it took in all, how many came to rest; each
+      // floating one's bottom row against the surface there (px, + below it); the latest 20 resting ones' bottom rows against the
+      // window's bottom; each one [id, state, its bottom row against the surface at its middle]; all of them; shows())
       leaves: () => leafProbe(),
       lift: () => depth,
       // (how far up from the window's bottom its surface's lowest trough can be: what sits on it is drawn down to there and kept
@@ -2117,7 +2134,7 @@ const Sky = (() => {
       },
       fade(dt) { e.amount = depth > 0 || e.level > 0 ? 1 : 0; },
       alive: () => e.level > 0 || depth > 0,
-      forget() { depth = 0; if (h) { h.fill(0); v.fill(0); far.fill(0); } frog = null; splashes = []; chop = 0; leaves = []; },
+      forget() { depth = 0; if (h) { h.fill(0); v.fill(0); far.fill(0); } frog = null; splashes = []; chop = 0; emptied(); },
       resize() {
         full = Math.max(8, Math.round(H * SPAN));
         rows = full + TOP;
@@ -2137,7 +2154,18 @@ const Sky = (() => {
         }
         frog = null;
         splashes = [];
-        leaves = [];
+        // the leaves in it kept, where they were from the window's bottom (those resting with the bottom's canvas, as it was)
+        const was = floor, dy = H - lastH;
+        floor = canvasOf(W, FLOOR);
+        floorG = floor.getContext("2d");
+        pile = pile ? Float32Array.from({length: W}, (_, x) => pile[Math.min(x, pile.length - 1)]) : new Float32Array(W);
+        if (was && lastH) {
+          floorG.drawImage(was, 0, 0);
+          for (const l of leaves) { l.sx = clamp(l.sx, 4, W - 4); l.y += dy; l.bed += dy; }
+          bed = bed.filter((r) => r.x < W);
+          for (const r of bed) r.y += dy;
+        } else emptied();
+        lastH = H;
       },
       step(dt, t, share) {
         if (e.level > 0 && depth <= 0) {   // (rising from empty: its frogs' clock from now)
@@ -2151,7 +2179,7 @@ const Sky = (() => {
         depth = STILL ? target : depth + clamp(target - depth, -dt * full / DRAIN, dt * full / RISE);
         const pouring = e.level > 0 ? 1 : 0;
         chop += (pouring - chop) * (1 - Math.exp(-dt / (pouring > chop ? 3 : CALMS)));
-        if (depth <= 0) { h.fill(0); v.fill(0); far.fill(0); frog = null; splashes = []; chop = 0; leaves = []; return; }
+        if (depth <= 0) { h.fill(0); v.fill(0); far.fill(0); frog = null; splashes = []; chop = 0; if (leaves.length || bed.length) emptied(); return; }
         if (STILL && !drops) {   // (reduced motion: a still surface some seconds in, gently uneven)
           drops = 1;
           for (let x = 0; x < W; x++) h[x] = 1.6 * Math.sin(x * 0.09) + 0.9 * Math.sin(x * 0.23 + 1) + (x < 12 || x > W - 13 ? 1.5 : 0);
@@ -2173,7 +2201,6 @@ const Sky = (() => {
         for (let i = 0; i < W; i++) far[i] += (h[i] - far[i]) * lag;
         soaking(dt, t);
         wind.wade(t);   // (the wind's leaves its surface reaches, as it is now: its own)
-        crowded(share);
         for (const s of splashes) s.age += dt;
         splashes = splashes.filter((s) => s.age < 0.2);
         // the frog: rarely, never at once; drifting across with the wind, bobbing on the waves
@@ -2186,11 +2213,12 @@ const Sky = (() => {
       },
       draw(g, alpha, t) {
         if (depth <= 0) return;
-        if (leaves.length) {   // (under its water: lying flat on it, rocking as they sink, at rest on the bottom)
+        if (leaves.length || bed.length) {   // (under its water: at rest on the bottom, rocking as they sink, lying flat on it)
           const o = Math.min(1, alpha * LEAF_ALPHA) * (e.level > 0 ? 1 : Math.min(1, depth / 4));
+          if (bed.length) { g.globalAlpha = o; g.drawImage(floor, 0, H - FLOOR); }
           for (const l of leaves) {
             const frame = l.state === "sink" && Math.sin(t * l.rock + l.phase) > 0.55 ? l.flat[1] : l.flat[2];
-            g.globalAlpha = o * l.alpha * (l.fade > 0 ? l.fade / FADE : 1);
+            g.globalAlpha = o * l.alpha;
             g.drawImage(frame, Math.round(l.sx - frame.width / 2), Math.round((l.state === "float" ? floats(l) : l.y) - frame.height / 2));
           }
         }
