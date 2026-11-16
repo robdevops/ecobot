@@ -184,9 +184,11 @@ async def test_a_private_chat_shows_a_thinking_draft_that_streams_the_answer_the
 async def test_an_idle_draft_is_refreshed_before_telegram_drops_it(serve, alert_state, monkeypatch):
     monkeypatch.setattr("lib.bot.DRAFT_REFRESH_SECONDS", 0.02)
 
-    class Slow:
-        async def run(self, *a, on_text=None, **k):
-            await asyncio.sleep(0.15)
+    class Slow:   # (idle, no text, till four drafts have gone out: waited on, at most 5 s, not slept a fixed 0.15 s that a busy machine's
+        async def run(self, *a, on_text=None, **k):   # load can leave too short for them)
+            deadline = asyncio.get_running_loop().time() + 5
+            while len(bot.drafts) < 4 and asyncio.get_running_loop().time() < deadline:
+                await asyncio.sleep(0.01)
             return "ok"
     bot = DraftBot()
     await ask_private(serve, alert_state, Slow(), bot)
