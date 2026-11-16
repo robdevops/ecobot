@@ -139,7 +139,9 @@
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
 //   100 %), uv, wind, heat: 0 or 1, ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
 //   sooner)}; animate false (the page's "stop animation", or
-//   MCP_DASHBOARD_ANIMATIONS off): nothing drawn.
+//   MCP_DASHBOARD_ANIMATIONS off): nothing drawn (and anything blown across gone).
+//   Sky.fling(kind): something big blown across far behind (a gust over 99 km/h): "cow", "barn" or "chicken", else one at random;
+//   its kind, or null (nothing drawn: stopped, reduced motion, the tab hidden). The gust effect is on while one is crossing.
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), clock (the weather's time, s), size: [art width, art height,
 //   P], particles (each effect's
 //   now), budget (theirs together, at most), levels, iceReach (art px), wind (its leaves on screen: {vx: their mean speed across,
@@ -169,7 +171,7 @@
 //   bottom: its sprite's lowest row + 1, glass: under it, v: px/s now, fading, alpha, drawn: [x, y, w, h, alpha] as drawn last,
 //   age: s shown, behind: its trail there behind it, trail: [x, y] a pixel of it}]}), joined: how many have run into a flood},
 //   flood (a flash flood: its depth, its surface, its frog and its waves, as flood.probe() gives them; the wind's water: its leaves
-//   in it; the rain's under: drops drawn below its surface), for the tests. Sky.timeScale(k): the
+//   in it; the rain's under: drops drawn below its surface), gust (what's blown across: gust.probe()), for the tests. Sky.timeScale(k): the
 //   weather's time k times as fast, each frame (test-only). Sky.frost() (test-only):
 //   the ice now, {extent, target: where it's going (on its own measure), growing, frosted, crystals: the share of the window under
 //   any frost, under its crystals, fresh: the growth front's fresh tip pixels, deepest: the crystal furthest from its nearest edge,
@@ -185,7 +187,7 @@ const Sky = (() => {
   const BUDGET = 1 / 400;              // the particles of every effect together: this many per art pixel² (480 x 300: 360)
   const CAP = 1.5;                     // ... and their strengths together at most this (one strong effect: about 0.8)
   const STILL_HINT = 0.5;              // reduced motion: the still frame this faint
-  const ORDER = ["smog", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"];   // back to front
+  const ORDER = ["gust", "smog", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"];   // back to front
   let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
 
   // ---------- tools: seeded randomness, colours, dithering, noise, little canvases ----------
@@ -1778,7 +1780,286 @@ const Sky = (() => {
     };
   });
 
-  const effects = {smog, heat, uv, rain, wind, humidity, flood, ice};
+  // ---------- gust: something big blown across far behind, right to left, in a gust over 99 km/h ----------
+  // Each live gust reading over 99 km/h (a new reading: at most one each) and each click of its test link sends one across (fling()):
+  // at random a cow, a barn or a chicken (each in turn from a shuffled bag of the three, so no long run of one). Large, far off on the
+  // back layer (drawn first: every other effect over it) and faint; carried right to left with the wind (faster while the wind effect
+  // blows too), rising and sinking a little on the air. The cow and the barn tumble slowly end over end; the chicken doesn't: it hangs
+  // facing the viewer, legs dangling under it and swinging, bobbing and swaying a little, its head turning a touch this way and that,
+  // its eyes on the viewer all the while, bemused (one wide under a raised brow, the other half-lidded), blinking now and then. Each
+  // sheds a few bits as it goes (hay and splinters, tufts of grass, a feather or two). The art: sculpted from a few shapes, lit from
+  // the upper left and dithered into its own muted ramps, outlined in its darkest; turned (tumbling) by sampling each pixel's 3x3
+  // points in the upright sprite and taking the most common colour, so its pixel lines stay crisp at every angle; each angle made
+  // once, when first needed. Reduced motion, or the animations stopped: none.
+  const GUST_RAMPS = Object.fromEntries(Object.entries({   // [outline, shadow, mid, light]
+    hide: ["#1D2024", "#454C53", "#6E767D", "#9AA1A6"], patch: ["#0E1013", "#1B1E22", "#292D32", "#3A3F45"],
+    pink: ["#2A181C", "#56343B", "#7B525A", "#9C757C"], horn: ["#2C2719", "#5B5440", "#8A8166", "#B2A98B"],
+    hoof: ["#0B0C0E", "#16191C", "#22262A", "#2E3338"], red: ["#1E0B0A", "#3E1714", "#5F2822", "#7E3D32"],
+    slate: ["#0F1214", "#1E2226", "#2D3439", "#424A52"], trim: ["#2A2D30", "#565B60", "#80868B", "#A6ABAF"],
+    hay: ["#30250F", "#5E4B1E", "#8A7231", "#AF934B"], dark: ["#08090B", "#101316", "#171B1F", "#20252A"],
+    dirt: ["#17120C", "#30271A", "#463A28", "#5A4C36"], grass: ["#121A0E", "#24331A", "#364A25", "#4A6132"],
+    feather: ["#2B2721", "#5B5447", "#8A8373", "#B0AA98"], comb: ["#2E0C0E", "#5E191A", "#8A2A27", "#AC4739"],
+    beak: ["#3A250A", "#6C4915", "#9C6F22", "#BE9440"], eye: ["#E4E0D4", "#E4E0D4", "#E4E0D4", "#E4E0D4"],
+  }).map(([k, ramp]) => [k, ramp.map(rgb)]));
+  const gust = effect((e) => {
+    const SPEED = [42, 56];            // px/s across (the wind blowing too: a third faster)
+    const SPIN = [0.45, 0.8];          // rad/s: the cow's and the barn's tumble, slow
+    const TURNS = 48;                  // ... drawn at this many angles a turn
+    const BITS = 14;                   // the bits shed, at most at once
+    const pack = ([r, g, b]) => ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
+    // The shapes: each part a material (or a function of x, y giving one) and where it is, with its light there (0-1) or null.
+    // ball: an ellipsoid lit from the upper left; limb: a rounded stroke, lit across; slab: a box, poly: a polygon, lit by `lit`
+    const L = [-0.55, -0.6, 0.58];
+    const ball = (cx, cy, rx, ry, m, dim = 1) => ({m, at: (x, y) => {
+      const nx = (x + 0.5 - cx) / rx, ny = (y + 0.5 - cy) / ry, d = nx * nx + ny * ny;
+      return d > 1 ? null : dim * clamp(0.12 + 0.88 * (L[0] * nx + L[1] * ny + L[2] * Math.sqrt(1 - d)), 0, 1);
+    }});
+    const limb = (x0, y0, x1, y1, r, m, dim = 1) => ({m, at: (x, y) => {
+      const px = x + 0.5 - x0, py = y + 0.5 - y0, dx = x1 - x0, dy = y1 - y0, t = clamp((px * dx + py * dy) / (dx * dx + dy * dy), 0, 1);
+      const ox = px - t * dx, oy = py - t * dy, d = Math.hypot(ox, oy);
+      return d > r ? null : dim * clamp(0.55 - 0.45 * (ox * 0.8 + oy * 0.6) / r, 0, 1);
+    }});
+    const slab = (x0, y0, x1, y1, m, lit) => ({m, at: (x, y) => x >= x0 && x < x1 && y >= y0 && y < y1 ? lit(x, y) : null});
+    const poly = (pts, m, lit) => ({m, at: (x, y) => {
+      let inside = false;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const [xi, yi] = pts[i], [xj, yj] = pts[j];
+        if ((yi > y + 0.5) !== (yj > y + 0.5) && x + 0.5 < (xj - xi) * (y + 0.5 - yi) / (yj - yi) + xi) inside = !inside;
+      }
+      return inside ? lit(x, y) : null;
+    }});
+    // A sprite from its parts (later over earlier), dithered into its materials' three fill shades; its silhouette's edge, and a
+    // part's edge over one behind it of another material, in the outline shade. Then `over`: single pixels [x, y, [r, g, b]].
+    // {w, h, px: Uint32Array (0 clear)}
+    function sculpt(w, h, parts, over = []) {
+      const z = new Int16Array(w * h).fill(-1), mat = new Array(w * h), light = new Float32Array(w * h), px = new Uint32Array(w * h);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (let k = parts.length - 1; k >= 0; k--) {
+        const v = parts[k].at(x, y);
+        if (v === null) continue;
+        const i = y * w + x, m = parts[k].m;
+        z[i] = k; mat[i] = typeof m === "function" ? m(x, y) : m; light[i] = v;
+        break;
+      }
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (z[i] < 0) continue;
+        let edge = x === 0 || y === 0 || x === w - 1 || y === h - 1;
+        for (let k = 0; k < 4 && !edge; k++) {
+          const j = k === 0 ? i + 1 : k === 1 ? i - 1 : k === 2 ? i + w : i - w;
+          edge = z[j] < 0 || (z[j] > z[i] && mat[j] !== mat[i]);
+        }
+        const ramp = GUST_RAMPS[mat[i]];
+        px[i] = pack(edge ? ramp[0] : ramp[1 + clamp(shadeOf(light[i], x, y, 3), 0, 2)]);
+      }
+      for (const [x, y, c] of over) if (x >= 0 && y >= 0 && x < w && y < h) px[y * w + x] = pack(c);
+      return {w, h, px};
+    }
+    const C = (m, i) => GUST_RAMPS[m][i];
+    // The cow, side on, facing left: piebald, horned, its far legs darker; a tail with a tuft
+    const cow = () => {
+      const piebald = (x, y) => noise(x / 7, y / 5, 64, 31) > 0.6 ? "patch" : "hide";
+      return sculpt(66, 42, [
+        limb(57, 13, 61, 30, 0.9, "hide", 0.8), ball(61, 31.5, 1.8, 2.6, "patch"),
+        limb(23, 26, 21, 38, 2.4, "hide", 0.55), limb(47, 26, 49, 38, 2.4, "hide", 0.55),
+        slab(18, 37, 24, 40, "hoof", () => 0.3), slab(47, 37, 52, 40, "hoof", () => 0.3),
+        ball(45, 29, 4, 3, "pink"),
+        ball(38, 19, 20, 11, piebald),
+        limb(28, 27, 28, 38, 2.6, "hide"), limb(52, 25, 53, 38, 2.6, "hide"),
+        slab(25, 37, 31, 41, "hoof", () => 0.5), slab(50, 37, 56, 41, "hoof", () => 0.5),
+        ball(19, 17, 8, 7.5, piebald),
+        limb(15, 9, 12, 4, 1.1, "horn"), limb(9, 9, 6, 5, 1, "horn", 0.8),
+        ball(18, 10.5, 3.2, 1.7, "hide"),
+        ball(11, 15, 6.5, 6, piebald),
+        ball(7, 20, 5, 3.6, "pink"),
+      ], [[9, 14, C("dark", 0)], [10, 14, C("dark", 0)], [10, 13, C("trim", 2)], [5, 20, C("dark", 1)], [8, 20, C("dark", 1)],
+          [6, 23, C("pink", 0)], [7, 23, C("pink", 0)], [8, 23, C("pink", 0)]]);
+    };
+    // The barn, gable end on: a gambrel roof, weathered red boards, the big door's white frame and X brace, the hayloft's hay; a
+    // clod of earth torn up with it
+    const barn = () => {
+      const boards = (x, y) => clamp(0.72 - 0.4 * y / 56 - 0.12 * x / 58 - (x % 3 === 0 ? 0.18 : 0) - (noise(x / 2, y / 9, 64, 7) > 0.7 ? 0.15 : 0), 0, 1);
+      const shingles = (x, y) => clamp(0.66 - 0.28 * x / 58 - (y % 3 === 0 ? 0.25 : 0) - ((x + (((y / 3) | 0) & 1) * 2) % 4 === 0 ? 0.12 : 0), 0, 1);
+      const frame = (x0, y0, x1, y1) => (x, y) => x >= x0 && x < x1 && y >= y0 && y < y1 && (x === x0 || x === x1 - 1 || y === y0 || y === y1 - 1);
+      const door = frame(20, 33, 38, 52), loft = frame(24, 13, 34, 23);
+      const brace = (x, y) => x > 20 && x < 37 && y > 33 && y < 51 && (Math.abs((x - 20) - (y - 33) * 17 / 18) < 0.8 || Math.abs((37 - x) - (y - 33) * 17 / 18) < 0.8);
+      return sculpt(58, 56, [
+        ball(29, 53.5, 24, 2.5, "dirt"), ball(14, 54, 5, 1.8, "grass"), ball(43, 54.5, 6, 1.6, "grass"),
+        poly([[0, 25], [7, 10], [29, 0], [51, 10], [58, 25], [55, 25], [48, 12], [29, 4], [10, 12], [3, 25]], "slate", shingles),
+        poly([[5, 24], [11, 12], [29, 4], [47, 12], [53, 24], [53, 53], [5, 53]], "red", boards),
+        slab(21, 34, 37, 51, "red", (x, y) => boards(x, y) * 0.8),
+        slab(25, 14, 33, 22, "dark", () => 0.4), ball(29, 21, 4.5, 2.6, "hay"),
+        {m: "trim", at: (x, y) => door(x, y) || loft(x, y) || brace(x, y) ? clamp(0.85 - 0.3 * y / 56, 0, 1) : null},
+        slab(5, 24, 53, 25, "trim", () => 0.6),
+      ]);
+    };
+    // The chicken, facing the viewer: wings splayed, a red comb and wattle, one eye wide under a raised brow, the other half-lidded,
+    // the beak a touch askew; its legs dangling straight down from its hips (`legs`: their swing's frame, 0-3), its head turned
+    // `turn` px (-1 to 1), or blinking. Swaying `tilt` rad about its middle: its shapes tilted, its face (single pixels) only moved
+    // with its head, so it stays crisp and on the viewer
+    const LEG_SWING = [[-1, 0], [0, 1], [1, 0], [0, -1]];
+    const chicken = (turn, legs, blink, tilt) => {
+      const t = turn, [l, r] = LEG_SWING[legs], ring = C("dark", 1), white = C("eye", 3), pupil = C("dark", 0), lid = C("feather", 1);
+      const W2 = 40, H2 = 52, cx = 20, cy = 24, c = Math.cos(tilt), s = Math.sin(tilt);
+      const at = (x, y) => [cx + c * (x - cx) - s * (y - cy), cy + s * (x - cx) + c * (y - cy)];   // (a point of the upright chicken, tilted)
+      const tilted = (part) => ({m: part.m, at: (x, y) => {
+        const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+        return part.at(cx + c * dx + s * dy - 0.5, cy - s * dx + c * dy - 0.5);
+      }});
+      const [hx, hy] = at(19.5, 12), mx = Math.round(hx - 19.5), my = Math.round(hy - 12);   // (its face moved with its head)
+      const a = 13 + t + mx, b = 22 + t + mx, y = 10 + my;   // (the wide eye's left, the half-lidded one's, their top)
+      const over = [];
+      const put = (x, yy, colour) => over.push([x, yy, colour]);
+      for (const x0 of [a, b]) {   // each eye: a dark ring round 4x4
+        for (let i = 0; i < 4; i++) { put(x0 + i, y - 1, ring); put(x0 + i, y + 4, ring); put(x0 - 1, y + i, ring); put(x0 + 4, y + i, ring); }
+        for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
+          const corner = (i === 0 || i === 3) && (j === 0 || j === 3);
+          put(x0 + i, y + j, blink ? (j === 2 ? ring : lid) : corner ? ring : white);
+        }
+      }
+      if (!blink) {
+        for (const [i, j] of [[1, 1], [2, 1], [1, 2], [2, 2]]) put(a + i, y + j, pupil);   // (wide: looking straight out)
+        for (let i = 0; i < 4; i++) { put(b + i, y, lid); put(b + i, y + 1, ring); }   // (half-lidded, its pupil under the lid)
+        put(b + 1, y + 2, pupil); put(b + 2, y + 2, pupil);
+        for (const [x, yy] of [[a - 1, y - 2], [a, y - 3], [a + 1, y - 3], [a + 2, y - 3], [a + 3, y - 2]]) put(x, yy, ring);   // (a raised brow)
+      }
+      const bx = 18 + t + mx, by = 15 + my;
+      for (const [x, yy] of [[0, 0], [1, 0], [2, 0], [3, 0], [1, 1], [2, 1], [3, 1], [2, 2]]) put(bx + x, by + yy, C("beak", yy ? 2 : 3));
+      put(bx, by + 1, C("beak", 0)); put(bx + 4, by, C("beak", 0));   // (its beak a touch askew)
+      const legsOf = (hip, swing, side) => {   // (from the hip, tilted with it, straight down; toes drooping)
+        const [x0, y0] = at(hip, 35), fx = x0 + swing, fy = y0 + 10;
+        return [limb(x0, y0, fx, fy, 0.75, "beak"), limb(fx, fy, fx - 1.5 * side, fy + 3.5, 0.6, "beak"),
+                limb(fx, fy, fx + side, fy + 4, 0.6, "beak"), limb(fx, fy, fx, fy + 4.5, 0.6, "beak")];
+      };
+      return sculpt(W2, H2, [
+        ...legsOf(16, l, 1), ...legsOf(23, r, -1),
+        ...[limb(6, 21, 2.5, 32, 1.7, "feather", 0.7), limb(33, 21, 36.5, 32, 1.7, "feather", 0.6),
+            ball(9, 25, 5.5, 8, "feather", 0.85), ball(30, 25, 5.5, 8, "feather", 0.7),
+            ball(19.5, 28, 10.5, 9.5, "feather"),
+            ball(17 + t, 5.5, 2, 2.2, "comb"), ball(19.5 + t, 4, 2.2, 2.8, "comb"), ball(22 + t, 5.5, 2, 2.2, "comb"),
+            ball(19.5 + t * 0.6, 12.5, 8, 7.5, "feather"),
+            ball(20 + t, 20, 1.8, 2.6, "comb")].map(tilted),
+      ], over);
+    };
+    // A sprite turned `angle` rad about its middle (a canvas S x S, S its diagonal): each pixel the most common colour of its 3x3 points
+    function turned({w, h, px}, angle) {
+      const S = Math.ceil(Math.hypot(w, h)) + 2, out = canvasOf(S, S), g = out.getContext("2d"), img = g.createImageData(S, S);
+      const d = new Uint32Array(img.data.buffer), c = Math.cos(angle), s = Math.sin(angle), got = new Uint32Array(9), n = new Uint8Array(9);
+      for (let ty = 0; ty < S; ty++) for (let tx = 0; tx < S; tx++) {
+        let kinds = 0, opaque = 0;
+        for (let sy = -1; sy <= 1; sy++) for (let sx = -1; sx <= 1; sx++) {
+          const X = tx + 0.5 + sx / 3 - S / 2, Y = ty + 0.5 + sy / 3 - S / 2;
+          const u = Math.floor(c * X + s * Y + w / 2), v = Math.floor(-s * X + c * Y + h / 2);
+          const p = u >= 0 && v >= 0 && u < w && v < h ? px[v * w + u] : 0;
+          if (!p) continue;
+          opaque++;
+          let k = 0;
+          while (k < kinds && got[k] !== p) k++;
+          if (k === kinds) { got[kinds] = p; n[kinds++] = 0; }
+          n[k]++;
+        }
+        if (opaque < 5) continue;
+        let best = 0;
+        for (let k = 1; k < kinds; k++) if (n[k] > n[best]) best = k;
+        d[ty * S + tx] = got[best];
+      }
+      g.putImageData(img, 0, 0);
+      return out;
+    }
+    const shown = ({w, h, px}) => {   // (a sculpted sprite as a canvas)
+      const out = canvasOf(w, h), g = out.getContext("2d"), img = g.createImageData(w, h);
+      new Uint32Array(img.data.buffer).set(px);
+      g.putImageData(img, 0, 0);
+      return out;
+    };
+    // Its picture now: the cow and the barn turned to the nearest of TURNS angles, the chicken in its frame and its sway's nearest 3°
+    // (each made once, when first needed: a millisecond or two; at most one a frame, the others keeping theirs till the next)
+    const bases = new Map(), pictures = new Map();
+    const base = (kind) => bases.get(kind) || (bases.set(kind, kind === "cow" ? cow() : barn()), bases.get(kind));
+    let made = false;
+    function picture(f) {
+      const chick = f.kind === "chicken", step = chick ? Math.PI / 60 : 2 * Math.PI / TURNS, turn = Math.round(f.angle / step);
+      const key = chick ? `chicken ${f.turn} ${f.legs} ${f.blink < 0} ${turn}` : `${f.kind} ${((turn % TURNS) + TURNS) % TURNS}`;
+      let pic = pictures.get(key);
+      if (!pic) {
+        if (made && f.pic) return f.pic;
+        if (pictures.size > 400) pictures.clear();
+        pictures.set(key, pic = chick ? shown(chicken(f.turn, f.legs, f.blink < 0, turn * step)) : turned(base(f.kind), turn * step));
+        made = true;
+      }
+      return f.pic = pic;
+    }
+    const KINDS = ["cow", "barn", "chicken"];
+    const SHED = {cow: [C("grass", 2), C("grass", 3), C("dirt", 2)], barn: [C("hay", 2), C("hay", 3), C("red", 2), C("trim", 1)],
+                  chicken: [C("feather", 3), C("feather", 2)]};
+    let flyers = [], bits = [], bag = [], sent = [], shed = 0;
+    const along = () => 1 + 0.35 * wind.amount;
+    return {
+      strength: () => 0.45,
+      need: () => flyers.length ? BITS : 0,
+      count: () => bits.length,
+      want() {},                       // (no condition of its own: fling() sends one, and it's on while one is crossing)
+      fade() { e.level = e.amount = flyers.length || bits.length ? 1 : 0; },
+      clear() { flyers = []; bits = []; e.level = e.amount = 0; },
+      fling(kind) {
+        if (!KINDS.includes(kind)) {
+          if (!bag.length) bag = KINDS.slice().sort(() => random() - 0.5);
+          kind = bag.pop();
+        }
+        const size = kind === "chicken" ? 52 : 66;
+        flyers.push({kind, size, x: W + size * 0.75, y0: H * between(0.16, 0.42), rise: between(-3, 3), vx: between(...SPEED),
+                     angle: kind === "chicken" ? 0 : between(0, 2 * Math.PI), spin: between(...SPIN), t: 0, phase: between(0, 6.3),
+                     turn: 0, legs: 0, blink: between(1.5, 4), y: 0});
+        sent.push(kind);
+        e.level = e.amount = 1;
+        return kind;
+      },
+      step(dt) {
+        for (const f of flyers) {
+          f.t += dt;
+          f.x -= f.vx * along() * dt;
+          f.y = f.y0 + f.rise * f.t + 6 * Math.sin(0.55 * f.t + f.phase);
+          if (f.kind === "chicken") {   // (facing the viewer: swaying and bobbing, its legs swinging, its head turning a little)
+            f.angle = 0.17 * Math.sin(1.1 * f.t + f.phase);
+            f.y += 2.5 * Math.sin(2.3 * f.t);
+            f.legs = Math.floor(((2.6 * f.t + f.phase) / (Math.PI / 2)) % 4 + 4) % 4;
+            f.turn = clamp(Math.round(1.4 * Math.sin(0.6 * f.t + 2 * f.phase)), -1, 1);
+            if ((f.blink -= dt) < -0.16) f.blink = between(1.5, 4.5);
+          } else f.angle -= f.spin * dt;   // (anticlockwise: rolling over leftward)
+          if ((shed -= dt) <= 0 && bits.length < BITS) {   // (a few bits shed now and then)
+            shed = between(0.15, 0.45);
+            const r = f.size * 0.3;
+            bits.push({x: f.x + between(-r, r), y: f.y + between(-r, r), vx: -f.vx * along() * between(1.05, 1.4), vy: between(-4, 8),
+                       life: between(2, 4), age: 0, c: SHED[f.kind][Math.floor(random() * SHED[f.kind].length)],
+                       big: f.kind !== "cow" && random() < 0.4, sway: f.kind === "chicken" ? between(1.5, 3) : 0});
+          }
+        }
+        flyers = flyers.filter((f) => f.x > -f.size * 0.75);
+        for (const b of bits) { b.age += dt; b.x += b.vx * dt; b.y += (b.vy + b.sway * 6 * Math.sin(3 * b.age)) * dt; }
+        bits = bits.filter((b) => b.age < b.life && b.x > -4);
+        e.level = e.amount = flyers.length || bits.length ? 1 : 0;
+      },
+      draw(g, a) {
+        made = false;
+        for (const f of flyers) {
+          const pic = picture(f);
+          g.globalAlpha = Math.min(1, a);
+          g.drawImage(pic, Math.round(f.x - pic.width / 2), Math.round(f.y - pic.height / 2));
+        }
+        for (const b of bits) {
+          g.globalAlpha = Math.min(1, a) * Math.min(1, 2 * (1 - b.age / b.life));
+          g.fillStyle = `rgb(${b.c})`;
+          g.fillRect(Math.round(b.x), Math.round(b.y), b.big ? 2 : 1, 1);
+        }
+      },
+      // (for the tests: those crossing now {kind, x, y (their middle, art px), angle (rad), size, turn, legs}, how many sent and
+      // their kinds, the bits now, the pictures made)
+      probe: () => ({flyers: flyers.map(({kind, x, y, angle, size, turn, legs}) => ({kind, x, y, angle, size, turn, legs})),
+                     sent: sent.length, kinds: sent.slice(),
+                     bits: bits.length, pictures: pictures.size}),
+    };
+  });
+
+  const effects = {gust, smog, heat, uv, rain, wind, humidity, flood, ice};
 
   // ---------- the loop ----------
   let animate = true, frame = 0, last = 0, clock = 0, frames = 0, cost = 0, scale = 1;
@@ -1853,6 +2134,7 @@ const Sky = (() => {
   function set(want, on) {
     animate = on;
     if (!W) resize();
+    if (!on) effects.gust.clear();   // (anything blown across, gone)
     for (const k of ORDER) effects[k].want(want[k] || 0);
     start();
   }
@@ -1864,13 +2146,24 @@ const Sky = (() => {
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) start(); });
 
-  return {set, timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
+  // Something big blown across far behind (a gust over 99 km/h; `kind`: "cow", "barn" or "chicken", else one at random): its kind,
+  // or null when nothing is drawn (the animations stopped, reduced motion, the tab hidden)
+  function fling(kind) {
+    if (!animate || STILL || document.hidden) return null;
+    if (!W) resize();
+    const sent = effects.gust.fling(kind);
+    start();
+    return sent;
+  }
+
+  return {set, fling, timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
           frost: (quick) => effects.ice.probe(quick),   // (test-only: the frost as it is now)
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: !!frame, frames, cost, clock, size: [W, H, P],
                               particles: Object.fromEntries(ORDER.map((k) => [k, effects[k].count()])), budget: W * H * BUDGET,
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
                               wind: effects.wind.probe(), rain: effects.rain.probe(),
-                              humidity: effects.humidity.probe(), flood: effects.flood.probe()})};
+                              humidity: effects.humidity.probe(), flood: effects.flood.probe(),
+                              gust: effects.gust.probe()})};
 })();
 </script>
 <script>
@@ -2411,6 +2704,7 @@ const Sky = (() => {
     else arrange();
     real = conditionsOf(data);
     weather();
+    gusting(data);
   }
 
   let fetching = null;
@@ -2860,6 +3154,7 @@ const Sky = (() => {
   }
 
   // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animation" (bottom left) ----------
+  // (And with each new live gust reading over 99 km/h, something big blown across once: gusting(), below.)
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
   // stronger to 8 mm/h), smog from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
   // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust), heat at 35 °C, ice below 0 °C (how far below), a flash flood
@@ -2915,6 +3210,18 @@ const Sky = (() => {
     if (focused && now) now.focus();
   }
 
+  // A gust over 99 km/h (the live reading's: each new reading at most once, by its time): something big blown across far behind
+  // the tiles (Sky.fling: a cow, a barn or a chicken); the test links' "gust" sends one each click ("ecobot-gust")
+  const GUST_MARK = 99;
+  let gustedAt = null;
+  function gusting(data) {
+    const at = asOf || "";
+    if (typeof data.gust !== "number" || data.gust <= GUST_MARK || at === gustedAt) return;
+    gustedAt = at;
+    if (animated()) Sky.fling();
+  }
+  document.addEventListener("ecobot-gust", () => { if (animated()) Sky.fling(); });
+
   // The temporary test links (the block near the page's end) simulate conditions: {effect: level}, as conditionsOf's. Only the effects
   // and the frames: the gauges keep their readings; nothing kept.
   document.addEventListener("ecobot-fx", (e) => { simulated = e.detail || {}; weather(); });
@@ -2950,7 +3257,8 @@ const Sky = (() => {
      "ecobot-fx-stop"), one link per effect, simulating its condition (the effect and its
      tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
      ?fx=smog3,wind,ice, ?fx=all (rain light, rain2 heavy (now and then a drop sticking to the glass), rain3 heavy with a flash
-     flood (its first frog 30 s after the water starts rising; off: it drains), smog1-smog5, uv, humidity light (91 %), humidity2 heavy (100 %), wind, heat, ice; ?fx=all every one, no link of its own). To remove: delete
+     flood (its first frog 30 s after the water starts rising; off: it drains), smog1-smog5, uv, humidity light (91 %), humidity2 heavy (100 %), wind, heat, ice; ?fx=all every one, no link of its own); and "gust" (?fx=gust), not
+     on or off: each click (and ?fx=gust as the page opens) sends one cow, barn or chicken across, as a gust over 99 km/h does. To remove: delete
      from here to "END TEMPORARY" (this style, the row and its script). The page's own listener for "ecobot-fx" then simply hears nothing. -->
 <style>
   #fxtest { flex: 0 1 auto; min-width: 140px; overflow-x: auto; overflow-y: hidden;   /* (the corner's width set to fit by the page) */
@@ -2962,9 +3270,9 @@ const Sky = (() => {
   #fxtest button { font: inherit; color: inherit; background: none; border: 0; padding: 0 0 0 6px; cursor: pointer; }
   #fxtest button.on { color: #FF9EA1; text-decoration: underline; text-underline-offset: 2px; }
   #fxtest button:hover, #fxtest button:focus-visible { color: var(--ink); outline: none; }
-  @media (max-width: 480px) {   /* (a phone: no "test:", the links a little closer, so all of them fit with room for one more) */
-    #fxtest { padding-left: 3px; }
-    #fxtest button { padding-left: 5px; }
+  @media (max-width: 480px) {   /* (a phone: no "test:", the links a little smaller and closer, so all of them fit with room for one more) */
+    #fxtest { padding-left: 3px; font-size: 10.5px; }
+    #fxtest button { padding-left: 3px; }
   }
 </style>
 <div id="fxtest" role="group" aria-label="Effect test links"><span class="tag">test:</span></div>
@@ -2988,7 +3296,7 @@ const Sky = (() => {
     row.scrollLeft = row.scrollWidth;
   }
   new ResizeObserver(fit).observe(row);
-  let on = {};   // {effect: its step's index}
+  let on = {}, gusted = false;   // {effect: its step's index}; whether "gust" has been asked for (?fx=gust, its link), until stopped
   const name = (k) => k === "rain" || k === "humidity" ? [k, `${k}2`, `${k}3`][on[k]] : k === "smog" ? `smog${on[k] + 1}` : k;   // (in the URL)
   const label = (k) => k in on ? (k === "rain" || k === "humidity" ? `${k}: ${["light", "heavy", "flood"][on[k]]}` : k === "smog" ? `smog ${on[k] + 1}` : k) : k;
   // On a phone (the row above the strip, across the window): no "test:", and a link's step as a small raised figure (rain¹ light, rain²
@@ -3008,13 +3316,14 @@ const Sky = (() => {
       else if (/^smog[1-5]?$/.test(word)) on.smog = Number(word.slice(4) || 1) - 1;
       else if (word in STEPS) on[word] = 0;
       else if (word in OLD) on[OLD[word]] = 0;
+      else if (word === "gust") gusted = true;
     }
   }
   function apply() {
     const detail = Object.fromEntries(Object.entries(on).map(([k, i]) => [k, STEPS[k][i]]));
     if (on.rain === 2) detail.flood = FLOOD;
     document.dispatchEvent(new CustomEvent("ecobot-fx", {detail}));
-    const url = new URL(location.href), words = Object.keys(on).map(name);
+    const url = new URL(location.href), words = [...Object.keys(on).map(name), ...(gusted ? ["gust"] : [])];
     if (words.length) url.searchParams.set("fx", words.join(",")); else url.searchParams.delete("fx");
     history.replaceState(history.state, "", url.pathname + url.search.replace(/%2C/g, ",") + url.hash);   // (no reload)
     for (const b of row.querySelectorAll("button[data-fx]")) {
@@ -3032,16 +3341,23 @@ const Sky = (() => {
     if (fx) b.dataset.fx = fx;
     b.addEventListener("click", action);
     row.append(b);
+    return b;
   };
   for (const k of Object.keys(STEPS)) button(k, k, () => {
     const next = k in on ? on[k] + 1 : 0;
     if (next < STEPS[k].length) on[k] = next; else delete on[k];
     apply();
   });
-  document.addEventListener("ecobot-fx-stop", () => { on = {}; apply(); });   // ("stop animation": every one off)
+  // "gust": each click sends something big across (a cow, a barn or a chicken, at random), as a gust over 99 km/h does; not on or off
+  const gust = () => document.dispatchEvent(new Event("ecobot-gust"));
+  const gustLink = button("gust", null, () => { gusted = true; apply(); gust(); });
+  gustLink.dataset.gust = "";
+  gustLink.setAttribute("aria-label", "gust");
+  document.addEventListener("ecobot-fx-stop", () => { on = {}; gusted = false; apply(); });   // ("stop animation": every one off)
   PHONE.addEventListener("change", apply);
   read(new URLSearchParams(location.search).get("fx"));
   apply();
+  if (gusted) gust();
   window.dispatchEvent(new Event("resize"));   // (the page places its corner again, the row in it)
 })();
 </script>

@@ -17,7 +17,8 @@
     tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`), the look, and the station's rain rate now
     (`rain_rate`, mm/h: its rain gauge's, or its piezo gauge's where that's the one reporting, which no tile shows; null with
     neither), for the page's rain behind the tiles; the past hour's highest of the dials with a thin red hand (`hour_highs`, by
-    title: Wind's gust, Rain rate's, Solar radiation's, UV index's: hour_highs()), and the gust now (`gust`, km/h);
+    title: Wind's gust, Rain rate's, Solar radiation's, UV index's: hour_highs()), and the gust now (`gust`, km/h: over 99, a new
+    reading sends a cow, a barn or a chicken across behind the tiles);
   - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading or the
     air sensor's latest change, told by the server's own change detection for ecobot://now/weather and ecobot://now/air
     (EcobotServer.publish_changes: nothing is fetched for it), so the page fetches the data again and moves its gauges in place. A

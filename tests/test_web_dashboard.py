@@ -10,7 +10,8 @@ selectable, live readings); the weather behind the tiles (each effect at its rea
 one canvas behind the tiles, "stop animation", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place
 with no particles, the wind's leaves within the budget and blowing right to left, rain in the wind bunched into curtains, its drops
 knocking the leaves they hit, humidity's fog and its beads, heavy rain's drops sticking to the glass, a flash flood filling the window
-a quarter up, its waves, its leaves and its frog), the data's rain rate, and the
+a quarter up, its waves, its leaves and its frog, a cow, a barn or a chicken blown across in a gust over 99 km/h), the data's rain
+rate, and the
 dials' thin red hands at the past hour's highest (the wind's gust, rain rate, sun, UV: read from the file and the reading now, moving
 smoothly, at once with reduced motion) with the wind's Gust column.
 With ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
@@ -1041,7 +1042,7 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
     # the temporary test links: each its effect and frame (the gauges keep their readings), the URL following; smog steps through its
     # bands, rain light then heavy; ice melts back; "stop animation" ends them all (no "clear"); no "all" link, but ?fx=all
     links = got["links"]
-    assert links["buttons"] == ["rain", "smog", "uv", "humidity", "wind", "heat", "ice"], links["buttons"]
+    assert links["buttons"] == ["rain", "smog", "uv", "humidity", "wind", "heat", "ice", "gust"], links["buttons"]
     on = []
     for name in ("uv", "humidity", "wind", "heat", "ice"):
         on.append(name)
@@ -1068,23 +1069,23 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
                                       {"level": 0, "url": "?fx=uv,wind,heat", "label": "humidity"}], links["humiditySteps"]
     assert links["role"] == "group" and links["pressed"] == {"rain": "false", "smog": "false", "uv": "true", "humidity": "true",
                                                              "wind": "true", "heat": "true", "ice": "false"}, links["pressed"]
-    # on a phone (360x740, 390x844), every effect on (its links' longest): no "test:", each link and "stop animation" in sight,
+    # on a phone (360x740, 390x844), every effect on (its links' longest): no "test:", each link ("gust" too) and "stop animation" in sight,
     # unscrolled, with room for one more short link (some 30 px); a link's step a raised figure, its full words its label
     for phone in (got["phone360"], got["phone390"]):
         assert not phone["tag"] and phone["fits"] and phone["spare"] >= 30 and phone["apart"] and phone["onScreen"], phone
         just_right_of_the_row(phone)
     for phone in (got["phone360"], got["phone390"]):
         assert phone["errors"] == [] and phone["link"] == "stop animation", phone
-        assert phone["buttons"] == ["rain²", "smog³", "uv", "humidity²", "wind", "heat", "ice"], phone["buttons"]
-        assert phone["labels"] == ["rain: heavy", "smog 3", "uv", "humidity: heavy", "wind", "heat", "ice"], phone["labels"]
+        assert phone["buttons"] == ["rain²", "smog³", "uv", "humidity²", "wind", "heat", "ice", "gust"], phone["buttons"]
+        assert phone["labels"] == ["rain: heavy", "smog 3", "uv", "humidity: heavy", "wind", "heat", "ice", "gust"], phone["labels"]
         assert phone["motion"]["bottom"] == pytest.approx(phone["strip"]["top"], abs=0.5), phone              # (above the strip)
         assert phone["flood"] == ["rain³", "rain: flood"], phone["flood"]                                   # (rain's third step)
     # MCP_DASHBOARD_ANIMATIONS off (the page as served then, data-animations="off"), every effect asked for (?fx=all) and called for by
-    # the readings, the animations not stopped in the browser: no loop, nothing drawn, no link, no test links; the tiles and the
-    # strip as ever
+    # the readings (a gust over 99 km/h and ?fx=gust too), the animations not stopped in the browser: no loop, nothing drawn, nothing
+    # blown across, no link, no test links; the tiles and the strip as ever
     off = got["off"]
     assert off["off"] == {"effects": off["off"]["effects"], "levels": off["off"]["levels"], "running": False, "framed": off["off"]["framed"],
-                          "link": None, "frames": 0, "ink": 0, "sky": "none", "corner": "none", "row": False}, off["off"]
+                          "link": None, "frames": 0, "ink": 0, "gust": 0, "sky": "none", "corner": "none", "row": False}, off["off"]
     assert off["off"]["effects"] == EVERY, off["off"]                                    # (asked for all the same: just never drawn)
     assert off["tiles"] == titles_of(station) and off["strip"] == "last reading 18:42", off
     # a tile hidden: "reset preferences" in the strip as ever; still nothing drawn
@@ -1108,7 +1109,7 @@ def just_right_of_the_row(corner):
 @needs_browser
 async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alone_and_within_the_particle_budget(server, station):
     got = await weather(server, "all")
-    assert got["cost"] < 8, got["cost"]
+    assert got["cost"] < 8 and got["flying"] == 1, (got["cost"], got["flying"])   # (something blown across too: ?fx=all,gust)
     # ... the ice grown all the way in too, its frost across much of the glass: as cheap
     assert got["costFrosted"]["cost"] < 8 and got["costFrosted"]["crystals"] > 0.15, got["costFrosted"]
     # several at once no brighter than one strong one: every effect on (the ice grown all the way in), against Hazardous smog alone
@@ -1122,7 +1123,7 @@ async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alon
 async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_reduced_motion(server, station):
     got = await weather(server, "opened")
     # ?fx= when the page opens
-    assert got["param"]["levels"] == {"smog": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "flood": 0, "ice": 5}
+    assert got["param"]["levels"] == {"gust": 0, "smog": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "flood": 0, "ice": 5}
     assert sorted(got["param"]["framed"]) == ["Temperature", "US AQI", "Wind"] and got["param"]["errors"] == []
     # (the effects' earlier names, in links saved before, still work: as wind, uv, humidity)
     assert got["paramOld"]["effects"] == ["uv", "wind", "humidity"] and got["paramOld"]["errors"] == [], got["paramOld"]
@@ -1357,6 +1358,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     # ... and a flash flood's: full at once, still, no frog
     flood = still["flood"]
     assert flood["depth"] == flood["full"] > 0 and flood["frog"] is None and not flood["running"] and flood["frames"] == 0, flood
+    # ... and a gust (the page's, the test link's, asked for by name): nothing blown across, no loop
+    assert still["gust"] == {"fling": None, "sent": 0, "running": False, "frames": 0}, still["gust"]
 
 
 @needs_browser
@@ -1418,3 +1421,52 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     costly = linked["costly"]
     assert costly["effects"] == ["smog", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"] and costly["cost"] < 8, costly
     assert sum(costly["particles"].values()) <= costly["budget"] + 3, costly
+
+
+@needs_browser
+async def test_a_gust_over_99_kmh_blows_a_cow_a_barn_or_a_chicken_across_far_behind_the_tiles(server, station):
+    got = await weather(server, "gust")
+    # the live gust: at 99 nothing; just over, one sent; the same reading fetched again, no more; a new one over, another; under, none
+    assert got["live"] == [0, 1, 1, 2, 2] and got["liveEffects"] == ["gust"], got["live"]
+    assert set(got["liveKinds"]) <= {"cow", "barn", "chicken"}, got["liveKinds"]
+    # a cow, a barn and a chicken at once: each right to left all the way across (in at the right, out at the left), every frame
+    # further left, in the window's upper part; large (a sixth of the window across or so) and faint (most pixels under half
+    # opaque), on the back layer, alone here; crossing in some 6-14 s of the weather's time
+    crossing = got["crossing"]
+    width, height, _ = crossing["size"]
+    assert crossing["kinds"] == ["cow", "barn", "chicken"] and crossing["effects"] == ["gust"], crossing
+    for kind, track in crossing["tracks"].items():
+        xs, ys = [p[0] for p in track], [p[1] for p in track]
+        assert len(track) >= 30 and xs[0] > width and xs[-1] < 0 and all(b < a for a, b in zip(xs, xs[1:])), (kind, xs)
+        assert all(0 < y < 0.6 * height for y in ys), (kind, ys)
+        assert track[0][5] >= 50 and track[0][5] >= width / 7, (kind, track[0])
+        assert 6 <= track[-1][6] - track[0][6] <= 14, (kind, track[0], track[-1])
+    # the cow and the barn tumbling end over end, slowly (anticlockwise, rolling over leftward: 0.3-1 rad/s, more than a turn
+    # across); the chicken not: facing out, swaying a little (under 0.2 rad either way), its head turning a touch each way, its legs
+    # swinging through all their frames
+    for kind in ("cow", "barn"):
+        track = crossing["tracks"][kind]
+        angles, took = [p[2] for p in track], track[-1][6] - track[0][6]
+        assert all(b < a for a, b in zip(angles, angles[1:])), (kind, angles)
+        assert 0.3 <= (angles[0] - angles[-1]) / took <= 1 and angles[0] - angles[-1] > 3.2, (kind, angles[0], angles[-1], took)
+    chicken = crossing["tracks"]["chicken"]
+    assert all(abs(p[2]) <= 0.2 for p in chicken) and max(p[2] for p in chicken) - min(p[2] for p in chicken) > 0.1, chicken
+    assert {p[3] for p in chicken} == {-1, 0, 1} and {p[4] for p in chicken} == {0, 1, 2, 3}, chicken
+    assert crossing["inked"] > 1500 and 60 <= crossing["median"] <= 130, crossing
+    assert crossing["cost"] < 8, crossing["cost"]
+    # once they're gone: nothing left, nothing drawn, the loop ended
+    assert crossing["after"]["flyers"] == [] and crossing["after"]["bits"] == 0 and crossing["ink"] == 0 and not crossing["running"], crossing
+    # the test link: each click one more, at random (all three kinds in five clicks), ?fx=gust; not a switch: never pressed
+    link = got["link"]
+    assert link["sent"] == 5 and set(link["kinds"]) == {"cow", "barn", "chicken"} and link["flying"] >= 1, link
+    assert link["url"] == "?fx=gust" and link["pressed"] is None and "on" not in link["classes"].split(), link
+    # "stop animation": gone at once, nothing drawn, ?fx= gone; stopped, a gust sends none
+    assert got["stopped"] == {"flyers": 0, "running": False, "url": "", "ink": 0, "sent": 5}, got["stopped"]
+    # ?fx=gust as the page opens: one sent
+    opened = got["opened"]
+    assert opened["sent"] == 1 and opened["effects"] == ["gust"] and opened["url"] == "?fx=gust" and opened["errors"] == [], opened
+    # on a phone, every effect on and "gust" clicked: one sent; no "test:", every link ("gust" too) and "stop animation" in sight
+    phone = got["phone"]
+    assert phone["sent"] == 1 and phone["buttons"][-1] == "gust" and not phone["tag"] and phone["fits"] and phone["onScreen"], phone
+    just_right_of_the_row(phone)
+    assert got["errors"] == [] and phone["errors"] == [], (got["errors"], phone["errors"])

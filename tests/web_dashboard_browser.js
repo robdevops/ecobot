@@ -903,6 +903,8 @@ async function weatherPage(browser, url, options = {}) {
     const readings = { "US AQI": 40, ...state.readings };
     for (const t of data.tiles) if (t.title in readings) t.value = readings[t.title];
     if ("rain_rate" in readings) data.rain_rate = readings.rain_rate;
+    if ("gust" in readings) data.gust = readings.gust;              // (the gust now, km/h)
+    if (readings.asOf) data.as_of = { ...data.as_of, time: readings.asOf };   // (a new reading: its time)
     if (readings.hour) Object.assign(data.hour_highs, readings.hour);   // (the red hands' past hour)
     await route.fulfill({ response, json: data });
   });
@@ -1221,9 +1223,10 @@ const framesIn = async (page, ms) => {   // the frames the page asked for in thi
 // MCP_DASHBOARD_ANIMATIONS off (the page as ecobot-mcp serves it then: data-animations="off" on its <html>): every effect asked for
 // and called for, nothing drawn; the rest as ever
 async function animationsOff(browser, url, out) {
-  const { context, page, errors, reads } = await weatherPage(browser, url, { query: "?fx=all", animations: "off" });
-  await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160 });
+  const { context, page, errors, reads } = await weatherPage(browser, url, { query: "?fx=all,gust", animations: "off" });
+  await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160, gust: 130 });
   const seen = async () => ({ ...await weatherSeen(page), frames: await page.evaluate(() => Sky.state().frames), ink: await canvasInk(page),
+                              gust: await page.evaluate(() => Sky.state().gust.sent),   // (a gust over 99 km/h, and ?fx=gust: none sent)
                               ...await page.evaluate(() => ({ sky: getComputedStyle(document.getElementById("sky")).display,
                                                               corner: getComputedStyle(document.getElementById("corner")).display,
                                                               row: !!document.getElementById("fxtest") && document.getElementById("fxtest").checkVisibility() })) });
@@ -1248,7 +1251,7 @@ async function animationsOff(browser, url, out) {
 // "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
 // and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, humidity's beads running down the
 // glass alone and in the wind, a phone's strip, reduced motion), "flood" (a flash flood: its mark, its rise, its surface and waves,
-// what ends at it, the test link's rain3, its leaves and its frog, its cost)
+// what ends at it, the test link's rain3, its leaves and its frog, its cost), "gust" (something big blown across in a gust over 99 km/h)
 const WEATHER = {
   async marks(browser, url, out) {
     const { context, page, errors, reads } = await weatherPage(browser, url);
@@ -1448,9 +1451,10 @@ const WEATHER = {
   },
   async all(browser, url, out) {
     const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
-    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=all" });
+    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=all,gust" });
     await page.waitForTimeout(3000);
-    out.cost = await page.evaluate(() => Sky.state().cost);   // (ms of script a frame, with every effect on)
+    out.cost = await page.evaluate(() => Sky.state().cost);   // (ms of script a frame, with every effect on, and something blown across)
+    out.flying = await page.evaluate(() => Sky.state().gust.flyers.length);
     // the strongest single effect (Hazardous smog), as bright as "all" may be: faded in while the ice grows on
     const strongest = (async () => {
       const smog = await weatherPage(browser, url, { query: "?fx=smog5" });
@@ -1805,6 +1809,11 @@ const WEATHER = {
       const f = Sky.state().flood;
       return { depth: f.depth, full: f.full, frog: f.frog, running: Sky.state().running, frames: Sky.state().frames };
     });
+    out.still.gust = await still.page.evaluate(() => {   // (a gust: nothing sent, by the page or the test link)
+      document.dispatchEvent(new Event("ecobot-gust"));
+      document.querySelector("#fxtest button[data-gust]").click();
+      return { fling: Sky.fling("cow"), sent: Sky.state().gust.sent, running: Sky.state().running, frames: Sky.state().frames };
+    });
     out.still.errors = still.errors;
     await still.context.close();
     await Promise.all([params, alone, phoned]);
@@ -1814,6 +1823,90 @@ const WEATHER = {
     [out.rain.alone, out.rain.windy, out.rain.phone] = await raining;
     [out.bare, out.barePhone] = await bare;
     out.errors = [];
+  },
+  // A gust over 99 km/h: the live gust at 99 (nothing), just over (one sent), the same reading fetched again (no more), a new one over
+  // (another), one under (none); then a cow, a barn and a chicken sent at once, watched every frame as they cross (the weather's time
+  // 5 times as fast): where each is, its angle, the chicken's frames, the canvas's pixels while they cross (alone: theirs and their
+  // bits'), the loop ending once they're gone; the test link (five clicks, its URL, never pressed), "stop animation" (the wind's
+// link on too, so it shows: they're gone at once),
+  // ?fx=gust as the page opens, and on a phone the row (every link, "gust" too, and "stop animation" in sight unscrolled). A frame
+  // sequence of the three crossing kept as screenshots (SHOTS, when given)
+  async gust(browser, url, out) {
+    const opened = (async () => {   // (beside the rest)
+      const p = await weatherPage(browser, url, { query: "?fx=gust" });
+      const seen = { ...await p.page.evaluate(() => ({ sent: Sky.state().gust.sent, kinds: Sky.state().gust.kinds, effects: Sky.state().effects })),
+                     url: await p.page.evaluate(() => location.search), errors: p.errors };
+      await p.context.close();
+      return seen;
+    })();
+    const phone = (async () => {
+      const p = await weatherPage(browser, url, { query: "?fx=all", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true } });
+      await p.page.locator("#fxtest button[data-gust]").click();
+      const seen = { ...await cornerSeen(p.page), sent: await p.page.evaluate(() => Sky.state().gust.sent), errors: p.errors };
+      await p.context.close();
+      return seen;
+    })();
+    const { context, page, errors, reads } = await weatherPage(browser, url);
+    const sent = () => page.evaluate(() => Sky.state().gust.sent);
+    out.live = [];
+    for (const [gust, asOf] of [[99, "2026-11-16T10:00:00+11:00"], [99.1, "2026-11-16T10:01:00+11:00"], [99.1, "2026-11-16T10:01:00+11:00"],
+                                [140, "2026-11-16T10:02:00+11:00"], [60, "2026-11-16T10:03:00+11:00"]]) {
+      await reads({ gust, asOf });
+      out.live.push(await sent());
+    }
+    out.liveKinds = await page.evaluate(() => Sky.state().gust.kinds);
+    out.liveEffects = await page.evaluate(() => Sky.state().effects);
+    // (the two on their way off first: the time on fast till they're gone)
+    await page.evaluate(() => Sky.timeScale(8));
+    await page.waitForFunction(() => !Sky.state().running);
+    // a cow, a barn and a chicken at once, every frame till they're gone
+    out.crossing = await page.evaluate(() => new Promise((resolve) => {
+      Sky.timeScale(5);
+      const kinds = ["cow", "barn", "chicken"].map((k) => Sky.fling(k)), c = document.querySelector("#sky canvas"), g = c.getContext("2d");
+      const tracks = { cow: [], barn: [], chicken: [] }, size = Sky.state().size;
+      const alphas = new Array(256).fill(0);   // (the canvas's pixels by their alpha, while all three cross: how faint)
+      let frames = 0, inked = 0, effects = null, first = Sky.state().frames, last = first;
+      const look = () => {
+        const s = Sky.state();
+        if (s.frames > last) {   // (a frame drawn since the last look)
+          last = s.frames;
+          frames++;
+          for (const f of s.gust.flyers) tracks[f.kind].push([f.x, f.y, f.angle, f.turn, f.legs, f.size, s.clock]);
+          if (s.gust.flyers.length === 3 && frames % 8 === 1) {   // (the canvas read now and then: reading it is slow)
+            effects = effects || s.effects;
+            const d = g.getImageData(0, 0, c.width, c.height).data;
+            let n = 0;
+            for (let i = 3; i < d.length; i += 4) if (d[i]) { n++; alphas[d[i]]++; }
+            inked = Math.max(inked, n);
+          }
+        }
+        if (s.running || frames === 0) return requestAnimationFrame(look);
+        Sky.timeScale(1);
+        const all = alphas.reduce((a, b) => a + b, 0);
+        let median = 0;
+        for (let k = 0, n = 0; k < 256; k++) if ((n += alphas[k]) >= all / 2) { median = k; break; }
+        resolve({ kinds, tracks, size, frames, median, strong: alphas.slice(160).reduce((a, b) => a + b, 0) / all, inked, effects, cost: s.cost, after: s.gust, running: s.running,
+                  ink: (() => { const d = g.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; return n; })() });
+      };
+      requestAnimationFrame(look);
+    }));
+    // the test link: each click one, the three kinds in three clicks; ?fx=gust; never pressed; "stop animation": gone at once
+    const before = await sent();
+    for (let i = 0; i < 5; i++) await page.locator("#fxtest button[data-gust]").click();
+    out.link = { sent: await sent() - before, kinds: (await page.evaluate(() => Sky.state().gust.kinds)).slice(-5),
+                 flying: await page.evaluate(() => Sky.state().gust.flyers.length), url: await page.evaluate(() => location.search),
+                 pressed: await page.evaluate(() => document.querySelector("#fxtest button[data-gust]").getAttribute("aria-pressed")),
+                 classes: await page.evaluate(() => document.querySelector("#fxtest button[data-gust]").className) };
+    await page.locator("#fxtest button[data-fx='wind']").click();   // (an effect on: "stop animation" shows)
+    await page.locator("#motion .animations").click();
+    out.stopped = { ...await page.evaluate(() => ({ flyers: Sky.state().gust.flyers.length, running: Sky.state().running })),
+                    url: await page.evaluate(() => location.search), ink: await canvasInk(page) };
+    await page.evaluate(() => document.dispatchEvent(new Event("ecobot-gust")));   // (stopped: none sent)
+    out.stopped.sent = await sent() - before;
+    out.errors = errors;
+    await context.close();
+    out.opened = await opened;
+    out.phone = await phone;
   },
 };
 
