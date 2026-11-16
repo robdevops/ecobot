@@ -143,7 +143,9 @@
 // Drawn at a low resolution (one art pixel: P CSS px, about a third of the window across) and scaled up crisply (image-rendering:
 // pixelated). Every sprite and texture is drawn once to a small offscreen canvas and blitted; one loop (at most 30 frames a second)
 // for every effect, each frame cleared once and drawn back to front (ORDER). The effects share a particle budget and a cap on their
-// strength together, so several at once are no busier or brighter than one strong one. Nothing runs while no effect is on or fading
+// strength together, so several at once are no busier or brighter than one strong one; but the humidity's beads stay out of the
+// budget (OWN_BUDGET: their own limits bound them, so heavy rain keeps every drop beside them), and the rain out of the cap
+// (OWN_STRENGTH: drawn at its own strength whatever else is on). Nothing runs while no effect is on or fading
 // out; the tab hidden, it waits; with reduced motion, or low motion (MCP_DASHBOARD_ANIMATIONS=low), one still, faint frame and no loop
 // (low motion: drawn again only as the conditions change).
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), haze: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
@@ -154,7 +156,8 @@
 //   its kind, or null (nothing drawn: stopped, reduced motion, the tab hidden). The gust effect is on while one is crossing.
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), clock (the weather's time, s), size: [art width, art height,
 //   P], particles (each effect's
-//   now), budget (theirs together, at most), levels, iceReach (art px), wind (its leaves on screen: {vx: their mean speed across,
+//   now), budget (theirs together, at most: the humidity's (own) aside), drawn (each effect's strength as last drawn: the cap's,
+//   and the rain's own), cap, levels, iceReach (art px), wind (its leaves on screen: {vx: their mean speed across,
 //   negative leftward, against: how many go rightward, hits: how many the rain's drops have hit, push: their mean push, px/s,
 //   kick: the mean change in a hit leaf's own velocity a hit made, px/s,
 //   whirl: the most spin knocks have left on one now}), rain (its drops: {xs: where across, those in the window's lower half,
@@ -171,7 +174,7 @@
 //   size then), gained, lost: water, moves: steps, all, norm:
 //   px run by any, and what they'd have run on fog in that time}}, sizes: [px, s] on fog by size (under bands[0], ..., the last and
 //   over), bands, swept: the trail pixels the latest frame's sweep looked at again (sweepMost at most), physics: {speed(r, glass):
-//   px/s, after(r, glass, px, s, fog): its radius after (0: gone), gone}, hasten(k): the
+//   px/s (0 under run), after(r, glass, px, s, fog): its radius after (0: gone), gone, run: the size a bead runs from}, hasten(k): the
 //   trails' time k times as fast (test-only), clock(): the trails', wetAt(x, y): how fresh a trail is there (1 just left, 0 none),
 //   lifeAt(x, y): its life, glassAt(x, y): "dry", "trail" or "fog", fogAt(x, y): [its fog as shown, its fog not wiped] (0-1),
 //   shownAt(x, y): what the fog's canvas shows there [r, g, b, alpha], trailOf(id): a bead's trail as it looks now, its latest rows
@@ -214,6 +217,8 @@ const Sky = (() => {
   const CAP = 1.5;                     // ... and their strengths together at most this (one strong effect: about 0.8)
   const STILL_HINT = 0.5;              // reduced motion: the still frame this faint
   const ORDER = ["gust", "haze", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"];   // back to front
+  const OWN_BUDGET = new Set(["humidity"]);   // (its beads outside the shared budget: their own limits keep their cost bounded)
+  const OWN_STRENGTH = new Set(["rain"]);     // (drawn at its own strength whatever else is on: outside the cap)
   let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
 
   // ---------- tools: seeded randomness, colours, dithering, noise, little canvases ----------
@@ -1159,14 +1164,16 @@ const Sky = (() => {
   // another close by (SNAP px between their edges or less, about a bead's width, not only touching): the higher one pulled into the
   // lower quickly, quicker and quicker, merged there (their water adding up: two tiny, a small one) with a tiny jump (a size bigger
   // for POP s). A bead not running (under 1 px/s) and a tiny one close below it the same; a running one takes in any tiny one
-  // beside or above it as it passes. Only small ones and up run (as below). Heavy rain (HEAVY_RAIN or more, the humidity high or not): now and
+  // beside or above it as it passes. Only large ones (RUN_R and up: about four tiny ones' water) run (as below); smaller ones stay
+  // put (snapping as tiny ones do), a small one growing on the fog till it's large enough. Heavy rain (HEAVY_RAIN or more, the humidity high or not): now and
   // then (LANDING a second, RAIN_MOST on the glass at most) a drop sticks, landing at once as a large bead (RAIN_R) with a splash (a
   // ring of tiny droplets bursting out and fading in a few frames); none in lighter rain, and none forming once the rain eases.
   // Every bead, condensed or rain, one set of rules (a merged one too):
   //   The glass under it (the row just below it): FOG (fog shown there: FOG_AT or more), a TRAIL (a streak a bead has left: wiped
   //   through the fog, or wet on clear glass) or DRY (clear glass, no trail).
-  //   Its speed: its water (r³) times SPEED times the glass's PACE (dry slowest, a trail medium, fog fastest); so it rises gradually
-  //   with its size (tiny ones not at all, small ones creeping extremely slowly, larger ones faster and faster: no fastest), each
+  //   Its speed: none under RUN_R; from there its water (r³) times SPEED times the glass's PACE (dry slowest, a trail medium, fog
+  //   fastest); so it rises gradually with its size (tiny and small ones not at all, large ones creeping extremely slowly at
+  //   first, larger ones faster and faster: no fastest), each
   //   stretch of a run a little quicker or slower than that, stop-start (a pause after a stretch now and then, most often on dry
   //   glass), wandering a little (a kink here, a slant there, kept a while; never more than MEANDER px from where it began); on dry
   //   glass it steers into a trail close beside it, on a trail it follows it.
@@ -1186,8 +1193,9 @@ const Sky = (() => {
   // the rest running on, on the glass as it is now. The fog: one low-res offscreen canvas (each pixel's thickness as one of the FOG
   // shades, dithered; a trail's streak), repainted whole only as it forms, clears or thickens (a few times a second), otherwise only
   // the pixels a bead wipes, and the trails a slice a frame (all of them every REDRAW s). The wind moves none of it (water on the
-  // glass). The budget: a particle a bead (a tiny one a quarter); the shared budget shrinking (another effect on): beads yet to show dropped, then the
-  // smallest dried away. The rain easing but still on, its streaks dry on their own time; gone all the way (no fog, no bead, the
+  // glass). The beads' cost: a particle a bead (a tiny one a quarter), kept to their own most (PER_PX for each px of the window's
+  // width, heavy rain's RAIN_MOST beside them), outside the effects' shared budget (another effect on takes none of it); over
+  // that (the humidity falling): beads yet to show dropped, then the smallest dried away. The rain easing but still on, its streaks dry on their own time; gone all the way (no fog, no bead, the
   // rain over: the trails fading with it), or the animations stopped, every trail, stain and bead forgotten (its canvas cleared),
   // so on again it starts on clean glass. Reduced motion: the still frame as it would be some seconds in.
   const WATER = ["#1A2E41", "#2C5573", "#5793BC", "#A6D7F2", "#EFFAFF"].map(rgb);
@@ -1198,8 +1206,8 @@ const Sky = (() => {
                                                                  // ... drawn as wide as it is, however big, see sprite())
     const DRY = 0, TRAIL = 1, FOGGY = 2, GLASSES = ["dry", "trail", "fog"];   // the glass under a bead
     const PACE = [0.3, 0.6, 1];        // how fast a bead runs on each (dry slowest, a trail medium, fog fastest) ...
-    const SPEED = 13;                  // ... times this, px/s, for a bead of r 2.8; rising gradually with its size, ever faster (r 0.6,
-                                       // tiny: about 0.006 px/s on fog, r 1: 0.08, r 1.4: 0.4, r 2: 2.4, r 2.8: 13, r 4: 38)
+    const SPEED = 13;                  // ... times this, px/s, for a bead of r 2.8; from RUN_R up, rising gradually with its size, ever
+                                       // ... faster (r 0.87: about 0.04 px/s on fog, r 1: 0.08, r 1.4: 0.4, r 2: 2.4, r 2.8: 13, r 4: 38)
     const GATHER = 0.1;                // water a bead gathers for each px it runs through fog, for each px of its width (fog at 1) ...
     const CONDENSE = 0.012;            // ... and for each s it sits on it (each bead 0.3 to 1.5 times that, a few 3 to 5 times)
     const LEAVE = 0.1;                 // water left on dry glass for each px a bead runs, for each px of its width ...
@@ -1207,6 +1215,8 @@ const Sky = (() => {
     const GONE = 0.03;                 // a bead's water this little: gone (r about 0.3)
     const BORN = [0.5, 0.6];           // a bead condensing: its radius, tiny (a px: two of them together small, r 0.63 or more)
     const TINY = 0.61;                 // a condensed bead this small or less: tiny, never running (see snaps())
+    const RUN_R = 0.87;                // a bead runs only this big or bigger (about large: four tiny ones' water); smaller, it stays put
+                                       // ... (growing, keeping or shrinking as its glass has it, snapping as tiny ones do)
     const SNAP = 1.6;                  // px between two beads' edges (about a bead's width) or less, one of them tiny: they snap together
     const SNAP_V = [6, 30, 120];       // the one pulled in: px/s to start, at most, and how fast it gets quicker (px/s²): a px or two
                                        // ... in a few frames
@@ -1459,7 +1469,7 @@ const Sky = (() => {
       }
     }
     // The physics, one bead (b: {vol, r, k}) over a stretch of glass g (f: its fog as shown): px run in s s
-    const speedFor = (r, g) => { const x = r / 2.8; return SPEED * (x <= 1 ? x ** 5 : x ** 3) * PACE[g]; };   // (px/s, a stretch's mean)
+    const speedFor = (r, g) => { const x = r / 2.8; return r < RUN_R ? 0 : SPEED * (x <= 1 ? x ** 5 : x ** 3) * PACE[g]; };   // (px/s, a stretch's mean)
     function change(b, g, f, px, s) {
       if (g === FOGGY) b.vol += GATHER * f * 2 * b.r * px + CONDENSE * (b.k || 1) * f * s;
       else if (g === DRY) b.vol = Math.max(0, b.vol - LEAVE * 2 * b.r * px - EVAPORATE * b.r * s);
@@ -1624,8 +1634,9 @@ const Sky = (() => {
         const cx = Math.round(b.x), below = Math.floor(b.y) + heightOf(b.r), g = glassAt(cx, below);
         const f = g === FOGGY ? feltOf(at(cx, below)) : 0;
         b.g = g;
-        const ran = b.pause <= 0;
-        if (b.pause > 0) { const p = Math.min(b.pause, time); b.pause -= p; time -= p; b.v = 0; b.rested = (b.rested || 0) + p; account(b, g, f, 0, p); }
+        const sits = speedFor(b.r, g) <= 0, ran = b.pause <= 0 && !sits;   // (sits: under RUN_R, staying put the while)
+        if (sits) { b.v = 0; account(b, g, f, 0, time); time = 0; }
+        else if (b.pause > 0) { const p = Math.min(b.pause, time); b.pause -= p; time -= p; b.v = 0; b.rested = (b.rested || 0) + p; account(b, g, f, 0, p); }
         else {
           const v = speedFor(b.r, g) * b.base, dy = Math.min(v * time, 1, b.run + 1e-3), s = Math.min(time, dy / v);
           time -= s;
@@ -1856,7 +1867,7 @@ const Sky = (() => {
                                  if (!px) change(b, GLASSES.indexOf(g), f, 0, s);
                                  return b.vol > GONE ? b.r : 0;
                                },
-                               gone: GONE},
+                               gone: GONE, run: RUN_R},
                      hasten: (k) => { hasten = k; },   // (test-only: the trails' time this many times as fast)
                      // (the tiny beads: how small, how close they snap together, how many snaps so far, the most beads condensed in
                      // the fog now (the tiny ones' cap); and, test-only, tiny ones put on the glass at once, each {x, y: its middle,
@@ -2935,6 +2946,7 @@ const Sky = (() => {
   // frames of its own: only those Sky.advance(n) makes)
   const DRIVEN = !!TEST.driven;
   let animate = true, frame = 0, last = 0, clock = 0, frames = 0, cost = 0, scale = 1;
+  const drawn = {};                    // (each effect's strength as last drawn, the cap and the fading in: for the tests)
   const alive = () => ORDER.some((k) => effects[k].alive());
 
   function resize() {   // (the art made again for the window's size: only if that has changed)
@@ -2957,20 +2969,21 @@ const Sky = (() => {
       fx.fade(dt);
       if (fx.alive()) fx.held = true;
       else if (fx.held) { fx.held = false; fx.forget(); }   // (gone all the way: whatever it had, forgotten)
-      if (fx.amount > 0 || fx.level > 0) need += fx.need();
+      if ((fx.amount > 0 || fx.level > 0) && !OWN_BUDGET.has(k)) need += fx.need();
     }
     const share = Math.min(1, W * H * BUDGET / Math.max(need, 1));
-    for (const k of ORDER) if (effects[k].alive()) effects[k].step(dt, clock, share);
+    for (const k of ORDER) if (effects[k].alive()) effects[k].step(dt, clock, OWN_BUDGET.has(k) ? 1 : share);
   }
   function draw(faint = 1) {
     ctx.globalAlpha = 1;
     ctx.clearRect(0, 0, W, H);
     let sum = 0;
-    for (const k of ORDER) sum += effects[k].strength() * effects[k].amount;
+    for (const k of ORDER) if (!OWN_STRENGTH.has(k)) sum += effects[k].strength() * effects[k].amount;
     const cap = Math.min(1, CAP / Math.max(sum, 1e-6)) * faint;
     for (const k of ORDER) {
-      const fx = effects[k];
-      if (fx.amount > 0) fx.draw(ctx, fx.strength() * fx.amount * cap, clock);
+      const fx = effects[k], a = fx.strength() * fx.amount * (OWN_STRENGTH.has(k) ? faint : cap);
+      drawn[k] = fx.amount > 0 ? a : 0;
+      if (fx.amount > 0) fx.draw(ctx, a, clock);
     }
     ctx.globalAlpha = 1;
   }
@@ -3062,6 +3075,7 @@ const Sky = (() => {
           clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: running(), frames, cost, clock, size: [W, H, P],
                               particles: Object.fromEntries(ORDER.map((k) => [k, effects[k].count()])), budget: W * H * BUDGET,
+                              own: [...OWN_BUDGET], drawn: {...drawn}, cap: CAP,
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
                               wind: effects.wind.probe(), rain: effects.rain.probe(), haze: effects.haze.probe(),
                               humidity: effects.humidity.probe(), flood: effects.flood.probe(),
