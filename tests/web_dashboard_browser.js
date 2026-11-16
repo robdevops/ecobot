@@ -1503,7 +1503,7 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
       for (let i = 3; i < cw * 2 * 4; i += 4) if (all[i]) k++;
       top = Math.max(top, k);
       still += h.beads.filter((b) => b.v < 1).length; running += h.beads.filter((b) => b.v >= 1).length; counts++;
-      for (const b of h.beads) if (b.r >= 2 && b.v < 1 && b.alpha === 1 && b.drawn) {
+      for (const b of h.beads) if (b.r >= 1.5 && b.v < 1 && b.alpha === 1 && b.drawn) {   // (big enough to look at: fewer reach r 2 now they run from about large)
         const [x0, y0, w, hh, drawn] = b.drawn;
         for (let y = Math.max(0, y0); y < Math.min(ch, y0 + hh); y++) for (let x = Math.max(0, x0); x < Math.min(cw, x0 + w); x++) {
           // (the bead's own alpha, the fog drawn under it taken out: the canvas's alpha over it is 1 - (1 - fog)(1 - bead))
@@ -1626,8 +1626,10 @@ const trailsAge = (page, k, through, most) => page.evaluate(([k, through, most])
 // Heavy rain's beads: light rain first, `light` frames (none sticking), then heavy, `heavy` frames: the drops that stuck (each as it
 // first showed: its radius, its alpha, its splash's droplets), the most on the glass at once, the beads' water gained and lost on each
 // glass and their px run and s taken there (r 1.8-3.2), any bead vanishing (as humiditySeen), the trails at the end; then (`after`
-// frames, the weather's time `scale` times as fast; unless `phase` "heavy": from there) the rain light again: no new one sticking,
-// and those there run off or shrunk away
+// frames, the weather's time `scale` times as fast; unless `phase` "heavy": from there, once one is on the glass (the drops landing
+// at their own pace, the beads outside the shared budget: those there may all have run off or shrunk away already; the trails'
+// clock held the while, so they're no older for it)) the rain light again: no new one sticking, and those there run off or
+// shrunk away
 const rainBeads = (page, light, heavy, after, scale, from = "light") => page.evaluate(([light, heavy, after, scale, from]) => new Promise((resolve) => {
   const out = { stuck: [], looks: [] }, seenIds = new Set(), last = new Map(), looked = new Set();
   let n = 0, phase = from, popped = 0, start = Sky.state().frames;
@@ -1652,7 +1654,10 @@ const rainBeads = (page, light, heavy, after, scale, from = "light") => page.eva
       out.light = { landed: h.landed, levels: state.levels.rain };
       document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1 } }));
       phase = "heavy"; start = state.frames;
+    } else if (phase === "heavy" && n >= heavy && from === "heavy" && !h.beads.some((b) => b.kind === "rain") && n < 900) {
+      h.hasten(0);   // (waiting for one to land: the trails' clock held)
     } else if (phase === "heavy" && n >= heavy) {
+      h.hasten(1);
       out.heavy = { landed: h.landed, rainMost: h.rainMost, glass: h.glass, trails: h.trails, beads: h.beads.length, popped };
       if (!after) return resolve(out);
       document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 0.35 } }));
@@ -2106,7 +2111,7 @@ const WEATHER = {
             if (last && shows.px < last.px) r.kept.shrank++;
             r.kept.looks.push(shows);
           }
-          const used = Object.values(s.particles).reduce((a, b) => a + b, 0);
+          const used = Object.entries(s.particles).filter(([k]) => !(s.own || []).includes(k)).reduce((a, [, b]) => a + b, 0);   // (humidity's beads their own)
           r.over = Math.max(r.over, used - s.budget);
           if (f.depth >= f.full) {   // (the drips: none below the surface, beyond a crest's rise in a frame on this fast clock)
             r.under = Math.max(r.under, s.humidity.beads.filter((b) => b.bottom > f.surface[Math.round(Math.min(Math.max(b.x, 0), f.width - 1))] + 3).length);
@@ -2331,7 +2336,8 @@ const WEATHER = {
       const p = await weatherPage(browser, url, { query: `?fx=${name}`, pace: 10, driven: true, context: { viewport: { width: 640, height: 480 } } });
       await p.page.evaluate(() => Sky.timeScale(6));
       await lookable(p.page);
-      const seen = await humiditySeen(p.page, name === "humidity" ? 200 : 360);
+      if (name !== "humidity") await drive(p.page, 150);   // (beaded up a while first: beads run only from about large)
+      const seen = await humiditySeen(p.page, name === "humidity" ? 200 : 540);   // (beads run only from about large: watched longer)
       if (name === "humidity2") seen.grid = (await gridPeak(p.page)).ratio;   // (its fog's dithering)
       await p.page.evaluate((k) => Sky.timeScale(k), name === "humidity2,wind" ? 1 : 2);
       if (name === "humidity2") seen.snapped = await snapped(p.page);
@@ -2364,8 +2370,8 @@ const WEATHER = {
         seen.restarted = await restarted(p.page, { humidity: 1 });
         // (and the physics the beads run by: a bead's mean speed on each glass, by size; its size after running 20 px in 5 s there)
         seen.physics = await p.page.evaluate(() => {
-          const { speed, after, gone } = Sky.state().humidity.physics, sizes = [0.6, 1, 1.4, 2, 2.8, 4, 6, 10];
-          return { sizes, gone, speed: Object.fromEntries(["dry", "trail", "fog"].map((g) => [g, sizes.map((r) => speed(r, g))])),
+          const { speed, after, gone, run } = Sky.state().humidity.physics, sizes = [0.6, 1, 1.4, 2, 2.8, 4, 6, 10];
+          return { sizes, gone, run, speed: Object.fromEntries(["dry", "trail", "fog"].map((g) => [g, sizes.map((r) => speed(r, g))])),
                    after: Object.fromEntries(["dry", "trail", "fog"].map((g) => [g, sizes.map((r) => after(r, g, 20, 5))])) };
         });
       }
