@@ -36,9 +36,10 @@ def pytest_collection_modifyitems(items):
 
 
 def pytest_xdist_auto_num_workers(config):
-    """`-n auto` (pytest.ini): half as many workers again as there are CPUs. The browser's tests mostly wait on the page (its
-    animations, a long press, a swipe's end), so a worker in one leaves its CPU mostly free for the extra workers' tests."""
-    return max(2, (os.cpu_count() or 1) * 3 // 2)
+    """`-n auto` (pytest.ini): twice as many workers as there are CPUs. The browser's tests mostly wait on the page (its animations, a
+    long press, a swipe's end), and many of the rest on a server, a subprocess or a timeout, so a worker in one leaves its CPU mostly free
+    for the extra workers' tests (on 4 CPUs: 8 workers, about 4 s sooner than 6 as measured; 10, no sooner, more CPU)."""
+    return max(2, (os.cpu_count() or 1) * 2)
 
 
 BROWSER = "test_web_dashboard.py"   # its slow tests drive the page in Chromium: seconds each, mostly waiting on the page
@@ -48,7 +49,7 @@ def browser_test(item) -> bool:
     return item.path.name == BROWSER and item.nodeid.split("[")[0] in SLOW
 
 
-# The browser's zoom tests: two time the zoom's 200 ms from the click or key (within 330 ms), all of them its frames
+# The browser's zoom tests: two time the zoom's 200 ms (within 330 ms, on its animations' own timeline), all of them follow its frames
 ZOOM_TIMED = ("test_a_click_on_a_gauge_zooms_", "test_zoomed_the_last_tile_", "test_a_double_click_esc_", "test_zoomed_the_gallery_")
 
 

@@ -157,7 +157,8 @@
 //   largest radius a merge has made, born: the latest condensed [{id, kind, r, fog: shown there, y: its middle, of the height}],
 //   first: the first bead to show since the glass was fresh {after: s, cover, fog: the fog where it showed (not wiped), formed:
 //   fog() then} or null, landed: heavy rain's drops stuck, rainMost: the most of them at once, splashes: the latest {id, r, dots},
-//   glass: {dry, trail, fog: each {px, s: run and taken there by beads of r 1.8-3.2, gained, lost: water, moves: steps, all, norm:
+//   glass: {dry, trail, fog: each {px, s: run and taken there by beads of r 1.8-3.2, band: what they'd have run on fog (each at its
+//   size then), gained, lost: water, moves: steps, all, norm:
 //   px run by any, and what they'd have run on fog in that time}}, sizes: [px, s] on fog by size (under bands[0], ..., the last and
 //   over), bands, physics: {speed(r, glass): px/s, after(r, glass, px, s, fog): its radius after (0: gone), gone}, hasten(k): the
 //   trails' time k times as fast (test-only), clock(): the trails', wetAt(x, y): how fresh a trail is there (1 just left, 0 none),
@@ -1003,7 +1004,7 @@ const Sky = (() => {
     // (for the tests, as Sky.state() gives them)
     const seen = {merges: 0, merged: [], absorbed: [], left: [], ranOff: 0, shrunk: 0, faded: 0, largest: 0, born: [], first: null,
                   dried: 0, landed: 0, rainMost: 0, splashes: [], joined: 0, joins: [],
-                  glass: [0, 1, 2].map(() => ({px: 0, s: 0, gained: 0, lost: 0, moves: 0, all: 0, norm: 0})),   // (px, s: r 1.8-3.2)
+                  glass: [0, 1, 2].map(() => ({px: 0, s: 0, band: 0, gained: 0, lost: 0, moves: 0, all: 0, norm: 0})),   // (px, s, band: r 1.8-3.2)
                   sizes: [0, 1, 2, 3, 4].map(() => [0, 0])};                                     // (on fog: px and s, by size)
     const BANDS = [1, 1.6, 2.4, 3.2];
     const heightOf = (r) => sprite(r).height;
@@ -1113,8 +1114,22 @@ const Sky = (() => {
       const rest = b.rested || 0;
       b.rested = 0;
       const blob = rest > 0.35 ? 0.9 : 0;
-      const wide = broken && !blob ? 0 : clamp(Math.min(1.35, Math.max(0.8, w * 0.2)) * (0.25 + 1.4 * n) * (0.75 + 0.5 * hash(y, id, 68)), 0.5, 2.2) + blob;
       const sway = (noise(y / 11, id * 3 + 1, 1 << 20, 64) - 0.5) * Math.max(0, w - 3) * 0.55, at = mid + sway;
+      let wide = broken && !blob ? 0 : clamp(Math.min(1.35, Math.max(0.8, w * 0.2)) * (0.25 + 1.4 * n) * (0.75 + 0.5 * hash(y, id, 68)), 0.5, 2.2) + blob;
+      // (never one width for long, where the noise lingers: after a run of 5-9 rows alike, a row a px thinner, or if it's a px, thicker)
+      const across = (wd) => {   // (its px across at this width: those covered enough to show, as below)
+        let k = 0;
+        for (let x = Math.min(a, left); x <= Math.max(c, left + w - 1); x++) k += Math.max(clamp(wd / 2 + 0.5 - Math.abs(x - at), 0, 1), wd > 0 && x === Math.round(at) ? 0.45 : 0) >= 0.4;
+        return k;
+      };
+      if (wide > 0 && !blob) {
+        const k = across(wide);
+        if (k === b.streakW && ++b.streakRun >= 5 + Math.floor(hash(y, id, 69) * 5)) {
+          for (const wd of k > 1 ? [wide - 1, wide - 0.6, 0.5] : [wide + 0.6, wide + 1, 1.6, 2]) if (wd > 0 && across(wd) !== k) { wide = wd; break; }
+        }
+        const now = across(wide);
+        if (now !== b.streakW) { b.streakW = now; b.streakRun = 0; }
+      } else { b.streakW = 0; b.streakRun = 0; }
       const drop = hash(y, id, 65) < (blob ? 0.7 : 0.05) ? Math.round(at + (hash(y, id, 66) - 0.5) * Math.max(1, w * 0.45)) : null;
       for (let x = Math.min(a, left); x <= Math.max(c, left + w - 1); x++) {   // (its own width, as the beads feel it; its ragged edge)
         const cov = Math.max(clamp(wide / 2 + 0.5 - Math.abs(x - at), 0, 1), wide > 0 && x === Math.round(at) ? 0.45 : 0), h = hash(x, y, id);
@@ -1154,7 +1169,7 @@ const Sky = (() => {
       change(b, g, f, px, s);
       if (b.vol > was) o.gained += b.vol - was; else o.lost += was - b.vol;
       o.moves++;
-      if (px > 0 && r >= 1.8 && r <= 3.2) { o.px += px; o.s += s; }
+      if (px > 0 && r >= 1.8 && r <= 3.2) { o.px += px; o.s += s; o.band += s * speedFor(r, FOGGY); }   // (band: px it'd have run on fog)
       if (px > 0) { o.all += px; o.norm += s * speedFor(r, FOGGY); }   // (any size: px run, against what it'd have run on fog)
       if (px > 0 && g === FOGGY) { const band = seen.sizes[BANDS.filter((x) => r >= x).length]; band[0] += px; band[1] += s; }
     }

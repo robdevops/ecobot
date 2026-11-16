@@ -433,8 +433,8 @@ SIZES = {"phone-portrait": (390, 844), "phone-landscape": (844, 390), "tablet-la
 @functools.cache
 def browser_there() -> bool:
     if not shutil.which("node"):
-        return False
-    return subprocess.run(["node", "-e", "require('playwright')"], capture_output=True, timeout=60).returncode == 0
+        return False   # (Playwright found, not loaded: loading it is most of a script's start)
+    return subprocess.run(["node", "-e", "require.resolve('playwright')"], capture_output=True, timeout=60).returncode == 0
 
 
 @pytest.fixture
@@ -579,7 +579,7 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
     back at north and no figure claimed."""
     title, column, value = ("NOx index", "nox_index", 60) if comes else ("VOC index", "voc_index", None)
     port = free_port()
-    async with Serving(http_app(server, tokens=(TOKEN,)), port):
+    async with Serving(http_app(server, tokens=(TOKEN,), dashboard_animations=False), port):   # (no weather: as run_page's weather=False)
         page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", "--arrive", title,
                                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         before = json.loads(await asyncio.wait_for(page.stdout.readline(), 60))
@@ -646,22 +646,22 @@ def test_what_the_events_compare_of_the_air_is_its_gauges_readings():
 
 # ---------- arranging the tiles (drag, hide, reset, preferences) and their fill ----------
 async def run_page(server, *args, timeout=120, weather=True, parts=None) -> dict:
-    """The page served, driven by the browser script with these arguments; its report. With `parts`, the script once for each, the
-    part after the arguments, side by side (each its own browser): their reports in one, their errors together. (`weather` False:
-    served as with MCP_DASHBOARD_ANIMATIONS off, no weather drawn behind the tiles: for the pages that drive the tiles and time their
-    moves, not the weather, so the machine's time goes to those moves. The weather's own tests drive the tiles over it, zoomed too.)"""
+    """The page served, driven by the browser script with these arguments; its report. With `parts`, each part after the arguments,
+    side by side (each its own page, in one browser: one script's start, not one a part): their reports in one, the first part's
+    where two report the same, their errors together. (`weather` False: served as with MCP_DASHBOARD_ANIMATIONS off, no weather drawn
+    behind the tiles: for the pages that drive the tiles and time their moves, not the weather, so the machine's time goes to those
+    moves. The weather's own tests drive the tiles over it, zoomed too.)"""
     port = free_port()
-
-    async def one(*more):
-        page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", *args, *more,
-                                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = await asyncio.wait_for(page.communicate(), timeout)
-        assert page.returncode == 0, err.decode()
-        return json.loads(out)
     async with Serving(http_app(server, tokens=(TOKEN,), dashboard_animations=weather), port):
-        if parts is None:
-            return await one()
-        reports = await asyncio.gather(*(one(part) for part in parts))
+        page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", *args,
+                                                    *(["+".join(parts)] if parts else []), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = await asyncio.wait_for(page.communicate(), timeout)
+    assert page.returncode == 0, err.decode()
+    reports = json.loads(out)
+    if parts is None:
+        return reports
+    if len(parts) == 1:
+        reports = [reports]
     got = {"errors": []}
     for report in reports:
         got["errors"] += report.pop("errors")
@@ -682,7 +682,7 @@ def moved(titles, title, after):
 
 @needs_browser
 async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_kept_across_reloads_and_reset(server, station):
-    got = await run_page(server, "--arrange", weather=False, parts=("dragged", "prefs"))
+    got = await run_page(server, "--arrange", weather=False, parts=("dragged", "hidden", "prefs"))
     default = titles_of(station)
     assert got["errors"] == [] and got["initial"] == default, got["errors"]
     # mouseover: the grip and the × on the tile under the mouse only
@@ -731,7 +731,7 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
 
 @needs_browser
 async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swipe_is_left_alone(server, station):
-    got = await run_page(server, "--touch", weather=False, parts=("taps", "held"))
+    got = await run_page(server, "--touch", weather=False, parts=("taps", "edge", "held"))
     default = titles_of(station)
     assert got["errors"] == [] and got["initial"] == default
     # a short tap: a click (it zooms the tile), nothing picked up; a swipe: the page scrolls
@@ -746,7 +746,7 @@ async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swi
     # held and let go in place: the grip and × stay, and a tap on the × hides it
     assert got["armed"]["armed"] == ["Humidity"] and got["armed"]["close"] == "1"
     assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "reset preferences · last reading 18:42"}
-    # held at the bottom edge: the page scrolls to its end, never past it, and stays there once let go
+    # held at the bottom edge (on a page of its own, beside them): the page scrolls to its end, never past it, and stays there once let go
     edge = got["edge"]
     assert edge["seen"][-1] == pytest.approx(edge["end"], abs=1) and max(edge["seen"]) <= edge["end"] + 1, edge
     assert edge["after"] <= edge["end"] + 1, edge
@@ -861,11 +861,11 @@ async def test_a_click_on_a_gauge_zooms_its_tile_to_fill_the_window_the_tile_bes
     assert keys["prevented"] == [["ArrowLeft", True], ["ArrowLeft", True], [" ", True], ["ArrowRight", True], ["Backspace", True]], keys
 
 
-ZOOM_PARTS = {"pager": ("pager",), "last": ("last", "single"), "out": ("out", "keys")}   # (the browser script's, side by side)
+ZOOM_PARTS = {"pager": ("pager", "wheel"), "last": ("last", "text", "single", "lone"), "out": ("out", "keys")}   # (the browser script's, side by side)
 
 
 async def zoomed(server, station, part: str) -> tuple[dict, list[str], dict]:
-    """A part of the zoom at 1024x768 (its own pages in their own browsers: the parts run side by side): its report, no error; the
+    """A part of the zoom at 1024x768 (its own pages, side by side in one browser): its report, no error; the
     tiles' titles; a tile's rect zoomed."""
     got = await run_page(server, "--zoom", weather=False, parts=ZOOM_PARTS[part])
     default = titles_of(station)
@@ -885,8 +885,10 @@ async def test_zoomed_the_gallery_pages_by_mouse_drags_and_a_trackpads_swipes_sp
     # at the first, dragged on: it gives (less than the drag), springs back
     assert drag["pastFirst"]["shown"] == default[0] and 20 < drag["pastFirst"]["during"] < 300 * 0.6 and drag["pastFirst"]["track"] == 0, drag
     assert all(d["zoomed"] for d in drag.values())                                  # (the click ending a drag doesn't go back)
-    # a trackpad's two-finger swipe (wheel deltaX): the next, or back if short; never reaching the browser
+    # a trackpad's two-finger swipe (wheel deltaX), from the first (on a page of its own, beside that one): the next, or back if short;
+    # never reaching the browser
     wheel = got["wheel"]
+    assert wheel["from"] == {"zoomed": True, "shown": default[0], "track": 0}, wheel
     assert [wheel[k]["shown"] for k in ("far", "short", "back")] == [default[1], default[1], default[0]], wheel
     assert wheel["prevented"] and all(wheel["prevented"]), wheel
 
@@ -899,8 +901,9 @@ async def test_zoomed_the_last_tile_stops_paging_its_text_is_selectable_a_click_
     assert last["reached"]["shown"] == default[-1] and last["pastLast"]["shown"] == default[-1] and last["pastLast"]["extreme"] >= 20, last
     assert last["wheeled"]["shown"] == default[-1] and last["dragged"]["shown"] == default[-1], last
     assert last["wheeled"]["track"] == last["dragged"]["track"] == -1024 * (len(default) - 1)
-    # a drag on the text selects it: no paging, still zoomed
+    # a drag on the text selects it: no paging, still zoomed (on a page of its own, beside that one, the last reached the same way)
     text = got["text"]
+    assert got["textOn"] == default[-1], got["textOn"]
     assert {k: (v["selected"], v["shown"], v["zoomed"]) for k, v in text.items()} == {
         "title": (default[-1], default[-1], True), "reading": (text["reading"]["selected"], default[-1], True)}, text
     assert text["reading"]["selected"].strip(), text
@@ -919,18 +922,21 @@ async def test_zoomed_the_last_tile_stops_paging_its_text_is_selectable_a_click_
                                                                              "cursor": "zoom-out", "look": None}, one
     fills(one["zoomed"]["look"], 1024, 768)
     assert near(one["zoomed"]["look"]["box"], full), one["zoomed"]
-    # a gallery of one: the keys nudge it and back, a drag either way gives a little and springs back, as does a trackpad's swipe
+    # a gallery of one: the keys nudge it and back, a drag either way gives a little and springs back, as does a trackpad's swipe (on a
+    # page of its own, beside that one, zoomed the same way)
+    lone = got["lone"]
     for name, key in one["keys"].items():
         assert key["zoomed"] and key["shown"] == "Humidity" and key["track"] == 0 and key["extreme"] >= 20, (name, key)
     for name, drag in one["dragged"].items():
         assert drag["zoomed"] and drag["shown"] == "Humidity" and drag["track"] == 0 and 20 < abs(drag["during"]) < 400 * 0.6, (name, drag)
-    assert one["wheeled"] | {"prevented": None} == {"zoomed": True, "shown": "Humidity", "track": 0, "prevented": None}, one["wheeled"]
-    assert one["wheeled"]["prevented"] and all(one["wheeled"]["prevented"]), one["wheeled"]
+    assert lone["wheeled"] | {"prevented": None} == {"zoomed": True, "shown": "Humidity", "track": 0, "prevented": None}, lone["wheeled"]
+    assert lone["wheeled"]["prevented"] and all(lone["wheeled"]["prevented"]), lone["wheeled"]
     # a click goes back, the tile in its place; Esc too
     box = lambda r: r | {"left": r["x"], "top": r["y"]}
-    rect = one["back"].pop("rect")
-    assert one["back"] == {"zoomed": False, "shown": "Humidity", "track": 0} and near(box(rect), box(one["gridRect"])), (one["back"], rect)
-    assert one["esc"]["zoomed"] is False, one["esc"]
+    rect = lone["back"].pop("rect")
+    assert lone["back"] == {"zoomed": False, "shown": "Humidity", "track": 0} and near(box(rect), box(lone["gridRect"])), (lone["back"], rect)
+    assert near(box(lone["gridRect"]), box(one["gridRect"])), (lone["gridRect"], one["gridRect"])
+    assert lone["esc"]["zoomed"] is False, lone["esc"]
 
 
 @needs_browser
@@ -966,18 +972,21 @@ async def test_a_double_click_esc_the_bounce_cut_short_the_keyboard_and_esc_mid_
 
 @needs_browser
 async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_tap_goes_back_where_the_page_was(server, station):
-    got = await run_page(server, "--zoom-touch", weather=False, parts=("back", "swipes"))
+    got = await run_page(server, "--zoom-touch", weather=False, parts=("back", "swipes", "later", "return"))
     default = titles_of(station)
     assert got["errors"] == [] and got["initial"] == default, got["errors"]
     t = default.index(got["tapped"])
-    assert got["swipesTapped"] == got["tapped"], got   # (the swipes' page, beside it: the same tile tapped)
+    assert got["swipesTapped"] == got["laterTapped"] == got["returnTapped"] == got["tapped"], got   # (the swipes' pages, beside it: the same tile tapped)
     assert got["scrolled"] > 100
     assert got["zoomed"]["zoomed"] and got["zoomed"]["shown"] == got["tapped"]
     assert not got["backStraight"]["zoomed"] and abs(got["backStraight"]["scrollY"] - got["scrolled"]) <= 2, got["backStraight"]
     assert near(got["zoomed"]["rect"] | {"left": got["zoomed"]["rect"]["x"], "top": got["zoomed"]["rect"]["y"]}, zoomed_rect(390, 844))
     fills(got["zoomed"]["look"], 390, 844)
     assert [got[k]["shown"] for k in ("next", "previous", "flick", "fromTitle")] == [default[t + 1], default[t], default[t + 1], default[t + 2]], got
+    # (on pages of their own, beside them, the same tile tapped and two on: there,) a vertical swipe, a long press: nothing; three
+    # swipes back, and a tap back to the dashboard
     assert got["vertical"]["shown"] == default[t + 2] and got["vertical"]["zoomed"]
+    assert got["returnFrom"] == got["vertical"], (got["returnFrom"], got["vertical"])
     assert got["held"] == {"zoomed": True, "shown": default[t + 2], "track": got["vertical"]["track"], "buzz": [], "zone": False}
     assert got["backAt"]["shown"] == default[t - 1]
     assert not got["out"]["zoomed"] and got["out"]["titles"] == default and got["out"]["lastShown"], got["out"]
@@ -1216,8 +1225,9 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
         assert glass["fog"]["gained"] > 0 and glass["fog"]["lost"] == 0, (name, glass)            # (on fog: growing, never shrinking)
         assert glass["trail"]["moves"] > 100 and glass["trail"]["gained"] == glass["trail"]["lost"] == 0, (name, glass)   # (a trail: kept)
         assert glass["dry"]["lost"] == 0, (name, glass)
-        # (the same size, r 1.8-3.2: slower on a trail than on fog; any size, against its speed on fog: about 0.6 on a trail, 1 on fog)
-        speed = {g: o["px"] / o["s"] for g, o in glass.items() if o["s"] > 0}
+        # (the same size, r 1.8-3.2: slower on a trail than on fog, each bead's px against what it'd have run on fog at its size then,
+        # so the sizes that happened to run on each don't count; any size, the same: about 0.6 on a trail, 1 on fog)
+        speed = {g: o["px"] / o["band"] for g, o in glass.items() if o["band"] > 0}
         assert speed["trail"] < speed["fog"], (name, speed)
         assert 0.45 < glass["trail"]["all"] / glass["trail"]["norm"] < 0.75 < glass["fog"]["all"] / glass["fog"]["norm"] < 1.3, (name, glass)
         on_fog = [px / s for px, s in beads["sizes"] if s > 0]   # (by size: under 1, 1-1.6, 1.6-2.4, 2.4-3.2, 3.2 and over)
