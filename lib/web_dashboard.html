@@ -2786,7 +2786,9 @@ const Sky = (() => {
   const BUZZ_MS = 15;                  // the vibration as a long press picks a tile up (where navigator.vibrate exists: not iOS)
   const LIFT = 1.04;                   // a picked-up tile, a little larger
   const TABLE_TOP = 372;               // where the Daily/Monthly/Yearly table starts, in the tile's own pixels (table(): 378); above
-                                       // it, the title and the gauge (a dial's band name ends at 370): all the zoomed view shows
+                                       // it, the title and the gauge: all the zoomed view shows
+  const DROP = 14;                     // every gauge (a dial, thermometer, beaker or compass, with its reading) drawn this far (the
+                                       // tile's own px) below its place in lib/gauge_look.py: room under the title
   const EDGE = 48, EDGE_SPEED = 10;    // a drag this near the window's top or bottom scrolls a scrolling page, this many px a frame
   const ZOOM_MS = 200;                 // a tile zooming to fill the window, and back
   const STEP_MS = 200;                 // the zoomed view: a key's step to the next or previous tile
@@ -2877,7 +2879,8 @@ const Sky = (() => {
   }
 
   function beaker(svg, tile, ink, id) {
-    const top = 90, bottom = 300, left = 235, right = 345, r = 34;
+    const top = 90, bottom = 292, left = 235, right = 345, r = 34;   // (a little shorter than the Status picture's, and its reading
+                                                                     // not dropped: room for both above the table)
     scaleBar(svg, left - L.bar_gap - L.bar_width, top, bottom - 10, tile, ink);
     const jar = `M${left},${top} L${left},${bottom - r} A${r},${r} 0 0 0 ${left + r},${bottom} L${right - r},${bottom} ` +
                 `A${r},${r} 0 0 0 ${right},${bottom - r} L${right},${top}`;
@@ -2886,7 +2889,7 @@ const Sky = (() => {
     const water = el("rect", {x: 0, y: level(shown(tile)), width: L.cell[0], height: L.cell[1]}, clip);   // (none at 0 mm)
     el("path", {d: jar + " Z", fill: ink(L.water), "clip-path": `url(#${id})`}, svg);
     el("path", {d: jar, fill: "none", stroke: ink(L.soft), "stroke-width": lw(2.5), "stroke-linejoin": "round"}, svg);
-    const label = text(svg, 290, 345, "", 46, ink(L.soft));
+    const label = text(svg, 290, 343 - DROP, "", 46, ink(L.soft));
     label.classList.add("reading");
     return (v) => {
       water.setAttribute("y", level(v).toFixed(2));
@@ -2921,10 +2924,8 @@ const Sky = (() => {
                   "stroke-linecap": "round", fill: "none"}, hand);
       el("circle", {cx: cx - 34, cy, r: 3.6, fill: L.hour_hand}, hand);
     }
-    const label = text(svg, cx, cy + 102, "", 50, ink(L.ink));
-    label.classList.add("reading");
-    const band = text(svg, cx, cy + L.band_y, "", L.band_size, ink(L.soft));   // the air gauges' category ("Moderate")
-    band.classList.add("band");
+    const label = text(svg, cx, cy + 102, "", 50, ink(L.ink));   // (the reading alone: no band word ("Moderate") under the dial, its
+    label.classList.add("reading");                                // colours say it)
     el("circle", {cx, cy, r: 25, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
     const at = (v) => {
       const a = angle(v);
@@ -2932,8 +2933,6 @@ const Sky = (() => {
       needle.setAttribute("points", pts.map((p) => p.map((n) => n.toFixed(2)).join(",")).join(" "));
       label.textContent = figure(v, tile.decimals);
     };
-    at.band = (t) => { band.textContent = t.band && t.value !== null ? t.band : ""; };   // (no reading: no category)
-    at.band(tile);
     if (hand) at.hand = (v) => {   // the red hand at v (moved in place, frame by frame); null: none to show
       hand.style.display = v === null ? "none" : "";
       if (v !== null) hand.setAttribute("transform", `rotate(${(-angle(v)).toFixed(2)} ${cx} ${cy})`);
@@ -2951,7 +2950,8 @@ const Sky = (() => {
   const arrow = (cx, cy, reach) => [[0, reach], [17, reach - 30], [5.5, reach - 23], [5.5, 0], [-5.5, 0], [-5.5, reach - 23], [-17, reach - 30]]
     .map(([x, y]) => [cx + x, cy - y]);
   function compass(svg, tile, ink) {
-    const [cx, cy, r] = L.compass, outer = r - 8, inner = outer - L.band_width, mid = (outer + inner) / 2, reach = inner - 8;
+    // (its ring a little smaller than the Status picture's and its reading a little smaller, not dropped: room above the table's place)
+    const [cx, cy] = L.compass, r = L.compass[2] - 10, outer = r - 8, inner = outer - L.band_width, mid = (outer + inner) / 2, reach = inner - 8;
     el("circle", {cx, cy, r, fill: "none", stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
     el("circle", {cx, cy, r: mid, fill: "none", stroke: ink(L.compass_band), "stroke-width": L.band_width}, svg);
     let ticks = "";   // (fine ticks every 10 degrees, longer every 30; none where a point is named: one path)
@@ -2980,7 +2980,7 @@ const Sky = (() => {
     el("polygon", {points: arrow(cx, cy, reach).map((p) => p.join(",")).join(" "), fill: ink(L.needle), "stroke-linejoin": "round",
                    stroke: ink(L.needle), "stroke-width": 1.5, class: "head"}, needle);
     el("circle", {cx, cy, r: 11, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(2.5)}, svg);
-    const label = text(svg, cx, L.compass_label_y, "", 40, ink(L.ink));
+    const label = text(svg, cx, L.compass_label_y + 2 - DROP, "", 36, ink(L.ink));
     label.classList.add("reading");
     let now = tile;   // (the tile as last given: its reading and the service's compass point)
     const at = (v) => {
@@ -3048,7 +3048,8 @@ const Sky = (() => {
     const svg = el("svg", {viewBox: `0 0 ${L.cell[0]} ${L.cell[1]}`, preserveAspectRatio: "xMidYMid meet", "aria-hidden": "true"});
     svg.style.height = `${L.cell[1] / L.cell[0] * 100}cqw`;   // (by the width: zoomed, the tile's box is only its top)
     box.appendChild(svg);
-    const at = DRAW[tile.kind](svg, tile, ink, `clip${clips++}`);
+    const gauge = el("g", {class: "gauge", transform: `translate(0 ${DROP})`}, svg);   // (the gauge, a little below the title: room)
+    const at = DRAW[tile.kind](gauge, tile, ink, `clip${clips++}`);
     place(box, 0, 38 - 25, L.cell[0], 50, 38, tile.title, "title", {color: ink(L.ink)});
     if (tile.columns.length) place(box, 0, TABLE_TOP, L.cell[0], L.cell[1] - TABLE_TOP, 0, "", "tablearea");   // (the table's area, under
                                                                                                               // its chips: its cursor)

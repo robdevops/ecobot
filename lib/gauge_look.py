@@ -22,7 +22,6 @@ MERCURY_GAP = 7             # the gap between the outline and the red, the same 
 BAR_WIDTH, BAR_GAP = 13, 12   # the scale's coloured blocks beside a thermometer or beaker: how wide, and how far from its outline
 RING_OUTER, BAND_WIDTH = 130, 22   # a dial's coloured scale: its outer radius and how wide it is (the outline is at 138)
 LABEL_RADIUS = 84           # where a dial's numbers sit, just inside its scale
-BAND_Y, BAND_SIZE = 157, 19  # a dial's band name ("Moderate"): how far below its centre (under its outline), and its size
 COMPASS = (240, 188, 130)   # the wind's direction, a compass: its centre and outline's radius (above the table's place: it has none)
 COMPASS_LABEL_Y = 346       # ... its reading ("99° E") under it
 COMPASS_BAND = "#262E34"    # ... its ring, under the ticks and the letters N, E, S and W
@@ -69,7 +68,7 @@ def look() -> dict:
     return {"bg": BG, "ink": INK, "soft": SOFT, "chip": CHIP, "chips": CHIPS, "marks": MARKS, "fill": FILL, "water": WATER,
             "needle": NEEDLE, "hour_hand": HOUR_HAND, "hour_hand_width": HOUR_HAND_WIDTH, "tube_half": TUBE_HALF, "bulb_radius": BULB_RADIUS, "mercury_gap": MERCURY_GAP, "bar_width": BAR_WIDTH,
             "bar_gap": BAR_GAP, "ring_outer": RING_OUTER, "band_width": BAND_WIDTH, "label_radius": LABEL_RADIUS,
-            "band_y": BAND_Y, "band_size": BAND_SIZE, "cell": [CELL_W, CELL_H], "compass": list(COMPASS),
+            "cell": [CELL_W, CELL_H], "compass": list(COMPASS),
             "compass_label_y": COMPASS_LABEL_Y, "compass_band": COMPASS_BAND, "points": list(POINTS),
             "fade": FADE, "sweep": SWEEP, "start": START, "rows": list(ROWS)}
 

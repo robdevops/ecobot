@@ -90,6 +90,15 @@ async function sizes(browser, url, shots, wanted) {
       scrollHeight: document.documentElement.scrollHeight,
       status: document.getElementById("status").textContent,
       glass: [...document.querySelectorAll(".tile")].map((t) => [t.dataset.kind, [...t.querySelectorAll("svg .glass")].map((e) => e.getAttribute("d"))]),
+      // each tile's gauge, in its own px (480 wide): its kind and title, how far its drawing's top is below the title's bottom, the
+      // lowest of its drawing and its words, its words (svg text) but its reading, and any band word's element
+      gauges: [...document.querySelectorAll(".tile")].map((t) => {
+        const box = t.getBoundingClientRect(), k = 480 / box.width, g = t.querySelector("svg g.gauge").getBoundingClientRect();
+        const texts = [...t.querySelectorAll("svg text")];
+        return { kind: t.dataset.kind, title: t.querySelector(".title").textContent, gap: (g.top - t.querySelector(".title").getBoundingClientRect().bottom) * k,
+                 bottom: Math.max(g.bottom, ...texts.map((e) => e.getBoundingClientRect().bottom)) * k - box.top * k,
+                 words: texts.filter((e) => !e.classList.contains("reading")).map((e) => e.textContent), bands: t.querySelectorAll("svg .band").length };
+      }),
     })), errors };
     await handsSettled(page);
     report[name].hands = await handsLook(page);   // the dials' thin red hands: the past hour's highest
@@ -126,8 +135,8 @@ async function sizes(browser, url, shots, wanted) {
 const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#grid .tile")].map((t) => {
   const hand = t.querySelector("svg .hour"), title = t.querySelector(".title").textContent;
   if (!hand) return [title, null];
-  const parts = [...t.querySelector("svg").children], line = hand.querySelector("path");
-  const hub = parts.filter((e) => e.tagName === "circle").pop(), needle = t.querySelector("svg > polygon");
+  const parts = [...t.querySelector("svg > g.gauge").children], line = hand.querySelector("path");
+  const hub = parts.filter((e) => e.tagName === "circle").pop(), needle = t.querySelector("svg > g.gauge > polygon");
   return [title, { turn: hand.getAttribute("transform"), shown: hand.style.display !== "none", colour: line.getAttribute("stroke"),
                    width: Number(line.getAttribute("stroke-width")), needleWidth: needle.getBBox().width,
                    order: [parts.indexOf(needle), parts.indexOf(hand), parts.indexOf(hub)],
@@ -570,7 +579,7 @@ const ZOOM_HELPERS = () => {
   addEventListener("keydown", (e) => { window.__at = performance.now(); setTimeout(() => window.__keys.push([e.key, e.defaultPrevented])); });
   addEventListener("wheel", (e) => { setTimeout(() => window.__wheels.push(e.defaultPrevented)); }, { passive: true });
   window.__keys = []; window.__wheels = [];
-  // A tile's look: its box; its title, reading and (a dial's) band word, each on the screen; its table's visibility and opacity
+  // A tile's look: its box; its title, reading and the gauge's other words, each on the screen; its table's visibility and opacity
   window.__look = (title) => {
     const t = window.__tile(title), rect = (e) => e && e.getBoundingClientRect().toJSON();
     const table = [...t.querySelectorAll(".unit, .chip, .figure, .tablearea")].map((e) => getComputedStyle(e));

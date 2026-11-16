@@ -496,6 +496,16 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert (shots / f"dashboard-{name}.png").exists() and (shots / f"dashboard-{name}-zoomed.png").exists()
         assert got["zoomed"]["zoomed"], (name, got["zoomed"])
         fills(got["zoomed"], width, height)                                       # zoomed: its title and gauge fill the window, no table
+        # no band word ("Good", "Moderate"...) under any dial: its words are its scale's numbers, its unit and its reading alone; every
+        # gauge drawn lower than it was, the same for every kind (its top this far further below the title's bottom), all of it above
+        # the table's place
+        for g in got["gauges"]:
+            t = next(t for t in sheet if t.title == g["title"])
+            assert g["bands"] == 0, (name, g)
+            if g["kind"] == "dial":                                                # (besides its reading)
+                assert sorted(g["words"]) == sorted([*(str(int(x)) if float(x).is_integer() else str(x) for x in t.ticks), t.unit]), (name, g)
+            assert g["gap"] >= GAPS_BEFORE[g["kind"]] + 12 and g["gap"] >= 15, (name, g)
+            assert g["bottom"] <= TABLE_TOP + 0.5, (name, g)
         # the thermometers' glass catches the light: one straight line down the tube (no curve on the bulb, no second line); no dial
         # or beaker has it
         assert sorted(k for k, _ in got["glass"]) == sorted(kinds) and {"thermometer", "dial", "beaker"} <= set(kinds), got["glass"]
@@ -604,7 +614,7 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
         assert opacities == sorted(opacities) and opacities[0] < 1, opacities                       # brightening, never a flash
         assert before["needle"] != after["needle"]
     else:
-        assert not before["faded"] and before["number"] == "112" and "Average" in before["shown"], before
+        assert not before["faded"] and before["number"] == "112" and "Average" not in before["shown"], before   # (no band word, ever)
         assert after["faded"] and after["opacity"] == pytest.approx(look()["fade"]) and after["number"] == "1", after
         assert "Average" not in after["shown"] and after["label"] == "VOC index: no reading"   # no category without a reading
         assert numbers == sorted(numbers, reverse=True) and numbers[-1] == 1, numbers              # down to the floor
@@ -783,6 +793,8 @@ async def test_fewer_tiles_grow_evenly_to_fill_the_window_and_never_shrink_below
 
 # ---------- the zoomed view and its gallery ----------
 ZOOM_MS = 200
+GAPS_BEFORE = {"dial": 2, "thermometer": 21.7, "beaker": 16.7, "compass": -5}   # (the gap under the title, each kind, before the gauges
+                                                                                  # were moved down: the tile's own px)
 TABLE_TOP = 372     # (the web page's: where a tile's table starts, in its own pixels; above it the title and gauge, all a zoomed tile shows)
 
 
@@ -809,7 +821,7 @@ def fills(zl, width, height):
     assert box["width"] / box["height"] == pytest.approx(look()["cell"][0] / TABLE_TOP, rel=0.01), zl   # (its proportions kept)
     assert (box["left"] + box["right"]) / 2 == pytest.approx(width / 2, abs=1), zl
     assert (box["top"] + box["bottom"]) / 2 == pytest.approx(8 + room[1] / 2, abs=1) and box["bottom"] <= height - 18, zl
-    for r in [zl["title"], *zl["texts"]]:                                                     # (the reading, a dial's band word)
+    for r in [zl["title"], *zl["texts"]]:                                                     # (the reading, the scale's words)
         assert box["left"] - 1 <= r["left"] and r["right"] <= box["right"] + 1 and box["top"] - 1 <= r["top"] and r["bottom"] <= box["bottom"] + 1, (r, zl)
 
 
