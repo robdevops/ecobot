@@ -981,6 +981,8 @@ def just_right_of_the_row(corner):
 async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alone_and_within_the_particle_budget(server, station):
     got = await weather(server, "all")
     assert got["cost"] < 8, got["cost"]
+    # ... the ice grown all the way in too, its frost across much of the glass: as cheap
+    assert got["costFrosted"]["cost"] < 8 and got["costFrosted"]["crystals"] > 0.15, got["costFrosted"]
     # several at once no brighter than one strong one: every effect on (the ice grown all the way in), against Hazardous smog alone
     assert 0 < got["light"]["all"] <= got["light"]["smog5"], got["light"]
     together = got["particles"]["all"]
@@ -1188,6 +1190,33 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     for bare in (got["bare"], got["barePhone"]):
         assert bare["errors"] == [] and bare["row"] is None and bare["link"] == "stop animation", bare
         assert bare["motion"]["left"] == 0 and bare["motion"]["bottom"] == bare["window"][1] and bare["apart"] and bare["onScreen"], bare
+    # the frost: fern-like crystals from the window's edges, further in and faster the colder, over minutes; melting back from the
+    # tips, the edges last. Just below 0 °C (-0.5) a fringe at the edges, grown in a minute or two; then gone again, the loop with it
+    frost = got["frost"]
+    assert frost["errors"] == [], frost["errors"]
+    slight, cold, minute = frost["slight"], frost["cold"], frost["minute"]
+    assert 40 <= slight["took"] <= 180 and slight["deepest"] < 0.2 and 0.01 < slight["crystals"] < 0.1 and slight["rim"] > 0.4, slight
+    assert slight["fresh"] == 0 and not slight["growing"], slight                     # (the fresh tips only while it grows)
+    assert frost["slightGone"]["extent"] == 0 and not frost["slightGone"]["running"], frost["slightGone"]
+    # -5 °C: a minute in, growing on (its fresh tips, white, at the front), past the fringe already but not half way to where it goes
+    assert minute["growing"] and minute["fresh"] > 20 and minute["extent"] < 0.5 * minute["target"], minute
+    assert minute["deepest"] > slight["deepest"] and minute["crystals"] > slight["crystals"], (minute, slight)
+    # ... as far as it goes some 3 to 5 minutes in: well across the glass, frost over much of it; uneven fingers, some reaching far
+    # in, others stopping short; sparkles catching the light now and then
+    assert 180 <= cold["took"] <= 300 and not cold["growing"] and cold["fresh"] == 0, cold
+    assert cold["deepest"] > 0.4 and cold["crystals"] > 0.18 and cold["frosted"] > 0.3 and cold["rim"] > 0.9, cold
+    fingers = sorted(cold["fingers"])
+    assert fingers[-1] > 0.35 and fingers[0] < 0.6 * fingers[-1] and fingers[-1] - fingers[len(fingers) // 2] > 0.05, fingers
+    assert frost["sparkles"] >= 1, frost["sparkles"]
+    # ... faint (the tiles read over it), pale cyan to white
+    shown = cold["pixels"]
+    assert shown["drawn"] > 0.3 and shown["alpha"] < 0.15 and shown["strong"] < 0.002, shown
+    assert shown["light"] > 180 and shown["bluer"] > 0.95, shown
+    # melting: back from the tips, the edges last: half a minute in, fewer crystals, the rim still frosted; then gone, the loop too
+    melting = frost["melting"]
+    assert melting["extent"] < cold["extent"] and melting["crystals"] < 0.9 * cold["crystals"], (melting, cold)
+    assert melting["rim"] >= 0.97 * cold["rim"] and melting["fresh"] == 0, (melting, cold)
+    assert frost["gone"]["extent"] == 0 and frost["gone"]["frosted"] == 0 and not frost["gone"]["running"], frost["gone"]
     # reduced motion: no loop, one still, faint frame (the ice as it would be), the frames and the link as ever
     still = got["still"]
     assert still["effects"] == ["uv", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still

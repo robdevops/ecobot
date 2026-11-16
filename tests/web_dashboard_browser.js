@@ -1379,11 +1379,14 @@ const WEATHER = {
       await smog.context.close();
       return light;
     })();
-    await page.waitForFunction(() => {   // (the ice grown all the way in: its reach the same for half a second)
-      const r = Sky.state().iceReach, now = performance.now();
-      if (window.__reach !== r) { window.__reach = r; window.__reachSince = now; }
-      return r > 0 && now - window.__reachSince >= 500;
-    }, null, { timeout: 15000 });
+    // (the ice grown all the way in, over some minutes: the weather's time 100 times as fast meanwhile; then as ever, the cost again
+    // 45 frames on, the frost across the glass)
+    await page.evaluate(() => Sky.timeScale(100));
+    await page.waitForFunction(() => { const f = Sky.frost(true); return f && f.target > 0 && f.extent === f.target; }, null, { timeout: 15000 });
+    await page.evaluate(() => Sky.timeScale(1));
+    const frames = await page.evaluate(() => Sky.state().frames);
+    await page.waitForFunction((n) => Sky.state().frames >= n, frames + 45);
+    out.costFrosted = await page.evaluate(() => ({ cost: Sky.state().cost, crystals: Sky.frost().crystals }));
     out.light = { all: await canvasLight(page) };
     out.particles = { all: await particles(page) };
     out.light.smog5 = await strongest;
@@ -1393,11 +1396,64 @@ const WEATHER = {
   async opened(browser, url, out) {
     const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
     // uv's beams over 40 s of the page's time, on a page of their own beside the rest: each swaying about its place
+    // ... then, on that page, the frost (its page's time 10 times as fast and its weather's 40 times that: 4 s a frame): just below
+    // 0 °C (-0.5) as far as it goes, then melted; then -5 °C from nothing, a minute in and as far as it goes; then melting, half a
+    // minute in, and gone. Each: Sky.frost() and the weather's time it took; as far as it goes, the canvas's pixels: their alphas
+    // and colours
+    const frostSeen = async (p) => {
+      const fx = (detail) => p.page.evaluate((d) => { document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: d })); return Sky.state().clock; }, detail);
+      const frost = () => p.page.evaluate(() => ({ ...Sky.frost(), clock: Sky.state().clock, running: Sky.state().running }));
+      const until = (test, arg) => p.page.waitForFunction(test, arg, { timeout: 20000 });
+      const settled = () => until(() => { const f = Sky.frost(true); return f && f.extent === f.target; });
+      // the canvas: the share of it drawn, its pixels' mean alpha (0-1), the share over 100 (of 255); of those drawn, their mean
+      // light (luminance, 0-255) and the share as blue as red or bluer
+      const pixels = () => p.page.evaluate(() => {
+        const c = document.querySelector("#sky canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let drawn = 0, alpha = 0, strong = 0, light = 0, bluer = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          if (!d[i + 3]) continue;
+          drawn++; alpha += d[i + 3]; strong += d[i + 3] > 100;
+          light += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+          bluer += d[i + 2] >= d[i] && d[i + 1] >= d[i];
+        }
+        const n = d.length / 4;
+        return { drawn: drawn / n, alpha: alpha / n / 255, strong: strong / n, light: light / Math.max(drawn, 1), bluer: bluer / Math.max(drawn, 1) };
+      });
+      const seen = {};
+      await p.page.evaluate(() => Sky.timeScale(40));
+      let from = await fx({ ice: 0.5 });
+      await settled();
+      seen.slight = await frost();
+      seen.slight.took = seen.slight.clock - from;
+      await fx({});
+      await until(() => !Sky.state().running);
+      seen.slightGone = await frost();
+      from = await fx({ ice: 5 });
+      await until((t) => Sky.state().clock >= t, from + 60);
+      seen.minute = await frost();
+      const sparkles = p.page.evaluate(() => new Promise((resolve) => {   // (the most sparkles at once, while it grows on)
+        let most = 0;
+        const look = () => { const f = Sky.frost(true); most = Math.max(most, f.sparkles); if (f.extent === f.target) resolve(most); else requestAnimationFrame(look); };
+        look();
+      }));
+      seen.sparkles = await sparkles;
+      await settled();
+      seen.cold = await frost();
+      seen.cold.took = seen.cold.clock - from;
+      seen.cold.pixels = await pixels();
+      from = await fx({});
+      await until((t) => Sky.state().clock >= t, from + 30);
+      seen.melting = await frost();
+      await until(() => !Sky.state().running);
+      seen.gone = await frost();
+      return seen;
+    };
     const swaying = (async () => {
       const uv = await weatherPage(browser, url, { query: "?fx=uv", pace: 10, context: { viewport: { width: 640, height: 480 } } });   // (small: cheap)
-      const seen = { ...await uvSeen(uv.page), errors: uv.errors };
+      const seen = await uvSeen(uv.page), frost = await frostSeen(uv);
+      seen.errors = frost.errors = uv.errors;
       await uv.context.close();
-      return seen;
+      return [seen, frost];
     })();
     // humidity's beads condensing on the glass and running down it over 3.6 minutes of the page's time (its weather's time 6 times as
     // fast), alone and with the wind, beside the rest (small: cheap) (heavy: 100 %); and light (91 %), watched for 2 minutes
@@ -1528,7 +1584,7 @@ const WEATHER = {
     out.still.errors = still.errors;
     await still.context.close();
     await Promise.all([params, alone, phoned]);
-    out.uv = await swaying;
+    [out.uv, out.frost] = await swaying;
     [out.humidity.alone, out.humidity.windy, out.humidityLight] = await beading;
     out.rainBeads = await sticking;
     [out.rain.alone, out.rain.windy, out.rain.phone] = await raining;

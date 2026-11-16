@@ -139,7 +139,8 @@
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
 //   100 %), uv, wind, heat: 0 or 1, ice: how far below 0 °C it is (0: none)}; animate false (the page's "stop animation", or
 //   MCP_DASHBOARD_ANIMATIONS off): nothing drawn.
-//   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), size: [art width, art height, P], particles (each effect's
+//   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), clock (the weather's time, s), size: [art width, art height,
+//   P], particles (each effect's
 //   now), budget (theirs together, at most), levels, iceReach (art px), wind (its leaves on screen: {vx: their mean speed across,
 //   negative leftward, against: how many go rightward, hits: how many the rain's drops have hit, push: their mean push, px/s,
 //   kick: the mean change in a hit leaf's own velocity a hit made, px/s,
@@ -166,7 +167,12 @@
 //   x, x0 and y0: where it showed, y: its top, cy: its middle, r, vol: its water, w, laidW: its width as it last left its trail,
 //   bottom: its sprite's lowest row + 1, glass: under it, v: px/s now, fading, alpha, drawn: [x, y, w, h, alpha] as drawn last,
 //   age: s shown, behind: its trail there behind it, trail: [x, y] a pixel of it}]})}, for the tests. Sky.timeScale(k): the
-//   weather's time k times as fast, each frame (test-only).
+//   weather's time k times as fast, each frame (test-only). Sky.frost() (test-only):
+//   the ice now, {extent, target: where it's going (on its own measure), growing, frosted, crystals: the share of the window under
+//   any frost, under its crystals, fresh: the growth front's fresh tip pixels, deepest: the crystal furthest from its nearest edge,
+//   of the window's shorter side, rim: the share of the window's outer 3 px frosted, fingers: in 32 stretches of the edges (between
+//   the corners) how far in the furthest crystal reaches, of the shorter side, sparkles: how many now, pixels: the crystals there
+//   could be} (null till first made); Sky.frost(true): only {extent, target, sparkles}, cheap.
 const Sky = (() => {
   const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
   const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1260,89 +1266,159 @@ const Sky = (() => {
     };
   });
 
-  // ---------- ice: frost crystals branching in from the window's edges, thickest in the corners, growing slowly, melting back ----------
-  // The crystals are grown once for the window's size (each pixel: how far in it is, on the ice's own measure, and its shade); then
-  // shown out to `extent`, drawn to an offscreen canvas only when that has moved half a pixel, and blitted each frame.
-  const ICE = ["#132536", "#1F3D56", "#356A8E", "#69A9CF", "#B6E3F7", "#F2FCFF"].map(rgb);
+  // ---------- ice: frost ferns creeping in from the window's edges, thickest in the corners, further and faster the colder ----------
+  // Grown once for the window's size, like frost on a window pane: from seeds all round the edges (closer in the corners) fronds,
+  // each a wandering stem with fine side branches every pixel or two (shorter toward its tip, so it ends in a feathery point) and
+  // tiny barbs on those, now and then forking into a frond of its own; the stems uneven, some short, some reaching far across the
+  // glass. Each pixel knows when the frost gets there (`extent`, on the ice's own measure: a stem's own pace times it is how far it
+  // has crept) and its shade; about each frond a faint dithered bloom, and along the edges a soft dithered haze, thickest in the
+  // corners. Shown out to `extent` on an offscreen canvas (only the pixels whose look changed redrawn: the ones just reached or
+  // melted, the growth front's fresh white tips), blitted each frame, a few sparkles catching the light now and then. Melting, the
+  // tips go first, the edges last.
+  const ICE = ["#7FB6CF", "#A6DCEE", "#C2EAF7", "#DDF6FC", "#F0FCFF", "#FFFFFF"].map(rgb);
   const ice = effect((e) => {
-    const GROW = 2.2, MELT = 4;        // px a second
-    const GLINT = [mapped(["5"], {5: ICE[5]}), mapped([".4.", "454", ".4."], {4: ICE[4], 5: ICE[5]}),
-                   mapped(["..3..", "..4..", "34543", "..4..", "..3.."], {3: ICE[3], 4: ICE[4], 5: ICE[5]})];
-    let extent = 0, shownAt = -1, layer = null, img = null;
-    let crystals = null, crystalReach = null, crystalShade = null, rim = null, rimReach = null, glints = [];
-    const most = () => Math.min(W, H) * 0.1;   // (a little past the furthest reach, -10 °C)
-    // How far in (art px, along the edges; the corners about 1.8 times that): a thin rim just below 0 °C, 6 % of the window's shorter
-    // side at -5 °C, 9 % at -10 °C and colder (no further: the tables at the window's edges stay readable)
+    // each pixel's look: [colour, alpha]; 0, 1 the haze, 2 the bloom, 3 a barb, 4 a side branch, 5 a stem, 6 a fresh tip
+    const LOOK = [[ICE[0], 95], [ICE[1], 135], [ICE[1], 90], [ICE[2], 125], [ICE[3], 165], [ICE[4], 215], [ICE[5], 255]];
+    const BLOOM = 2, BARB = 3, SIDE = 4, STEM = 5, FRESH = 6;
+    const GLINT = [mapped(["5"], {5: ICE[5]}), mapped([".4.", "454", ".4."], {4: ICE[3], 5: ICE[5]}),
+                   mapped(["...3...", "...4...", "...5...", "3455543", "...5...", "...4...", "...3..."], {3: ICE[2], 4: ICE[3], 5: ICE[5]})];
+    let extent = 0, shownAt = -1, shownGrowing = false, layer = null, img = null, glints = [];
+    // per pixel: when a crystal reaches it (Infinity: never) and its look; when its bloom does; how far in it is for the haze
+    let crystalAt = null, crystalLook = null, bloomAt = null, hazeIn = null;
+    let crystals = null, crystalKeys = null, blooms = null, bloomKeys = null, hazes = null, hazeKeys = null;   // (each sorted by its key)
+    const big = () => Math.max(W, H);
+    // How far the frost creeps (on its own measure; a stem goes its own pace times it, about 0.6 to 1.9): just below 0 °C a fringe,
+    // 3.5 % of the window's longer side; at -5 °C 65 %, reaching well across the glass; to 80 % at -10 °C and colder
     const reachFor = (degrees) => degrees <= 0 ? 0 :
-      Math.min(W, H) * (0.02 + 0.04 * Math.min(1, degrees / 5) + 0.03 * clamp((degrees - 5) / 5, 0, 1));
+      big() * (0.035 + 0.615 * Math.pow(Math.min(1, degrees / 5), 1.2) + 0.15 * clamp((degrees - 5) / 5, 0, 1));
+    // ... and how fast: just below 0 °C slowly (a minute or so to its fringe), at -5 °C over some 3.5 minutes; melting, faster
+    const growRate = (degrees) => big() * (0.0005 + 0.0005 * Math.min(degrees, 10));
+    const MELT = 0.005;                // (of the longer side a second)
+    const HAZE = 0.4, HAZE_MOST = 0.11;   // the haze as deep as 0.4 of `extent`, at most 11 % of the shorter side
+    const hazeDepth = (x) => Math.min(x * HAZE, Math.min(W, H) * HAZE_MOST);
+    const sorted = (list, key) => {   // (a counting sort, to an eighth of a px: cheap; its keys kept to that, the spans below widened)
+      let top = 0;
+      for (const i of list) top = Math.max(top, key[i]);
+      const count = new Int32Array(Math.ceil(top * 8) + 2), order = new Int32Array(list.length);
+      for (const i of list) count[((key[i] * 8) | 0) + 1]++;
+      for (let b = 1; b < count.length; b++) count[b] += count[b - 1];
+      for (const i of list) order[count[(key[i] * 8) | 0]++] = i;
+      return [order, Float32Array.from(order, (i) => ((key[i] * 8) | 0) / 8)];
+    };
+    const firstAt = (keys, v) => {   // the first place in `keys` (sorted) at v or past it
+      let lo = 0, hi = keys.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (keys[mid] < v) lo = mid + 1; else hi = mid; }
+      return lo;
+    };
     function grow() {
-      const reach = new Float32Array(W * H).fill(Infinity), shade = new Uint8Array(W * H), r = seeded(4242), m = Math.min(W, H);
-      const mark = (x, y, far, s) => {
+      const n = W * H, r = seeded(4242), D = big(), m = Math.min(W, H);
+      crystalAt = new Float32Array(n).fill(Infinity); crystalLook = new Uint8Array(n);
+      bloomAt = new Float32Array(n).fill(Infinity); hazeIn = new Float32Array(n);
+      const mark = (x, y, at, look) => {
         x = Math.round(x); y = Math.round(y);
         if (x < 0 || y < 0 || x >= W || y >= H) return;
         const i = y * W + x;
-        if (far < reach[i]) { reach[i] = far; shade[i] = s; }
+        if (at < crystalAt[i]) { crystalAt[i] = at; crystalLook[i] = look; }
       };
-      // A branch from (x, y) heading `angle`, `length` long, starting `from` in (k: its edge's corner stretch); side branches at 60°
-      const branch = (x, y, angle, length, from, k, depth) => {
-        const dx = Math.cos(angle), dy = Math.sin(angle);
-        let next = 3 + r() * 3;
-        for (let s = 0; s <= length; s += 0.6) {
-          mark(x + dx * s, y + dy * s, (from + s) / k, depth ? (length - s < 1.2 ? 2 : 1) : length - s < 1.8 ? 3 : 2);   // (a stem's tip lit)
-          if (depth < 2 && s >= next && length - s > 3) {
-            const side = (length - s) * (0.25 + r() * 0.25) * (depth ? 0.5 : 1), both = r() < 0.4, way = r() < 0.5 ? -1 : 1;
-            branch(x + dx * s, y + dy * s, angle + way * Math.PI / 3, side, from + s, k, depth + 1);
-            if (both) branch(x + dx * s, y + dy * s, angle - way * Math.PI / 3, side * (0.7 + r() * 0.3), from + s, k, depth + 1);
-            next = s + (depth ? 3 : 4) + r() * 5;
+      // A frond from (x, y) heading `angle`, `length` long, reached at `from`, going `pace` px for each of `extent`; side branches
+      // (depth 1) and barbs (2) slower than what they grow from, so a frond's growing tip is a feathery point
+      const frond = (x, y, angle, length, from, pace, depth, forks) => {
+        const step = 0.6, look = depth === 0 ? STEM : depth === 1 ? SIDE : BARB;
+        let a = angle, bend = (r() - 0.5) * 0.03, side = r() < 0.5 ? 1 : -1, dx = Math.cos(a) * step, dy = Math.sin(a) * step;
+        let next = depth === 0 ? 1.5 + r() * 2 : 1 + r() * 1.5;
+        for (let s = 0; s <= length; s += step) {
+          x += dx; y += dy;
+          if (x < -1 || y < -1 || x > W || y > H) return;
+          mark(x, y, from + s / pace, look);
+          if (depth === 0) {   // (a stem wanders a little; its branches straight)
+            bend = (bend + (r() - 0.5) * 0.005) * 0.95; a += bend; dx = Math.cos(a) * step; dy = Math.sin(a) * step;
+          }
+          if (depth < 2 && s >= next && length - s > 1.5) {
+            const left = length - s, at = from + s / pace;
+            if (depth === 0 && forks > 0 && left > 25 && r() < 0.02) {   // a fork: a frond of its own
+              frond(x, y, a + side * (0.45 + r() * 0.35), left * (0.4 + r() * 0.5), at, pace * (0.8 + r() * 0.3), 0, forks - 1);
+            } else {
+              const most = depth === 0 ? 3 + r() * 7 : 1 + r() * 2, size = Math.min(most, left * (depth === 0 ? 0.4 : 0.5));
+              if (size >= 1) frond(x, y, a + side * (0.9 + r() * 0.35), size, at, pace * (depth === 0 ? 0.45 : 0.4), depth + 1, 0);
+            }
+            side = -side;
+            next = s + (depth === 0 ? 1.6 + r() * 1.8 : 1.4 + r() * 1.4);
           }
         }
       };
-      const edges = [[W, (p) => [p, 0], Math.PI / 2], [W, (p) => [p, H - 1], -Math.PI / 2], [H, (p) => [0, p], 0], [H, (p) => [W - 1, p], Math.PI]];
+      const edges = [[W, (p) => [p, 0], Math.PI / 2], [W, (p) => [p, H - 1], -Math.PI / 2],
+                     [H, (p) => [0, p], 0], [H, (p) => [W - 1, p], Math.PI]];
       for (const [span, at, inward] of edges) {
-        for (let p = r() * 5; p < span; p += 5 + r() * 7) {
-          const corner = Math.pow(clamp(1 - Math.min(p, span - p) / (0.4 * m), 0, 1), 1.5), k = 1 + 0.8 * corner;
-          const toward = p < span / 2 ? -1 : 1;   // (in a corner, leaning along the diagonal, away from the other edge)
-          const tilt = (r() - 0.5) * 1.1 + corner * 0.55 * toward * (inward === Math.PI || inward === Math.PI / 2 ? -1 : 1);
+        for (let p = r() * 4; p < span; ) {
+          const corner = Math.pow(clamp(1 - Math.min(p, span - p) / (0.35 * m), 0, 1), 1.5);
+          const toward = (p < span / 2 ? -1 : 1) * (inward === Math.PI || inward === Math.PI / 2 ? -1 : 1);   // (a corner's lean)
+          const tilt = (r() - 0.5) * 1.0 + corner * 0.5 * toward;
+          const u = r(), length = D * (0.04 + 0.95 * u * u * u) * (1 + 0.4 * corner);   // (most short, a few reaching far)
+          const pace = (0.6 + r() * 0.6) * (1 + 0.6 * corner);
           const [x, y] = at(p);
-          branch(x, y, inward + tilt, most() * k * (0.3 + r() * 0.7), r() * 3, k, 0);
+          frond(x, y, inward + tilt, length, r() * 4, pace, 0, 2);
+          p += (16 + r() * 20) * (1 - 0.6 * corner);
         }
       }
       const list = [];
-      for (let i = 0; i < W * H; i++) if (reach[i] < Infinity) list.push(i);
-      crystals = Int32Array.from(list);
-      crystalReach = Float32Array.from(list, (i) => reach[i]);
-      crystalShade = Uint8Array.from(list, (i) => shade[i]);
-      const film = [], filmReach = [], deepest = most();   // the frost film between them: dithered, thicker in the corners
-      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-        const a = Math.min(x, W - 1 - x) + 1, b = Math.min(y, H - 1 - y) + 1, far = 3.5 * a * b / (a + b);
-        if (far < deepest) { film.push(y * W + x); filmReach.push(far); }
+      for (let i = 0; i < n; i++) if (crystalAt[i] < Infinity) list.push(i);
+      // the bloom: a dithered pixel or two about each crystal, a little after it (half of those next to it, a quarter one further)
+      for (const i of list) {
+        const x = i % W, y = (i / W) | 0, at = crystalAt[i] + 1.5;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          const X = x + dx, Y = y + dy, far = Math.abs(dx) + Math.abs(dy);
+          if (!far || X < 0 || Y < 0 || X >= W || Y >= H || far > 3) continue;
+          if (BAYER[(Y & 3) * 4 + (X & 3)] > (far === 1 ? 0.3 : 0.08)) continue;
+          const j = Y * W + X;
+          if (at + far < bloomAt[j]) bloomAt[j] = at + far;
+        }
       }
-      rim = Int32Array.from(film);
-      rimReach = Float32Array.from(filmReach);
+      const bloomed = [], hazed = [], deepest = Math.min(W, H) * HAZE_MOST;
+      for (let i = 0; i < n; i++) {
+        if (bloomAt[i] < Infinity && bloomAt[i] < crystalAt[i]) bloomed.push(i);
+        const x = i % W, y = (i / W) | 0, a = Math.min(x, W - 1 - x) + 1, b = Math.min(y, H - 1 - y) + 1;
+        hazeIn[i] = 2 * a * b / (a + b) * (0.65 + 0.7 * noise(x / 7, y / 7, 4096, 77));   // (thickest in the corners, uneven)
+        if (hazeIn[i] < deepest) hazed.push(i);
+      }
+      [crystals, crystalKeys] = sorted(list, crystalAt);
+      [blooms, bloomKeys] = sorted(bloomed, bloomAt);
+      [hazes, hazeKeys] = sorted(hazed, hazeIn);
       layer = canvasOf(W, H);
       img = layer.getContext("2d").createImageData(W, H);
       shownAt = -1;
     }
-    function show() {   // the ice out to `extent` drawn to its canvas
+    const growing = () => extent < reachFor(e.level) - 0.25;
+    function lookOf(i, grows) {   // pixel i's look at `extent` (-1: clear)
+      const since = extent - crystalAt[i];
+      if (since >= 0) return grows && since < 1.5 ? FRESH : grows && since < 5 ? Math.min(FRESH, crystalLook[i] + 1) : crystalLook[i];
+      if (bloomAt[i] <= extent) return BLOOM;
+      const depth = hazeDepth(extent), x = i % W, y = (i / W) | 0;
+      if (hazeIn[i] >= depth) return -1;
+      return shadeOf(0.62 * Math.pow(1 - hazeIn[i] / depth, 1.3), x, y, 2);
+    }
+    function show() {   // the ice out to `extent` on its canvas: only what has changed since it was shown last
+      const d = img.data, grows = growing();
+      const paint = (i) => {
+        const look = lookOf(i, grows), k = i * 4;
+        if (look < 0) { d[k + 3] = 0; return; }
+        const [c, alpha] = LOOK[look];
+        d[k] = c[0]; d[k + 1] = c[1]; d[k + 2] = c[2]; d[k + 3] = alpha;
+      };
+      const all = shownAt < 0 || grows !== shownGrowing, lo = all ? -1 : Math.min(shownAt, extent), hi = Math.max(shownAt, extent);
+      if (all) d.fill(0);
+      const span = (order, keys, from, to) => {   // (each pixel whose key is from `from` to `to`, an eighth either side)
+        for (let j = firstAt(keys, from - 0.125), end = firstAt(keys, to + 0.125); j < end; j++) paint(order[j]);
+      };
+      span(crystals, crystalKeys, all ? -1 : lo - 5, hi);   // (the front's 5 px: their shades with it)
+      span(blooms, bloomKeys, all ? -1 : lo, hi);
+      if (all || hazeDepth(lo) < hazeDepth(Math.min(W, H))) span(hazes, hazeKeys, -1, hazeDepth(hi));   // (while it deepens)
       shownAt = extent;
-      const d = img.data, growing = extent < reachFor(e.level) - 0.5;
-      d.fill(0);
-      const put = (i, c, a = 255) => { d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2]; d[i * 4 + 3] = a; };
-      for (let j = 0; j < rim.length; j++) {
-        const v = 1 - rimReach[j] / Math.max(extent, 0.01);
-        if (v <= 0) continue;
-        const i = rim[j], s = shadeOf(v * 0.5, i % W, (i / W) | 0, 2);
-        if (s >= 0) put(i, ICE[s]);
-      }
-      for (let j = 0; j < crystals.length; j++) {
-        const far = crystalReach[j];
-        if (far > extent) continue;
-        put(crystals[j], ICE[growing && extent - far < 1.5 ? 4 : extent - far < 3 ? crystalShade[j] + 1 : crystalShade[j]]);
-      }
+      shownGrowing = grows;
       layer.getContext("2d").putImageData(img, 0, 0);
     }
     return {
-      strength: () => 0.4,             // (faint: crystals cross the tiles at the window's edges; the glints brighter)
+      // (faint, and fainter as it spreads: the tiles read over it, even with the glass mostly frosted; the sparkles brighter)
+      strength: () => 0.36 - 0.12 * Math.min(1, extent / (0.6 * big())),
       want(v) { e.level = v; if (STILL) extent = reachFor(v); },
       fade() { e.amount = extent > 0 ? 1 : 0; },
       alive: () => e.level > 0 || extent > 0,
@@ -1350,19 +1426,15 @@ const Sky = (() => {
       resize() { grow(); },
       step(dt) {
         const target = reachFor(e.level);
-        extent = extent < target ? Math.min(target, extent + GROW * dt) : Math.max(target, extent - MELT * dt);
+        extent = extent < target ? Math.min(target, extent + growRate(e.level) * dt) : Math.max(target, extent - big() * MELT * dt);
         e.amount = extent > 0 ? 1 : 0;
         if (Math.abs(extent - shownAt) >= 0.5 || (extent === target && shownAt !== extent)) show();
         for (const gl of glints) gl.age += dt;
         glints = glints.filter((gl) => gl.age < gl.life);
-        if (glints.length < 6 && random() < dt * 4 && extent > 2) {   // a glint on a crystal that's there
-          for (let tries = 0; tries < 6; tries++) {
-            const j = Math.floor(random() * crystals.length);
-            if (crystalReach[j] <= extent && crystalShade[j] >= 2) {
-              glints.push({x: crystals[j] % W, y: (crystals[j] / W) | 0, age: 0, life: between(0.5, 1.1)});
-              break;
-            }
-          }
+        const frozen = firstAt(crystalKeys, extent);   // (the crystals there now: the first `frozen` of them)
+        if (frozen > 20 && glints.length < 2 + Math.min(6, frozen / 3000) && random() < dt * 1.2) {   // a sparkle on one of them
+          const i = crystals[Math.floor(random() * frozen)];
+          if (crystalLook[i] >= SIDE && crystalAt[i] <= extent) glints.push({x: i % W, y: (i / W) | 0, age: 0, life: between(0.6, 1.4)});
         }
       },
       draw(g, alpha) {
@@ -1371,9 +1443,33 @@ const Sky = (() => {
         g.drawImage(layer, 0, 0);
         g.globalAlpha = Math.min(1, alpha * 1.8);
         for (const gl of glints) {
-          const p = gl.age / gl.life, sprite = GLINT[p < 0.25 || p > 0.75 ? 0 : p < 0.4 || p > 0.6 ? 1 : 2];
+          const p = gl.age / gl.life, sprite = GLINT[p < 0.2 || p > 0.8 ? 0 : p < 0.38 || p > 0.62 ? 1 : 2];
           g.drawImage(sprite, gl.x - (sprite.width >> 1), gl.y - (sprite.height >> 1));
         }
+      },
+      probe(quick) {   // (for the tests) the frost as it is now: Sky.frost(); quick, only how far, where to and the sparkles
+        if (!crystalAt) return null;
+        if (quick) return {extent, target: reachFor(e.level), sparkles: glints.length};
+        const grows = growing(), m = Math.min(W, H), BUCKETS = 32, most = new Float32Array(BUCKETS);
+        let frosted = 0, crystal = 0, fresh = 0, deepest = 0, rim = 0, rimFrosted = 0;
+        for (let i = 0; i < W * H; i++) {
+          const x = i % W, y = (i / W) | 0, look = lookOf(i, grows), inward = Math.min(x, y, W - 1 - x, H - 1 - y);
+          if (inward < 3) { rim++; if (look >= 0) rimFrosted++; }
+          if (look < 0) continue;
+          frosted++;
+          if (look < BARB) continue;
+          crystal++;
+          if (look === FRESH) fresh++;
+          deepest = Math.max(deepest, inward);
+          // (along which edge, where: the deepest crystal in each of 32 stretches of the window's edges, between the corners' 15 %)
+          const edge = [y, H - 1 - y, x, W - 1 - x].indexOf(inward), along = edge < 2 ? x / W : y / H;
+          if (along < 0.15 || along > 0.85) continue;
+          const b = edge * 8 + Math.min(7, Math.floor((along - 0.15) / 0.7 * 8));
+          most[b] = Math.max(most[b], inward);
+        }
+        return {extent, target: reachFor(e.level), growing: grows, frosted: frosted / (W * H), crystals: crystal / (W * H), fresh,
+                deepest: deepest / m, rim: rimFrosted / rim, fingers: Array.from(most, (v) => v / m), sparkles: glints.length,
+                pixels: crystals.length};
       },
     };
   });
@@ -1465,7 +1561,8 @@ const Sky = (() => {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) start(); });
 
   return {set, timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
-          state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: !!frame, frames, cost, size: [W, H, P],
+          frost: (quick) => effects.ice.probe(quick),   // (test-only: the frost as it is now)
+          state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: !!frame, frames, cost, clock, size: [W, H, P],
                               particles: Object.fromEntries(ORDER.map((k) => [k, effects[k].count()])), budget: W * H * BUDGET,
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
                               wind: effects.wind.probe(), rain: effects.rain.probe(),
