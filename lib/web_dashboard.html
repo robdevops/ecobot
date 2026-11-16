@@ -1164,7 +1164,7 @@ const Sky = (() => {
   // another close by (SNAP px between their edges or less, a pixel's gap, not only touching): the higher one pulled into the
   // lower quickly, quicker and quicker, merged there (their water adding up: two tiny, a small one) with a tiny jump (a size bigger
   // for POP s). A bead not running (under 1 px/s) and a tiny one close below it the same; a running one takes in any tiny one
-  // beside or above it as it passes. Only large ones (RUN_R and up: about eight tiny ones' water) run (as below); smaller ones stay
+  // beside or above it as it passes. Only large ones (RUN_R and up: about sixteen tiny ones' water) run (as below); smaller ones stay
   // put (snapping as tiny ones do), a small one growing on the fog till it's large enough. Heavy rain (HEAVY_RAIN or more, the humidity high or not): now and
   // then (LANDING a second, RAIN_MOST on the glass at most) a drop sticks, landing at once as a large bead (RAIN_R) with a splash (a
   // ring of tiny droplets bursting out and fading in a few frames, a few of them (STAY) thrown out to varied distances and left there
@@ -1218,7 +1218,7 @@ const Sky = (() => {
     const GONE = 0.03;                 // a bead's water this little: gone (r about 0.3)
     const BORN = [0.5, 0.6];           // a bead condensing: its radius, tiny (a px: two of them together small, r 0.63 or more)
     const TINY = 0.61;                 // a condensed bead this small or less: tiny, never running (see snaps())
-    const RUN_R = 1.1;                 // a bead runs only this big or bigger (about eight tiny ones' water); smaller, it stays put
+    const RUN_R = 1.4;                 // a bead runs only this big or bigger (about sixteen tiny ones' water); smaller, it stays put
                                        // ... (growing, keeping or shrinking as its glass has it, snapping as tiny ones do)
     const SNAP = 1;                    // px between two beads' edges or less (a pixel's gap), one of them tiny: they snap together
     const SNAP_V = [6, 30, 120];       // the one pulled in: px/s to start, at most, and how fast it gets quicker (px/s²): a px or two
