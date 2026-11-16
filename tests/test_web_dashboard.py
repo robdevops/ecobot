@@ -1407,6 +1407,22 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     fingers = sorted(cold["fingers"])
     assert fingers[-1] > 0.35 and fingers[0] < 0.6 * fingers[-1] and fingers[-1] - fingers[len(fingers) // 2] > 0.05, fingers
     assert frost["sparkles"] >= 1, frost["sparkles"]
+    # ... and varied, as real frost on a window: fern fronds, short plumes, needles radiating from a point and small six-armed stars,
+    # a few from a little way in (as if from a scratch); the fronds' lengths and their branches' spacing spread widely, the
+    # branches mostly near 60° to their stems (ice's hexagonal habit), each frond its own; the seeds along the edges uneven, crowded
+    # in some stretches with bare gaps in others; the shading uneven: ridges brighter than side branches, those than the fine
+    # barbs, the shades spread widely and in several tints
+    made, shades = cold["made"], cold["shades"]
+    assert all(made["forms"][k] >= 5 for k in ("fern", "plume", "needles", "star")) and made["scratches"] >= 1, made
+    q = lambda v, p: sorted(v)[int(p * (len(v) - 1))]
+    lengths = [f["length"] for f in made["fronds"]]
+    spacings, angles = [f["spacing"] for f in made["fronds"] if f["spacing"]], [f["angle"] for f in made["fronds"] if f["angle"]]
+    assert len(lengths) >= 40 and q(lengths, 0.9) > 5 * q(lengths, 0.1) and max(lengths) > 60, sorted(lengths)
+    assert len(spacings) >= 30 and q(spacings, 0.9) > 2.5 * q(spacings, 0.1), sorted(spacings)
+    assert 55 <= q(angles, 0.5) <= 65 and q(angles, 0.1) > 45 and q(angles, 0.9) < 75 and q(angles, 0.9) - q(angles, 0.1) > 6, sorted(angles)
+    gaps = [b[1] - a[1] for a, b in zip(made["seeds"], made["seeds"][1:]) if a[0] == b[0]]
+    assert len(gaps) >= 40 and q(gaps, 0.9) > 4 * q(gaps, 0.1) and max(gaps) > 4 * q(gaps, 0.5), sorted(gaps)
+    assert shades["stem"] > shades["side"] + 20 > shades["barb"] + 40 and shades["spread"] > 35 and shades["tints"] >= 3, shades
     # ... faint (the tiles read over it), pale cyan to white
     shown = cold["pixels"]
     assert shown["drawn"] > 0.3 and shown["alpha"] < 0.15 and shown["strong"] < 0.002, shown

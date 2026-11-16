@@ -181,7 +181,12 @@
 //   any frost, under its crystals, fresh: the growth front's fresh tip pixels, deepest: the crystal furthest from its nearest edge,
 //   of the window's shorter side, rim: the share of the window's outer 3 px frosted, fingers: in 32 stretches of the edges (between
 //   the corners) how far in the furthest crystal reaches, of the shorter side, sparkles: how many now, pixels: the crystals there
-//   could be, ink: its canvas's pixels showing anything} (null till first made); Sky.frost(true): only {extent, target, sparkles}, cheap.
+//   could be, ink: its canvas's pixels showing anything, made: what was grown {forms: how many of each ({fern, plume, needles,
+//   star}), fronds: each fern's and plume's stem {kind, length, branches, spacing: its length a branch, angle: its branches' mean
+//   to it, degrees}, seeds: [edge (0 top, 1 bottom, 2 left, 3 right), where along it] each along the edges, scratches: how many
+//   from a little way in}, shades: the crystals shown now (not the fresh tips) {mean, spread: their alphas' standard deviation,
+//   tints: how many tints, stem, side, barb: the mean alpha of each}} (null till first made); Sky.frost(true): only {extent,
+//   target, sparkles}, cheap.
 const Sky = (() => {
   const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
   const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1695,26 +1700,39 @@ const Sky = (() => {
     };
   });
 
-  // ---------- ice: frost ferns creeping in from the window's edges, thickest in the corners, further and faster the colder ----------
-  // Grown once for the window's size, like frost on a window pane: from seeds all round the edges (closer in the corners) fronds,
-  // each a wandering stem with fine side branches every pixel or two (shorter toward its tip, so it ends in a feathery point) and
-  // tiny barbs on those, now and then forking into a frond of its own; the stems uneven, some short, some reaching far across the
-  // glass. Each pixel knows when the frost gets there (`extent`, on the ice's own measure: a stem's own pace times it is how far it
-  // has crept) and its shade; about each frond a faint dithered bloom, and along the edges a soft dithered haze, thickest in the
-  // corners. Shown out to `extent` on an offscreen canvas (only the pixels whose look changed redrawn: the ones just reached or
-  // melted, the growth front's fresh white tips), blitted each frame, a few sparkles catching the light now and then. Melting, the
-  // tips go first, the edges last.
+  // ---------- ice: frost creeping in from the window's edges, thickest in the corners, further and faster the colder ----------
+  // Grown once for the window's size, like frost on a window pane, and never twice alike: seeds along the edges, thick in some
+  // stretches (and in the corners), sparse in others with bare glass between, a few a little way in (as if from a scratch), each
+  // one of several forms: long feathery fern fronds (a wandering stem, side branches every pixel or few, mostly near 60° to it as
+  // ice's hexagonal habit has them, shorter toward the tip, so it ends in a feathery point, with finer barbs on them, now and then
+  // forking into a frond of its own), short dense plumes, needles radiating from a point; and small six-armed stars and plates
+  // scattered on the glass ahead of the front. Each frond its own make: its branches' angle, spacing and length, how dense, how
+  // much it curves, how bold (a bold one's stem two pixels thick), its tint and brightness (some bold and bright, others fine and
+  // faint), its ridge brighter than its branches, those than its barbs, the shade wandering a little along it; where fronds cross,
+  // a touch brighter. Each pixel knows when the frost gets there (`extent`, on the ice's own measure: a stem's own pace times it is
+  // how far it has crept), its shade and its tint; about the bolder crystals a faint dithered bloom, and along the edges a soft
+  // dithered haze, thickest in the corners. Shown out to `extent` on an offscreen canvas (only the pixels whose look changed
+  // redrawn: the ones just reached or melted, the growth front's fresh white tips), blitted each frame, a few sparkles catching
+  // the light now and then. Melting, the tips go first, the edges last.
   const ICE = ["#7FB6CF", "#A6DCEE", "#C2EAF7", "#DDF6FC", "#F0FCFF", "#FFFFFF"].map(rgb);
+  // the crystals' tints, each a ramp from faint to bright (frost catching the light a little differently frond to frond): icy
+  // blue, as the haze, a touch greener, silvery
+  const FROST_TINTS = [["#6FA8C6", "#8EC6DF", "#AEDCEE", "#CDEDF8", "#E8F8FD", "#FFFFFF"], ICE.map((c) => "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("")),
+                       ["#78B6C2", "#98D3D9", "#B9E7EA", "#D5F4F4", "#EDFCFC", "#FFFFFF"],
+                       ["#97B6CA", "#B5CFDF", "#CDE2EE", "#E1EEF6", "#F1F8FB", "#FFFFFF"]].map((ramp) => ramp.map(rgb));
   const ice = effect((e) => {
-    // each pixel's look: [colour, alpha]; 0, 1 the haze, 2 the bloom, 3 a barb, 4 a side branch, 5 a stem, 6 a fresh tip
-    const LOOK = [[ICE[0], 95], [ICE[1], 135], [ICE[1], 90], [ICE[2], 125], [ICE[3], 165], [ICE[4], 215], [ICE[5], 255]];
+    // each pixel's look: 0, 1 the haze, 2 the bloom (each [colour, alpha]); a crystal's: 3 a barb, 4 a side branch (or a star's
+    // arm), 5 a stem (or a needle, a star's heart), 6 a fresh tip; a crystal's colour and alpha its own
+    const LOOK = [[ICE[0], 95], [ICE[1], 135], [ICE[1], 90]];
     const BLOOM = 2, BARB = 3, SIDE = 4, STEM = 5, FRESH = 6;
     const GLINT = [mapped(["5"], {5: ICE[5]}), mapped([".4.", "454", ".4."], {4: ICE[3], 5: ICE[5]}),
                    mapped(["...3...", "...4...", "...5...", "3455543", "...5...", "...4...", "...3..."], {3: ICE[2], 4: ICE[3], 5: ICE[5]})];
     let extent = 0, shownAt = -1, shownGrowing = false, layer = null, img = null, glints = [];
-    // per pixel: when a crystal reaches it (Infinity: never) and its look; when its bloom does; how far in it is for the haze
-    let crystalAt = null, crystalLook = null, bloomAt = null, hazeIn = null;
+    // per pixel: when a crystal reaches it (Infinity: never), its look, alpha and tint; when its bloom does; how far in it is for
+    // the haze
+    let crystalAt = null, crystalLook = null, crystalAlpha = null, crystalTint = null, bloomAt = null, hazeIn = null;
     let crystals = null, crystalKeys = null, blooms = null, bloomKeys = null, hazes = null, hazeKeys = null;   // (each sorted by its key)
+    let made = null;   // (for the tests: what was grown: its forms, its fronds, its seeds)
     const big = () => Math.max(W, H);
     // How far the frost creeps (on its own measure; a stem goes its own pace times it, about 0.6 to 1.9): just below 0 °C a fringe,
     // 3.5 % of the window's longer side; at -5 °C 65 %, reaching well across the glass; to 80 % at -10 °C and colder
@@ -1740,59 +1758,151 @@ const Sky = (() => {
       return lo;
     };
     function grow() {
-      const n = W * H, r = seeded(4242), D = big(), m = Math.min(W, H);
-      crystalAt = new Float32Array(n).fill(Infinity); crystalLook = new Uint8Array(n);
-      bloomAt = new Float32Array(n).fill(Infinity); hazeIn = new Float32Array(n);
-      const mark = (x, y, at, look) => {
+      const n = W * H, r = seeded(4242), D = big(), m = Math.min(W, H), DEG = Math.PI / 180;
+      crystalAt = new Float32Array(n).fill(Infinity); crystalLook = new Uint8Array(n); crystalAlpha = new Uint8Array(n);
+      crystalTint = new Uint8Array(n); bloomAt = new Float32Array(n).fill(Infinity); hazeIn = new Float32Array(n);
+      made = {forms: {fern: 0, plume: 0, needles: 0, star: 0}, fronds: [], seeds: [], scratches: 0};
+      const mark = (x, y, at, look, alpha, tint) => {
         x = Math.round(x); y = Math.round(y);
         if (x < 0 || y < 0 || x >= W || y >= H) return;
         const i = y * W + x;
-        if (at < crystalAt[i]) { crystalAt[i] = at; crystalLook[i] = look; }
+        alpha = clamp(Math.round(alpha), 40, 240);
+        if (at < crystalAt[i]) {
+          if (crystalAt[i] < Infinity) alpha = Math.min(240, Math.max(alpha, crystalAlpha[i]) + 14);   // (where two cross)
+          crystalAt[i] = at; crystalLook[i] = look; crystalAlpha[i] = alpha; crystalTint[i] = tint;
+        } else crystalAlpha[i] = Math.min(240, Math.max(alpha, crystalAlpha[i]) + 14);
       };
+      let ids = 0;
+      // A frond's own make (o): its branches' spacing ([least, most] px along the stem), angle to the stem (about 60°) and how much
+      // that wanders, their length (most, px; shape: how it falls off toward the tip), barbs (the chance of each on a branch, how
+      // long, how far apart), how it curves and wanders, how bright (its stem's alpha; its branches' and barbs' a share of that),
+      // tint, bold (a stem two pixels thick), how deep it branches, its forks, whether its branches alternate side to side or
+      // lean to one side
+      const fern = (bold) => {
+        const sparse = r() < 0.25, lo = sparse ? 2.6 + r() * 2.6 : 1.1 + r() * 1.9, tier = bold ? 1 : r();   // (some spiky and open)
+        return {id: ++ids, spacing: [lo, lo * (1.25 + r() * 1.1)], angle: (54 + r() * 13) * DEG, jit: (6 + r() * 16) * DEG,
+                reach: sparse ? 2 + r() * 3 : 3 + r() * r() * 11, shape: 0.5 + r() * 1.3, barbs: 0.25 + r() * 0.75, barbReach: 1.2 + r() * 2.2,
+                barbGap: [1.1 + r() * 0.6, 2.2 + r() * 1.4], curve: (r() - 0.5) * 0.02, wander: 0.002 + r() * 0.007,
+                alpha: bold ? 205 + r() * 30 : tier < 0.35 ? 115 + r() * 35 : 160 + r() * 45, sideK: 0.7 + r() * 0.2,
+                barbK: 0.5 + r() * 0.2, tint: (r() * FROST_TINTS.length) | 0, bold, depth: 2, forks: 2, forkP: 0.008 + r() * 0.03,
+                slow: 0.38 + r() * 0.14, lean: r() < 0.3 ? (r() < 0.5 ? 0.2 : 0.8) : 0};
+      };
+      const plume = () => {
+        const lo = 0.75 + r() * 0.5;
+        return {...fern(false), spacing: [lo, lo * (1.2 + r() * 0.4)], angle: (50 + r() * 16) * DEG, reach: 4 + r() * 7, shape: 0.3 + r() * 0.5,
+                barbs: 0.7 + r() * 0.3, barbGap: [0.9, 1.5 + r()], curve: (r() - 0.5) * 0.05, wander: 0.006 + r() * 0.012,
+                alpha: 125 + r() * 55, sideK: 0.8 + r() * 0.12, barbK: 0.6 + r() * 0.15, forks: 0};
+      };
+      const needle = (tint) => ({...fern(false), spacing: [5 + r() * 6, 12 + r() * 12], reach: 1 + r() * 2.5, barbs: 0, curve: (r() - 0.5) * 0.004,
+                                 wander: 0.0005, alpha: 150 + r() * 80, depth: 1, forks: 0, tint});
       // A frond from (x, y) heading `angle`, `length` long, reached at `from`, going `pace` px for each of `extent`; side branches
       // (depth 1) and barbs (2) slower than what they grow from, so a frond's growing tip is a feathery point
-      const frond = (x, y, angle, length, from, pace, depth, forks) => {
+      const frond = (x, y, angle, length, from, pace, depth, o, kind) => {
         const step = 0.6, look = depth === 0 ? STEM : depth === 1 ? SIDE : BARB;
-        let a = angle, bend = (r() - 0.5) * 0.03, side = r() < 0.5 ? 1 : -1, dx = Math.cos(a) * step, dy = Math.sin(a) * step;
-        let next = depth === 0 ? 1.5 + r() * 2 : 1 + r() * 1.5;
-        for (let s = 0; s <= length; s += step) {
+        const base = depth === 0 ? o.alpha : o.alpha * (depth === 1 ? o.sideK : o.barbK) * (0.85 + r() * 0.3);
+        let a = angle, bend = depth === 0 ? o.curve : o.curve * 0.4, drift = 0, side = r() < 0.5 ? 1 : -1;
+        let dx = Math.cos(a) * step, dy = Math.sin(a) * step, branches = 0, turned = 0;
+        const gap = () => depth === 0 ? o.spacing[0] + r() * (o.spacing[1] - o.spacing[0]) : o.barbGap[0] + r() * (o.barbGap[1] - o.barbGap[0]);
+        let next = gap() * (0.4 + r() * 0.8), s = 0;
+        for (; s <= length; s += step) {
           x += dx; y += dy;
-          if (x < -1 || y < -1 || x > W || y > H) return;
-          mark(x, y, from + s / pace, look);
-          if (depth === 0) {   // (a stem wanders a little; its branches straight)
-            bend = (bend + (r() - 0.5) * 0.005) * 0.95; a += bend; dx = Math.cos(a) * step; dy = Math.sin(a) * step;
+          if (x < -1 || y < -1 || x > W || y > H) break;
+          const at = from + s / pace, tip = clamp((length - s) / 5, 0.6, 1);   // (finer at the very tip)
+          mark(x, y, at, look, base * tip * (0.8 + 0.4 * noise(s / 7, o.id, 4096, 31)), o.tint);
+          if (o.bold && depth === 0 && length - s > 5) mark(x - dy / step, y + dx / step, at + 0.5, look, base * 0.62, o.tint);
+          if (depth === 0) {   // (a stem wanders a little and curves its own way; its branches nearly straight)
+            drift = (drift + (r() - 0.5) * o.wander) * 0.95; a += bend * step + drift; dx = Math.cos(a) * step; dy = Math.sin(a) * step;
           }
-          if (depth < 2 && s >= next && length - s > 1.5) {
-            const left = length - s, at = from + s / pace;
-            if (depth === 0 && forks > 0 && left > 25 && r() < 0.02) {   // a fork: a frond of its own
-              frond(x, y, a + side * (0.45 + r() * 0.35), left * (0.4 + r() * 0.5), at, pace * (0.8 + r() * 0.3), 0, forks - 1);
-            } else {
-              const most = depth === 0 ? 3 + r() * 7 : 1 + r() * 2, size = Math.min(most, left * (depth === 0 ? 0.4 : 0.5));
-              if (size >= 1) frond(x, y, a + side * (0.9 + r() * 0.35), size, at, pace * (depth === 0 ? 0.45 : 0.4), depth + 1, 0);
+          if (depth < o.depth && s >= next && length - s > 1.5) {
+            const left = length - s, t = s / length;
+            if (depth === 0 && o.forks > 0 && left > 25 && r() < o.forkP) {   // a fork: a frond of its own
+              frond(x, y, a + side * (0.7 + r() * 0.35), left * (0.4 + r() * 0.5), at, pace * (0.8 + r() * 0.3), 0, {...o, id: ++ids, forks: o.forks - 1});
+            } else if (depth === 1 ? r() < o.barbs : true) {
+              const most = depth === 0 ? o.reach * (0.5 + r() * 0.7) * Math.pow(Math.sin(Math.PI * (0.12 + 0.88 * t)), o.shape) : o.barbReach * (0.5 + r() * 0.8);
+              const size = Math.min(most, left * (depth === 0 ? 0.5 : 0.6)), turn = o.angle + (r() - 0.5) * o.jit;
+              if (size >= 1) {
+                frond(x, y, a + side * turn, size, at, pace * o.slow, depth + 1, o);
+                branches++; turned += turn;
+              }
             }
-            side = -side;
-            next = s + (depth === 0 ? 1.6 + r() * 1.8 : 1.4 + r() * 1.4);
+            side = o.lean ? (r() < o.lean ? 1 : -1) : -side;
+            next = s + gap();
           }
         }
+        if (kind) made.fronds.push({kind, length: Math.round(Math.min(s, length) * 10) / 10, branches,
+                                    spacing: branches > 1 ? Math.min(s, length) / branches : null, angle: branches ? turned / branches / DEG : null});
       };
-      const edges = [[W, (p) => [p, 0], Math.PI / 2], [W, (p) => [p, H - 1], -Math.PI / 2],
-                     [H, (p) => [0, p], 0], [H, (p) => [W - 1, p], Math.PI]];
-      for (const [span, at, inward] of edges) {
-        for (let p = r() * 4; p < span; ) {
-          const corner = Math.pow(clamp(1 - Math.min(p, span - p) / (0.35 * m), 0, 1), 1.5);
-          const toward = (p < span / 2 ? -1 : 1) * (inward === Math.PI || inward === Math.PI / 2 ? -1 : 1);   // (a corner's lean)
-          const tilt = (r() - 0.5) * 1.0 + corner * 0.5 * toward;
+      // ... the forms, from a seed at (x, y) heading inward (`inward`, the way into the glass), reached at `from`; `corner`: how
+      // near a corner (0-1), its fronds longer there
+      const planted = (x, y, inward, from, corner, kind) => {
+        const pace = (0.6 + r() * 0.6) * (1 + 0.6 * corner);
+        if (kind === "fern") {
           const u = r(), length = D * (0.04 + 0.95 * u * u * u) * (1 + 0.4 * corner);   // (most short, a few reaching far)
-          const pace = (0.6 + r() * 0.6) * (1 + 0.6 * corner);
-          const [x, y] = at(p);
-          frond(x, y, inward + tilt, length, r() * 4, pace, 0, 2);
-          p += (16 + r() * 20) * (1 - 0.6 * corner);
+          const o = fern(r() < 0.22);
+          o.reach = Math.min(15, o.reach * (0.6 + length / 80));   // (a long frond's branches longer)
+          frond(x, y, inward, length, from, pace, 0, o, "fern");
+        } else if (kind === "plume") {
+          frond(x, y, inward, 7 + r() * r() * 30, from, pace * 0.8, 0, plume(), "plume");
+        } else {   // needles: a few to many from one point, fanned about the way in, each its own length
+          const count = 3 + Math.floor(r() * 6), spread = 0.8 + r() * 1.4, tint = (r() * FROST_TINTS.length) | 0;
+          for (let k = 0; k < count; k++) {
+            const u = r();
+            frond(x, y, inward + (r() - 0.5) * spread, 3 + u * u * 26, from + r() * 2, pace * (0.9 + r() * 0.5), 0, needle(tint));
+          }
         }
+        made.forms[kind]++;
+      };
+      const edges = [[W, (p, d) => [p, d], Math.PI / 2], [W, (p, d) => [p, H - 1 - d], -Math.PI / 2],
+                     [H, (p, d) => [d, p], 0], [H, (p, d) => [W - 1 - d, p], Math.PI]];
+      edges.forEach(([span, at, inward], edge) => {
+        for (let p = r() * 6; p < span; ) {
+          const corner = Math.pow(clamp(1 - Math.min(p, span - p) / (0.35 * m), 0, 1), 1.5);
+          const thick = Math.max(corner, noise(p / 30, edge * 17 + 3, 4096, 57));   // (stretches thick with seeds, others sparse)
+          const toward = (p < span / 2 ? -1 : 1) * (inward === Math.PI || inward === Math.PI / 2 ? -1 : 1);   // (a corner's lean)
+          const tilt = (r() - 0.5) * (0.6 + r() * 0.9) + corner * 0.5 * toward, u = r();
+          const kind = u < 0.45 + 0.35 * corner ? "fern" : u < 0.78 + 0.15 * corner ? "plume" : "needles";
+          const [x, y] = at(p, 0);
+          planted(x, y, inward + tilt, r() * 6, corner, kind);
+          made.seeds.push([edge, Math.round(p * 10) / 10]);
+          p += (5 + r() * 21) * (0.3 + 2.8 * Math.pow(1 - thick, 2.4)) * (1 - 0.4 * corner);
+        }
+      });
+      // ... a few from a little way in, as if from a scratch: any way
+      for (let k = 2 + Math.floor(r() * 4); k > 0; k--) {
+        const [span, at, inward] = edges[Math.floor(r() * 4)], d = 4 + r() * 0.08 * m, [x, y] = at(0.15 * span + r() * 0.7 * span, d);
+        planted(x, y, inward + (r() - 0.5) * 2.6, d / 1.2, 0, r() < 0.6 ? "fern" : "needles");
+        made.scratches++;
+      }
+      // ... and the stars: small six-armed crystals scattered on the glass ahead of the front, more near the edges: plain stars,
+      // stars with twigs on their arms (at 60°) and little plates; each its own size, tilt, brightness and tint
+      for (let k = Math.round(W * H / 1200); k > 0; k--) {
+        const x = 2 + r() * (W - 4), y = 2 + r() * (H - 4), inward = Math.min(x, y, W - 1 - x, H - 1 - y);
+        if (inward > 0.45 * m || r() < inward / (0.45 * m) * 0.7) continue;
+        const from = inward / (1.5 + r() * 0.7) + r() * 3, turn = r() * Math.PI / 3, tint = (r() * FROST_TINTS.length) | 0;
+        const bright = 120 + r() * 100, kind = r(), arm = kind < 0.45 ? 2 + r() * 2 : kind < 0.85 ? 3.5 + r() * 2.5 : 1.2 + r() * 0.8;
+        mark(x, y, from, STEM, bright, tint);
+        for (let j = 0; j < 6; j++) {
+          const a = turn + j * Math.PI / 3, c = Math.cos(a), s = Math.sin(a);
+          for (let d = 0.5; d <= arm; d += 0.5) mark(x + c * d, y + s * d, from + d * 0.8, SIDE, bright * (1 - 0.25 * d / arm), tint);
+          if (kind >= 0.45 && kind < 0.85) for (const w of [-1, 1]) {   // (twigs, at 60° to the arm, two-thirds out)
+            const bx = x + c * arm * 0.6, by = y + s * arm * 0.6, b = a + w * Math.PI / 3;
+            for (let d = 0.5; d <= arm * 0.4; d += 0.5) mark(bx + Math.cos(b) * d, by + Math.sin(b) * d, from + arm * 0.5 + d, BARB, bright * 0.7, tint);
+          }
+          if (kind >= 0.85) {   // (a plate: its hexagon's rim, its middle fainter)
+            const b = a + Math.PI / 3, nx = x + Math.cos(b) * (arm + 1), ny = y + Math.sin(b) * (arm + 1);
+            const ex = x + c * (arm + 1), ey = y + s * (arm + 1);
+            for (let t = 0; t <= 1; t += 0.25) mark(ex + (nx - ex) * t, ey + (ny - ey) * t, from + 1.5, SIDE, bright, tint);
+            mark(x + c * 0.8, y + s * 0.8, from + 0.5, BARB, bright * 0.55, tint);
+          }
+        }
+        made.forms.star++;
       }
       const list = [];
       for (let i = 0; i < n; i++) if (crystalAt[i] < Infinity) list.push(i);
-      // the bloom: a dithered pixel or two about each crystal, a little after it (half of those next to it, a quarter one further)
+      // the bloom: a dithered pixel or two about each bolder crystal, a little after it (half of those next to it, a quarter one
+      // further); none about the faintest
       for (const i of list) {
+        if (crystalAlpha[i] < 120) continue;
         const x = i % W, y = (i / W) | 0, at = crystalAt[i] + 1.5;
         for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
           const X = x + dx, Y = y + dy, far = Math.abs(dx) + Math.abs(dy);
@@ -1819,7 +1929,7 @@ const Sky = (() => {
     const growing = () => extent < reachFor(e.level) - 0.25;
     function lookOf(i, grows) {   // pixel i's look at `extent` (-1: clear)
       const since = extent - crystalAt[i];
-      if (since >= 0) return grows && since < 1.5 ? FRESH : grows && since < 5 ? Math.min(FRESH, crystalLook[i] + 1) : crystalLook[i];
+      if (since >= 0) return grows && since < 1.5 ? FRESH : crystalLook[i];
       if (bloomAt[i] <= extent) return BLOOM;
       const depth = hazeDepth(extent), x = i % W, y = (i / W) | 0;
       if (hazeIn[i] >= depth) return -1;
@@ -1830,6 +1940,12 @@ const Sky = (() => {
       const paint = (i) => {
         const look = lookOf(i, grows), k = i * 4;
         if (look < 0) { d[k + 3] = 0; return; }
+        if (look >= BARB) {   // (a crystal: its own shade and tint, whiter the brighter; just behind the fresh tips, brighter still)
+          const since = extent - crystalAt[i], alpha = look === FRESH ? 255 : grows && since < 5 ? Math.min(250, crystalAlpha[i] + 45) : crystalAlpha[i];
+          const c = FROST_TINTS[crystalTint[i]][clamp(((alpha - 40) / 40) | 0, 0, 5)];
+          d[k] = c[0]; d[k + 1] = c[1]; d[k + 2] = c[2]; d[k + 3] = alpha;
+          return;
+        }
         const [c, alpha] = LOOK[look];
         d[k] = c[0]; d[k + 1] = c[1]; d[k + 2] = c[2]; d[k + 3] = alpha;
       };
@@ -1867,7 +1983,7 @@ const Sky = (() => {
         const frozen = firstAt(crystalKeys, extent);   // (the crystals there now: the first `frozen` of them)
         if (frozen > 20 && glints.length < 2 + Math.min(6, frozen / 3000) && random() < dt * 1.2) {   // a sparkle on one of them
           const i = crystals[Math.floor(random() * frozen)];
-          if (crystalLook[i] >= SIDE && crystalAt[i] <= extent) glints.push({x: i % W, y: (i / W) | 0, age: 0, life: between(0.6, 1.4)});
+          if ((crystalLook[i] >= SIDE || crystalAlpha[i] >= 170) && crystalAt[i] <= extent) glints.push({x: i % W, y: (i / W) | 0, age: 0, life: between(0.6, 1.4)});
         }
       },
       draw(g, alpha) {
@@ -1884,7 +2000,8 @@ const Sky = (() => {
         if (!crystalAt) return null;
         if (quick) return {extent, target: reachFor(e.level), sparkles: glints.length};
         const grows = growing(), m = Math.min(W, H), BUCKETS = 32, most = new Float32Array(BUCKETS);
-        let frosted = 0, crystal = 0, fresh = 0, deepest = 0, rim = 0, rimFrosted = 0;
+        let frosted = 0, crystal = 0, fresh = 0, deepest = 0, rim = 0, rimFrosted = 0, sum = 0, sum2 = 0;
+        const tints = new Set(), byLook = {[BARB]: [0, 0], [SIDE]: [0, 0], [STEM]: [0, 0]};
         for (let i = 0; i < W * H; i++) {
           const x = i % W, y = (i / W) | 0, look = lookOf(i, grows), inward = Math.min(x, y, W - 1 - x, H - 1 - y);
           if (inward < 3) { rim++; if (look >= 0) rimFrosted++; }
@@ -1893,6 +2010,7 @@ const Sky = (() => {
           if (look < BARB) continue;
           crystal++;
           if (look === FRESH) fresh++;
+          else { const al = crystalAlpha[i]; sum += al; sum2 += al * al; tints.add(crystalTint[i]); byLook[look][0] += al; byLook[look][1]++; }
           deepest = Math.max(deepest, inward);
           // (along which edge, where: the deepest crystal in each of 32 stretches of the window's edges, between the corners' 15 %)
           const edge = [y, H - 1 - y, x, W - 1 - x].indexOf(inward), along = edge < 2 ? x / W : y / H;
@@ -1905,7 +2023,10 @@ const Sky = (() => {
         for (let i = 3; i < shown.length; i += 4) if (shown[i]) ink++;
         return {extent, target: reachFor(e.level), growing: grows, frosted: frosted / (W * H), crystals: crystal / (W * H), fresh, ink,
                 deepest: deepest / m, rim: rimFrosted / rim, fingers: Array.from(most, (v) => v / m), sparkles: glints.length,
-                pixels: crystals.length};
+                pixels: crystals.length, made,
+                shades: {mean: sum / Math.max(1, crystal - fresh), spread: Math.sqrt(Math.max(0, sum2 / Math.max(1, crystal - fresh) - (sum / Math.max(1, crystal - fresh)) ** 2)),
+                         tints: tints.size, stem: byLook[STEM][0] / Math.max(1, byLook[STEM][1]), side: byLook[SIDE][0] / Math.max(1, byLook[SIDE][1]),
+                         barb: byLook[BARB][0] / Math.max(1, byLook[BARB][1])}};
       },
     };
   });
