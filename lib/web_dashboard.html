@@ -137,7 +137,8 @@
 // strength together, so several at once are no busier or brighter than one strong one. Nothing runs while no effect is on or fading
 // out; the tab hidden, it waits; with reduced motion, one still, faint frame and no loop.
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
-//   100 %), uv, wind, heat: 0 or 1, ice: how far below 0 °C it is (0: none)}; animate false (the page's "stop animation", or
+//   100 %), uv, wind, heat: 0 or 1, ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
+//   sooner)}; animate false (the page's "stop animation", or
 //   MCP_DASHBOARD_ANIMATIONS off): nothing drawn.
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), clock (the weather's time, s), size: [art width, art height,
 //   P], particles (each effect's
@@ -166,7 +167,9 @@
 //   the fog's canvas showing otherwise than they should where no trail is any more, beads: [{id, kind ("fog": condensed, "rain"),
 //   x, x0 and y0: where it showed, y: its top, cy: its middle, r, vol: its water, w, laidW: its width as it last left its trail,
 //   bottom: its sprite's lowest row + 1, glass: under it, v: px/s now, fading, alpha, drawn: [x, y, w, h, alpha] as drawn last,
-//   age: s shown, behind: its trail there behind it, trail: [x, y] a pixel of it}]})}, for the tests. Sky.timeScale(k): the
+//   age: s shown, behind: its trail there behind it, trail: [x, y] a pixel of it}]}), joined: how many have run into a flood},
+//   flood (a flash flood: its depth, its surface, its frog and its waves, as flood.probe() gives them; the wind's water: its leaves
+//   in it; the rain's under: drops drawn below its surface), for the tests. Sky.timeScale(k): the
 //   weather's time k times as fast, each frame (test-only). Sky.frost() (test-only):
 //   the ice now, {extent, target: where it's going (on its own measure), growing, frosted, crystals: the share of the window under
 //   any frost, under its crystals, fresh: the growth front's fresh tip pixels, deepest: the crystal furthest from its nearest edge,
@@ -182,7 +185,7 @@ const Sky = (() => {
   const BUDGET = 1 / 400;              // the particles of every effect together: this many per art pixel² (480 x 300: 360)
   const CAP = 1.5;                     // ... and their strengths together at most this (one strong effect: about 0.8)
   const STILL_HINT = 0.5;              // reduced motion: the still frame this faint
-  const ORDER = ["smog", "heat", "uv", "rain", "wind", "humidity", "ice"];        // back to front
+  const ORDER = ["smog", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"];   // back to front
   let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
 
   // ---------- tools: seeded randomness, colours, dithering, noise, little canvases ----------
@@ -264,9 +267,9 @@ const Sky = (() => {
     const SLANTS = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.1, 1.3, 1.55], ALONE = SLANTS.indexOf(SLANT);   // the streaks drawn at these
     const FASTEST = 330;               // the near layer's speed: the wind's air full strength on it; slower layers, further off, less
     const LAYERS = [                   // far (short, dim, slow) to near; [tail, body, head] shades
-      {speed: 150, length: [3, 4], alpha: 0.55, shades: [0, 1, 2], share: 0.45},
-      {speed: 230, length: [5, 6], alpha: 0.8, shades: [1, 2, 3], share: 0.33},
-      {speed: 330, length: [8, 10], alpha: 1, shades: [1, 3, 4], share: 0.22, splash: true}];
+      {speed: 150, length: [3, 4], alpha: 0.55, shades: [0, 1, 2], share: 0.45, ripple: 0.3},   // (ripple: a flood's, where it lands,
+      {speed: 230, length: [5, 6], alpha: 0.8, shades: [1, 2, 3], share: 0.33, ripple: 0.6},    // ... px down)
+      {speed: 330, length: [8, 10], alpha: 1, shades: [1, 3, 4], share: 0.22, splash: true, ripple: 1.1}];
     // A streak: its bright head at the bottom left, its tail fading up to the right
     const streak = (n, [tail, body, head], slant) => {
       const w = Math.round((n - 1) * slant) + 1;
@@ -289,7 +292,7 @@ const Sky = (() => {
                     [[-3, -1, 2], [3, -2, 1]],
                     [[-4, 0, 1], [3, -1, 1]]].map((dots) =>
       painted(9, 5, (x, y) => { const d = dots.find(([dx, dy]) => dx + 4 === x && dy + 4 === y); return d && RAIN[d[2]]; }));
-    let drops = [], splashes = [], mist = null;
+    let drops = [], splashes = [], mist = null, under = 0;
     const spawn = (d, anywhere) => {
       const l = LAYERS[d.layer];
       d.sprites = sprites[d.layer][random() < 0.5 ? 0 : 1];
@@ -308,6 +311,7 @@ const Sky = (() => {
       // (for the tests: where the drops are across, on screen in the window's lower half (art px), and their mean speed across, px/s,
       // negative leftward)
       probe: () => ({xs: drops.filter((d) => d.y > H / 2 && d.y < H && d.x >= 0 && d.x < W).map((d) => Math.round(d.x)), width: W,
+                     under,   // (drawn last with its head below a flood's surface)
                      vx: drops.reduce((sum, d) => sum + d.vx, 0) / Math.max(drops.length, 1)}),
       resize() {
         drops = [];
@@ -348,6 +352,11 @@ const Sky = (() => {
             d.x -= fall * sway;
             d.sprite = d.sprites[ALONE];
           }
+          if (d.y + d.sprite.height >= flood.surface(d.x) - 2) {   // (a flood: ending at its surface, in a ripple, the near ones a splash)
+            flood.hit(d.x, LAYERS[d.layer].ripple, !!LAYERS[d.layer].splash);
+            spawn(d, false);
+            continue;
+          }
           if (d.y + d.sprite.height >= d.floor) {
             if (d.floor < H && splashes.length < 40) splashes.push({x: d.x, y: d.floor, age: 0});
             spawn(d, false);
@@ -358,13 +367,17 @@ const Sky = (() => {
       },
       draw(g, alpha) {
         let layer = -1;
+        under = 0;
         for (const d of drops) {
           if (d.layer !== layer) { layer = d.layer; g.globalAlpha = alpha * LAYERS[layer].alpha; }
-          g.drawImage(d.sprite, Math.round(d.x), Math.round(d.y));
+          const y = Math.round(d.y);
+          if (y + d.sprite.height > flood.surface(d.x)) continue;   // (a flood risen over it since it moved: ending there next)
+          if (y + d.sprite.height - 1 > flood.surface(d.x) + 1) under++;
+          g.drawImage(d.sprite, Math.round(d.x), y);
         }
         g.globalAlpha = alpha * 0.8;
         for (const s of splashes) g.drawImage(SPLASH[Math.min(4, Math.floor(s.age / 0.05))], Math.round(s.x) - 4, Math.round(s.y) - 4);
-        if (e.level > 0.6) { g.globalAlpha = alpha * (e.level - 0.6) * 0.9; g.drawImage(mist, 0, H - mist.height); }
+        if (e.level > 0.6) { g.globalAlpha = alpha * (e.level - 0.6) * 0.9; g.drawImage(mist, 0, Math.round(flood.waterline()) - mist.height); }
       },
     };
   });
@@ -404,17 +417,18 @@ const Sky = (() => {
       step() { if (e.level > 0 && (e.level !== built || !textures.length)) build(e.level); },
       draw(g, alpha, t) {
         if (!built) return;
-        LAYERS.forEach((l, i) => {
-          const x = Math.floor((t * l.drift + i * W / 3) % W), y = Math.round(Math.sin(t * 0.07 + i * 2) * 1.5);
+        flood.above(g, () => LAYERS.forEach((l, i) => {
+          const x = Math.floor((t * l.drift + i * W / 3) % W), y = Math.round(Math.sin(t * 0.07 + i * 2) * 1.5 - flood.lift());
           g.globalAlpha = alpha * (0.6 + 0.4 * l.depth);
           g.drawImage(textures[i], x - W, y);
           g.drawImage(textures[i], x, y);
-        });
+        }));
       },
     };
   });
 
   // ---------- heat: a shimmering amber glow rising from the bottom, its ripples riding up and wavering sideways ----------
+  // (In a flood, from its surface: flood.lift(); the smog's banks sit on it too, and neither is drawn below it)
   const HEAT = ["#3A1C0A", "#62300E", "#955015", "#C97B24", "#EFB05A"].map(rgb);
   const heat = effect((e) => {
     const SPAN = 0.34, PERIOD = 13, LINES = 7, RISE = 9, SPARE = 4;   // its height (of the window's); its ripples' spacing (px), how many
@@ -441,14 +455,16 @@ const Sky = (() => {
         });
       },
       draw(g, alpha, t) {
-        const top = H - band, rows = PERIOD * LINES, scroll = Math.floor(t * RISE) % rows;
-        for (let y = 0; y < band; y++) {
-          const k = y / band, dx = Math.round(Math.sin(y * 0.5 - t * 3.1) * (0.5 + 1.8 * k));   // (wavering more lower down)
-          g.globalAlpha = alpha * 0.85;
-          g.drawImage(glow, SPARE - dx, y, W, 1, 0, top + y, W, 1);
-          g.globalAlpha = alpha * Math.pow(k, 1.3) * 0.7;
-          g.drawImage(ripples, SPARE + dx, (y + scroll) % rows, W, 1, 0, top + y, W, 1);
-        }
+        const top = Math.round(H - band - flood.lift()), rows = PERIOD * LINES, scroll = Math.floor(t * RISE) % rows;   // (a flood: from its surface)
+        flood.above(g, () => {
+          for (let y = 0; y < band; y++) {
+            const k = y / band, dx = Math.round(Math.sin(y * 0.5 - t * 3.1) * (0.5 + 1.8 * k));   // (wavering more lower down)
+            g.globalAlpha = alpha * 0.85;
+            g.drawImage(glow, SPARE - dx, y, W, 1, 0, top + y, W, 1);
+            g.globalAlpha = alpha * Math.pow(k, 1.3) * 0.7;
+            g.drawImage(ripples, SPARE + dx, (y + scroll) % rows, W, 1, 0, top + y, W, 1);
+          }
+        });
       },
     };
   });
@@ -602,8 +618,10 @@ const Sky = (() => {
       d.on = 0; d.draw = 1;
     };
     const spawn = (f, anywhere) => {
-      const set = leafSprites()[f.layer];
-      f.frames = set[Math.floor(random() * set.length)];
+      const set = leafSprites()[f.layer], i = Math.floor(random() * set.length);
+      f.frames = set[i];
+      f.flat = set[i | 1];   // (the same leaf turning end over end: its frames squeezed flat, lying on water)
+      f.wet = null;
       f.x = anywhere ? between(-10, W) : between(-30, -8);
       f.y = between(H * 0.05, H * 0.95);
       f.vx = LAYERS[f.layer].speed * calm; f.vy = 0;
@@ -615,6 +633,37 @@ const Sky = (() => {
       f.whirl = 0; f.batter = 0;   // (rain's knocks: spin on top of its own, frames/s; sink on top of its own, px/s; both dying away)
       f.hw = -1;                   // (where it is on screen, for the rain: not yet)
     };
+    // A flood: a leaf touching its surface lies on it ("float"), bobbing with the waves, drifting a little; after FLOATS s it sinks
+    // slowly ("sink"), rocking side to side, to the bottom, and rests there ("rest"); the oldest fading out (then blown in again)
+    // once more than WET_MOST of the wind's leaves are in the water, all of them as it drains. The rain passes them by.
+    const FLOATS = [5, 15], WET_MOST = 0.4, FADE = 1.2;
+    function soak(f) {   // (into the water: a little ripple and splash where it lands)
+      const frame = f.flat[2];
+      f.wet = {state: "float", left: between(...FLOATS), drift: between(-1, 2.5), age: 0, fade: 0, sink: between(2.5, 4.5),
+               rock: between(1.2, 2), phase: between(0, 7), bed: H - 1 - Math.ceil(frame.height / 2) - Math.floor(between(0, 3))};
+      f.hw = -1; f.vx = 0; f.vy = 0;
+      flood.hit(W - f.x, 0.8, true);
+    }
+    const floats = (f) => flood.surface(W - f.x) - Math.floor(f.flat[2].height / 2) + 1;   // (its middle, lying on the surface)
+    function soaking(f, dt, t) {
+      const w = f.wet, frame = f.flat[2];
+      w.age += dt;
+      if (w.fade > 0) {
+        if ((w.fade -= dt) <= 0) spawn(f, false);
+        return;
+      }
+      if (w.state === "float") {   // (on the surface, bobbing; from under it, bobbing up to it)
+        const y = floats(f);
+        f.y = y > f.y ? y : Math.max(y, f.y - 18 * dt);
+        w.up = f.y === y;   // (up at the surface: drawn on it as it is when drawn)
+        f.x = clamp(f.x + w.drift * dt, 4, W - 4);
+        if ((w.left -= dt) <= 0) w.state = "sink";
+      } else if (w.state === "sink") {   // (down slowly, swinging side to side)
+        f.y += w.sink * dt;
+        f.x = clamp(f.x + Math.cos(t * w.rock + w.phase) * 4 * dt, 4, W - 4);
+        if (f.y >= w.bed) { f.y = w.bed; w.state = "rest"; }
+      }
+    }
     const wisp = (w, anywhere) => {
       w.x = anywhere ? between(0, W) : between(-40, -5);
       w.y = between(H * 0.1, H * 0.9);
@@ -636,7 +685,15 @@ const Sky = (() => {
       probe: () => ({vx: -flying.reduce((sum, f) => sum + f.vx, 0) / Math.max(flying.length, 1),
                      against: flying.filter((f) => f.vx < 0).length, hits, push: pushed / Math.max(hits, 1),
                      kick: kicked / Math.max(hits, 1),
-                     whirl: flying.reduce((most, f) => Math.max(most, f.whirl), 0)}),
+                     whirl: flying.reduce((most, f) => Math.max(most, f.whirl), 0),
+                     // (in a flood: its leaves floating, sinking, resting on the bottom, fading out; each floating one's bottom row
+                     // against the surface there (px, + below it); the resting ones' bottom rows against the window's bottom)
+                     water: Object.fromEntries(["float", "sink", "rest"].map((k) => [k, flying.filter((f) => f.wet && !f.wet.fade && f.wet.state === k).length])),
+                     fading: flying.filter((f) => f.wet && f.wet.fade > 0).length,
+                     floating: flying.filter((f) => f.wet && !f.wet.fade && f.wet.state === "float" && f.wet.up)
+                       .map((f) => Math.round(floats(f) - f.flat[2].height / 2) + f.flat[2].height - 1 - Math.round(flood.surface(W - f.x))),
+                     resting: flying.filter((f) => f.wet && f.wet.state === "rest").map((f) => Math.round(f.y - f.flat[2].height / 2) + f.flat[2].height - H),
+                     leaves: flying.length}),
       // A drop of rain layer `layer` going from (x0, y0) to (x1, y1) this frame (its head, on screen, art px), at vx across and vy down
       // (px/s): if it hits a leaf as far off as itself, the leaf knocked (`hard` 0-1: how heavy the rain) and true (the drop ends)
       knock(layer, x0, y0, x1, y1, vx, vy, hard) {
@@ -690,7 +747,19 @@ const Sky = (() => {
           d.y += d.vy * dt;
           if (d.age >= d.life || d.x > W + 2 * d.r) eddy(d, false);
         }
+        // (a flood: leaves in it, the oldest faded out past the most (those resting on the bottom first), one at a time to make room
+        // for more once it's full; all of them as it drains. Full, a leaf touching it skims off it, the wind lifting it again.)
+        const flooded = flood.lift() > 3, wet = flying.filter((f) => f.wet && !f.wet.fade), most = Math.max(3, Math.round(n * WET_MOST));
+        let room = most - wet.length;
+        if (!flooded) for (const f of wet) f.wet.fade = FADE;
+        else {
+          wet.sort((a, b) => (b.wet.state === "rest") - (a.wet.state === "rest") || b.wet.age - a.wet.age);
+          let k = 0;
+          while (wet.length - k > most) wet[k++].wet.fade = FADE;
+          if (room <= 0 && wet[k] && wet[k].wet.state === "rest" && wet[k].wet.age > 20 && !flying.some((f) => f.wet && f.wet.fade)) wet[k].wet.fade = FADE;
+        }
         for (const f of flying) {
+          if (f.wet) { soaking(f, dt, t); continue; }
           const [vx, vy, curl] = airAt(f.x, f.y, LAYERS[f.layer].speed, t), ease = 1 - Math.exp(-dt / f.weight);
           f.vx += (vx - f.vx) * ease;
           f.vy += (vy + f.sink + f.batter - f.vy) * ease;
@@ -701,6 +770,11 @@ const Sky = (() => {
           if (f.x > W + 14 || f.x < -60 || f.y > H + 14 || f.y < -14) { spawn(f, false); continue; }
           const frame = f.frames[Math.floor(f.turn) % f.frames.length];   // (its size as drawn: what a drop can hit, a little inside it)
           f.hw = frame.width * 0.4; f.hh = frame.height * 0.4;
+          const surface = flooded ? flood.surface(W - f.x) : Infinity;
+          if (f.y + f.hh >= surface) {
+            if (room-- > 0) soak(f);
+            else { f.y = surface - f.hh - 1; f.vy = -between(10, 25); }
+          }
         }
         for (const s of splashes) s.age += dt;
         if (splashes.length) splashes = splashes.filter((s) => s.age < 0.16 && s.f.hw >= 0);
@@ -721,7 +795,7 @@ const Sky = (() => {
           const m = w.trail.length / 2;
           for (let i = 0; i < m; i++) {
             const k = i / Math.max(m - 1, 1), lit = Math.sin(Math.PI * k);
-            if (lit < 0.15 || (i & 1)) continue;
+            if (lit < 0.15 || (i & 1) || w.trail[2 * i + 1] >= flood.surface(W - 1 - w.trail[2 * i]) - 1) continue;   // (none in a flood)
             g.globalAlpha = alpha * 0.45 * lit;
             g.fillStyle = WISP[lit > 0.8 ? 2 : lit > 0.45 ? 1 : 0];
             g.fillRect(W - 1 - w.trail[2 * i], w.trail[2 * i + 1], 1, 1);
@@ -729,6 +803,14 @@ const Sky = (() => {
         }
         let layer = -1;
         for (const f of flying) {
+          if (f.wet) {   // (in a flood: lying flat on it, rocking as it sinks, at rest; the water drawn over those under it)
+            const w = f.wet, frame = w.state === "sink" && Math.sin(t * w.rock + w.phase) > 0.55 ? f.flat[1] : f.flat[2];
+            const y = w.state === "float" && w.up ? floats(f) : f.y;
+            g.globalAlpha = alpha * LAYERS[f.layer].alpha * (w.fade > 0 ? w.fade / FADE : 1);
+            g.drawImage(frame, Math.round(W - f.x - frame.width / 2), Math.round(y - frame.height / 2));
+            layer = -1;
+            continue;
+          }
           if (f.layer !== layer) { layer = f.layer; g.globalAlpha = alpha * LAYERS[layer].alpha; }
           const frame = f.frames[Math.floor(f.turn) % f.frames.length];
           const y = f.y + Math.sin(t * 2.3 + f.phase) * 1.2;   // (a flutter)
@@ -856,7 +938,7 @@ const Sky = (() => {
     let dirty = null, painting = 0, level = 0, fresh = 0, quiet = false;
     // (for the tests, as Sky.state() gives them)
     const seen = {merges: 0, merged: [], absorbed: [], left: [], ranOff: 0, shrunk: 0, faded: 0, largest: 0, born: [], first: null,
-                  dried: 0, landed: 0, rainMost: 0, splashes: [],
+                  dried: 0, landed: 0, rainMost: 0, splashes: [], joined: 0,
                   glass: [0, 1, 2].map(() => ({px: 0, s: 0, gained: 0, lost: 0, moves: 0, all: 0, norm: 0})),   // (px, s: r 1.8-3.2)
                   sizes: [0, 1, 2, 3, 4].map(() => [0, 0])};                                     // (on fog: px and s, by size)
     const BANDS = [1, 1.6, 2.4, 3.2];
@@ -1082,7 +1164,16 @@ const Sky = (() => {
         }
         b.x = clamp(b.x, Math.ceil(b.r), W - 1 - Math.ceil(b.r));   // (never part off the window's side)
         if (top >= H) { b.gone = true; seen.ranOff++; seen.left.push(b.id); if (seen.left.length > 300) seen.left.shift(); return; }   // (run off its bottom edge)
+        if (drowned(b)) return;
       }
+    }
+    // A flood: a bead reaching its surface joins it, a small ripple and splash (its trail ending at the waterline); one not yet showing
+    // there, never shows
+    function drowned(b) {
+      if (Math.floor(b.y) + heightOf(b.r) < flood.surface(b.x)) return false;
+      b.gone = true;
+      if (b.state !== "rest") { seen.joined++; flood.hit(b.x, 0.4 + 0.2 * b.r, true); }
+      return true;
     }
     const fadeFor = (r) => 0.5 + 0.12 * r ** 3;   // s for a bead to dry away (its water)
     const dries = (b) => { b.state = "fade"; b.fadeFor = b.left = fadeFor(b.r); b.r1 = b.r; };
@@ -1167,7 +1258,7 @@ const Sky = (() => {
         if (heavy() && rainy < RAIN_MOST && all.length < most && random() < LANDING * dt) land();
         seen.rainMost = Math.max(seen.rainMost, all.filter((b) => b.kind === "rain").length);
         for (const b of all) {
-          if (b.gone) continue;
+          if (b.gone || drowned(b)) continue;
           if (b.shown !== undefined) b.shown += dt;
           if (b.state === "rest") {   // (showing once the fog has formed there, and shows: else not at all)
             const i = at(b.x, b.y + heightOf(b.r) / 2);
@@ -1195,7 +1286,7 @@ const Sky = (() => {
       probe: () => ({height: H, width: W, meander: MEANDER, crisp: CRISP, life: LIFE, trails: trails.length, dried: seen.dried,
                      merges: seen.merges, merged: seen.merged.slice(), absorbed: seen.absorbed.slice(), left: seen.left.slice(),
                      ranOff: seen.ranOff, shrunk: seen.shrunk, faded: seen.faded, largest: seen.largest, born: seen.born.slice(),
-                     first: seen.first, landed: seen.landed, rainMost: seen.rainMost, splashes: seen.splashes.slice(),
+                     first: seen.first, landed: seen.landed, rainMost: seen.rainMost, splashes: seen.splashes.slice(), joined: seen.joined,
                      glass: Object.fromEntries(GLASSES.map((name, g) => [name, {...seen.glass[g]}])), sizes: seen.sizes.map((s) => s.slice()),
                      bands: BANDS,
                      // (the physics as the beads run by it: a bead's mean speed, px/s, of radius r on glass g ("dry", "trail", "fog"),
@@ -1263,6 +1354,219 @@ const Sky = (() => {
           }
         }
       },
+    };
+  });
+
+  // ---------- flood: a flash flood, the window filling from the bottom like a fish tank, its surface choppy ----------
+  // The station's rain rate over 30 mm/h: water rising steadily from the window's bottom to a quarter of the way up (RISE s from
+  // empty), draining back down (DRAIN s) once it's 30 or less. A translucent blue-green body, darker toward the bottom (dithered), a
+  // bright surface line with a faint lighter band under it, no caps or foam; a fainter line just below, slightly out of step: the
+  // tank's far side. The surface: a height a pixel column under a damped wave equation (WAVE px/s), its waves travelling, reflecting
+  // off the window's sides, piling up and slapping higher there; stirred all across by every raindrop landing in it (hit(): a ripple
+  // spreading both ways, and a tiny splash), a drip running into it, a restless chop while it pours, now and then a bigger slosh from
+  // one side; calming slowly as the rain eases. Rain, the drips and the wind's wisps end at it, none ever drawn below; leaves land on
+  // it, float, then sink (the wind's); the smog and the heat's shimmer rise above it (lift()). Rarely (about every FROG_EVERY s on
+  // average, never in its first FROG_FIRST s) a bemused frog on a lily pad floats across, right to left with the wind, bobbing; the
+  // test link's flood (level 2) sends its first one FROG_FIRST s after the water starts rising. Drawn after the drips and the
+  // leaves (the sunken ones show through it, tinted and dimmed), before the ice.
+  const FLOOD = ["#06161A", "#0A2226", "#0F2F31", "#163E3E", "#1F4F4B", "#2A625B"].map(rgb);   // the body, deep to shallow
+  const SURFACE = rgb("#9FDCCB"), BAND = rgb("#4E978A"), FAR = rgb("#3F7F75"), LIT = rgb("#C4F0E2");
+  const FROG = {k: rgb("#16240F"), g: rgb("#3E7232"), l: rgb("#68A04A"), y: rgb("#B9C97A"), w: rgb("#DCE4C8"), p: rgb("#0B0F08"),
+                d: rgb("#2C5426"), P: rgb("#244A22"), Q: rgb("#356B2E"), R: rgb("#57903F"), S: rgb("#7FB65A")};
+  const flood = effect((e) => {
+    const SPAN = 0.25;                 // its full height, of the window's
+    const RISE = 4, DRAIN = 6;         // s to fill from empty, and to drain
+    const WAVE = 34;                   // px/s: the waves' speed along the surface
+    const DAMP = 0.1;                  // 1/s: how fast its waves die away (slowly) ...
+    const SMOOTH = 2;                  // ... and the shortest ripples faster (px²/s): choppy, not jagged
+    const MOST = 6;                    // px: the surface at most this far above or below its level
+    const CALMS = 25;                  // s for the chop to calm once the rain eases (to build up: 3)
+    const SLOSH = [4, 10];             // s between the bigger sloshes
+    const FROG_FIRST = 30, FROG_EVERY = 180, FROG_SPEED = [7, 10];   // s, s, px/s
+    const TOP = 2 * MOST + 2;          // rows drawn above its full level (its crests, higher up the sides)
+    const pack = ([r, g, b], a) => ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;   // (a pixel of ImageData, as a 32-bit word)
+    // The frog on its lily pad, facing out: one eye wide, the other half-lidded, both looking off to the side, a long flat mouth
+    // drooping at one end: unimpressed. Now and then it blinks. (Its pad's middle row sits on the surface.)
+    const FROG_ROWS = [".....kkkk...kkkk.....", "....klwwwk.kllggk....", "....kwwwwkkkkkkkk....", "....kwwwpk.kwwwpk....",
+                       "...kkgkkkgkgkkkgkk...", "..kgggggggggggggggk..", "..kglllllllllllllgk..", "..kgkkkkkkkkkkkkkgk..",
+                       "..kggggggggggggkdgk..", "...kgyyyyyyyyyyygk...", "..kgkyyyyyyyyyyykgk..", ".QkggkQkyyyyyykRkggkQ",
+                       ".PQRRSSRRRQQRRRRSRRQP", "..PPPPPPPPPPPPPPPPPP."];
+    const FROGS = [FROG_ROWS, FROG_ROWS.map((row, y) => (y >= 1 && y <= 3 ? row.replace(/[wp]/g, "g") : row))].map((rows) => mapped(rows, FROG));
+    const FROG_SITS = 12;
+    // A splash where a drop or a drip lands, frame by frame: a bead thrown up, two droplets, falling back ([dx, dy, colour])
+    const SPLASH = [[[0, -1, SURFACE]], [[0, -2, SURFACE], [-1, -1, BAND], [1, -1, BAND]], [[-2, -2, BAND], [2, -2, BAND]],
+                    [[-2, -1, FAR], [3, -1, FAR]]]
+      .map((dots) => painted(7, 4, (x, y) => { const d = dots.find(([dx, dy]) => dx + 3 === x && dy + 3 === y); return d && d[2]; }));
+    let h = null, v = null, a = null, far = null, slap = null, depth = 0, full = 0, rows = 0, layer = null, img = null, px = null, body = null;
+    let chop = 0, nextSlosh = 0, since = 0, test = false, nextFrog = Infinity, frog = null, frogs = 0, splashes = [];
+    let hits = 0, sloshes = 0, drops = 0;
+    const calm = () => Math.min(1, depth / 10);   // (shallow: its waves smaller)
+    const surfaceAt = (x) => {   // the surface's height at x on screen (art px, a float: its row there, rounded, as drawn)
+      if (depth <= 0) return Infinity;
+      const i = clamp(Math.round(x), 0, W - 1);
+      return H - depth - h[i] * slap[i] * calm();
+    };
+    const expo = (mean) => -mean * Math.log(1 - random());
+    // The waves dt s on: a damped wave equation, the window's sides reflecting (in a few steps a frame, each short enough to be
+    // stable; at most 12, so with the tests' time run on fast they lag), its level kept, and never past MOST either way
+    function waves(h, v, a, dt) {
+      const w = h.length, n = Math.min(12, Math.ceil(dt * WAVE / 0.7)), ds = Math.min(dt / Math.max(n, 1), 0.7 / WAVE), c2 = WAVE * WAVE;
+      for (let s = 0; s < n; s++) {
+        for (let i = 0; i < w; i++) {
+          const l = i > 0 ? i - 1 : 0, r = i < w - 1 ? i + 1 : w - 1;
+          a[i] = c2 * (h[l] + h[r] - 2 * h[i]) + SMOOTH * (v[l] + v[r] - 2 * v[i]) - DAMP * v[i];
+        }
+        let mean = 0;
+        for (let i = 0; i < w; i++) { v[i] += a[i] * ds; h[i] += v[i] * ds; mean += h[i]; }
+        mean /= w;
+        for (let i = 0; i < w; i++) {
+          h[i] -= mean;
+          if (h[i] > MOST) { h[i] = MOST; v[i] = Math.min(v[i], 0); } else if (h[i] < -MOST) { h[i] = -MOST; v[i] = Math.max(v[i], 0); }
+        }
+      }
+    }
+    function poke(x, by, width, into = h) {   // the water at x raised (by px: up, + ; down, -), or pushed (into v: px/s), spread
+      const lo = Math.max(0, Math.round(x - 2 * width)), hi = Math.min(W - 1, Math.round(x + 2 * width));   // ... `width` px either side
+      for (let i = lo; i <= hi; i++) into[i] += by * Math.exp(-(((i - x) / width) ** 2));
+    }
+    return {
+      strength: () => 0.6,
+      surface: surfaceAt,
+      waterline: () => (depth > 0 ? H - depth : H),   // (its level, its waves aside: the window's bottom with no water)
+      lift: () => depth,
+      // Whatever `paint` draws on g kept above the surface (clipped to it, a column at a time: crisp)
+      above(g, paint) {
+        if (depth <= 0) return paint();
+        g.save();
+        g.beginPath();
+        g.moveTo(0, 0);
+        g.lineTo(W, 0);
+        for (let x = W - 1; x >= 0; x--) { const y = Math.round(surfaceAt(x)); g.lineTo(x + 1, y); g.lineTo(x, y); }
+        g.closePath();
+        g.clip();
+        paint();
+        g.restore();
+      },
+      // Something landing in it at x: a ripple (the water pushed down `power` px), and a tiny splash if `splash`; false if there's none
+      hit(x, power, splash) {
+        if (depth <= 0 || !h) return false;
+        poke(clamp(x, 0, W - 1), -power, 1.3);
+        hits++;
+        if (splash && splashes.length < 30) splashes.push({x: Math.round(x), age: 0});
+        return true;
+      },
+      fade(dt) { e.amount = depth > 0 || e.level > 0 ? 1 : 0; },
+      alive: () => e.level > 0 || depth > 0,
+      resize() {
+        full = Math.max(8, Math.round(H * SPAN));
+        rows = full + TOP;
+        h = new Float32Array(W); v = new Float32Array(W); a = new Float32Array(W); far = new Float32Array(W);
+        slap = Float32Array.from({length: W}, (_, x) => 1 + 0.8 * Math.exp(-Math.min(x, W - 1 - x) / 3));   // (running up the sides)
+        depth = Math.min(depth, full);
+        layer = canvasOf(W, rows);
+        img = layer.getContext("2d").createImageData(W, rows);
+        px = new Uint32Array(img.data.buffer);
+        // the body, by row up from the window's bottom: darker and denser low down, a little lighter up to the surface; slow swirls
+        // of a shade lighter or darker in it (dithered)
+        body = new Uint32Array(W * rows);
+        for (let r = 0; r < rows; r++) for (let x = 0; x < W; x++) {
+          const k = Math.min(1, r / full), n = noise(x / 22, r / 7, Math.max(1, Math.ceil(W / 22)), 41) - 0.5;
+          const s = Math.max(0, shadeOf(clamp(0.04 + 0.9 * Math.pow(k, 1.3) + 0.3 * n, 0, 1), x, r, FLOOD.length));
+          body[r * W + x] = pack(FLOOD[s], Math.round(190 - 75 * k));
+        }
+        frog = null;
+        splashes = [];
+      },
+      step(dt, t) {
+        if (e.level > 0 && depth <= 0) {   // (rising from empty: its frogs' clock from now)
+          since = 0;
+          test = e.level >= 2;
+          nextFrog = FROG_FIRST + (test ? 0 : expo(FROG_EVERY));
+          nextSlosh = between(1, 3);
+        }
+        since += dt;
+        const target = e.level > 0 ? full : 0;
+        depth = STILL ? target : depth + clamp(target - depth, -dt * full / DRAIN, dt * full / RISE);
+        const pouring = e.level > 0 ? 1 : 0;
+        chop += (pouring - chop) * (1 - Math.exp(-dt / (pouring > chop ? 3 : CALMS)));
+        if (depth <= 0) { h.fill(0); v.fill(0); far.fill(0); frog = null; splashes = []; chop = 0; return; }
+        if (STILL && !drops) {   // (reduced motion: a still surface some seconds in, gently uneven)
+          drops = 1;
+          for (let x = 0; x < W; x++) h[x] = 1.6 * Math.sin(x * 0.09) + 0.9 * Math.sin(x * 0.23 + 1) + (x < 12 || x > W - 13 ? 1.5 : 0);
+          far.set(h);
+        }
+        // the chop: pokes all across while it pours, and now and then a bigger slosh from one side
+        const pokes = chop * 30 * dt * W / 300;
+        for (let n = Math.floor(pokes) + (random() < pokes % 1 ? 1 : 0); n > 0; n--) poke(between(0, W - 1), between(-1.6, 1.6), between(2, 5));
+        if ((nextSlosh -= dt) <= 0) {
+          nextSlosh = between(...SLOSH);
+          if (chop > 0.2) {
+            const left = random() < 0.5;
+            poke(left ? 0 : W - 1, between(50, 90) * chop * (random() < 0.5 ? 1 : -1), W * between(0.05, 0.1), v);
+            sloshes++;
+          }
+        }
+        waves(h, v, a, dt);
+        const lag = 1 - Math.exp(-dt / 0.5);   // (the far side: the near one's waves, half a second behind)
+        for (let i = 0; i < W; i++) far[i] += (h[i] - far[i]) * lag;
+        for (const s of splashes) s.age += dt;
+        splashes = splashes.filter((s) => s.age < 0.2);
+        // the frog: rarely, never at once; drifting across with the wind, bobbing on the waves
+        if (!STILL && !frog && since >= nextFrog && depth >= 0.6 * full) { frog = {x: W + 10, v: between(...FROG_SPEED), blink: between(2, 5)}; frogs++; }
+        if (frog) {
+          frog.x -= frog.v * (wind.amount > 0 ? 1.4 : 1) * dt;
+          if ((frog.blink -= dt) < -0.18) frog.blink = between(2.5, 6);
+          if (frog.x < -12 || depth < 4) { frog = null; nextFrog = since + Math.max(40, expo(FROG_EVERY)); }
+        }
+      },
+      draw(g, alpha, t) {
+        if (depth <= 0) return;
+        const top = H - rows, k = calm();
+        px.fill(0);
+        for (let x = 0; x < W; x++) {
+          const y = Math.round(H - depth - h[x] * slap[x] * k) - top;
+          if (y >= rows) continue;
+          const f = Math.round(H - depth + 3 - far[x] * slap[x] * k * 0.7) - top;
+          for (let r = Math.max(0, y), i = r * W + x; r < rows; r++, i += W) px[i] = body[(rows - 1 - r) * W + x];
+          if (y < 0) continue;
+          const crest = h[x] > 2.5 && h[x] >= h[Math.max(0, x - 1)] && h[x] >= h[Math.min(W - 1, x + 1)];   // (a crest catching the light)
+          px[y * W + x] = pack(crest ? LIT : SURFACE, crest ? 230 : 205);
+          if (y + 1 < rows) px[(y + 1) * W + x] = pack(BAND, 150);
+          if (y + 2 < rows && ((x + y) & 1)) px[(y + 2) * W + x] = pack(BAND, 95);
+          if (f > y + 3 && f < rows) px[f * W + x] = pack(FAR, 120);
+        }
+        layer.getContext("2d").putImageData(img, 0, 0);
+        const o = Math.min(1, alpha * 1.4);
+        g.globalAlpha = o;
+        g.drawImage(layer, 0, top);
+        for (const s of splashes) {
+          const y = Math.round(surfaceAt(s.x));
+          g.drawImage(SPLASH[Math.min(3, Math.floor(s.age / 0.05))], s.x - 3, y - 3);
+        }
+        if (frog) {
+          const x = Math.round(frog.x), pic = FROGS[frog.blink < 0 ? 1 : 0];
+          let y = 0;
+          for (let dx = -6; dx <= 6; dx += 3) y += surfaceAt(x + dx);
+          frog.y = Math.round(y / 5);
+          g.globalAlpha = Math.min(1, o * 1.1);
+          g.drawImage(pic, x - (pic.width >> 1), frog.y - FROG_SITS);
+        }
+      },
+      // (for the tests: its depth now and full, art px; the surface's row in each column; how long since it began rising, s; the
+      // next frog due, s after that; the frog crossing now {x, y} or null, and how many so far; ripples from what's landed in it,
+      // sloshes, the chop now (0-1), the splashes showing)
+      // ... and the waves alone, as they run: a still surface `width` px wide pushed down `by` px at x, then each `every` s for `s`
+      // s, its heights: [[h, ...], ...])
+      probe: () => ({depth, full, height: H, width: W, since, nextFrog, test, frogs, chop, hits, sloshes, splashes: splashes.length,
+                     wave: WAVE, damp: DAMP,
+                     waves: (width, x, by, s, every) => {
+                       const h = new Float32Array(width), v = new Float32Array(width), a = new Float32Array(width), out = [];
+                       for (let i = 0; i < width; i++) h[i] = -by * Math.exp(-(((i - x) / 1.3) ** 2));
+                       for (let t = 0; t <= s + 1e-9; t += every) { out.push(Array.from(h)); waves(h, v, a, every); }
+                       return out;
+                     },
+                     frog: frog && {x: frog.x, y: frog.y || null},
+                     surface: depth > 0 ? Array.from({length: W}, (_, x) => surfaceAt(x)) : []}),
     };
   });
 
@@ -1474,7 +1778,7 @@ const Sky = (() => {
     };
   });
 
-  const effects = {smog, heat, uv, rain, wind, humidity, ice};
+  const effects = {smog, heat, uv, rain, wind, humidity, flood, ice};
 
   // ---------- the loop ----------
   let animate = true, frame = 0, last = 0, clock = 0, frames = 0, cost = 0, scale = 1;
@@ -1566,7 +1870,7 @@ const Sky = (() => {
                               particles: Object.fromEntries(ORDER.map((k) => [k, effects[k].count()])), budget: W * H * BUDGET,
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
                               wind: effects.wind.probe(), rain: effects.rain.probe(),
-                              humidity: effects.humidity.probe()})};
+                              humidity: effects.humidity.probe(), flood: effects.flood.probe()})};
 })();
 </script>
 <script>
@@ -2558,10 +2862,11 @@ const Sky = (() => {
   // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animation" (bottom left) ----------
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
   // stronger to 8 mm/h), smog from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
-  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust), heat at 35 °C, ice below 0 °C (how far below). A tile
+  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust), heat at 35 °C, ice below 0 °C (how far below), a flash flood
+  // over 30 mm/h (the rain's too). A tile
   // with no reading now calls for nothing.
   const CALLED_BY = {rain: "Rain", smog: "US AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
-                     ice: "Temperature"};
+                     ice: "Temperature", flood: "Rain"};
   const BANDS = [50, 100, 150, 200, 300];   // the US AQI's bands' upper edges, Good to Very Unhealthy (the tile's own bounds if it has them)
   let real = {}, simulated = {}, conditions = {};
   function conditionsOf(data) {
@@ -2578,7 +2883,7 @@ const Sky = (() => {
             uv: uvi !== null && uvi >= 11 ? 1 : 0,
             humidity: humidity !== null && humidity >= 90 ? Math.max(0.05, Math.min(1, (humidity - 90) / 10)) : 0,
             wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 1 : 0,
-            ice: temperature !== null && temperature < 0 ? -temperature : 0};
+            ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: rate > 30 ? 1 : 0};
   }
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop animation" shows)
   const animated = () => ALLOWED && prefs.animations !== false;
@@ -2644,7 +2949,8 @@ const Sky = (() => {
 <!-- TEMPORARY: effect test links. A "test:" row at the bottom left (in the corner, before "stop animation", which also ends them all: its
      "ecobot-fx-stop"), one link per effect, simulating its condition (the effect and its
      tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
-     ?fx=smog3,wind,ice, ?fx=all (rain light, rain2 heavy (now and then a drop sticking to the glass), smog1-smog5, uv, humidity light (91 %), humidity2 heavy (100 %), wind, heat, ice; ?fx=all every one, no link of its own). To remove: delete
+     ?fx=smog3,wind,ice, ?fx=all (rain light, rain2 heavy (now and then a drop sticking to the glass), rain3 heavy with a flash
+     flood (its first frog 30 s after the water starts rising; off: it drains), smog1-smog5, uv, humidity light (91 %), humidity2 heavy (100 %), wind, heat, ice; ?fx=all every one, no link of its own). To remove: delete
      from here to "END TEMPORARY" (this style, the row and its script). The page's own listener for "ecobot-fx" then simply hears nothing. -->
 <style>
   #fxtest { flex: 0 1 auto; min-width: 140px; overflow-x: auto; overflow-y: hidden;   /* (the corner's width set to fit by the page) */
@@ -2666,8 +2972,9 @@ const Sky = (() => {
 "use strict";
 (() => {
   // Each effect's simulated levels, one click a step (back to off after the last): as the page's conditions (rain: its strength;
-  // smog: its band; ice: degrees below 0 °C)
-  const STEPS = {rain: [0.35, 1], smog: [1, 2, 3, 4, 5], uv: [1], humidity: [0.1, 1], wind: [1], heat: [1], ice: [5]};
+  // smog: its band; ice: degrees below 0 °C). Rain's third, heavy with a flash flood (FLOOD: the flood's level too, the test's own)
+  const STEPS = {rain: [0.35, 1, 1], smog: [1, 2, 3, 4, 5], uv: [1], humidity: [0.1, 1], wind: [1], heat: [1], ice: [5]};
+  const FLOOD = 2;
   const ALL = {rain: 1, smog: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5};   // (?fx=all)
   const OLD = {leaves: "wind", radiation: "uv", drips: "humidity"};   // (their earlier names, in links saved before)
   const row = document.getElementById("fxtest");
@@ -2682,8 +2989,8 @@ const Sky = (() => {
   }
   new ResizeObserver(fit).observe(row);
   let on = {};   // {effect: its step's index}
-  const name = (k) => k === "rain" || k === "humidity" ? [k, `${k}2`][on[k]] : k === "smog" ? `smog${on[k] + 1}` : k;   // (in the URL)
-  const label = (k) => k in on ? (k === "rain" || k === "humidity" ? `${k}: ${["light", "heavy"][on[k]]}` : k === "smog" ? `smog ${on[k] + 1}` : k) : k;
+  const name = (k) => k === "rain" || k === "humidity" ? [k, `${k}2`, `${k}3`][on[k]] : k === "smog" ? `smog${on[k] + 1}` : k;   // (in the URL)
+  const label = (k) => k in on ? (k === "rain" || k === "humidity" ? `${k}: ${["light", "heavy", "flood"][on[k]]}` : k === "smog" ? `smog ${on[k] + 1}` : k) : k;
   // On a phone (the row above the strip, across the window): no "test:", and a link's step as a small raised figure (rain¹ light, rain²
   // heavy, smog³), so every link and "stop animation" fit, with room for one more
   const PHONE = matchMedia("(max-width: 480px)"), RAISED = "¹²³⁴⁵";
@@ -2695,6 +3002,7 @@ const Sky = (() => {
       if (word === "all") Object.entries(ALL).forEach(([k, v]) => { on[k] = STEPS[k].indexOf(v); });
       else if (word === "rain" || word === "rain1") on.rain = 0;
       else if (word === "rain2" || word === "heavyrain") on.rain = 1;
+      else if (word === "rain3" || word === "flood") on.rain = 2;
       else if (word === "humidity1") on.humidity = 0;
       else if (word === "humidity2") on.humidity = 1;
       else if (/^smog[1-5]?$/.test(word)) on.smog = Number(word.slice(4) || 1) - 1;
@@ -2704,6 +3012,7 @@ const Sky = (() => {
   }
   function apply() {
     const detail = Object.fromEntries(Object.entries(on).map(([k, i]) => [k, STEPS[k][i]]));
+    if (on.rain === 2) detail.flood = FLOOD;
     document.dispatchEvent(new CustomEvent("ecobot-fx", {detail}));
     const url = new URL(location.href), words = Object.keys(on).map(name);
     if (words.length) url.searchParams.set("fx", words.join(",")); else url.searchParams.delete("fx");

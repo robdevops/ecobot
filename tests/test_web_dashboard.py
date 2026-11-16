@@ -9,7 +9,8 @@ fill the window and the gallery through the others (keys, mouse drags, a trackpa
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
 one canvas behind the tiles, "stop animation", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place
 with no particles, the wind's leaves within the budget and blowing right to left, rain in the wind bunched into curtains, its drops
-knocking the leaves they hit, humidity's fog and its beads, heavy rain's drops sticking to the glass), the data's rain rate, and the
+knocking the leaves they hit, humidity's fog and its beads, heavy rain's drops sticking to the glass, a flash flood filling the window
+a quarter up, its waves, its leaves and its frog), the data's rain rate, and the
 dials' thin red hands at the past hour's highest (the wind's gust, rain rate, sun, UV: read from the file and the reading now, moving
 smoothly, at once with reduced motion) with the wind's Gust column.
 With ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
@@ -1054,7 +1055,8 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
     just_right_of_the_row(corner)
     assert corner["tag"] and corner["fits"], corner
     assert corner["row"]["left"] == 0 and corner["motion"]["bottom"] == corner["window"][1] == corner["strip"]["bottom"], corner
-    assert links["smog"] == [1, 2, 3, 4, 5, 0] and links["rain"] == [0.35, 1, 0]
+    assert links["smog"] == [1, 2, 3, 4, 5, 0]
+    assert links["rain"] == [[0.35, 0], [1, 0], [1, 2], [0, 0]]   # (light, heavy, heavy with a flash flood (the test's own), off)
     melting = links["melting"]
     assert melting["grown"] > 2 and 0 < melting["reach"] < melting["grown"] and "ice" not in melting["effects"] and melting["running"], melting
     # "stop animation" with only test links on: every one off, ?fx= gone, the animations stopped (kept), the link gone with them
@@ -1076,6 +1078,7 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
         assert phone["buttons"] == ["rain²", "smog³", "uv", "humidity²", "wind", "heat", "ice"], phone["buttons"]
         assert phone["labels"] == ["rain: heavy", "smog 3", "uv", "humidity: heavy", "wind", "heat", "ice"], phone["labels"]
         assert phone["motion"]["bottom"] == pytest.approx(phone["strip"]["top"], abs=0.5), phone              # (above the strip)
+        assert phone["flood"] == ["rain³", "rain: flood"], phone["flood"]                                   # (rain's third step)
     # MCP_DASHBOARD_ANIMATIONS off (the page as served then, data-animations="off"), every effect asked for (?fx=all) and called for by
     # the readings, the animations not stopped in the browser: no loop, nothing drawn, no link, no test links; the tiles and the
     # strip as ever
@@ -1119,7 +1122,7 @@ async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alon
 async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_reduced_motion(server, station):
     got = await weather(server, "opened")
     # ?fx= when the page opens
-    assert got["param"]["levels"] == {"smog": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "ice": 5}
+    assert got["param"]["levels"] == {"smog": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "flood": 0, "ice": 5}
     assert sorted(got["param"]["framed"]) == ["Temperature", "US AQI", "Wind"] and got["param"]["errors"] == []
     # (the effects' earlier names, in links saved before, still work: as wind, uv, humidity)
     assert got["paramOld"]["effects"] == ["uv", "wind", "humidity"] and got["paramOld"]["errors"] == [], got["paramOld"]
@@ -1351,3 +1354,67 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     beading = still["humidity"]
     assert beading["fog"] == 1 and beading["beads"] >= 20 and beading["ran"] >= 2 and beading["trails"] > 30 and beading["stray"] == 0, beading
     assert not beading["running"] and beading["frames"] == 0, beading
+    # ... and a flash flood's: full at once, still, no frog
+    flood = still["flood"]
+    assert flood["depth"] == flood["full"] > 0 and flood["frog"] is None and not flood["running"] and flood["frames"] == 0, flood
+
+
+@needs_browser
+async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_what_falls_ending_at_it_and_a_frog_now_and_then(server, station):
+    got = await weather(server, "flood")
+    # the station's rain rate over 30 mm/h, not at 30: a flash flood (the rain's too); the Rain tile its tile
+    assert got["at30"]["effects"] == ["rain"] and got["at30"]["levels"]["flood"] == 0, got["at30"]
+    assert got["over"]["effects"] == ["rain", "flood"] and got["over"]["levels"]["flood"] == 1 and got["over"]["framed"] == ["Rain"], got["over"]
+    # the water rising from the bottom at a steady pace to a quarter of the window's height, in 3 to 5 s
+    rising = got["rising"]
+    assert rising["full"] == round(rising["height"] / 4), rising["full"]
+    speeds = rising["speeds"]
+    assert len(speeds) >= 20 and max(speeds) - min(speeds) < 0.05 * max(speeds), speeds
+    assert 3 <= rising["full"] / speeds[0] <= 5, speeds[0]
+    # its surface choppy all across (many crests, about one every 8 px; each third of the width as choppy), higher at the sides
+    # (waves piling up and slapping there: about 1.6 times the middle's), the chop up while it pours; the rain ending at it (none
+    # drawn below it), every drop a ripple there, the near ones a splash
+    assert rising["crests"] > rising["width"] / 20 and rising["middle"] > 0.8, rising
+    assert min(rising["thirds"]) > max(0.15, 0.5 * max(rising["thirds"])), rising["thirds"]   # (about 0.3 to 0.5 px each)
+    assert rising["edges"] > 1.25 * rising["middle"], rising
+    assert rising["chop"] > 0.8 and rising["under"] == 0 and rising["hits"] > 200 and rising["splashes"] > 3, rising
+    # (no frog for a real flood's first 30 s; after that only now and then, at random)
+    assert not rising["test"] and rising["nextFrog"] >= 30 and rising["frog"] is None, rising
+    # its waves (a damped wave equation): one push travelling both ways at their speed, reflecting off a side, dying away slowly
+    waves = rising["waves"]
+    there = lambda xs, x: any(abs(t - x) <= 5 for t in xs)
+    assert there(waves["at1"], 60 - waves["speed"]) and there(waves["at1"], 60 + waves["speed"]), waves
+    assert there(waves["at3"], 3 * waves["speed"] - 60) and there(waves["at3"], 60 + 3 * waves["speed"]), waves   # (back from the left)
+    assert -1.5 < waves["deepest3"] < -0.25, waves
+    # the rate 30 again: draining in about 6 s, the chop calming slowly (still much of it half way down); then gone, the rain on
+    draining = got["draining"]
+    assert 5 <= draining["took"] <= 7 and draining["surface"] == 0 and got["drained"]["effects"] == ["rain"], (draining, got["drained"])
+    assert draining["half"]["chop"] > 0.7 * draining["chop0"], draining
+    # the test link (every other effect on): rain light, heavy, then heavy with a flash flood (rain3; the test's own flood level, 2),
+    # then off: draining
+    linked = got["linked"]
+    assert [(s["url"].split(",")[-1], s["label"], s["rain"], s["flood"]) for s in linked["steps"]] == [
+        ("rain", "rain: light", 0.35, 0), ("rain2", "rain: heavy", 1, 0), ("rain3", "rain: flood", 1, 2)], linked["steps"]
+    assert linked["off"]["url"] == "?fx=smog3,uv,humidity2,wind,heat,ice" and linked["off"]["flood"] == linked["off"]["rain"] == 0, linked["off"]
+    # ... its first frog some 30 s after the water started rising, not before; one, crossing right to left, on the waves (bobbing)
+    assert 29 <= linked["before"] < 30 <= linked["first"] <= 31 and linked["frogs"] == 1, linked
+    track = linked["track"]
+    assert len(track) > 15 and track[0][0] > 0.9 * got["rising"]["width"] and track[-1][0] < 0.1 * got["rising"]["width"], track[::10]
+    assert all(b[0] <= a[0] for a, b in zip(track, track[1:])), track   # (two looks a frame drawn, at times)
+    assert all(abs(y - surface) <= 1 for _, y, surface in track) and max(t[1] for t in track) - min(t[1] for t in track) >= 2, track
+    # ... the leaves: landing on it and lying there (on the surface line, or a px into it), then sinking and resting on the bottom; no
+    # more than 40 % of them in the water, within the budget; fading out as it drains
+    leaves = linked["leaves"]
+    assert leaves["float"] >= 2 and leaves["sink"] >= 1 and leaves["rest"] >= 1, leaves
+    assert linked["gaps"] and set(linked["gaps"]) <= {0, 1}, sorted(set(linked["gaps"]))
+    assert linked["resting"] and all(-4 <= r <= 0 for r in linked["resting"]), sorted(set(linked["resting"]))
+    assert 0 < linked["most"] <= 0.42 and linked["over"] <= 3, linked
+    # ... the drips: joining it as they reach it, none below it
+    assert linked["joined"] >= 1 and linked["under"] == 0, linked
+    drained = linked["drained"]
+    assert 5 <= drained["took"] <= 7 and drained["wet"] == 0 and drained["frog"] is None, drained
+    assert drained["effects"] == ["smog", "heat", "uv", "wind", "humidity", "ice"], drained
+    # every effect on with the flood (full): as cheap as ever (about 3 ms), within the budget
+    costly = linked["costly"]
+    assert costly["effects"] == ["smog", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"] and costly["cost"] < 8, costly
+    assert sum(costly["particles"].values()) <= costly["budget"] + 3, costly

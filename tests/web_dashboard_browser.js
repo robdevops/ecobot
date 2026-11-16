@@ -29,6 +29,7 @@
 //   node web_dashboard_browser.js URL --weather PART: the page at 1024x768, its data altered on the way, a part of the weather behind the
 //     tiles (WEATHER): each reading at, and just short of, the mark that calls up its effect; the canvas behind the tiles and the tiles'
 //     red frames; "stop animation"; the temporary test links; every effect at once (?fx=all: the frame time, the light, the particles);
+//     a flash flood;
 //     ?fx= as the page opens, a phone, reduced motion; prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --fill CASES: for each case {name: [width, height, hidden titles]}, the page with those hidden;
 //     prints {name: {rects, columns, scroll}}.
@@ -1246,7 +1247,8 @@ async function animationsOff(browser, url, out) {
 // and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn),
 // "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
 // and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, humidity's beads running down the
-// glass alone and in the wind, a phone's strip, reduced motion)
+// glass alone and in the wind, a phone's strip, reduced motion), "flood" (a flash flood: its mark, its rise, its surface and waves,
+// what ends at it, the test link's rain3, its leaves and its frog, its cost)
 const WEATHER = {
   async marks(browser, url, out) {
     const { context, page, errors, reads } = await weatherPage(browser, url);
@@ -1394,6 +1396,8 @@ const WEATHER = {
       const p = await weatherPage(browser, url, { query: "?fx=all", context: { viewport: { width, height }, hasTouch: true, isMobile: true } });
       const seen = { ...await cornerSeen(p.page), labels: await p.page.evaluate(() => [...document.querySelectorAll("#fxtest button")]
         .map((b) => b.getAttribute("aria-label"))), errors: p.errors };
+      await p.page.locator("#fxtest button[data-fx='rain']").click();   // (rain's third step, the flood: its link's figure and label)
+      seen.flood = await p.page.evaluate(() => { const b = document.querySelector("#fxtest button[data-fx='rain']"); return [b.textContent, b.getAttribute("aria-label")]; });
       await p.context.close();
       return seen;
     }));
@@ -1412,8 +1416,8 @@ const WEATHER = {
     out.links.corner = await cornerSeen(page);
     out.links.smog = [];
     for (let i = 0; i < 6; i++) { await fx("smog"); out.links.smog.push((await weatherSeen(page)).levels.smog); }
-    out.links.rain = [];
-    for (let i = 0; i < 3; i++) { await fx("rain"); out.links.rain.push((await weatherSeen(page)).levels.rain); }
+    out.links.rain = [];   // (rain: light, heavy, heavy with a flash flood (the test's own flood level), off: [rain, flood])
+    for (let i = 0; i < 4; i++) { await fx("rain"); const { levels } = await weatherSeen(page); out.links.rain.push([levels.rain, levels.flood]); }
     await page.waitForFunction(() => Sky.state().iceReach > 2.5);   // (the ice grown in a little)
     const grown = await page.evaluate(() => Sky.state().iceReach);
     await fx("ice");   // (off: it melts back, the loop running on until it's gone)
@@ -1468,6 +1472,141 @@ const WEATHER = {
     out.light.smog5 = await strongest;
     out.errors = errors;
     await context.close();
+  },
+  // A flash flood: the station's rain rate over 30 mm/h (not at 30): the water rising steadily to a quarter of the window's height,
+  // its surface choppy all across and higher at the sides, the rain ending at it in ripples and splashes; its waves alone (one
+  // push: travelling both ways, reflecting off a side); draining at 30, its chop calming slowly. Beside it, every other effect on
+  // and the test link's rain3 (rain light, heavy, flood, off): the frame time and the particles with the flood full; then on a fast
+  // clock, leaves landing on it, floating, sinking and resting on the bottom; the drips joining it; its first frog 30 s after the
+  // water starts rising, drifting right to left on the waves; off, draining.
+  async flood(browser, url, out) {
+    const linked = (async () => {
+      const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=smog3,uv,humidity2,wind,heat,ice" });
+      const seen = { steps: [] };
+      const rain = () => page.evaluate(() => {
+        const b = document.querySelector("#fxtest button[data-fx='rain']");
+        return { url: location.search, label: b.getAttribute("aria-label"), text: b.textContent, rain: Sky.state().levels.rain,
+                 flood: Sky.state().levels.flood };
+      });
+      const click = () => page.locator("#fxtest button[data-fx='rain']").click();
+      for (let i = 0; i < 3; i++) { await click(); seen.steps.push(await rain()); }
+      await page.evaluate(() => Sky.timeScale(4));   // (full, then 80 frames as ever: their cost, averaged, the page's start long past)
+      await page.waitForFunction(() => Sky.state().flood.depth >= Sky.state().flood.full);
+      await page.evaluate(() => Sky.timeScale(1));
+      const frames = await page.evaluate(() => Sky.state().frames);
+      await page.waitForFunction((n) => Sky.state().frames >= n, frames + 80);
+      seen.costly = await page.evaluate(() => ({ cost: Sky.state().cost, effects: Sky.state().effects, particles: Sky.state().particles,
+                                                 budget: Sky.state().budget }));
+      await page.evaluate(() => Sky.timeScale(10));
+      // every frame, until the first frog has crossed (or 100 s of the page's time): the frog, the leaves in the water, the drips
+      Object.assign(seen, await page.evaluate(() => new Promise((resolve) => {
+        const r = { before: null, first: null, track: [], leaves: { float: 0, sink: 0, rest: 0 }, gaps: [], resting: [], wet: 0, most: 0,
+                    over: 0, under: 0, joined: 0, frogs: 0, fullAt: null };
+        const step = () => {
+          const s = Sky.state(), f = s.flood, w = s.wind;
+          if (f.depth >= f.full && r.fullAt === null) r.fullAt = f.since;
+          if (!f.frog && !r.first) r.before = f.since;
+          if (f.frog) {
+            if (!r.first) r.first = f.since;
+            const x = Math.round(f.frog.x), under = [-6, -3, 0, 3, 6].map((dx) => f.surface[Math.min(Math.max(x + dx, 0), f.width - 1)]);
+            if (f.frog.y !== null && x >= 0 && x < f.width) r.track.push([f.frog.x, f.frog.y, under.reduce((a, b) => a + b) / 5]);   // (the surface under its pad)
+          }
+          for (const k of ["float", "sink", "rest"]) r.leaves[k] = Math.max(r.leaves[k], w.water[k]);
+          r.gaps.push(...w.floating);
+          r.resting.push(...w.resting);
+          const wet = w.water.float + w.water.sink + w.water.rest;
+          r.wet = Math.max(r.wet, wet);
+          r.most = Math.max(r.most, wet / w.leaves);
+          const used = Object.values(s.particles).reduce((a, b) => a + b, 0);
+          r.over = Math.max(r.over, used - s.budget);
+          if (f.depth >= f.full) {   // (the drips: none below the surface, beyond a crest's rise in a frame on this fast clock)
+            r.under = Math.max(r.under, s.humidity.beads.filter((b) => b.bottom > f.surface[Math.round(Math.min(Math.max(b.x, 0), f.width - 1))] + 3).length);
+          }
+          r.joined = s.humidity.joined;
+          r.frogs = f.frogs;
+          if ((r.first && !f.frog) || f.since > 100) { r.gaps = r.gaps.slice(-400); r.resting = r.resting.slice(-400); return resolve(r); }
+          requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      })));
+      // off: draining, the leaves in it fading out with it (the weather's time four times as fast)
+      await page.evaluate(() => Sky.timeScale(4));
+      await click();
+      seen.off = await rain();
+      seen.drained = await page.evaluate(() => new Promise((resolve) => {
+        const c0 = Sky.state().clock, depth0 = Sky.state().flood.depth;
+        const step = () => {
+          const s = Sky.state();
+          if (s.flood.depth > 0) return requestAnimationFrame(step);
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            const w = Sky.state().wind;
+            resolve({ took: s.clock - c0, depth0, effects: Sky.state().effects, wet: w.water.float + w.water.sink + w.water.rest,
+                      fading: w.fading, frog: Sky.state().flood.frog });
+          }));
+        };
+        requestAnimationFrame(step);
+      }));
+      seen.errors = errors;
+      await context.close();
+      return seen;
+    })();
+    // the station's rain rate: 30 mm/h, then just over it (the weather's time four times as fast)
+    const { context, page, errors, reads } = await weatherPage(browser, url);
+    await reads({ rain_rate: 30 });
+    out.at30 = await weatherSeen(page);
+    await page.evaluate(() => Sky.timeScale(4));
+    await reads({ rain_rate: 30.1 });
+    out.over = await weatherSeen(page);
+    out.rising = await page.evaluate(() => new Promise((resolve) => {
+      const rise = [], looks = [], splashes = [];
+      let under = 0, hits = null;
+      const mean = (a) => a.reduce((s, v) => s + v, 0) / Math.max(a.length, 1);
+      const step = () => {
+        const s = Sky.state(), f = s.flood;
+        under = Math.max(under, s.rain.under);
+        if (f.depth < f.full) { if (!rise.length || s.clock > rise.at(-1)[0]) rise.push([s.clock, f.depth]); return requestAnimationFrame(step); }
+        if (hits === null) hits = f.hits;
+        splashes.push(f.splashes);
+        if (looks.length < 90) { looks.push(f.surface.map((y) => y - (f.height - f.depth))); return requestAnimationFrame(step); }
+        // the rise: its speed (art px/s of the weather's time) frame to frame, while it rose (not its first frame or its last)
+        const speeds = rise.slice(1).map(([c, d], i) => (d - rise[i][1]) / (c - rise[i][0])).slice(1, -1);
+        const W = looks[0].length, rms = (xs) => Math.sqrt(mean(looks.flatMap((l) => xs.map((x) => l[x] ** 2))));
+        const middle = Array.from({ length: Math.floor(W / 3) }, (_, i) => i + Math.floor(W / 3));
+        // (the waves alone: a still surface 200 px wide pushed down 4 px at 60, each 0.1 s for 3 s: its troughs' places at 1 s and
+        // 3 s, and its deepest then)
+        const alone = f.waves(200, 60, 4, 3, 0.1), troughs = (h) => h.flatMap((v, x) => (x > 0 && x < h.length - 1 && v < -0.15 &&
+          v <= h[x - 1] && v <= h[x + 1] ? [x] : []));
+        resolve({ full: f.full, height: f.height, width: W, speeds, test: f.test, nextFrog: f.nextFrog, frog: f.frog, under, hits: f.hits - hits,
+                  splashes: Math.max(...splashes), chop: f.chop,
+                  crests: mean(looks.map((l) => l.filter((v, x) => x > 0 && x < W - 1 && v < l[x - 1] && v <= l[x + 1]).length)),
+                  middle: rms(middle), edges: rms([0, 1, 2, W - 3, W - 2, W - 1]),
+                  // (the chop in each third of the width: the surface against its own mean over 9 px about each column, so the
+                  // longer sloshes passing don't count)
+                  thirds: [0, 1, 2].map((k) => Math.sqrt(mean(looks.flatMap((l) => Array.from({ length: Math.floor(W / 3) - 8 }, (_, i) => {
+                    const x = i + 4 + k * Math.floor(W / 3);
+                    return (l[x] - mean(l.slice(x - 4, x + 5))) ** 2;
+                  }))))),
+                  waves: { speed: f.wave, at1: troughs(alone[10]), at3: troughs(alone[30]), deepest3: Math.min(...alone[30]) } });
+      };
+      requestAnimationFrame(step);
+    }));
+    await reads({ rain_rate: 30 });
+    out.draining = await page.evaluate(() => new Promise((resolve) => {
+      const f0 = Sky.state().flood, c0 = Sky.state().clock, effects = Sky.state().effects;
+      let half = null;
+      const step = () => {
+        const s = Sky.state(), f = s.flood;
+        if (half === null && f.depth <= f.full / 2) half = { chop: f.chop, after: s.clock - c0 };
+        if (f.depth > 0) return requestAnimationFrame(step);
+        resolve({ effects, took: s.clock - c0, chop0: f0.chop, half, surface: f.surface.length });
+      };
+      requestAnimationFrame(step);
+    }));
+    out.drained = await weatherSeen(page);
+    out.errors = errors;
+    await context.close();
+    out.linked = await linked;
+    out.errors.push(...out.linked.errors);
   },
   async opened(browser, url, out) {
     const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
@@ -1660,6 +1799,11 @@ const WEATHER = {
       const h = Sky.state().humidity;
       return { beads: h.beads.length, ran: h.beads.filter((b) => b.y - b.y0 >= 10).length + h.ranOff, trails: h.trails, stray: h.stray(),
                fog: h.fog().cover, running: Sky.state().running, frames: Sky.state().frames };
+    });
+    out.still.flood = await still.page.evaluate(() => {   // (a flood: full at once, still; no frog)
+      document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1, flood: 1 } }));
+      const f = Sky.state().flood;
+      return { depth: f.depth, full: f.full, frog: f.frog, running: Sky.state().running, frames: Sky.state().frames };
     });
     out.still.errors = still.errors;
     await still.context.close();
