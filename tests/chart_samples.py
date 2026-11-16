@@ -119,7 +119,7 @@ def two_scales() -> Chart:
 def _station() -> tuple[dict, dict, date]:
     """A live reading and the days' figures for a cool October evening, with no indoor sensor: (live, values, today)."""
     live = {"outdoor": {"temperature": {"value": "12.9"}, "humidity": {"value": "70"}, "dew_point": {"value": "7.6"}, "feels_like": {"value": "12.9"}},
-            "pressure": {"relative": {"value": "1026.0"}}, "wind": {"wind_speed": {"value": "5"}},
+            "pressure": {"relative": {"value": "1026.0"}}, "wind": {"wind_speed": {"value": "5"}, "wind_direction": {"value": "99"}},
             "rainfall": {"daily": {"value": "0.2"}, "rain_rate": {"value": "0"}}, "solar_and_uvi": {"solar": {"value": "0"}, "uvi": {"value": "0"}}}
     today = date(2026, 10, 27)
     days = {d: i for i, d in enumerate((today - timedelta(days=n) for n in range(300)))}

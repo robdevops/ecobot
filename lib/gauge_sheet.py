@@ -6,6 +6,9 @@ and PM10's, as AQI). An air gauge's band is named from its own reading now, and 
 higher of the two, its band saying "(PM10)" when PM10 sets it: the dials agree with their needles (the service's `aqi_us` and `band`
 are of the lower of the last two readings, for its ratings).
 
+The wind's direction is a compass (its needle where the wind comes from, its band the compass point current gives with it), with no
+table: highs and lows of a direction mean nothing. It is left out only when current has no entry for it, and dimmed with no reading.
+
 A tile is left out when current has neither a reading nor a figure for it (no indoor sensor, no air sensor, a reading the air sensor
 never sent), and drawn dimmed at its floor when it has figures but no reading now. The web page's dashboard is every gauge's; the
 Status picture its three (STATUS).
@@ -16,6 +19,7 @@ import math
 from .airgradient.dashboard import AIR_GAUGES, AirGauge, air_gauges_of
 from .airgradient.metrics import us_aqi
 from .ecowitt.dashboard import GAUGES, PERIODS, STATUS, Gauge, gauges_of, scale
+from .ecowitt.direction import point
 from .gauge_look import CELL_H, CELL_W
 from .specs import Dashboard, Tile
 
@@ -74,6 +78,10 @@ def _tile(gauge: Gauge | AirGauge, entry: dict) -> Tile | None:
     """A gauge's tile from its reading's entry in current's result (the US AQI's: _aqi_entry); None when it has neither a reading nor a
     figure."""
     now = _value(entry)
+    if isinstance(gauge, Gauge) and gauge.kind == "compass":   # (no figures: there whenever current has the reading, dimmed with none now)
+        compass = (entry.get("compass") or point(now)) if now is not None else None   # (the service's compass point, as it gives it)
+        return Tile(gauge.title, gauge.unit, now, gauge.kind, gauge.low, gauge.high, gauge.colours, (), {}, gauge.ticks, gauge.decimals,
+                    band=compass)
     rows = {row: _row(gauge, entry.get(key) or {}) for row, key in ROWS.items()}
     if now is None and all(f is None for figures in rows.values() for f in figures):
         return None

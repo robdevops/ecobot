@@ -4,6 +4,7 @@ top left 0, 0. Nothing here imports Pillow."""
 
 from dataclasses import asdict
 
+from .ecowitt.direction import POINTS   # (the compass's 16 points, for the page to name a direction as its needle moves)
 from .specs import Tile
 
 BG = "#14191D"
@@ -20,6 +21,9 @@ BAR_WIDTH, BAR_GAP = 13, 12   # the scale's coloured blocks beside a thermometer
 RING_OUTER, BAND_WIDTH = 130, 22   # a dial's coloured scale: its outer radius and how wide it is (the outline is at 138)
 LABEL_RADIUS = 84           # where a dial's numbers sit, just inside its scale
 BAND_Y, BAND_SIZE = 157, 19  # a dial's band name ("Moderate"): how far below its centre (under its outline), and its size
+COMPASS = (240, 188, 130)   # the wind's direction, a compass: its centre and outline's radius (above the table's place: it has none)
+COMPASS_LABEL_Y = 346       # ... its reading ("99° E") under it
+COMPASS_BAND = "#262E34"    # ... its ring, under the ticks and the letters N, E, S and W
 WATER = "#4FB3F6"           # the rain beaker's water
 NEEDLE = "#3E86C0"
 CELL_W, CELL_H, MARGIN = 480, 575, 20
@@ -63,7 +67,8 @@ def look() -> dict:
     return {"bg": BG, "ink": INK, "soft": SOFT, "chip": CHIP, "chips": CHIPS, "marks": MARKS, "fill": FILL, "water": WATER,
             "needle": NEEDLE, "tube_half": TUBE_HALF, "bulb_radius": BULB_RADIUS, "mercury_gap": MERCURY_GAP, "bar_width": BAR_WIDTH,
             "bar_gap": BAR_GAP, "ring_outer": RING_OUTER, "band_width": BAND_WIDTH, "label_radius": LABEL_RADIUS,
-            "band_y": BAND_Y, "band_size": BAND_SIZE, "cell": [CELL_W, CELL_H],
+            "band_y": BAND_Y, "band_size": BAND_SIZE, "cell": [CELL_W, CELL_H], "compass": list(COMPASS),
+            "compass_label_y": COMPASS_LABEL_Y, "compass_band": COMPASS_BAND, "points": list(POINTS),
             "fade": FADE, "sweep": SWEEP, "start": START, "rows": list(ROWS)}
 
 

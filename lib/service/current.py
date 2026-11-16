@@ -285,10 +285,11 @@ def station_entry(live: dict, now: dict, reading: Reading, field: str) -> dict:
 # ---------- the gauges' figures (context) ----------
 def gauge_of(name: str) -> Gauge | None:
     """The gauge a reading's context comes from: the one whose live reading it is (rainfall.rain: the Rain gauge's "daily"); the gusts
-    get the Wind gauge's highest, with the live gust counted in."""
+    get the Wind gauge's highest, with the live gust counted in. None for a reading with no gauge, or whose gauge has no figures (the
+    wind's direction: its compass)."""
     if name == "wind.wind_gust":
         return replace(next(g for g in GAUGES if g.live == ("wind", "wind_speed")), live=("wind", "wind_gust"), counted=None)
-    return next((g for g in GAUGES if g.reading == name), None)
+    return next((g for g in GAUGES if g.reading == name and g.highest), None)
 
 
 def _times_on(r: Reader, mac: str, names: list[str], days: list[date]) -> dict[str, dict[date, tuple[int, str]]]:

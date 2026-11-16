@@ -1736,7 +1736,51 @@ const Sky = (() => {
     return at;
   }
 
-  const DRAW = {thermometer, dial, beaker};
+  // The wind's direction, a compass (as the Status picture's: lib/gauges.py _compass): a ring with fine ticks and the points named, the
+  // needle's head (the needle's colour) where the wind comes from, in degrees clockwise from north, its tail grey; the reading under it
+  // ("99° E": the compass point the service gives, or, while the needle swings to it, the point it is passing). No table.
+  const pointOf = (deg) => L.points[Math.floor(((deg % 360) + 360 + 11.25) / 22.5) % 16];   // (direction.py sector())
+  function compass(svg, tile, ink) {
+    const [cx, cy, r] = L.compass, outer = r - 8, inner = outer - L.band_width, mid = (outer + inner) / 2, reach = inner - 8;
+    el("circle", {cx, cy, r, fill: "none", stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
+    el("circle", {cx, cy, r: mid, fill: "none", stroke: ink(L.compass_band), "stroke-width": L.band_width}, svg);
+    let ticks = "";   // (fine ticks every 10 degrees, longer every 30; none where a point is named: one path)
+    for (let b = 0; b < 360; b += 10) {
+      if (Math.min(b % 45, 45 - b % 45) <= 5 || b % 30 === 0) continue;
+      const [x0, y0] = polar(cx, cy, outer - 4, 90 - b), [x1, y1] = polar(cx, cy, outer - 7, 90 - b);
+      ticks += `M${x0.toFixed(1)},${y0.toFixed(1)}L${x1.toFixed(1)},${y1.toFixed(1)}`;
+    }
+    el("path", {d: ticks, stroke: ink(L.soft), "stroke-width": lw(1.5), "stroke-linecap": "round"}, svg);
+    ticks = "";
+    for (let b = 30; b < 360; b += 30) {
+      if (Math.min(b % 45, 45 - b % 45) <= 5) continue;
+      const [x0, y0] = polar(cx, cy, outer - 4, 90 - b), [x1, y1] = polar(cx, cy, outer - 12, 90 - b);
+      ticks += `M${x0.toFixed(1)},${y0.toFixed(1)}L${x1.toFixed(1)},${y1.toFixed(1)}`;
+    }
+    el("path", {d: ticks, stroke: ink(L.soft), "stroke-width": lw(2.2), "stroke-linecap": "round"}, svg);
+    L.points.filter((_, i) => i % 2 === 0).forEach((name, i) => {   // N, NE, E...: the cardinal points large, the others small
+      const [x, y] = polar(cx, cy, mid, 90 - 45 * i);
+      text(svg, x, y, name, i % 2 ? 13 : 20, ink(i % 2 ? L.soft : L.ink), "middle", i % 2 ? "normal" : "bold").classList.add("point");
+    });
+    const needle = el("g", {class: "needle"}, svg);   // (drawn pointing north, turned to the reading)
+    el("polygon", {points: `${cx},${cy + reach} ${cx - 9},${cy} ${cx + 9},${cy}`, fill: ink(L.soft), "fill-opacity": 0.45}, needle);
+    el("polygon", {points: `${cx},${cy - reach} ${cx - 9},${cy} ${cx + 9},${cy}`, fill: ink(L.needle), class: "head"}, needle);
+    el("circle", {cx, cy, r: 11, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(2.5)}, svg);
+    const label = text(svg, cx, L.compass_label_y, "", 40, ink(L.ink));
+    label.classList.add("reading");
+    let now = tile;   // (the tile as last given: its reading and the service's compass point)
+    const at = (v) => {
+      const deg = ((v % 360) + 360) % 360;
+      needle.setAttribute("transform", `rotate(${deg.toFixed(2)} ${cx} ${cy})`);
+      const whole = Math.round(deg) % 360, still = now.value !== null && Math.abs(deg - now.value) < 1e-6;
+      label.textContent = now.value === null ? "–" : `${whole}° ${still && now.band ? now.band : pointOf(deg)}`;
+    };
+    at.band = (t) => { now = t; };
+    at.toward = (from, to) => from + ((((to - from) % 360) + 540) % 360) - 180;   // (the short way round: 350° to 10° through north)
+    return at;
+  }
+
+  const DRAW = {thermometer, dial, beaker, compass};
 
   // ---------- HTML: the title and the table, placed in the tile's own pixels (480 x 575), sized with it (by its width: cqw) ----------
   function place(parent, x, y, w, h, size, words, cls, style) {
@@ -1751,6 +1795,7 @@ const Sky = (() => {
   }
 
   function table(box, tile, ink) {
+    if (!tile.columns.length) return () => {};   // (a gauge with no figures: the compass)
     const figures = {};
     const left = 60, top = 378, w = 128, h = 38, gap = 4;
     const xs = tile.columns.map((_, i) => left + (w + gap) * (i + 1));
@@ -1773,7 +1818,8 @@ const Sky = (() => {
   // What can't change in place (a tile so different is drawn again): its kind and scale. A reading coming or going doesn't: the tile
   // brightens or dims (its opacity, eased) and the gauge moves from or to its floor.
   const shape = (t) => JSON.stringify([t.kind, t.title, t.unit, t.low, t.high, t.colours, t.ticks, t.bounds, t.columns, t.decimals]);
-  const label = (t) => t.value === null ? `${t.title}: no reading` : `${t.title} ${figure(t.value, t.decimals)} ${t.unit}`.trim();
+  const label = (t) => t.value === null ? `${t.title}: no reading` : t.kind === "compass" ? `${t.title} ${figure(t.value, t.decimals)}° ${t.band || ""}`.trim()
+                                                                     : `${t.title} ${figure(t.value, t.decimals)} ${t.unit}`.trim();
   let clips = 0;
 
   function drawTile(tile) {
@@ -1789,7 +1835,8 @@ const Sky = (() => {
     box.appendChild(svg);
     const at = DRAW[tile.kind](svg, tile, ink, `clip${clips++}`);
     place(box, 0, 38 - 25, L.cell[0], 50, 38, tile.title, "title", {color: ink(L.ink)});
-    place(box, 0, TABLE_TOP, L.cell[0], L.cell[1] - TABLE_TOP, 0, "", "tablearea");   // (the table's area, under its chips: its cursor)
+    if (tile.columns.length) place(box, 0, TABLE_TOP, L.cell[0], L.cell[1] - TABLE_TOP, 0, "", "tablearea");   // (the table's area, under
+                                                                                                              // its chips: its cursor)
     const fill = table(box, tile, ink);
     const grip = document.createElement("div");   // (the whole gauge drags; the grip is the cue)
     grip.className = "grip";
@@ -1804,21 +1851,22 @@ const Sky = (() => {
       box.classList.toggle("faded", !!t.faded);
       fill(t);
       if (at.band) at.band(t);
-      move(drawnTile.value, shown(t), MOVE_MS);
+      move(drawnTile.value, aim(drawnTile.value, shown(t)), MOVE_MS);
     };
+    const aim = (from, to) => at.toward ? at.toward(from, to) : to;   // (a compass's needle: the short way round)
     const move = (from, to, ms) => {
       drawnTile.value = to;
       cancelAnimationFrame(drawnTile.frame);
       if (from === to || STILL || document.hidden) return at(to);
       const start = performance.now();
       const step = (now) => {
-        const p = Math.min((now - start) / ms, 1), eased = 1 - (1 - p) ** 3;
+        const p = Math.min(Math.max((now - start) / ms, 0), 1), eased = 1 - (1 - p) ** 3;   // (a frame stamped before the start: 0)
         at(p < 1 ? from + (to - from) * eased : to);
         if (p < 1) drawnTile.frame = requestAnimationFrame(step);
       };
       drawnTile.frame = requestAnimationFrame(step);
     };
-    if (opening) move(tile.floor, shown(tile), RISE_MS);   // the page just opened: every gauge rises from its floor to its reading
+    if (opening) move(tile.floor, aim(tile.floor, shown(tile)), RISE_MS);   // the page just opened: every gauge rises from its floor to its reading
     else at(shown(tile));
     return drawnTile;
   }
@@ -2057,7 +2105,8 @@ const Sky = (() => {
   function draggable(e, box) {
     if (e.target.closest(".close, .title, .unit, .chip, .figure")) return false;
     const r = box.getBoundingClientRect();
-    if ((e.clientY - r.top) / r.width * L.cell[0] >= TABLE_TOP) return false;   // (the table, gaps between its chips too)
+    if ((e.clientY - r.top) / r.width * L.cell[0] >= TABLE_TOP && box.querySelector(".tablearea")) return false;   // (the table, gaps
+                                                                                                                  // between its chips too)
     const reading = box.querySelector("svg text.reading");
     const t = reading && reading.getBoundingClientRect();
     return !(t && t.width && e.clientX >= t.left - 2 && e.clientX <= t.right + 2 && e.clientY >= t.top - 2 && e.clientY <= t.bottom + 2);

@@ -63,8 +63,8 @@ RAIN_RATES = ("rainfall", "rainfall_piezo")   # where the station's rain rate is
 
 
 def readings_of(live: dict | None) -> tuple | None:
-    """What the gauges show now of a live reading ({group: {field: {value, ...}}}): each gauge's reading, the gust counted into the
-    wind's Max, and the piezo gauge's rain rate (the page's rain behind the tiles). None without one."""
+    """What the gauges show now of a live reading ({group: {field: {value, ...}}}): each gauge's reading (the wind's direction's, its
+    compass, too), the gust counted into the wind's Max, and the piezo gauge's rain rate (the page's rain behind the tiles). None without one."""
     if not live:
         return None
     return (*(live_value(live, where) for g in GAUGES for where in (g.live, *([g.counted] if g.counted else []))),

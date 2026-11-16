@@ -1,12 +1,15 @@
 // The dashboard page in Playwright's Chromium, for tests/test_web_dashboard.py.
 //   node web_dashboard_browser.js URL SHOTS SIZES: the page at each size ({name: [width, height]}): a screenshot of each (SHOTS/dashboard-
 //     NAME.png, device scale factor 2) and, on stdout, {name: {tiles, rects, columns, scroll, scrollWidth, scrollHeight, status, glass, errors,
-//     zoomed}}; then the first tile zoomed (Enter): its look, and a screenshot (SHOTS/dashboard-NAME-zoomed.png).
+//     zoomed, compass, compassZoomed}}; then the first tile zoomed (Enter): its look, and a screenshot (SHOTS/dashboard-NAME-zoomed.png);
+//     then the compass (the wind's direction) zoomed: its look (compassLook), and a screenshot (SHOTS/dashboard-NAME-compass.png).
 //   node web_dashboard_browser.js URL --live: the page open at 800x600; prints {label} (the first tile's), waits for a line on stdin
-//     (the test has changed the reading), then prints {label, same_page, errors} once the tile shows it, or after 15 s.
+//     (the test has changed the reading, and the wind's direction), then prints {label, same_page, compass (its look, and its needle's
+//     turn every frame since), errors} once the tile shows it, or after 15 s.
 //   node web_dashboard_browser.js URL --arrive TITLE: the page open at 1024x768; prints the tile's state ({label, faded, opacity, shown,
 //     needle}), waits for a line on stdin (the test has given it a reading, or taken it away), then, once its label changes, samples it
-//     every frame for 1.5 s and prints {before, after, frames: [{opacity, number}], same_tile, errors}.
+//     every frame for 1.5 s and prints {before, after, frames: [{opacity, number}], same_tile, compass: [before, after] (compassLook),
+//     errors}.
 //   node web_dashboard_browser.js URL --arrange PART: the page at 1024x768 with a mouse, a part of the arranging (arrangeMode):
 //     "dragged" (dragging to reorder, the drag's text zones, the grip and the × on mouseover, the remove zone, the reset link, the
 //     preferences across a reload, the tiles' see-through look), "prefs" (the preferences corrupt or from elsewhere (a tile new to
@@ -63,6 +66,8 @@ async function sizes(browser, url, shots, wanted) {
       status: document.getElementById("status").textContent,
       glass: [...document.querySelectorAll(".tile")].map((t) => [t.dataset.kind, t.querySelectorAll("svg .glass").length]),
     })), errors };
+    await compassSettled(page);
+    report[name].compass = await compassLook(page);   // the wind's direction in the grid: its compass, no table
     // zoomed (Enter on the first tile): its look (box, title, text, table) and a screenshot (SHOTS/dashboard-NAME-zoomed.png)
     await page.focus(".tile");
     await page.keyboard.press("Enter");
@@ -76,15 +81,48 @@ async function sizes(browser, url, shots, wanted) {
                glass: [...t.querySelectorAll("svg .glass")].map(rect),
                table: [...new Set(table.map((c) => `${c.visibility} ${c.opacity}`))] };
     });
+    // back, then the compass zoomed (Enter): its look as the first's, and a screenshot (SHOTS/dashboard-NAME-compass.png)
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.body.classList.contains("zoomed") && !document.querySelector(".tile.zooming, .tile.fading"));
+    await page.focus('.tile[data-kind="compass"]');
+    await page.keyboard.press("Enter");
+    await calm(page, 400);
+    await page.screenshot({ path: `${shots}/dashboard-${name}-compass.png` });
+    report[name].compassZoomed = await compassLook(page);
     await context.close();
   }));
   process.stdout.write(JSON.stringify(Object.fromEntries(Object.keys(wanted).map((name) => [name, report[name]]))));
 }
 
+// The compass tile's look: its label, reading, needle's turn, the points named, any table, and where its parts are (the window's px)
+const compassLook = (page) => page.evaluate(() => {
+  const t = document.querySelector('.tile[data-kind="compass"]'), rect = (e) => e.getBoundingClientRect().toJSON();
+  return { label: t.getAttribute("aria-label"), reading: t.querySelector("svg text.reading").textContent, faded: t.classList.contains("faded"),
+           turn: t.querySelector(".needle").getAttribute("transform"), points: [...t.querySelectorAll("svg text.point")].map((e) => e.textContent),
+           table: t.querySelectorAll(".unit, .chip, .figure, .tablearea").length, zoomed: document.body.classList.contains("zoomed"),
+           shown: !t.inert, box: rect(t), title: rect(t.querySelector(".title")), texts: [...t.querySelectorAll("svg text")].map(rect),
+           ring: rect(t.querySelector("svg circle")), head: rect(t.querySelector(".needle .head")) };
+});
+
+// The compass at rest: its needle turned all the way to the reading its label gives (north with none), rather than a fixed wait
+const compassSettled = (page) => page.waitForFunction(() => {
+  const t = document.querySelector('.tile[data-kind="compass"]'), turn = t.querySelector(".needle").getAttribute("transform");
+  const m = /(\d+)° /.exec(t.getAttribute("aria-label"));
+  return turn.startsWith(`rotate(${m ? m[1] : 0}.00 `);
+}, null, { timeout: 5000 }).catch(() => { /* reported as it is */ });
+
 async function live(browser, url) {
   const { page, errors } = await open(browser, url, 800, 600);
   const label = () => page.evaluate(() => document.querySelector(".tile").getAttribute("aria-label"));
   await page.evaluate(() => { window.__mark = 1; document.querySelector(".tile").__mark = 1; });
+  // (the compass's needle, every frame from now, the opening's rise over: the wind's direction changes with the temperature)
+  await compassSettled(page);
+  await page.evaluate(() => {
+    window.__turns = [];
+    const needle = document.querySelector('.tile[data-kind="compass"] .needle');
+    const sample = () => { window.__turns.push(Number(/rotate\(([-\d.]+)/.exec(needle.getAttribute("transform"))[1])); requestAnimationFrame(sample); };
+    requestAnimationFrame(sample);
+  });
   const before = await label();
   process.stdout.write(JSON.stringify({ label: before }) + "\n");
   await new Promise((resolve) => readline.createInterface({ input: process.stdin }).once("line", resolve));
@@ -95,7 +133,9 @@ async function live(browser, url) {
   const sameTile = await page.evaluate(() => document.querySelector(".tile").__mark === 1);   // moved in place, not drawn again
   await page.waitForTimeout(1200);   // (the gauge's move to the new reading, MOVE_MS)
   const shown = await page.evaluate(() => [...document.querySelectorAll(".tile")[0].querySelectorAll("svg text")].map((t) => t.textContent).join("|"));
-  process.stdout.write(JSON.stringify({ label: await label(), same_page: same, same_tile: sameTile, shown, errors }) + "\n");
+  await compassSettled(page);
+  const compass = { ...await compassLook(page), turns: await page.evaluate(() => window.__turns) };
+  process.stdout.write(JSON.stringify({ label: await label(), same_page: same, same_tile: sameTile, shown, compass, errors }) + "\n");
 }
 
 async function arrive(browser, url, title) {
@@ -110,7 +150,8 @@ async function arrive(browser, url, title) {
   await page.evaluate((title) => {
     window.__tile = [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === title);
   }, title);
-  const before = await state();
+  await compassSettled(page);
+  const before = await state(), compassBefore = await compassLook(page);
   process.stdout.write(JSON.stringify(before) + "\n");
   await new Promise((resolve) => readline.createInterface({ input: process.stdin }).once("line", resolve));
   try {
@@ -128,7 +169,9 @@ async function arrive(browser, url, title) {
   }));
   const sameTile = await page.evaluate((title) => window.__tile.isConnected &&
     [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === title) === window.__tile, title);
-  process.stdout.write(JSON.stringify({ before, after: await state(), frames, same_tile: sameTile, errors }) + "\n");
+  await compassSettled(page);
+  process.stdout.write(JSON.stringify({ before, after: await state(), frames, same_tile: sameTile, compass: [compassBefore, await compassLook(page)],
+                                        errors }) + "\n");
 }
 
 // ---------- arranging ----------
@@ -251,7 +294,7 @@ async function arrangedFromPrefs(browser, url, out, allErrors) {
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
   out.corrupt = await titles(page);
-  const saved = initial.filter((t) => t !== "Rain" && t !== "Temperature").concat(["Temperature", "Gone sensor"]);
+  const saved = initial.filter((t) => !["Rain", "Temperature", "Wind direction"].includes(t)).concat(["Temperature", "Gone sensor"]);
   await page.evaluate(([key, order]) => localStorage.setItem(key, JSON.stringify({ order, hidden: ["Gone sensor"], later: true })), [KEY, saved]);
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);

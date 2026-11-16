@@ -275,7 +275,8 @@ GAUGE_RESULT = {
                     "humidity": {"value": 94, "unit": "%", "text": "94 %", "today": {"high": 94, "low": 60}}},
         "rainfall": {"rain": {"value": 6.3, "unit": "mm", "text": "6.3 mm", "today": {"total": 6.3},
                               "month": {"total": 49.8, "wettest_day": {"rain": 20.1}}, "year": {"total": 400.2, "wettest_day": {"rain": 41.0}}}},
-        "wind": {"wind_speed": {"value": 14, "unit": "km/h", "today": {"high_gust": 31.0}}},
+        "wind": {"wind_speed": {"value": 14, "unit": "km/h", "today": {"high_gust": 31.0}},
+                 "wind_direction": {"value": 99, "unit": "°", "text": "99°", "compass": "E"}},
         "indoor": {"temperature": {"value": None, "unit": "°C", "year": {"high": 30.0, "low": 12.0}}},   # no reading now: dimmed
         "solar_and_uvi": {"uvi": {"value": None, "unit": ""}}},                                          # nothing at all: left out
     "lines": {"station": []}, "headings": {"station": "Weather station"}}
@@ -285,7 +286,8 @@ def test_the_gauges_sheet_is_drawn_from_currents_readings_and_their_context():
     from lib import gauge_sheet
     sheet = gauge_sheet.sheet(GAUGE_RESULT)
     tiles = {t.title: t for t in sheet.tiles}
-    assert list(tiles) == ["Temperature", "Humidity", "Rain", "Wind", "Indoor temperature"]   # the dashboard's order (FIRST, then GAUGES')
+    assert list(tiles) == ["Temperature", "Humidity", "Rain", "Wind", "Wind direction", "Indoor temperature"]   # the dashboard's order
+                                                                                                                 # (FIRST, then GAUGES')
     t = tiles["Temperature"]
     assert (t.value, t.unit, t.kind, t.columns) == (12.3, "°C", "thermometer", ("Max", "Min"))
     assert t.rows == {"Daily": (14.0, 9.5), "Monthly": (21.0, 4.0), "Yearly": (38.0, -1.0)}
@@ -461,3 +463,31 @@ def test_the_png_draws_a_tile_with_no_reading_as_its_floor_dimmed():
         mean, worst = sum(i * n for i, n in enumerate(off)) / sum(off), max(i for i, n in enumerate(off) if n)
         assert mean < 0.15 and worst <= 20, (tile.title, mean, worst)   # (but the edges' anti-aliasing; the gauge anywhere else: 80+)
         assert bright.getdata() != dimmed.getdata()
+
+
+def test_the_winds_direction_is_a_compass_with_no_table_its_point_the_services_dimmed_with_no_reading_and_drawn_in_the_png_too():
+    """A compass right after Wind: the station's wind_direction in degrees (where the wind comes from), its band the compass point the
+    service gives with it, no table (highs and lows of a direction mean nothing; current gives it no figures: gauge_of has none). There
+    whenever current has the reading, dimmed with no value now; never among the Status's three, but the PNG draws it all the same."""
+    from lib import gauge_sheet
+    from lib.gauge_look import faded, floor, tile_json
+    from lib.service.current import gauge_of
+    tile = next(t for t in gauge_sheet.sheet(GAUGE_RESULT).tiles if t.title == "Wind direction")
+    assert (tile.kind, tile.value, tile.unit, tile.band, tile.low, tile.high, tile.decimals) == ("compass", 99.0, "°", "E", 0, 360, 0)
+    assert tile.columns == () and tile.rows == {} and not faded(tile) and floor(tile) == 0
+    assert tile_json(tile)["columns"] == [] and tile_json(tile)["rows"] == {}
+    north = {**GAUGE_RESULT["sensors"]["wind"]["wind_direction"], "value": 350, "compass": "N"}   # (as the service names it)
+    sensors = {**GAUGE_RESULT["sensors"], "wind": {"wind_direction": north}}
+    assert next(t for t in gauge_sheet.sheet({"sensors": sensors}).tiles if t.kind == "compass").band == "N"
+    gone = {**GAUGE_RESULT["sensors"], "wind": {"wind_direction": {"value": None, "unit": "°"}}}
+    dim = next(t for t in gauge_sheet.sheet({"sensors": gone}).tiles if t.kind == "compass")
+    assert dim.value is None and dim.band is None and faded(dim)                                   # no reading: dimmed, no point claimed
+    absent = {**GAUGE_RESULT["sensors"], "wind": {}}
+    assert all(t.kind != "compass" for t in gauge_sheet.sheet({"sensors": absent}).tiles)          # not sent at all: left out
+    assert "Wind direction" not in STATUS_TITLES and all(t.kind != "compass" for t in gauge_sheet.sheet(GAUGE_RESULT, STATUS_TITLES).tiles)
+    assert gauge_of("wind.wind_direction") is None and gauge_of("wind.wind_speed").title == "Wind"   # (no figures beside it)
+    picture = Image.open(io.BytesIO(gauges.render(Dashboard([tile, dim], 2)))).convert("RGB")
+    assert picture.size[0] > 900
+    left, right = picture.crop((0, 0, picture.size[0] // 2, picture.size[1])), picture.crop((picture.size[0] // 2, 0, picture.size[0], picture.size[1]))
+    blue = lambda im: sum(1 for r, g, b in im.getdata() if b > 150 and b > r + 60)   # (the needle's head)
+    assert blue(left) > 200 and blue(right) == 0                                                  # dimmed: its colours faded

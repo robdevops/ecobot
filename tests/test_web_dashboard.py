@@ -306,6 +306,7 @@ def test_what_the_events_compare_is_the_gauges_readings_with_the_gust():
     shown = readings_of(live)
     assert 12.9 in shown and 1026.0 in shown
     assert readings_of({**live, "wind": {"wind_speed": {"value": "5"}, "wind_gust": {"value": "11"}}}) != shown
+    assert readings_of({**live, "wind": {**live["wind"], "wind_direction": {"value": "300"}}}) != shown   # (the compass's)
 
 
 async def test_with_mcp_dashboard_off_there_is_no_page_and_mcp_is_as_it_was(server, caplog):
@@ -399,6 +400,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
                                                     stderr=subprocess.PIPE)
         before = json.loads(await asyncio.wait_for(live.stdout.readline(), 60))
         station.reads("outdoor", "temperature", "21.5")
+        station.reads("wind", "wind_direction", "300")                           # (and the wind backs from the east to WNW)
         await server.publish_changes()
         live.stdin.write(b"go\n")
         await live.stdin.drain()
@@ -422,6 +424,23 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         tile, glass = got["zoomed"]["box"], got["zoomed"]["glass"]                # (the first tile, Temperature) zoomed: the glass with it
         assert len(glass) == 3 and all(g["height"] > 0 and tile["left"] <= g["left"] and g["right"] <= tile["right"] for g in glass)
         assert max(g["height"] for g in glass) > tile["width"] * 0.2, (glass, tile)
+        # the wind's direction, a compass: N, E, S, W and the points between named, its needle's head turned to where the wind comes
+        # from (99°, east), its reading "99° E" (the service's compass point); no table, the same size as its neighbours
+        c, rects = got["compass"], got["rects"]
+        assert (c["label"], c["reading"], c["turn"], c["faded"]) == ("Wind direction 99° E", "99° E", "rotate(99.00 240 188)", False), c
+        assert c["points"] == ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] and c["table"] == 0, c
+        assert any(near(c["box"], r, 0.5) for r in rects) and len({(round(r["width"]), round(r["height"])) for r in rects}) == 1, c
+        ring, head = c["ring"], c["head"]
+        assert (head["left"] + head["right"]) / 2 > (ring["left"] + ring["right"]) / 2 + ring["width"] * 0.1 and abs((head["top"] + head["bottom"]) / 2 - (ring["top"] + ring["bottom"]) / 2) < ring["height"] * 0.1, c
+        assert all(c["box"]["left"] <= r["left"] and r["right"] <= c["box"]["right"] and r["bottom"] <= c["box"]["top"] + c["box"]["width"] * TABLE_TOP / look()["cell"][0]
+                   for r in c["texts"]), c                                         # (all of it above where a table would start)
+        # zoomed: the compass and its reading fill the zoomed place, as any tile's title and gauge
+        z = got["compassZoomed"]
+        assert z["zoomed"] and z["shown"] and near(z["box"], zoomed_rect(width, height), 1.5), (name, z)
+        for r in [z["title"], z["ring"], *z["texts"]]:
+            assert z["box"]["left"] - 1 <= r["left"] and r["right"] <= z["box"]["right"] + 1 and z["box"]["top"] - 1 <= r["top"] and r["bottom"] <= z["box"]["bottom"] + 1, (r, z)
+        assert z["ring"]["width"] > z["box"]["width"] * 0.45, z
+        assert (shots / f"dashboard-{name}-compass.png").exists()
     for name in ("tablet-landscape", "tablet-portrait", "desktop"):            # these fit every tile without scrolling
         got = report[name]
         assert got["scroll"] == "no" and got["scrollHeight"] <= SIZES[name][1], (name, got)
@@ -432,6 +451,11 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     assert before["label"] == "Temperature 12.9 °C" and after["label"] == "Temperature 21.5 °C", (before, after)
     assert after["same_page"] and after["errors"] == [], after
     assert after["same_tile"] and "21.5 °C" in after["shown"], after                 # the gauge moved in place to the new reading
+    # the compass's needle swung from 99° to 300° the short way round, through north (never through the south), the reading WNW
+    c = after["compass"]
+    assert (c["label"], c["reading"], c["turn"]) == ("Wind direction 300° WNW", "300° WNW", "rotate(300.00 240 188)"), c
+    turns = c["turns"]
+    assert all(t <= 99.01 or t >= 299.99 for t in turns) and any(t < 30 for t in turns) and any(t > 330 for t in turns), turns
 
 
 @needs_browser
@@ -440,7 +464,8 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
                                                                                                                      comes):
     """The air sensor sends no NOx index: its tile is dimmed (L.fade), its needle at the dial's start and its number the floor (1). A
     reading arriving: the same tile brightens and its gauge moves up from the floor, frame by frame, nothing drawn again (no flash). A
-    reading going away (the VOC index): it dims and drops to its floor."""
+    reading going away (the VOC index): it dims and drops to its floor; the wind's direction gone with it, its compass dims, its needle
+    back at north and no figure claimed."""
     title, column, value = ("NOx index", "nox_index", 60) if comes else ("VOC index", "voc_index", None)
     port = free_port()
     async with Serving(http_app(server, tokens=(TOKEN,)), port):
@@ -448,7 +473,9 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
                                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         before = json.loads(await asyncio.wait_for(page.stdout.readline(), 60))
         station.air_reads(column, value)
-        assert await server.publish_changes() == [AIR_URI]                       # the air sensor's change: the page is told
+        if not comes:                                                            # (the wind's direction gone too: the station's)
+            station.reads("wind", "wind_direction", "--")
+        assert sorted(await server.publish_changes()) == sorted([AIR_URI] if comes else [AIR_URI, WEATHER_URI])   # the page is told
         page.stdin.write(b"go\n")
         await page.stdin.drain()
         out, err = await asyncio.wait_for(page.communicate(), 60)
@@ -471,6 +498,10 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
         assert "Average" not in after["shown"] and after["label"] == "VOC index: no reading"   # no category without a reading
         assert numbers == sorted(numbers, reverse=True) and numbers[-1] == 1, numbers              # down to the floor
         assert opacities == sorted(opacities, reverse=True), opacities
+        # the compass with no reading: dimmed, its needle back at north, no figure or point claimed
+        was, now = got["compass"]
+        assert not was["faded"] and was["reading"] == "99° E", was
+        assert now["faded"] and (now["label"], now["reading"], now["turn"]) == ("Wind direction: no reading", "–", "rotate(0.00 240 188)"), now
 
 
 async def test_an_event_is_sent_when_the_air_sensors_gauges_readings_change(server, station):
@@ -562,11 +593,12 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     assert got["reloaded"] == {"titles": shown, "status": "reset preferences · last reading 18:42"}
     # reset: every tile, in the default order, nothing kept, no link
     assert got["reset"] == {"titles": default, "status": "last reading 18:42", "stored": None}
-    # unreadable preferences: the defaults; a tile new to the saved order (Rain) in its usual place, after Atmospheric pressure; an
+    # unreadable preferences: the defaults; a tile new to the saved order in its usual place (Rain, after Atmospheric pressure; the
+    # wind's direction, after Wind); an
     # absent tile's place and a later stage's keys kept
     assert got["corrupt"] == default
-    saved = [t for t in default if t not in ("Rain", "Temperature")] + ["Temperature"]
-    assert got["newTile"] == moved(saved, "Rain", "Atmospheric pressure")
+    saved = [t for t in default if t not in ("Rain", "Temperature", "Wind direction")] + ["Temperature"]   # (saved before the compass)
+    assert got["newTile"] == moved(moved(saved, "Rain", "Atmospheric pressure"), "Wind direction", "Wind")
     assert got["keptOthers"] == {"order": moved(got["newTile"], "Humidity", "Rain") + ["Gone sensor"], "hidden": ["Gone sensor"], "later": True}
     # a click 150 ms after a drop reaches the page (only the drop's own click, if the browser sends one, is swallowed)
     assert got["clickAfterDrop"] == ["tile"] and got["zoomedAfterDrop"]
@@ -616,7 +648,7 @@ async def test_fewer_tiles_grow_evenly_to_fill_the_window_and_never_shrink_below
     cases = {"desktop-all": (1920, 1080, []), "desktop-one": (1920, 1080, but("Temperature")),
              "tablet-all": (1024, 768, []), "tablet-three": (1024, 768, but("Temperature", "Wind", "US AQI")),
              "tablet-many": (1024, 768, ["Rain", "Wind"]),
-             "phone-all": (390, 844, []), "phone-one": (390, 844, but("Humidity")), "phone-eight": (390, 844, every[:9])}
+             "phone-all": (390, 844, []), "phone-one": (390, 844, but("Humidity")), "phone-eight": (390, 844, every[:-8])}
     got = await run_page(server, "--fill", json.dumps(cases), weather=False)
     assert all(c["errors"] == [] and c["scrollWidth"] <= cases[name][0] for name, c in got.items()), got
     width = lambda name: {round(r["width"]) for r in got[name]["rects"]}

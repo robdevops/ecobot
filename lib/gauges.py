@@ -2,7 +2,7 @@
 readings now, for a chat client to send with its Status (the Telegram bot). The highs and lows are not drawn: they are in the
 resource's text, and in the web page's tables (lib/web_dashboard.py, which draws every gauge in the browser).
 
-A thermometer, a dial or a rain beaker per tile (specs.Tile), `per_row` to a row, drawn on one canvas laid out in pixels (the top left
+A thermometer, a dial, a rain beaker or a compass (the wind's direction: never among the Status's three, drawn all the same) per tile (specs.Tile), `per_row` to a row, drawn on one canvas laid out in pixels (the top left
 is 0, 0), in lib/gauge_look.py's colours and sizes (the web page draws with them too), each tile CELL_W by TILE_H. A tile with no
 reading is dimmed, its gauge at its floor (lib/gauge_look.py floor: the mercury at the scale's low end, the needle at its start, the
 beaker empty) reading the floor's number. Only ecobot-mcp draws it (the bot draws nothing). Safe to call from several threads, as
@@ -13,8 +13,9 @@ import math
 
 from .charts import _DRAWING, _blend
 from .draw import PT, Canvas, arc, clip_below, rounded_rect
-from .gauge_look import (BAND_WIDTH, BAR_GAP, BAR_WIDTH, BG, BULB_RADIUS, CELL_W, FADE, FILL, INK, LABEL_RADIUS, MARGIN, MERCURY_GAP,
-                         NEEDLE, RING_OUTER, SOFT, START, SWEEP, TUBE_HALF, WATER, faded, share, shown)
+from .gauge_look import (BAND_WIDTH, BAR_GAP, BAR_WIDTH, BG, BULB_RADIUS, CELL_W, COMPASS, COMPASS_BAND, COMPASS_LABEL_Y, FADE, FILL, INK,
+                         LABEL_RADIUS, MARGIN, MERCURY_GAP, NEEDLE, POINTS, RING_OUTER, SOFT, START, SWEEP, TUBE_HALF, WATER, faded, share,
+                         shown)
 from .specs import Dashboard, Tile
 
 DPI = 100
@@ -118,7 +119,31 @@ def _dial(c: Canvas, tile: Tile, ox: float, oy: float, ink):
     c.circle(cx, cy, 25, BG, outline=ink(SOFT), width=_lw(3))
 
 
-DRAW = {"thermometer": _thermometer, "dial": _dial, "beaker": _beaker}
+def _compass(c: Canvas, tile: Tile, ox: float, oy: float, ink):
+    """The wind's direction: a compass rose's ring with its ticks and N, E, S and W, the needle's head where the wind comes from
+    (degrees clockwise from north), the reading under it ("99° E"). As the web page draws it (web_dashboard.html compass())."""
+    cx, cy, r = ox + COMPASS[0], oy + COMPASS[1], COMPASS[2]
+    outer, inner = r - 8, r - 8 - BAND_WIDTH
+    c.circle(cx, cy, r, outline=ink(SOFT), width=_lw(3))
+    c.polygon(_band(cx, cy, inner, outer, 360, 0.01), ink(COMPASS_BAND))
+    for b in range(0, 360, 10):   # (fine ticks every 10 degrees, longer every 30; none where a point's name is)
+        if min(b % 45, 45 - b % 45) > 5:
+            a = 90 - b
+            c.line([_polar(cx, cy, outer - 4, a), _polar(cx, cy, outer - (12 if b % 30 == 0 else 7), a)], ink(SOFT), _lw(1.5 if b % 30 else 2.2))
+    for i, name in enumerate(POINTS[::2]):   # N, NE, E... on the ring: the four cardinal points large, the others small
+        x, y = _polar(cx, cy, (outer + inner) / 2, 90 - 45 * i)
+        _text(c, x, y, name, 13 if i % 2 else 20, ink(SOFT if i % 2 else INK), weight="normal" if i % 2 else "bold")
+    value = shown(tile) % 360
+    a, reach = 90 - value, inner - 8
+    tip, tail, left, right = (_polar(cx, cy, reach, a), _polar(cx, cy, -reach, a), _polar(cx, cy, 9, a + 90), _polar(cx, cy, 9, a - 90))
+    c.polygon([tail, left, right], _blend(ink(SOFT), 0.55, BG))
+    c.polygon([tip, left, right], ink(NEEDLE))
+    c.circle(cx, cy, 11, BG, outline=ink(SOFT), width=_lw(2.5))
+    words = f"{value:.0f}° {tile.band}" if tile.value is not None and tile.band else "–" if tile.value is None else f"{value:.0f}°"
+    _text(c, cx, oy + COMPASS_LABEL_Y, words, 40, ink(INK))
+
+
+DRAW = {"thermometer": _thermometer, "dial": _dial, "beaker": _beaker, "compass": _compass}
 
 
 def _tile(c: Canvas, tile: Tile, ox: float, oy: float):

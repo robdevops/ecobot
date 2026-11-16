@@ -33,6 +33,8 @@ def degree_colour(lower: float) -> str:
 
 @dataclass(frozen=True)
 class Gauge:
+    """A gauge: a thermometer, a dial, a rain beaker or a compass (the wind's direction: where it comes from, in degrees clockwise from
+    north, its needle pointing there; no figures beside it, as highs and lows of a direction mean nothing: lib/ecowitt/direction.py)."""
     title: str
     unit: str
     kind: str
@@ -41,7 +43,7 @@ class Gauge:
     colours: tuple[str, ...]
     ticks: tuple[float, ...]
     live: tuple[str, str]                 # the live reading: (group, field)
-    highest: str                          # the day figure (days.FIELDS) whose highest is its Max
+    highest: str | None                   # the day figure (days.FIELDS) whose highest is its Max (none: no table at all, the compass)
     lowest: str | None = None             # ... whose lowest is its Min (none: no Min column)
     decimals: int = 1
     total: bool = False                   # rain: the Total column, the sum of the days' figures (its Max is the wettest day's)
@@ -65,6 +67,7 @@ GAUGES = (
     Gauge("Feels like", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "feels_like"), "feels_like_max", "feels_like_min"),
     Gauge("Wind", "km/h", "dial", 0, 100, WIND, (0, 20, 40, 60, 80, 100), ("wind", "wind_speed"), "wind_gust", None, 0,
           counted=("wind", "wind_gust")),
+    Gauge("Wind direction", "°", "compass", 0, 360, WIND, (0, 90, 180, 270), ("wind", "wind_direction"), None, None, 0),
     Gauge("Rain", "mm", "beaker", 0, 100, WATER, (100, 80, 60, 40, 20, 0), ("rainfall", "daily"), "rain", None, 1, True),
     Gauge("Rain rate", "mm/h", "dial", 0, 50, WATER, (0, 10, 20, 30, 40, 50), ("rainfall", "rain_rate"), "rain_rate_max"),
     Gauge("Solar radiation", "W/m²", "dial", 0, 1500, SUN, (0, 300, 600, 900, 1200, 1500), ("solar_and_uvi", "solar"), "solar_max", None, 0),
