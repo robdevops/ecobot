@@ -958,12 +958,14 @@ const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
 // the beads at the start and at the end; where the still ones appeared (each's height as it first showed, of the window's); merges,
 // and the runs done ({merged, r, ran, fade}); every 10th frame, the most pixels drawn in the canvas's top two rows, and the still
 // beads drawn whole (r 2 or more, not drying): of the canvas's pixels in their sprites, the alpha (0-255) of those drawn, mean and
-// most; and the still beads showing and the beads running, each's mean count
+// most; the still beads showing and the beads running, each's mean count; and of each bead's track (off an earlier track) as it
+// passed 20 px down, a pixel of it: how many px across around it were wiped clear (crisp), the bead's width then, its fog as shown
+// (and not wiped) then, the fog shown beside the track (a few px either side of it), and at the end its fog as shown and how wiped
 const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
   const last = new Map(), lastSites = new Map(), ended = [], first = Sky.state().frames, count = Sky.state().particles.humidity;
   let n = 0, up = 0, down = 0, wander = 0, offset = 0, samples = 0, lowest = 0, moved = 0, behind = 0, wet = 0, cut = 0, popped = 0;
   let top = 0, inked = 0, alphas = 0, most = 0, looked = 0, still = 0, running = 0, counts = 0;
-  const wandered = new Set(), trails = new Map(), born = new Map();
+  const wandered = new Set(), trails = new Map(), born = new Map(), wiped = new Map();
   const canvas = document.querySelector("#sky canvas"), g = canvas.getContext("2d");
   const step = () => {
     const h = Sky.state().humidity, now = new Map(h.runners.map((d) => [d.id, d])), absorbed = new Set(h.absorbed);
@@ -982,7 +984,18 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
       offset += d.x - d.x0; samples++;
       lowest = Math.max(lowest, d.bottom / h.height);
       if (d.y - d.y0 > 10) { moved++; if (d.behind) behind++; }
-      if (d.y - d.y0 > 20 && d.trail && !trails.has(d.id)) trails.set(d.id, [...d.trail, h.wetAt(...d.trail)]);
+      if (d.y - d.y0 > 20 && d.trail && !trails.has(d.id)) {
+        trails.set(d.id, [...d.trail, h.wetAt(...d.trail)]);
+        const [x, y] = d.trail, crisp = (x) => h.cleanAt(x, y) > h.crisp;
+        if (!d.on && crisp(x)) {
+          let a = x, b = x;
+          while (crisp(a - 1)) a--;
+          while (crisp(b + 1)) b++;
+          const side = [a - 3, a - 2, b + 2, b + 3].map((x) => h.fogAt(x, y)[0]);
+          wiped.set(d.id, { across: b - a + 1, w: d.w, at: [x, y], shown: h.fogAt(x, y)[0], fog: h.fogAt(x, y)[1], clean: h.cleanAt(x, y),
+                            beside: side.reduce((s, v) => s + v, 0) / side.length });
+        }
+      }
     }
     wet = Math.max(wet, h.wet);
     last.clear();
@@ -1006,7 +1019,35 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
               on: h.on, off: h.off, stray: h.stray(), cut, popped, count: [count, Sky.state().particles.humidity],
               born: [...born.values()], merges: h.merges, merged: h.merged, done: h.done, largest: h.largest, top,
               look: { beads: looked, mean: alphas / Math.max(inked, 1), most },
-              showing: { still: still / Math.max(counts, 1), running: running / Math.max(counts, 1) } });
+              showing: { still: still / Math.max(counts, 1), running: running / Math.max(counts, 1) },
+              wiped: [...wiped.values()].map((t) => ({ ...t, end: { shown: h.fogAt(...t.at)[0], clean: h.cleanAt(...t.at) } })),
+              fog: h.fog(), first: h.first, refogged: h.refogged, colours: h.colours() });
+  };
+  requestAnimationFrame(step);
+}), frames);
+// humidity off (the humidity below 90 %), every frame after till the fog has cleared and no still bead is left (at most `frames`):
+// the fog's mean thickness in the window's middle and at its edges as it clears (the first frame each is gone, and the edges' then);
+// the still beads showing at the start; each still one as it went (gone at a radius of 1 or more, not faded: popped; else: where
+// it was, its distance from the middle, 0 there to 1 at the edges, and the frame); the frames taken and what was left
+const humidityClears = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
+  document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { wind: 1 } }));
+  const last = new Map(), gone = [], start = Sky.state().humidity.sites.filter((s) => s.r > 0).length, [W, H] = Sky.state().size;
+  let n = 0, popped = 0, middleGone = null, edgeGone = null, edgeThen = null, shrank = 0;
+  const step = () => {
+    const h = Sky.state().humidity, fog = h.fog(), sites = new Map(h.sites.map((s) => [s.id, s])), absorbed = new Set(h.absorbed);
+    for (const [id, s] of last) if (!sites.has(id) && !absorbed.has(id) && s.r > 0) {
+      if (s.r >= 1 && s.alpha > 0.15) popped++;
+      gone.push({ far: Math.max(Math.abs(2 * s.x / W - 1), Math.abs(2 * s.y / H - 1)), frame: n });
+    }
+    for (const [id, s] of sites) if (last.has(id) && s.r < last.get(id).r - 1e-9) shrank++;
+    last.clear();
+    for (const [id, s] of sites) last.set(id, s);
+    if (middleGone === null && fog.middle < 0.005) { middleGone = n; edgeThen = fog.edge; }
+    if (edgeGone === null && fog.edge < 0.005) edgeGone = n;
+    n++;
+    if (n < frames && (fog.cover > 0 || [...sites.values()].some((s) => s.r > 0))) return requestAnimationFrame(step);
+    resolve({ start, middleGone, edgeGone, edgeThen, gone, popped, shrank, frames: n, left: { cover: fog.cover, thickness: fog.thickness,
+              still: [...sites.values()].filter((s) => s.r > 0).length }, effects: Sky.state().effects });
   };
   requestAnimationFrame(step);
 }), frames);
@@ -1067,6 +1108,8 @@ const WEATHER = {
     for (const aqi of [101, 151, 201, 301, 500]) { await reads({ "US AQI": aqi }); out.smogBands.push((await weatherSeen(page)).levels.smog); }
     out.rainStrength = [];
     for (const rate of [0.5, 8, 20]) { await reads({ rain_rate: rate }); out.rainStrength.push((await weatherSeen(page)).levels.rain); }
+    out.humidityStrength = [];
+    for (const rh of [91, 95, 100]) { await reads({ Humidity: rh }); out.humidityStrength.push((await weatherSeen(page)).levels.humidity); }
     out.iceDepth = [];
     for (const t of [-0.5, -5]) { await reads({ Temperature: t }); out.iceDepth.push((await weatherSeen(page)).levels.ice); }
     out.errors = errors;
@@ -1204,6 +1247,12 @@ const WEATHER = {
     out.links.pressed = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#fxtest button[data-fx]")]
       .map((b) => [b.dataset.fx, b.getAttribute("aria-pressed")])));
     out.links.role = await page.evaluate(() => document.getElementById("fxtest").getAttribute("role"));
+    out.links.humiditySteps = [];   // (humidity, on: light; then heavy, then off)
+    for (let i = 0; i < 2; i++) {
+      await fx("humidity");
+      out.links.humiditySteps.push({ level: (await weatherSeen(page)).levels.humidity, url: await page.evaluate(() => location.search),
+                                     label: await page.evaluate(() => document.querySelector("#fxtest button[data-fx='humidity']").textContent) });
+    }
     await fx("clear");
     await page.waitForTimeout(100);
     out.links.cleared = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
@@ -1250,10 +1299,12 @@ const WEATHER = {
     })();
     // humidity's beads condensing on the glass and running down it over 36 s of the page's time, alone and with the wind, beside the rest
     // (small: cheap)
-    const beading = Promise.all(["humidity", "humidity,wind"].map(async (name) => {
+    // (heavy: 100 %); and light (91 %), watched for 20 s
+    const beading = Promise.all(["humidity2", "humidity2,wind", "humidity"].map(async (name) => {
       const p = await weatherPage(browser, url, { query: `?fx=${name}`, pace: 10, context: { viewport: { width: 640, height: 480 } } });
-      const seen = await humiditySeen(p.page, 360);
-      if (name === "humidity") {   // (then every other effect on too, its share of the budget shrinking: watched 4 s more)
+      const seen = await humiditySeen(p.page, name === "humidity" ? 200 : 360);
+      if (name === "humidity2,wind") seen.clears = await humidityClears(p.page, 300);   // (then humidity off: the fog clearing)
+      if (name === "humidity2") {   // (then every other effect on too, its share of the budget shrinking: watched 4 s more)
         await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1, smog: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5 } })));
         seen.squeezed = await humiditySeen(p.page, 40);
         // (then all off, faded out all the way, and humidity on again: the glass fresh, nothing left from before)
@@ -1352,7 +1403,7 @@ const WEATHER = {
     await still.context.close();
     await Promise.all([params, alone, phoned]);
     out.uv = await swaying;
-    [out.humidity.alone, out.humidity.windy] = await beading;
+    [out.humidity.alone, out.humidity.windy, out.humidityLight] = await beading;
     [out.rain.alone, out.rain.windy, out.rain.phone] = await raining;
     [out.bare, out.barePhone] = await bare;
     out.errors = [];

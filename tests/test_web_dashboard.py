@@ -860,6 +860,7 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
         assert mark["at"]["link"] == "stop animations" and mark["at"]["running"], (name, mark)
     assert got["smogBands"] == [2, 3, 4, 5, 5]                                   # thicker with each band: USG to Hazardous
     assert got["rainStrength"][0] < 0.4 and got["rainStrength"][1:] == [1, 1]    # light at 0.5 mm/h, heavy from 8
+    assert got["humidityStrength"] == pytest.approx([0.1, 0.5, 1])              # heavier from 90 % to 100 %
     assert got["iceDepth"] == [0.5, 5]                                           # further in the colder
 
 
@@ -920,7 +921,10 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_clear_them_and_w
     assert melting["grown"] > 2 and 0 < melting["reach"] < melting["grown"] and "ice" not in melting["effects"] and melting["running"], melting
     assert links["cleared"] | {"levels": None, "running": None} == {"effects": [], "levels": None, "running": None, "framed": [],
                                                                      "link": None, "url": ""}
-    assert links["all"]["effects"] == EVERY and links["all"]["url"] == "?fx=rain2,smog3,uv,humidity,wind,heat,ice"
+    assert links["all"]["effects"] == EVERY and links["all"]["url"] == "?fx=rain2,smog3,uv,humidity2,wind,heat,ice"
+    # humidity light (91 %) first, then heavy (100 %), then off
+    assert links["humiditySteps"] == [{"level": 1, "url": "?fx=uv,humidity2,wind,heat", "label": "humidity: heavy"},
+                                      {"level": 0, "url": "?fx=uv,wind,heat", "label": "humidity"}], links["humiditySteps"]
     assert links["role"] == "group" and links["pressed"] == {"rain": "false", "smog": "false", "uv": "true", "humidity": "true",
                                                              "wind": "true", "heat": "true", "ice": "false"}, links["pressed"]
     # MCP_DASHBOARD_ANIMATIONS off (the page as served then, data-animations="off"), every effect asked for (?fx=all) and called for by
@@ -936,6 +940,9 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_clear_them_and_w
 
 
 EVERY = ["smog", "heat", "uv", "rain", "wind", "humidity", "ice"]
+# humidity's beads' colours, [r, g, b, alpha] (alpha 0-255): the glass's pale body (#A6D7F2, 34) and crescent (105), the white glint
+# (#EFFAFF, 240), the deep blue rim (#2C5573, 110); the faintest first
+BEAD_COLOURS = [[166, 215, 242, 34], [166, 215, 242, 105], [44, 85, 115, 110], [239, 250, 255, 240]]
 
 
 def just_right_of_clear(corner):
@@ -998,7 +1005,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert windy["light"]["hits"] >= 3 and 0 < windy["light"]["push"] < 10, windy["light"]
     assert windy["light"]["kick"] == pytest.approx(windy["light"]["push"], rel=0.01), windy["light"]
     assert windy["leaves"]["kick"] > 2.5 * windy["light"]["kick"], (windy["leaves"], windy["light"])   # (heavy rain's knocks: far harder)
-    # humidity: condensation beading all over the glass (36 s of it, on a small page), the beads appearing at every height (more toward
+    # humidity (heavy: 100 %): condensation beading all over the glass in its fog (36 s of it, on a small page), the beads appearing at
+    # every height (more toward
     # the top), never a line of water along the top edge; its heavy beads running down: down only, never back up, well down; most
     # wandering a little either side of where each began (never further than its bound), the lot not drifting either way; none
     # reaching the window's bottom; its wet track behind it, drying (a pixel of each bead's track drier by the end, some dried out).
@@ -1036,6 +1044,44 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
         assert beads["stray"] == 0 and beads["cut"] == 0 and beads["popped"] == 0, (name, beads)
     # ... nothing at all drawn in the canvas's top two rows (humidity alone: no water along the top edge)
     assert got["humidity"]["alone"]["top"] == 0, got["humidity"]["alone"]
+    # ... the fog: forming first (the first bead only once it has, there and on the glass at large), its tracks wiped clear through it
+    # as wide as the bead (give or take the px it shrank by on the way), clearer than the fog beside them (where there is fog), then
+    # fogging over again (crisp for 15 s, then the fog back); the beads' colours as ever (the glass: the deep blue rim, a faint pale
+    # body, a crescent, a white glint; as read back from the canvas, within a few levels)
+    for name, beads in got["humidity"].items():
+        first = beads["first"]
+        assert first["after"] >= 2 and first["cover"] >= 0.3 and first["fog"] > 0.2 and first["formed"]["edge"] > 0.2, (name, first)
+        wiped = beads["wiped"]
+        assert len(wiped) >= 8 and all(t["shown"] == 0 and t["clean"] > 0.95 for t in wiped), (name, wiped)
+        assert all(0 <= t["across"] - t["w"] <= 1 for t in wiped), (name, wiped)
+        fogged = [t for t in wiped if t["fog"] > 0.05 and t["beside"] > 0.05]
+        assert len(fogged) >= 5 and all(t["beside"] > t["shown"] for t in fogged), (name, wiped)
+        # (fogging over: most of them; now and then a later bead runs down one again, wiping it afresh)
+        assert sum(t["end"]["clean"] < t["clean"] for t in wiped) >= 0.75 * len(wiped), (name, wiped)
+        assert sum(t["end"]["clean"] < 0.75 for t in wiped) >= 3, (name, wiped)                       # (15 s on: no longer crisp)
+        assert sum(t["end"]["shown"] > 0 for t in wiped) >= 3, (name, wiped)                           # (the fog back on them)
+        colours = sorted(beads["colours"], key=lambda c: c[3])
+        assert len(colours) == len(BEAD_COLOURS) and all(c == pytest.approx(want, abs=3) for c, want in zip(colours, BEAD_COLOURS)), (name, colours)
+    # ... light (91 %): a thinner fog than heavy (100 %), fewer beads, the fog first all the same
+    light, heavy = got["humidityLight"], got["humidity"]["alone"]
+    assert light["errors"] == [] and light["popped"] == 0 and light["stray"] == 0, light
+    assert 0.1 < light["fog"]["thickness"] < 0.7 * heavy["fog"]["thickness"], (light["fog"], heavy["fog"])
+    assert 0 < light["showing"]["still"] < 0.5 * heavy["showing"]["still"], (light["showing"], heavy["showing"])
+    assert light["first"]["after"] >= 2 and light["first"]["fog"] > 0.1 and light["first"]["formed"]["edge"] > 0.1, light["first"]
+    # ... in each, the fog patchy, heavier at the edges (the sides and the bottom) than in the middle
+    for fog in (light["fog"], heavy["fog"]):
+        assert fog["cover"] == 1 and fog["edge"] > 2 * fog["middle"] > 0, fog
+    # ... and the humidity then below 90 % (heavy, in the wind): the fog clearing as from a demister, the middle first, the edges
+    # still fogged then, all gone in the end (the effect off, the wind on); the still beads drying away (shrinking, fading: none
+    # vanishing), those in the middle sooner than those at the edges
+    clears = got["humidity"]["windy"]["clears"]
+    assert clears["start"] >= 5 and clears["middleGone"] is not None and clears["edgeGone"] is not None, clears
+    assert clears["middleGone"] < clears["edgeGone"] and clears["edgeThen"] > 0.3, clears
+    assert clears["left"] == {"cover": 0, "thickness": 0, "still": 0} and clears["effects"] == ["wind"], clears
+    assert clears["popped"] == 0 and clears["shrank"] > clears["start"], clears
+    middle = [g["frame"] for g in clears["gone"] if g["far"] < 0.4]
+    edges = [g["frame"] for g in clears["gone"] if g["far"] > 0.7]
+    assert middle and edges and sum(middle) / len(middle) < sum(edges) / len(edges), clears["gone"]
     # ... and the runs done after a merge (some on each page): bigger than the bead it was before it merged, and slower to dry away
     for name, beads in got["humidity"].items():
         merged = [d for d in beads["done"] if d["merged"]]

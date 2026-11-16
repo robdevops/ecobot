@@ -136,24 +136,30 @@
 // for every effect, each frame cleared once and drawn back to front (ORDER). The effects share a particle budget and a cap on their
 // strength together, so several at once are no busier or brighter than one strong one. Nothing runs while no effect is on or fading
 // out; the tab hidden, it waits; with reduced motion, one still, faint frame and no loop.
-//   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), uv, humidity, wind, heat: 0 or
-//   1, ice: how far below 0 °C it is (0: none)}; animate false (the page's "stop animations", or MCP_DASHBOARD_ANIMATIONS off):
-//   nothing drawn.
+//   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
+//   100 %), uv, wind, heat: 0 or 1, ice: how far below 0 °C it is (0: none)}; animate false (the page's "stop animations", or
+//   MCP_DASHBOARD_ANIMATIONS off): nothing drawn.
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), size: [art width, art height, P], particles (each effect's
 //   now), budget (theirs together, at most), levels, iceReach (art px), wind (its leaves on screen: {vx: their mean speed across,
 //   negative leftward, against: how many go rightward, hits: how many the rain's drops have hit, push: their mean push, px/s,
 //   kick: the mean change in a hit leaf's own velocity a hit made, px/s,
 //   whirl: the most spin knocks have left on one now}), rain (its drops: {xs: where across, those in the window's lower half,
-//   width: the art's, vx: their mean speed across}), humidity (its beads condensing on the glass and running down it: {height: the
-//   art's, meander: how far either side of where it began one may wander, wet: the track pixels wet now, dried: how many have dried,
+//   width: the art's, vx: their mean speed across}), humidity (the glass fogging over, its beads condensing in the fog and running
+//   down it: {height: the art's, meander: how far either side of where it began one may wander, wet: the track pixels wet now,
+//   dried: how many have dried, refogged: how many wiped have fogged over again all the way, crisp: how much of its refogging a
+//   wiped pixel has left while it's still clear, first: the first bead to show since the glass was fresh {after: s, cover, fog: the
+//   fog where it showed (not wiped), formed: fog() then} or null,
 //   on and off: [px run, s taken] on an earlier track and off one, merges: how many, merged: the latest [{r: the two radii, into:
 //   the one's, end: a running one's [end before, after, its lowest] or null}], absorbed: the latest beads merged into another (ids),
 //   done: the latest runs done [{merged, r: the water it held (a radius), ran: px, fade: s it took to dry away, part, partFade: the
 //   most a part of it held before it merged, and so how long it'd have taken}], largest: a bead's radius at most, runners: [{id, x,
-//   x0 and y0: where it began running, y, r, bottom: its sprite's lowest row + 1, end, on: following a track, behind: its track there
+//   x0 and y0: where it began running, y, r, w: its sprite's width, bottom: its sprite's lowest row + 1, end, on: following a track, behind: its track there
 //   behind it, trail: [x, y] a pixel of it, wet}] (running, or drying away where it stopped), sites: the still beads [{id, x, y: its
 //   middle, r: 0 yet to show, alpha: drying away, below 1, drawn: [x, y, w, h, alpha] its sprite as drawn last}], wetAt(x, y): a
-//   pixel's wetness, 0-1, stray(): pixels showing on the tracks' canvas where the glass is dry})}, for the tests.
+//   pixel's wetness, 0-1, cleanAt(x, y): how wiped it is (1 just wiped, 0 fogged over), fogAt(x, y): [its fog as shown, its fog
+//   not wiped] (0-1), fog(): {cover: how far formed, 0-1, dense, thickness, middle, edge: its mean shown, over the window, its
+//   middle and its edges}, colours(): the beads' sprites' colours [r, g, b, alpha], stray(): pixels left wiped on the fog's canvas
+//   where the glass has fogged over again})}, for the tests.
 const Sky = (() => {
   const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
   const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -724,31 +730,47 @@ const Sky = (() => {
     };
   });
 
-  // ---------- humidity: condensation beading all over the glass; a bead grown heavy runs down it, leaving a wet track ----------
-  // Beads condense anywhere on the window (a little more toward the top), each appearing tiny and slowly growing where it is. Most
-  // grow heavy and run; a light one lingers a while, then dries away. Two that touch merge into one (their water adding up: the
-  // radius the cube root of the radii cubed, summed): two growing side by side, a running bead sweeping up a resting one, or catching
-  // up another running. A heavy bead runs down the window as on glass: stop-start on dry glass (slow, pausing often and long; now and
-  // then quicker), wandering a little (a kink here, a slant there, kept a while; never more than MEANDER px from where it began),
-  // catching an earlier bead's still-wet track now and then and following it, fast there and pausing little. The bigger the bead,
-  // the faster it runs and the further, and the longer it takes to dry away. It leaves water in a faint clear track behind it, so
-  // shrinks, and stops somewhere above the window's bottom edge, drying away there. Nothing along the top edge. The beads are glass:
-  // a faint body the page shows through, a crisp glint, a darker rim below. The tracks: each wet pixel's wetness (wet, a grid of the
-  // window's art px) drying over DRY s, the pixels dropping out as they dry; drawn to their own little canvas, rewritten a few times
-  // a second; a pixel dried out cleared from it. The wind doesn't move them (water on the glass).
+  // ---------- humidity: the glass fogging over, beads condensing in the fog; a bead grown heavy runs down, wiping a clear track ----------
+  // First the fog: a pale haze forming on the window over FORM s, patchy, dithered, thickest toward the sides and the bottom corners
+  // and thinner, broken, in the middle (as a real pane); none in the top rows. How thick it is follows the humidity (the effect's
+  // level: 90 % to 100 %, a light haze to a heavy fog), easing to a new level over a few seconds. Then the beads, within the fog
+  // (each where the fog has formed, more often where it's thick): appearing tiny and slowly growing where they are, anywhere on the
+  // window (a little more toward the top); the more humid, the more of them. Most grow heavy and run; a light one lingers a while,
+  // then dries away. Two that touch merge into one (their water adding up: the radius the cube root of the radii cubed, summed): two
+  // growing side by side, a running bead sweeping up a resting one, or catching up another running. A heavy bead runs down the window
+  // as on glass: stop-start on dry glass (slow, pausing often and long; now and then quicker), wandering a little (a kink here, a slant
+  // there, kept a while; never more than MEANDER px from where it began), catching an earlier bead's still-wet track now and then and
+  // following it, fast there and pausing little. The bigger the bead, the faster it runs and the further, and the longer it takes to
+  // dry away. It leaves water behind it, so shrinks, and stops somewhere above the window's bottom edge, drying away there. Its track:
+  // the fog wiped off the glass, as wide as the bead was there (clear glass, crisp), fogging over again slowly (crisp for REFOG * (1 -
+  // CRISP) s, then the fog back over the rest of REFOG); the water in it (wet, a grid of the window's art px) drying over DRY s, a bead
+  // on it while it's wet running fast. The beads are glass: a faint body the page shows through, a crisp glint, a darker rim below.
+  // The fog: one low-res offscreen canvas (each pixel's thickness as one of the FOG shades, dithered), repainted whole only as it
+  // forms, clears or thickens (a few times a second), otherwise just the pixels a track wipes or that fog over again. The humidity
+  // falling below 90 % (the effect off): the fog clearing as from a demister, the middle first and the edges last over CLEAR s, each
+  // bead drying away (shrinking and fading) as the clearing reaches it, those running finishing their run. The wind doesn't move any of
+  // it (water on the glass).
   // The budget: a quarter of humidity's particles goes to mist (tiny beads, staying under TINY, lingering where they formed), each
-  // counting as a third of one, so many of them bead the glass at once; the rest to the beads that grow and run, as many as ever.
-  // The shared budget shrinking (another effect on): no running bead cut short (each finishing its run; no new one till there's
-  // room), beads yet to show dropped, and of those growing, the least dropped and the rest left to dry away. Faded out all the way,
-  // then on again: the glass fresh. Reduced motion: the still frame as it would be some seconds in, beads and tracks. A bead fades in
-  // as it appears (over APPEAR s), never popping up whole.
+  // counting as a third of one, so many of them bead the glass at once; the rest to the beads that grow and run. The shared budget
+  // shrinking (another effect on): no running bead cut short (each finishing its run; no new one till there's room), beads yet to show
+  // dropped, and of those growing, the least dropped and the rest left to dry away. Gone all the way (the fog cleared, no bead left),
+  // then on again: the glass fresh. Reduced motion: the still frame as it would be some seconds in, fog, beads and tracks. A bead fades
+  // in as it appears (over APPEAR s), never popping up whole.
   const WATER = ["#1A2E41", "#2C5573", "#5793BC", "#A6D7F2", "#EFFAFF"].map(rgb);
+  const FOG = ["#323C43", "#4A555C", "#66717A", "#8995A0", "#AFBAC2"].map(rgb);   // the fog, thin to thick: pale grey, the page's
+  const FOG_ALPHA = [44, 54, 63, 71, 79];                                            // ... cool dark palette (alpha 0-255)
   const humidity = effect((e) => {
     const SIZES = [0.6, 1, 1.4, 1.9, 2.4, 2.9, 3.4, 3.9, 4.5];   // a bead's radius (its half-width), growing
     const HEAVY = 2.4;                 // a bead this big runs
     const MEANDER = 7;                 // px either side of where it began, at most
-    const DRY = 30;                    // s for a track to dry
-    const REDRAW = 0.2;                // s between the tracks' rewrites (each new wet pixel drawn at once)
+    const DRY = 30;                    // s for a track's water to dry
+    const REFOG = 60;                  // s for a track to fog over again all the way ...
+    const CRISP = 0.75;                // ... crisp (clear glass) while this much of that is left: the first 15 s
+    const FORM = 6;                    // s for the fog to form
+    const CLEAR = 10;                  // s for the fog to clear (the humidity below 90 %)
+    const THICKEN = 4;                 // s for the fog to go from none to its thickest (or back): a new level, eased to
+    const REDRAW = 0.2;                // s between the tracks' rewrites (a track's new pixels wiped at once)
+    const REPAINT = 0.1;               // s between the fog's repaints while it forms, clears or thickens
     const ON = 4;                      // how many times as fast on an earlier track as on dry glass (a usual bead; bigger, faster)
     const TINY = 1.4;                  // a still bead staying under this (mist) counts as a third of a particle
     const MIST = 0.25;                 // the share of humidity's particles for mist
@@ -767,20 +789,71 @@ const Sky = (() => {
     const beads = BEADS.map((rows) => mapped(rows, GLASS));
     const sizeOf = (r) => { const i = SIZES.findIndex((size) => size >= r - 0.01); return i < 0 ? SIZES.length - 1 : i; };
     const LARGEST = SIZES[SIZES.length - 1];
-    let all = [], wet = null, wetList = [], layer = null, img = null, since = 0, made = 0, seeded = false;
+    let all = [], wet = null, wetList = [], since = 0, made = 0, seeded = false;
+    // The fog: each pixel's thickness at most (base: patchy, thickest at the edges), when it forms and clears (ring: 0 the middle, 1
+    // the edges; it forms there first and clears there last), how wiped it is (clean: 1 just wiped, to 0 fogged over again); how far
+    // it has formed (cover, 0-1) and how thick (dense, 0-1); its canvas and image, as painted last (at drawn: [cover, dense])
+    let base = null, ring = null, clean = null, cleanList = [], cover = 0, dense = 0, drawn = [0, 0], layer = null, img = null;
+    let dirty = null, painting = 0, level = 0, fresh = 0, quiet = false;
     // (for the tests: pixels dried; px run and s taken, on a track and off one; merges, how many and the latest; beads absorbed into
-    // another, the latest; runs done, the latest: as Sky.state() gives them)
-    const seen = {dried: 0, on: [0, 0], off: [0, 0], merges: 0, merged: [], absorbed: [], done: []};
+    // another, the latest; runs done, the latest; the first bead to show since the glass was fresh: as Sky.state() gives them)
+    const seen = {dried: 0, refogged: 0, on: [0, 0], off: [0, 0], merges: 0, merged: [], absorbed: [], done: [], first: null};
     const weight = (b) => b.mist ? 1 / 3 : 1;   // (mist to the end, drying away too)
     const counted = (mist) => all.reduce((n, b) => n + (mist === undefined || b.mist === mist ? weight(b) : 0), 0);
     const volume = (a, b) => Math.min(LARGEST, Math.cbrt(a ** 3 + b ** 3));
     const height = (r) => beads[sizeOf(r)].height;
-    // A bead to condense somewhere: unseen a moment, then growing in place; to `full` (heavy, so to run, or light, so to linger; or
-    // mist: tiny, lingering). Where: anywhere (a little more toward the top); or, now and then, close beside a bead already there (to
-    // grow into it), or (not mist) on a still-wet track (to run down it, fast). The glass misting over (the effect just on): some way
-    // grown already
+    const thickness = (v) => 0.5 + 0.5 * v;   // the fog at a level (90 %: 0, 100 %: 1), at most
+    const front = (i, c) => clamp((c - (1 - ring[i]) * 0.65) / 0.35, 0, 1);   // how far the fog has formed at a pixel (c: cover)
+    // A pixel's fog (0-1), as it is (cover c, dense d; wiped: as its track has left it) or, not wiped, as it would be
+    const fogOf = (i, c, d, wiped) => d * base[i] * front(i, c) * (wiped ? 1 - Math.min(1, clean[i] / CRISP) : 1);
+    const at = (x, y) => Math.round(clamp(y, 0, H - 1)) * W + Math.round(clamp(x, 0, W - 1));
+    function grain() {   // the fog's pattern for the window's size
+      base = new Float32Array(W * H); ring = new Float32Array(W * H);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const u = x / Math.max(1, W - 1), v = y / Math.max(1, H - 1), su = Math.min(u, 1 - u), i = y * W + x;
+        const side = Math.max(0, 1 - su / 0.2), low = Math.max(0, 1 - (1 - v) / 0.22), high = 0.55 * Math.max(0, 1 - v / 0.1);
+        const corner = Math.max(0, 1 - Math.hypot(su, 1 - v) / 0.45);   // (the bottom corners, thickest)
+        const edge = clamp(Math.max(side, low, high) ** 1.5 + 0.5 * corner ** 1.5, 0, 1);
+        const large = noise(x / 18, y / 13, 1 << 20, 21), fine = noise(x / 4, y / 3, 1 << 20, 22);   // (patches; a fine mottle)
+        let b = 0.12 + 0.78 * edge + (large - 0.5) * 1.3 * (1 - 0.8 * edge) + (fine - 0.5) * 0.4;
+        if (y < 2) b = 0; else if (y < 6) b *= (y - 1) / 5;   // (none along the top edge)
+        base[i] = clamp(b, 0, 1);
+        ring[i] = clamp(0.5 * Math.max(Math.abs(2 * u - 1), Math.abs(2 * v - 1)) + 0.5 * edge + (noise(x / 9, y / 9, 1 << 20, 23) - 0.5) * 0.3, 0, 1);
+      }
+    }
+    const LIFT = Float32Array.from({length: 257}, (_, j) => (j / 256) ** 0.8);   // (a thin haze still seen: t ** 0.8, looked up)
+    function put(i, x = i % W, y = (i / W) | 0) {   // a pixel of the fog's image, as it is now (as painted last: drawn)
+      const t = base[i] > 0 ? fogOf(i, drawn[0], drawn[1], true) : 0, k = i * 4, d = img.data;
+      const s = t > 0 ? shadeOf(LIFT[(t * 256) | 0], x, y, FOG.length) : -1;
+      if (s < 0) { d[k + 3] = 0; return; }
+      const c = FOG[s];
+      d[k] = c[0]; d[k + 1] = c[1]; d[k + 2] = c[2]; d[k + 3] = FOG_ALPHA[s];
+    }
+    const touch = (x, y) => {   // (a pixel of the image changed: to go to the canvas)
+      if (!dirty) dirty = [x, y, x, y];
+      else { dirty[0] = Math.min(dirty[0], x); dirty[1] = Math.min(dirty[1], y); dirty[2] = Math.max(dirty[2], x); dirty[3] = Math.max(dirty[3], y); }
+    };
+    function flush() {
+      if (dirty && !quiet) layer.getContext("2d").putImageData(img, 0, 0, dirty[0], dirty[1], dirty[2] - dirty[0] + 1, dirty[3] - dirty[1] + 1);
+      if (!quiet) dirty = null;
+    }
+    function paint() {   // the fog painted whole, as it is now
+      drawn = [cover, dense];
+      for (let y = 0, i = 0; y < H; y++) for (let x = 0; x < W; x++, i++) put(i, x, y);
+      dirty = [0, 0, W - 1, H - 1];
+      flush();
+    }
+    // A bead to condense somewhere: unseen till the fog has formed there (and a moment more), then growing in place; to `full` (heavy,
+    // so to run, or light, so to linger; or mist: tiny, lingering). Where: anywhere in the fog (a little more toward the top, more
+    // often where it's thick); or, now and then, close beside a bead already there (to grow into it), or (not mist) on a still-wet
+    // track (to run down it, fast). The glass fresh (the fog just forming): sooner, and some way grown already (small all the same: as
+    // if they'd been building as it formed)
     const condense = (misting, mist) => {
-      let x = between(3, W - 4), cy = 6 + (H * 0.82 - 6) * random() ** 1.3, heavy = random() < 0.7;
+      let x, cy, heavy = random() < 0.7;
+      for (let tries = 0; tries < 8; tries++) {
+        x = between(3, W - 4); cy = 6 + (H * 0.82 - 6) * random() ** 1.3;
+        if (random() < 0.15 + base[at(x, cy)]) break;
+      }
       const k = random(), near = all.filter((b) => b.state === "grow" || b.state === "hold");
       if (k < 0.3 && near.length) {
         const o = near[Math.floor(random() * near.length)], a = between(0, 2 * Math.PI), far = o.r + between(2, 4.5);
@@ -793,11 +866,12 @@ const Sky = (() => {
       x = Math.round(clamp(x, 3, W - 4)); cy = clamp(cy, 6, H * 0.82);
       const full = mist ? between(0.8, TINY - 0.05) : heavy ? between(HEAVY, 3.2) : between(0.9, 2.1);
       return {id: ++made, state: "rest", mist, x, cy, wait: between(0, misting ? 1.5 : 3), r: 0, water: 0,
-              merged: 0, grow: between(0.2, 0.4), full, start: misting ? between(SIZES[0], full * 0.85) : SIZES[0], hold: between(4, 10)};
+              merged: 0, grow: between(0.2, 0.4), full, start: misting ? between(SIZES[0], full / 2) : SIZES[0], hold: between(4, 10)};
     };
-    function clear() {   // the glass fresh: nothing beading, running or wet
-      all = []; wetList = []; since = 0; seeded = false;
-      if (wet) { wet.fill(0); img.data.fill(0); layer.getContext("2d").clearRect(0, 0, W, H); }
+    const formed = (b) => front(at(b.x, b.cy), cover) >= 0.9;   // (the fog formed where it is)
+    function clear() {   // the glass fresh: no fog, nothing beading, running or wet
+      all = []; wetList = []; cleanList = []; since = 0; painting = 0; seeded = false; cover = 0; dense = 0; fresh = 0; seen.first = null;
+      if (wet) { wet.fill(0); clean.fill(0); img.data.fill(0); drawn = [0, 0]; dirty = null; layer.getContext("2d").clearRect(0, 0, W, H); }
     }
     const reach = (r) => H * between(0.22, 0.4) * (r / 2.8) ** 1.5;   // how far a bead this big runs
     const fadeFor = (r) => 0.5 + 0.12 * r ** 3;                      // ... and how long it takes to dry away (its water)
@@ -854,40 +928,36 @@ const Sky = (() => {
       if (seen.absorbed.length > 200) seen.absorbed.shift();
     }
     const wetAt = (x, y) => (x >= 0 && x < W && y >= 0 && y < H ? wet[y * W + x] : 0);
-    // A pixel of track: how it shows as it dries (wetness 1 to 0): a few gone even when wet (a broken line, not a stroke), more as it
-    // dries, each at its own (fixed, random) threshold; fainter as it goes; a few catch a glint
-    const paint = (i, v) => {
-      const x = i % W, y = (i / W) | 0, k = i * 4, d = img.data, glint = hash(x, y, 7) < 0.08;
-      if (v <= 0 || hash(x, y, 3) < 0.12 + 0.75 * (1 - v)) { d[k + 3] = 0; return; }   // (dried out: none left at all)
-      const c = WATER[glint ? 4 : 3];
-      d[k] = c[0]; d[k + 1] = c[1]; d[k + 2] = c[2]; d[k + 3] = Math.round(glint ? 90 + 140 * v : (35 + 75 * v) * (0.7 + 0.6 * hash(x, y, 5)));
-    };
-    const lay = (x, y, v) => {   // water left on the glass at (x, y)
+    const lay = (x, y, v) => {   // water left on the glass at (x, y), the fog wiped off there
       if (x < 0 || x >= W || y < 1 || y >= H) return;
       const i = y * W + x;
       if (wet[i] <= 0) wetList.push(i);
-      if (v > wet[i]) {
-        wet[i] = v;
-        paint(i, v);
-        const g = layer.getContext("2d"), k = i * 4;
-        g.clearRect(x, y, 1, 1);
-        if (img.data[k + 3]) { g.fillStyle = `rgba(${img.data[k]},${img.data[k + 1]},${img.data[k + 2]},${img.data[k + 3] / 255})`; g.fillRect(x, y, 1, 1); }
-      }
+      if (v > wet[i]) wet[i] = v;
+      if (clean[i] <= 0) cleanList.push(i);
+      if (clean[i] < 1) { clean[i] = 1; put(i); touch(x, y); }
     };
-    function dry(dt) {   // every wet pixel a little drier, the tracks' canvas rewritten (those dried out this time, cleared)
-      let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    // A track's row: as wide as the bead's sprite, where it's drawn; the water there wettest down its middle (where a bead following
+    // it runs), thinner, so drying sooner, toward its sides
+    const wipe = (d, y) => {
+      const w = beads[sizeOf(d.r)].width, left = Math.round(d.x) - (w >> 1), v = 0.7 + 0.3 * Math.min(1, d.r / 3.4), mid = left + (w - 1) / 2;
+      for (let x = left; x < left + w; x++) lay(x, y, v * (1 - 0.3 * Math.abs(x - mid) / Math.max(1, w / 2)));
+    };
+    function dry(dt) {   // the tracks' water a little drier, their wiped glass fogging over a little more (those pixels repainted)
       const kept = [];
       for (const i of wetList) {
-        const x = i % W, y = (i / W) | 0;
-        x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
         wet[i] = Math.max(0, wet[i] - dt / DRY);
-        paint(i, wet[i]);
         if (wet[i] > 0) kept.push(i);
         else seen.dried++;
       }
       wetList = kept;
-      if (x1 >= 0) layer.getContext("2d").putImageData(img, 0, 0, x0, y0, x1 - x0 + 1, y1 - y0 + 1);
-      if (!wetList.length) layer.getContext("2d").clearRect(0, 0, W, H);
+      const still = [];
+      for (const i of cleanList) {
+        clean[i] = Math.max(0, clean[i] - dt / REFOG);
+        if (clean[i] < CRISP) { put(i); touch(i % W, (i / W) | 0); }
+        if (clean[i] > 0) still.push(i);
+        else seen.refogged++;
+      }
+      cleanList = still;
     }
     function run(d, dt) {
       let time = dt;
@@ -915,10 +985,10 @@ const Sky = (() => {
           if (o.state === "run" && o.r > d.r) { merge(o, d); return; }
           merge(d, o);
         }
-        // A new row reached: water left in the one behind it; just under it, an earlier track caught (close beside it) or followed on
+        // A new row reached: its track in the one behind it; just under it, an earlier track caught (close beside it) or followed on
         const row = Math.floor(d.y), cx = Math.round(d.x);
         if (row > d.laid) {
-          for (let y = d.laid + 1; y <= row; y++) lay(cx, y - 1, 0.7 + 0.3 * Math.min(1, d.r / 3.4));
+          for (let y = d.laid + 1; y <= row; y++) wipe(d, y - 1);
           d.laid = row;
           const ahead = row + height(d.r);   // (the row just under it)
           let best = 0, to = cx;
@@ -942,40 +1012,71 @@ const Sky = (() => {
       }
       if (time > 1e-6) seen[d.on ? "on" : "off"][1] += time;
     }
+    // The fog's mean thickness (0-1, as shown): over the window, its middle (the central fifth each way) and its edges (the outer
+    // tenth at the sides and the bottom); every other pixel each way
+    const fogNow = () => {
+      const sums = {thickness: [0, 0], middle: [0, 0], edge: [0, 0]};
+      if (base) for (let y = 0; y < H; y += 2) for (let x = 0; x < W; x += 2) {
+        const i = y * W + x, t = fogOf(i, cover, dense, true), u = x / W, v = y / H;
+        const add = (k) => { sums[k][0] += t; sums[k][1]++; };
+        add("thickness");
+        if (Math.abs(u - 0.5) < 0.2 && Math.abs(v - 0.5) < 0.2) add("middle");
+        if (Math.min(u, 1 - u) < 0.1 || v > 0.9) add("edge");
+      }
+      return {cover, dense, ...Object.fromEntries(Object.entries(sums).map(([k, [s, n]]) => [k, s / Math.max(n, 1)]))};
+    };
     return {
       strength: () => 0.85,
-      need: () => W / 14 / (1 - MIST),   // (the growing and running beads' W / 14, and the mist's share on top)
+      need: () => W / 14 / (1 - MIST) * (0.2 + 0.8 * (e.level > 0 ? e.level : level)),   // (the more humid, the more beads)
       count: () => Math.ceil(counted() - 1e-9),
-      want(v) { if (v > 0 && e.amount <= 0) clear(); e.level = v; },   // (on again after fading out all the way: the glass fresh)
+      want(v) {   // (on again after gone all the way: the glass fresh; reduced motion, off: gone at once)
+        if ((v > 0 && !(e.level > 0 || cover > 0 || all.length)) || (STILL && v <= 0)) clear();
+        e.level = v;
+      },
+      fade() { e.amount = e.level > 0 || cover > 0 || all.length ? 1 : 0; },   // (the fog forms and clears as it will; the beads fade)
+      alive: () => e.level > 0 || cover > 0 || all.length > 0,
       resize() {
         wet = new Float32Array(W * H);
+        clean = new Float32Array(W * H);
+        grain();
         layer = canvasOf(W, H);
         img = layer.getContext("2d").createImageData(W, H);
         clear();
       },
       step(dt, t, share) {
         if (STILL && !seeded) {   // (reduced motion: the glass as it would be 40 s in, for its one still frame)
-          seeded = true;
+          seeded = quiet = true;
           for (let i = 0; i < 400; i++) this.step(0.1, t, share);
+          quiet = false;
+          paint();
         }
+        if (e.level > 0) level = e.level;
+        // The fog forming (or clearing), thickening or thinning to its level
+        cover = STILL ? (e.level > 0 ? 1 : 0) : clamp(cover + (e.level > 0 ? dt / FORM : -dt / CLEAR), 0, 1);
+        const target = e.level > 0 ? thickness(e.level) : dense;
+        dense = STILL ? target : dense + clamp(target - dense, -dt / THICKEN, dt / THICKEN);
+        fresh += dt;
         const most = Math.max(2, Math.round(this.need() * share));
         // Too many (the budget shrunk, or tiny beads grown): those yet to show dropped, then the least of those growing; the rest left to
-        // dry away
+        // dry away. The fog clearing: those yet to show dropped, and each still one drying away as the clearing reaches it
         let over = counted() - most;
-        for (const b of all) if (over > 1e-9 && b.state === "rest") { b.gone = true; over -= weight(b); }
+        for (const b of all) if (b.state === "rest" && (over > 1e-9 || e.level <= 0)) { b.gone = true; over -= weight(b); }
         for (const b of all) if (over > 1e-9 && b.state === "grow" && b.r < 1) { b.gone = true; over -= weight(b); }
         for (const b of all) if (over > 1e-9 && (b.state === "grow" || b.state === "hold")) { over -= weight(b); dries(b); }
+        if (e.level <= 0) for (const b of all) if ((b.state === "grow" || b.state === "hold") && front(at(b.x, b.cy), cover) < 0.5) dries(b);
         all = all.filter((b) => !b.gone);
-        const misting = made === 0 || !all.length;
         // Too few: more to condense, mist and the rest each as many as fit their share
-        const rest = Math.max(1, Math.round(most * (1 - MIST)));
+        const rest = Math.max(1, Math.round(most * (1 - MIST))), misting = made === 0 || !all.length;
         for (let n = counted(false); n + 1 <= rest + 1e-9 && e.level > 0; n++) all.push(condense(misting, false));
         for (let n = counted(true); n + 1 / 3 <= most - rest + 1e-9 && e.level > 0; n += 1 / 3) all.push(condense(misting, true));
         for (const b of all) {
           if (b.gone) continue;
           if (b.shown !== undefined) b.shown += dt;
           if (b.state === "rest") {
-            if ((b.wait -= dt) <= 0) { b.state = "grow"; b.r = b.start; b.shown = 0; }
+            if (formed(b) && (b.wait -= dt) <= 0) {
+              b.state = "grow"; b.r = b.start; b.shown = 0;
+              if (!seen.first) seen.first = {after: fresh, cover, fog: fogOf(at(b.x, b.cy), cover, dense, false), formed: fogNow()};
+            }
           } else if (b.state === "grow") {
             b.r = Math.min(b.full, b.r + b.grow * dt);
             if (b.r >= b.full) b.state = "hold";
@@ -1004,28 +1105,45 @@ const Sky = (() => {
         }
         all = all.filter((b) => !b.gone);
         if ((since += dt) >= REDRAW) { dry(since); since = 0; }
+        // The fog repainted whole as it forms, clears or thickens (a few times a second); else just the pixels changed
+        painting += dt;
+        if ((cover !== drawn[0] || dense !== drawn[1]) && (painting >= REPAINT || STILL || cover === 0) && !quiet) { painting = 0; paint(); }
+        else flush();
       },
-      probe: () => ({height: H, meander: MEANDER, wet: wetList.length, dried: seen.dried, on: seen.on.slice(), off: seen.off.slice(),
-                     merges: seen.merges, merged: seen.merged.slice(), absorbed: seen.absorbed.slice(), done: seen.done.slice(), largest: LARGEST,
+      probe: () => ({height: H, meander: MEANDER, wet: wetList.length, dried: seen.dried, refogged: seen.refogged, on: seen.on.slice(),
+                     off: seen.off.slice(), merges: seen.merges, merged: seen.merged.slice(), absorbed: seen.absorbed.slice(),
+                     done: seen.done.slice(), largest: LARGEST, crisp: CRISP, first: seen.first,
                      wetAt: (x, y) => wetAt(x, y),
+                     cleanAt: (x, y) => (clean && x >= 0 && x < W && y >= 0 && y < H ? clean[y * W + x] : 0),
+                     fogAt: (x, y) => (base && x >= 0 && x < W && y >= 0 && y < H ? [fogOf(y * W + x, cover, dense, true), fogOf(y * W + x, cover, dense, false)] : [0, 0]),
+                     fog: fogNow,
+                     colours: () => {   // (every colour in the beads' sprites: [r, g, b, alpha])
+                       const found = new Set();
+                       for (const s of beads) {
+                         const d = s.getContext("2d").getImageData(0, 0, s.width, s.height).data;
+                         for (let i = 0; i < d.length; i += 4) if (d[i + 3]) found.add(`${d[i]},${d[i + 1]},${d[i + 2]},${d[i + 3]}`);
+                       }
+                       return [...found].sort().map((c) => c.split(",").map(Number));
+                     },
                      sites: all.filter((b) => b.state !== "run" && b.ran === undefined).map((b) => ({id: b.id, x: b.x, y: b.cy,
                        r: b.state === "rest" ? 0 : b.r, alpha: b.state === "fade" ? b.left / b.fadeFor : 1, drawn: b.drawn || null})),
-                     stray: () => {   // (pixels showing on the tracks' canvas where the glass is dry)
+                     stray: () => {   // (pixels left wiped on the fog's canvas where the glass has fogged over again)
                        if (!layer) return 0;
-                       const d = layer.getContext("2d").getImageData(0, 0, W, H).data;
+                       const d = layer.getContext("2d").getImageData(0, 0, W, H).data, k = img.data, was = img.data.slice();
                        let n = 0;
-                       for (let i = 0; i < W * H; i++) if (d[i * 4 + 3] && !(wet[i] > 0)) n++;
+                       for (let i = 0; i < W * H; i++) if (!(clean[i] > 0)) { put(i); if (d[i * 4 + 3] < k[i * 4 + 3]) n++; }
+                       k.set(was);
                        return n;
                      },
                      runners: all.filter((b) => b.state === "run" || b.ran !== undefined).map((d) => {
                        const h = height(d.r), cx = Math.round(d.x), top = Math.floor(d.y);
                        const trail = [-1, 0, 1].map((dx) => [cx + dx, top - 2]).find(([x, y]) => wetAt(x, y) > 0);
-                       return {id: d.id, x: d.x, x0: d.x0, y: d.y, y0: d.y0, r: d.r, bottom: top + h, end: d.end, on: d.on,
-                               behind: top < d.y0 + 4 || !!trail, trail: trail || null};
+                       return {id: d.id, x: d.x, x0: d.x0, y: d.y, y0: d.y0, r: d.r, w: beads[sizeOf(d.r)].width, bottom: top + h, end: d.end,
+                               on: d.on, behind: top < d.y0 + 4 || !!trail, trail: trail || null};
                      })}),
       draw(g, alpha) {
-        g.globalAlpha = alpha * 0.75;
-        if (wetList.length) g.drawImage(layer, 0, 0);
+        g.globalAlpha = alpha;
+        if (drawn[0] > 0) g.drawImage(layer, 0, 0);
         for (const b of all) {
           if (b.state === "rest") continue;
           const sprite = beads[sizeOf(b.r)], a = (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, (b.shown ?? APPEAR) / APPEAR);
@@ -2140,7 +2258,7 @@ const Sky = (() => {
   // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animations" (bottom left) ----------
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
   // stronger to 8 mm/h), smog from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
-  // humidity, wind above 15 km/h (the reading now, not the gust), heat at 35 °C, ice below 0 °C (how far below). A tile
+  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust), heat at 35 °C, ice below 0 °C (how far below). A tile
   // with no reading now calls for nothing.
   const CALLED_BY = {rain: "Rain", smog: "US AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
                      ice: "Temperature"};
@@ -2157,7 +2275,8 @@ const Sky = (() => {
       ? aqiTile.bounds.slice(1, -1) : BANDS;
     return {rain: rate > 0 ? 0.3 + 0.7 * Math.min(1, rate / 8) : 0,
             smog: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),
-            uv: uvi !== null && uvi >= 11 ? 1 : 0, humidity: humidity !== null && humidity >= 90 ? 1 : 0,
+            uv: uvi !== null && uvi >= 11 ? 1 : 0,
+            humidity: humidity !== null && humidity >= 90 ? Math.max(0.05, Math.min(1, (humidity - 90) / 10)) : 0,
             wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 1 : 0,
             ice: temperature !== null && temperature < 0 ? -temperature : 0};
   }
@@ -2218,7 +2337,7 @@ const Sky = (() => {
 </script>
 <!-- TEMPORARY: effect test links. A "test:" row at the bottom left (in the corner, before "stop animations"), one link per effect, simulating its condition (the effect and its
      tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
-     ?fx=smog3,wind,ice, ?fx=all (rain light, rain2 heavy, smog1-smog5, uv, humidity, wind, heat, ice; ?fx=all every one, no link of its own). To remove: delete
+     ?fx=smog3,wind,ice, ?fx=all (rain light, rain2 heavy, smog1-smog5, uv, humidity light (91 %), humidity2 heavy (100 %), wind, heat, ice; ?fx=all every one, no link of its own). To remove: delete
      from here to "END TEMPORARY" (this style, the row and its script). The page's own listener for "ecobot-fx" then simply hears nothing. -->
 <style>
   #fxtest { flex: 0 1 auto; min-width: 140px; overflow-x: auto; overflow-y: hidden;   /* (the corner's width set to fit by the page) */
@@ -2237,7 +2356,7 @@ const Sky = (() => {
 (() => {
   // Each effect's simulated levels, one click a step (back to off after the last): as the page's conditions (rain: its strength;
   // smog: its band; ice: degrees below 0 °C)
-  const STEPS = {rain: [0.35, 1], smog: [1, 2, 3, 4, 5], uv: [1], humidity: [1], wind: [1], heat: [1], ice: [5]};
+  const STEPS = {rain: [0.35, 1], smog: [1, 2, 3, 4, 5], uv: [1], humidity: [0.1, 1], wind: [1], heat: [1], ice: [5]};
   const ALL = {rain: 1, smog: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5};   // (?fx=all)
   const OLD = {leaves: "wind", radiation: "uv", drips: "humidity"};   // (their earlier names, in links saved before)
   const row = document.getElementById("fxtest");
@@ -2245,8 +2364,8 @@ const Sky = (() => {
   // Too narrow for all of it (a phone, "stop animations" beside it): scrolled to its end, its "clear" just left of that link
   new ResizeObserver(() => { row.scrollLeft = row.scrollWidth; }).observe(row);
   let on = {};   // {effect: its step's index}
-  const name = (k) => k === "rain" ? ["rain", "rain2"][on[k]] : k === "smog" ? `smog${on[k] + 1}` : k;   // (in the URL)
-  const label = (k) => k in on ? (k === "rain" ? ["rain: light", "rain: heavy"][on[k]] : k === "smog" ? `smog ${on[k] + 1}` : k) : k;
+  const name = (k) => k === "rain" || k === "humidity" ? [k, `${k}2`][on[k]] : k === "smog" ? `smog${on[k] + 1}` : k;   // (in the URL)
+  const label = (k) => k in on ? (k === "rain" || k === "humidity" ? `${k}: ${["light", "heavy"][on[k]]}` : k === "smog" ? `smog ${on[k] + 1}` : k) : k;
 
   function read(param) {   // ?fx=... into `on`
     on = {};
@@ -2254,6 +2373,8 @@ const Sky = (() => {
       if (word === "all") Object.entries(ALL).forEach(([k, v]) => { on[k] = STEPS[k].indexOf(v); });
       else if (word === "rain" || word === "rain1") on.rain = 0;
       else if (word === "rain2" || word === "heavyrain") on.rain = 1;
+      else if (word === "humidity1") on.humidity = 0;
+      else if (word === "humidity2") on.humidity = 1;
       else if (/^smog[1-5]?$/.test(word)) on.smog = Number(word.slice(4) || 1) - 1;
       else if (word in STEPS) on[word] = 0;
       else if (word in OLD) on[OLD[word]] = 0;

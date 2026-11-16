@@ -296,7 +296,7 @@ back) to fill the window, a single tile shown too. Zoomed, page through the tile
 swipe, a drag on the gauge, or a two-finger sideways swipe on a trackpad; it stops at the first and the last (with one tile, paging just nudges it and back). A click or tap (not on the text) or Esc goes back.
 
 Behind the gauges, the weather is drawn as faint pixel art while the readings call for it: rain while it rains, smog from the US
-AQI's Moderate band up, UV beams at a UV index of 11, condensation beading on the glass and running down it at 90 % humidity, leaves blowing past
+AQI's Moderate band up, UV beams at a UV index of 11, the glass fogging over at 90 % humidity (heavier to 100 %), beads condensing in the fog and running down it, wiping clear tracks, leaves blowing past
 above 15 km/h of wind, a heat haze from 35 °C and ice below 0 °C. "stop animations" at the bottom left stops them in that browser (kept with its arrangement);
 with reduced motion asked for, one still frame. To draw none of it for anyone, set `MCP_DASHBOARD_ANIMATIONS=off`.
 
