@@ -8,8 +8,8 @@ across reloads, reset), the drag's text left selectable, the fill of fewer tiles
 fill the window and the gallery through the others (keys, mouse drags, a trackpad's swipe, touch swipes, both ends, the text still
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
 one canvas behind the tiles, "stop animations", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place
-with no particles, the wind's leaves within the budget and blowing right to left, rain in the wind bunched into curtains), and the
-data's rain rate. With ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
+with no particles, the wind's leaves within the budget and blowing right to left, rain in the wind bunched into curtains, its drops
+knocking the leaves they hit), and the data's rain rate. With ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
 import base64
@@ -970,10 +970,18 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     rain_phone = got["rain"]["phone"]
     assert rain_phone["errors"] == [] and rain_phone["looks"] >= 20 and rain_phone["drops"] > 5, rain_phone
     assert rain_phone["vx"] < alone["vx"] and rain_phone["across"] > 1.3 and rain_phone["overTime"] > 1.3, rain_phone
+    # heavy drops knock the leaves they hit (a push along their slant, a burst of spin): many hits, each a bash; light rain's (before
+    # it turned heavy) barely nudge them; the rain alone (no leaves) and the wind alone (no drops), none
+    assert alone["leaves"]["hits"] == 0, alone["leaves"]
+    for heavy, many in ((windy, 25), (rain_phone, 5)):   # (in 3 s or so: about 50-65; on a phone, its art small, about 15-30)
+        assert heavy["leaves"]["hits"] >= many and heavy["leaves"]["push"] > 25, heavy["leaves"]
+    assert windy["leaves"]["whirl"] > 2, windy["leaves"]
+    assert windy["light"]["hits"] >= 3 and 0 < windy["light"]["push"] < 10, windy["light"]
     # the wind blows right to left: its leaves leftward overall, as drawn on the canvas too (frame to frame); some caught in a loop
     # going rightward a moment (on a phone too)
     for seen in (got["wind"], got["phoneWind"]):
         assert seen["vx"] < -10 and seen["against"] > 0 and seen["frames"] > 20 and seen["left"] > 3 * seen["right"] > 0, seen
+        assert seen["hits"] == 0 and seen["whirl"] == 0, seen   # (no rain: nothing knocks the leaves)
     # the strip at the bottom right: its links, then the time at the far right; on a phone with both its links, the test row
     # beside it or above it, never over it
     phone = got["phone"]

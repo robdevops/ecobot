@@ -141,7 +141,8 @@
 //   nothing drawn.
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), size: [art width, art height, P], particles (each effect's
 //   now), budget (theirs together, at most), levels, iceReach (art px), wind (its leaves on screen: {vx: their mean speed across,
-//   negative leftward, against: how many go rightward}), rain (its drops: {xs: where across, those in the window's lower half,
+//   negative leftward, against: how many go rightward, hits: how many the rain's drops have hit, push: their mean push, px/s,
+//   whirl: the most spin knocks have left on one now}), rain (its drops: {xs: where across, those in the window's lower half,
 //   width: the art's, vx: their mean speed across})}, for the tests.
 const Sky = (() => {
   const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
@@ -226,7 +227,8 @@ const Sky = (() => {
   // ---------- rain: streaks from the top right, three layers deep, splashing at the bottom ----------
   // With the wind on too, the drops ride its air (wind.across, below): blown further left, harder in its gusts, and through the gust
   // bands rolling right to left with the leaves; each drop's sideways speed rising and falling as a band passes, so the rain bunches
-  // into denser curtains and thins into gaps; each streak leaning as its drop moves (sprites at a few slants, the nearest drawn).
+  // into denser curtains and thins into gaps; each streak leaning as its drop moves (sprites at a few slants, the nearest drawn). A
+  // drop that hits a leaf (one as far off as itself) knocks it (wind.knock(), below) and ends there in a tiny splash.
   const RAIN = ["#2A4560", "#3A6688", "#5A90B8", "#8FC2E2", "#D6F0FF"].map(rgb);
   const rain = effect((e) => {
     const SLANT = 0.45;                // px left for each px down (no wind)
@@ -299,8 +301,10 @@ const Sky = (() => {
         // (the wind's gust bands, one air with the leaves', carried along as fast as the near drops go across: so they bunch, and the
         // far ones, slower, are overtaken by them, and bunch too)
         if (windy) wind.ride(LAYERS[1].speed * pace * sway + wind.steady(LAYERS[1].speed / FASTEST));
+        // (how hard a drop knocks a leaf it hits: light rain's barely, heavy rain's a bash)
+        const hard = 0.04 + 0.96 * Math.pow(e.level, 2.5);
         for (const d of drops) {
-          const fall = d.v * pace * dt;
+          const fall = d.v * pace * dt, x0 = d.x, y0 = d.y + d.sprite.height - 1;   // (its head, where it was)
           d.y += fall;
           if (windy) {   // (the wind's air where it is, leftward px/s; the streak leaning to match: sideways over down)
             // (in a lull it can blow back against the drop's own lean, so they fall almost straight down; never back up the window)
@@ -309,6 +313,7 @@ const Sky = (() => {
             d.vx = -(own + air);
             d.x += d.vx * dt;
             d.sprite = d.sprites[leaning(lean)];
+            if (wind.knock(d.layer, x0, y0, d.x, d.y + d.sprite.height - 1, d.vx, d.v * pace, hard)) { spawn(d, false); continue; }
           } else {
             d.vx = -d.v * pace * sway;
             d.x -= fall * sway;
@@ -484,7 +489,9 @@ const Sky = (() => {
     // round and round, then flings them off as it dies away. A leaf eases toward the air's speed where it is (it has a little
     // weight), turning over faster the faster the air turns about it. A few wisps of the wind itself trace the same air. Gust bands
     // roll along with it, one set for everything: the air faster in a band, slower between, harder after a gust; the rain rides them
-    // (across(), below), the leaves a little (with or without the rain).
+    // (across(), below), the leaves a little (with or without the rain). In the rain, a drop that hits a leaf knocks it (knock()):
+    // a push along the drop's slant, down and on, and a burst of spin; hit after hit, it tumbles and is battered down. A tiny splash on
+    // the leaf where it hit.
     // (All of it is worked out downwind along +x, from the left edge, and drawn mirrored: on screen x is W - x, the sprites mirrored
     // too, so everything, the gusts, turbulence and eddies, goes right to left, the leaves and wisps coming in at the right edge.)
     const LAYERS = [{speed: 40, alpha: 0.5, share: 0.4}, {speed: 60, alpha: 0.75, share: 0.35}, {speed: 85, alpha: 1, share: 0.25}];
@@ -493,19 +500,26 @@ const Sky = (() => {
     const EDDY_DRAW = 150;             // how hard an eddy draws leaves onto its ring, and flings them off (px/s, about)
     const STEADY = 45, BANDS = 190;    // the rain's push from the wind (leftward px/s on the nearest drops): steady, and in its bands, each way
     const LEAF_BANDS = 0.3;            // ... the leaves' from the bands (of their own speed, each way)
-    // Each layer's leaves: each shape in each colour turning each way, as its frames
+    // Each layer's leaves: each shape in each colour turning each way, as its frames (some hundreds of little canvases: made when the
+    // wind first blows, not as every page opens)
     const transposed = (rows) => rows[0].split("").map((_, x) => rows.map((row) => row[x]).join(""));
     const mirrored = (rows) => rows.map((row) => [...row].reverse().join(""));   // (drawn mirrored: see above)
-    const sprites = LEAF_SHAPES.map((shapes) => shapes.flatMap((rows) => LEAF_COLOURS.flatMap(([d, m, l]) => {
+    let sprites = null;
+    const leafSprites = () => sprites || (sprites = LEAF_SHAPES.map((shapes) => shapes.flatMap((rows) => LEAF_COLOURS.flatMap(([d, m, l]) => {
       const under = [d, d, m];   // (its underside: darker)
       // turning about its length, or end over end (squeezed on its side, then stood up again)
       return [rows, transposed(rows)].map((map, axis) => TURN.map((k) => {
         const squashed = mirrored(axis ? transposed(squeezed(map, k)) : squeezed(map, k));
         return mapped(squashed, k > 0 ? {d, m, l, v: l, s: STEM} : {d: under[0], m: under[1], l: under[2], v: under[1], s: STEM});
       }));
-    })));
+    }))));
     const WISP = ["#2E363D", "#45515B", "#5F6E7A"].map((c) => `rgb(${rgb(c)})`);
     let flying = [], eddies = [], wisps = [], gust = 0, nextGust = 0, travelled = 0, calm = 1, swept = 0, riding = 0;
+    let splashes = [], hits = 0, pushed = 0;
+    const KNOCK = 60;                  // a heavy drop's push on a near leaf (px/s, along its fall); farther leaves less (parallax)
+    // A splash on a leaf, frame by frame: a bead where the drop struck, then two droplets thrown up off it, falling away ([dx, dy, shade])
+    const SPLASH = [[[0, 0, 4], [0, -1, 3]], [[-1, -1, 3], [1, -2, 4], [0, 0, 2]], [[-2, -2, 2], [2, -2, 3]], [[-2, -1, 1], [3, -1, 2]]]
+      .map((dots) => painted(7, 4, (x, y) => { const d = dots.find(([dx, dy]) => dx + 3 === x && dy + 3 === y); return d && RAIN[d[2]]; }));
     // The gust bands at x (downwind): -1 (a lull) to 1 (a band's heart), two waves rolling along (`swept` px on), the same for the
     // leaves and the rain: a little ahead of the turbulence, or, in the rain, as fast as the near drops they carry (ride()), so the
     // drops bunch; on narrow art (a phone's) shorter, so a curtain and a gap or two still fit across. And how strongly, more after a gust
@@ -559,7 +573,7 @@ const Sky = (() => {
       d.on = 0; d.draw = 1;
     };
     const spawn = (f, anywhere) => {
-      const set = sprites[f.layer];
+      const set = leafSprites()[f.layer];
       f.frames = set[Math.floor(random() * set.length)];
       f.x = anywhere ? between(-10, W) : between(-30, -8);
       f.y = between(H * 0.05, H * 0.95);
@@ -569,6 +583,8 @@ const Sky = (() => {
       f.spin = between(4, 9);
       f.sink = between(2, 10);
       f.phase = between(0, 7);
+      f.whirl = 0; f.batter = 0;   // (rain's knocks: spin on top of its own, frames/s; sink on top of its own, px/s; both dying away)
+      f.hw = -1;                   // (where it is on screen, for the rain: not yet)
     };
     const wisp = (w, anywhere) => {
       w.x = anywhere ? between(0, W) : between(-40, -5);
@@ -586,9 +602,31 @@ const Sky = (() => {
       steady: (k) => e.amount * k * calm * STEADY * (1 + gust),
       ride: (v) => { riding = v; },   // (this frame, the gust bands carried along at v px/s: the rain's)
       // (on screen: the leaves' mean speed across, px/s, negative leftward; how many go rightward, against the wind, in a loop)
+      // (and the rain's hits on them so far, and their mean push, px/s; the most spin knocks have left on one now, frames/s)
       probe: () => ({vx: -flying.reduce((sum, f) => sum + f.vx, 0) / Math.max(flying.length, 1),
-                     against: flying.filter((f) => f.vx < 0).length}),
-      resize() { flying = []; eddies = []; wisps = []; },
+                     against: flying.filter((f) => f.vx < 0).length, hits, push: pushed / Math.max(hits, 1),
+                     whirl: flying.reduce((most, f) => Math.max(most, f.whirl), 0)}),
+      // A drop of rain layer `layer` going from (x0, y0) to (x1, y1) this frame (its head, on screen, art px), at vx across and vy down
+      // (px/s): if it hits a leaf as far off as itself, the leaf knocked (`hard` 0-1: how heavy the rain) and true (the drop ends)
+      knock(layer, x0, y0, x1, y1, vx, vy, hard) {
+        if (e.amount <= 0) return false;
+        for (const f of flying) {
+          if (f.layer !== layer || f.hw < 0 || f.y + f.hh < y0 || f.y - f.hh > y1) continue;
+          const sx = W - f.x, k = y1 > y0 ? clamp((f.y - f.hh - y0) / (y1 - y0), 0, 1) : 0, x = x0 + (x1 - x0) * k;   // (where it meets the top)
+          if (Math.abs(x - sx) > f.hw) continue;
+          const push = KNOCK * hard * LAYERS[layer].speed / LAYERS[2].speed * between(0.7, 1.3), v = Math.hypot(vx, vy);
+          f.vx -= vx * push / v;   // (downwind: leftward on screen)
+          f.vy += vy * push / v;
+          pushed += push;
+          f.whirl = Math.min(f.whirl + between(5, 12) * hard, 40);
+          f.batter = Math.min(f.batter + between(8, 16) * hard, 70);
+          hits++;
+          if (splashes.length < 40) splashes.push({f, dx: Math.round(x - sx), dy: Math.round(Math.max(y0 + (y1 - y0) * k, f.y - f.hh) - f.y), age: 0});
+          return true;
+        }
+        return false;
+      },
+      resize() { flying = []; eddies = []; wisps = []; splashes = []; },
       step(dt, t, share) {
         calm = clamp(W / 360, CALM, 1);
         const n = Math.round(this.need() * share);
@@ -622,12 +660,17 @@ const Sky = (() => {
         for (const f of flying) {
           const [vx, vy, curl] = airAt(f.x, f.y, LAYERS[f.layer].speed, t), ease = 1 - Math.exp(-dt / f.weight);
           f.vx += (vx - f.vx) * ease;
-          f.vy += (vy + f.sink - f.vy) * ease;
+          f.vy += (vy + f.sink + f.batter - f.vy) * ease;
           f.x += f.vx * dt;
           f.y += f.vy * dt;
-          f.turn += (f.spin + Math.min(Math.abs(curl) * 2.5, 14)) * dt;
-          if (f.x > W + 14 || f.x < -60 || f.y > H + 14 || f.y < -14) spawn(f, false);
+          f.turn += (f.spin + Math.min(Math.abs(curl) * 2.5, 14) + f.whirl) * dt;
+          if (f.whirl) { f.whirl *= Math.exp(-1.6 * dt); f.batter *= Math.exp(-0.6 * dt); if (f.whirl < 0.05) f.whirl = f.batter = 0; }
+          if (f.x > W + 14 || f.x < -60 || f.y > H + 14 || f.y < -14) { spawn(f, false); continue; }
+          const frame = f.frames[Math.floor(f.turn) % f.frames.length];   // (its size as drawn: what a drop can hit, a little inside it)
+          f.hw = frame.width * 0.4; f.hh = frame.height * 0.4;
         }
+        for (const s of splashes) s.age += dt;
+        if (splashes.length) splashes = splashes.filter((s) => s.age < 0.16 && s.f.hw >= 0);
         while (wisps.length < 4) { const w = {}; wisp(w, true); wisps.push(w); }
         for (const w of wisps) {   // (twice a frame: the trail smooth through the eddies)
           for (let i = 0; i < 2; i++) {
@@ -657,6 +700,11 @@ const Sky = (() => {
           const frame = f.frames[Math.floor(f.turn) % f.frames.length];
           const y = f.y + Math.sin(t * 2.3 + f.phase) * 1.2;   // (a flutter)
           g.drawImage(frame, Math.round(W - f.x - frame.width / 2), Math.round(y - frame.height / 2));
+        }
+        for (const s of splashes) {   // (riding on the leaf it hit, as it flutters)
+          const f = s.f, y = f.y + Math.sin(t * 2.3 + f.phase) * 1.2;
+          g.globalAlpha = alpha * LAYERS[f.layer].alpha * 0.9;
+          g.drawImage(SPLASH[Math.min(3, Math.floor(s.age / 0.04))], Math.round(W - f.x + s.dx) - 3, Math.round(y + s.dy) - 3);
         }
       },
     };
@@ -871,11 +919,12 @@ const Sky = (() => {
     canvas.width = W;
     canvas.height = H;
     Object.assign(canvas.style, {width: `${W * P}px`, height: `${H * P}px`});
-    for (const k of ORDER) effects[k].resize();
+    for (const k of ORDER) effects[k].sized = false;   // (each made to the new size when it's next on: none made for nothing)
   }
 
   function tick(dt) {
     let need = 0;
+    for (const k of ORDER) if (effects[k].alive() && !effects[k].sized) { effects[k].resize(); effects[k].sized = true; }
     for (const k of ORDER) { effects[k].fade(dt); if (effects[k].amount > 0 || effects[k].level > 0) need += effects[k].need(); }
     const share = Math.min(1, W * H * BUDGET / Math.max(need, 1));
     for (const k of ORDER) if (effects[k].alive()) effects[k].step(dt, clock, share);

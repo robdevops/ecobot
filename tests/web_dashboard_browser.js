@@ -839,7 +839,8 @@ const windSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
       if (a.length !== b.length) continue;
       for (let j = 0; j < a.length; j++) { const dx = b[j] - a[j]; if (Math.abs(dx) < 30) { if (dx < 0) left++; else if (dx > 0) right++; } }
     }
-    resolve({ vx: vx.reduce((a, b) => a + b, 0) / vx.length, against, left, right, frames: drawn.length });
+    const { hits, whirl } = Sky.state().wind;   // (the rain's knocks on the leaves: none without it)
+    resolve({ vx: vx.reduce((a, b) => a + b, 0) / vx.length, against, left, right, frames: drawn.length, hits, whirl });
   };
   requestAnimationFrame(step);
 }), ms);
@@ -1106,7 +1107,7 @@ const WEATHER = {
     // the strongest single effect (Hazardous smog), as bright as "all" may be: faded in while the ice grows on
     const strongest = (async () => {
       const smog = await weatherPage(browser, url, { query: "?fx=smog5" });
-      await smog.page.waitForTimeout(2500);   // (faded in)
+      await smog.page.waitForFunction(() => Sky.state().frames >= 56);   // (faded in: 1.5 s, each frame 29 ms or more on)
       const light = await canvasLight(smog.page);
       await smog.context.close();
       return light;
@@ -1131,11 +1132,23 @@ const WEATHER = {
       await uv.context.close();
       return seen;
     })();
-    // heavy rain, alone and in the wind (and in the wind on a phone), its drops watched for 3 s, beside the rest
+    // heavy rain, alone and in the wind (and in the wind on a phone), its drops watched for 3 s, beside the rest; with the wind, the
+    // leaves the drops knocked. (In the wind, the window's size: first light rain, as it fades in, its first few hits on the leaves.)
     const phoneSize = { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true };
-    const raining = Promise.all([["rain2"], ["rain2,wind"], ["rain2,wind", phoneSize]].map(async ([name, context]) => {
-      const p = await weatherPage(browser, url, { query: `?fx=${name}`, context });
-      const seen = { ...await rainSeen(p.page, 3000), errors: p.errors };
+    const raining = Promise.all([["rain2"], ["rain2,wind"], ["rain2,wind", phoneSize]].map(async ([name, context], i) => {
+      const p = await weatherPage(browser, url, { query: `?fx=${i === 1 ? "rain,wind" : name}`, context });
+      let light = null;
+      if (i === 1) {
+        await p.page.waitForFunction(() => Sky.state().wind.hits >= 3, null, { timeout: 15000 });
+        light = await p.page.evaluate(() => Sky.state().wind);
+        await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1, wind: 1 } })));
+      }
+      const seen = { ...await rainSeen(p.page, 3000), leaves: await p.page.evaluate(() => Sky.state().wind), errors: p.errors };
+      if (light) {   // (the heavy rain's hits alone: how many, their mean push)
+        const { hits, push } = seen.leaves;
+        seen.leaves = { ...seen.leaves, hits: hits - light.hits, push: (hits * push - light.hits * light.push) / Math.max(hits - light.hits, 1) };
+        seen.light = { hits: light.hits, push: light.push };
+      }
       await p.context.close();
       return seen;
     }));
@@ -1164,7 +1177,7 @@ const WEATHER = {
     await Promise.all(["uv", "wind"].map(async (name) => {
       const alone = await weatherPage(browser, url, { query: `?fx=${name}` });
       if (name === "wind") out.wind = await windSeen(alone.page, 3000);
-      else await alone.page.waitForTimeout(1500);
+      else await alone.page.waitForFunction(() => Sky.state().frames >= 20);   // (under way)
       const p = await particles(alone.page);
       out.particles[name] = { [name]: p[name], budget: p.budget };
       await alone.context.close();
