@@ -1500,11 +1500,11 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     assert 5 <= draining["took"] <= 7 and draining["surface"] == 0 and got["drained"]["effects"] == ["rain"], (draining, got["drained"])
     assert draining["half"]["chop"] > 0.7 * draining["chop0"], draining
     # the test link (every other effect on): rain light, heavy, then heavy with a flash flood (rain3; the test's own flood level, 2),
-    # then off: draining
+    # then off (the wind turned off before it): draining
     linked = got["linked"]
     assert [(s["url"].split(",")[-1], s["label"], s["rain"], s["flood"]) for s in linked["steps"]] == [
         ("rain", "rain: light", 0.35, 0), ("rain2", "rain: heavy", 1, 0), ("rain3", "rain: flood", 1, 2)], linked["steps"]
-    assert linked["off"]["url"] == "?fx=smog3,uv,humidity2,wind,heat,ice" and linked["off"]["flood"] == linked["off"]["rain"] == 0, linked["off"]
+    assert linked["off"]["url"] == "?fx=smog3,uv,humidity2,heat,ice" and linked["off"]["flood"] == linked["off"]["rain"] == 0, linked["off"]
     # ... its first frog some 30 s after the water started rising, not before; one, crossing right to left, on the waves (bobbing)
     assert 29 <= linked["before"] < 30 <= linked["first"] <= 31 and linked["frogs"] == 1, linked
     track = linked["track"]
@@ -1512,12 +1512,21 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     assert all(b[0] <= a[0] for a, b in zip(track, track[1:])), track   # (two looks a frame drawn, at times)
     assert all(abs(y - surface) <= 1 for _, y, surface in track) and max(t[1] for t in track) - min(t[1] for t in track) >= 2, track
     # ... the leaves: landing on it and lying there (on the surface line, or a px into it), then sinking and resting on the bottom; no
-    # more than 40 % of them in the water, within the budget; fading out as it drains
+    # more than 40 % of them in the water, within the budget
     leaves = linked["leaves"]
     assert leaves["float"] >= 2 and leaves["sink"] >= 1 and leaves["rest"] >= 1, leaves
     assert linked["gaps"] and set(linked["gaps"]) <= {0, 1}, sorted(set(linked["gaps"]))
     assert linked["resting"] and all(-4 <= r <= 0 for r in linked["resting"]), sorted(set(linked["resting"]))
-    assert 0 < linked["most"] <= 0.42 and linked["over"] <= 3, linked
+    assert 0 < linked["most"] <= 0.42 and linked["over"] <= 3, (linked["most"], linked["over"], linked["wet"])
+    # ... every leaf its wavy surface reaches stuck on it (many, in the wind, the heavy rain knocking them about): none flying drawn
+    # touching it or under it, none flying again, above it or going back a state (floating, sinking, resting, in that order); those
+    # seen flying the frame before it took them, all of them above it then (some well above: crossing it between frames); none
+    # vanishing near it but into it
+    stuck = linked["stuck"]
+    assert stuck["wet"] >= 8 and stuck["seen"] >= 0.6 * stuck["wet"] and stuck["near"] >= 5 and stuck["hits"] > 0, stuck
+    assert stuck["touching"] == 0 and stuck["back"] == 0 and stuck["above"] == 0 and stuck["backwards"] == 0, stuck
+    assert stuck["lost"] == [] and all(g is None or g >= 1 for g in stuck["lastGaps"]), stuck
+    assert sum(g is None or g > 3 for g in stuck["lastGaps"]) >= 3, stuck   # (crossing it between frames: from well above it)
     # ... the drips: joining it as they reach it, none below it; each running on down to the waves' own height where it is (its
     # sprite's bottom at the surface there, ripples and all, or under a crest risen over it), never joining it short of that, its
     # trail all the way down with it, wet to the water
@@ -1529,9 +1538,21 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     # under the level as drawn on as those just above (the smog, the heat, the rain's spray, the fog, all down to the wavy surface)
     cut = linked["cut"]
     assert cut["n"] >= 100 and cut["at"] >= 0.8 * cut["above"], cut
+    # ... the wind off (and gone): the leaves in the water its own, staying (those resting still resting, none fading), the floating
+    # ones sinking or resting by 16 s on, none flying
+    off = linked["windOff"]
+    before, after = {i: st for i, st, _ in off["before"]}, {i: st for i, st, _ in off["after"]}
+    assert "wind" not in off["effects"] and off["flyers"] == 0 and off["fading"] == 0, off
+    assert "rest" in before.values() and "float" in before.values() and set(before) <= set(after), off
+    assert all(after[i] == "rest" for i, st in before.items() if st == "rest"), off
+    assert all(after[i] in ("sink", "rest") for i, st in before.items() if st == "float"), off
+    # ... off: draining in about 6 s, its leaves all there till its last few px, then gone with it; a new flood: none from before
     drained = linked["drained"]
-    assert 5 <= drained["took"] <= 7 and drained["wet"] == 0 and drained["frog"] is None, drained
-    assert drained["effects"] == ["smog", "heat", "uv", "wind", "humidity", "ice"], drained
+    assert 5 <= drained["took"] <= 7 and drained["wet"] == drained["all"] == 0 and drained["frog"] is None, drained
+    assert drained["low"] == drained["n0"] == len(after), drained
+    assert drained["effects"] == ["smog", "heat", "uv", "humidity", "ice"], drained
+    again = linked["again"]
+    assert again["url"].endswith(",rain3") and again["leaves"]["all"] == 0 and again["leaves"]["wet"] == [], again
     # every effect on with the flood (full): as cheap as ever (about 3 ms), within the budget
     costly = linked["costly"]
     assert costly["effects"] == ["smog", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"] and costly["cost"] < 8, costly

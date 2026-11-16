@@ -1566,9 +1566,39 @@ const WEATHER = {
       // every frame, until the first frog has crossed (or 100 s of the page's time): the frog, the leaves in the water, the drips
       Object.assign(seen, await page.evaluate(() => new Promise((resolve) => {
         const r = { before: null, first: null, track: [], leaves: { float: 0, sink: 0, rest: 0 }, gaps: [], resting: [], wet: 0, most: 0,
-                    over: 0, under: 0, joined: 0, joins: [], frogs: 0, fullAt: null };
+                    over: 0, under: 0, joined: 0, joins: [], frogs: 0, fullAt: null,
+                    // (the leaves and the water, every frame: flying ones drawn touching it or under it; those stuck in it, and of them
+                    // the ones seen flying just before (and how near the water they were then); any flying again, any above the surface
+                    // or going back a state; flying ones vanishing other than into it, last seen near the water and away from the
+                    // window's edges; flying ones seen within 3 px of it; the rain's hits on leaves meanwhile)
+                    stuck: { touching: 0, wet: 0, seen: 0, lastGaps: [], back: 0, above: 0, backwards: 0, lost: [], near: 0, hits0: null, hits: 0 } };
+        const flyers = new Map(), states = new Map(), ORDER = ["float", "sink", "rest"];
         const step = () => {
-          const s = Sky.state(), f = s.flood, w = s.wind;
+          const s = Sky.state(), f = s.flood, w = s.wind, k = r.stuck;
+          if (f.depth >= f.full) {
+            if (k.hits0 === null) k.hits0 = w.hits;
+            k.hits = w.hits - k.hits0;
+            const now = new Map(w.flyers.map(([id, gap, x, y]) => [id, [gap, x, y]]));
+            for (const [id, [gap]] of now) {
+              if (gap !== null && gap <= 0) k.touching++;
+              if (gap !== null && gap <= 3) k.near++;
+              if (states.has(id)) k.back++;
+            }
+            for (const [id, state, gap] of w.wet) {
+              if (gap < 0) k.above++;
+              if (!states.has(id)) {
+                k.wet++;
+                if (flyers.has(id)) { k.seen++; k.lastGaps.push(flyers.get(id)[0]); }
+              } else if (ORDER.indexOf(state) < ORDER.indexOf(states.get(id))) k.backwards++;
+              states.set(id, state);
+            }
+            for (const [id, [gap, x, y]] of flyers) {
+              if (now.has(id) || states.has(id)) continue;
+              if (gap !== null && gap <= 8 && x > 16 && x < f.width - 16) k.lost.push([id, gap, x, y]);
+            }
+            flyers.clear();
+            for (const [id, v] of now) flyers.set(id, v);
+          }
           if (f.depth >= f.full && r.fullAt === null) r.fullAt = f.since;
           if (!f.frog && !r.first) r.before = f.since;
           if (f.frog) {
@@ -1590,7 +1620,10 @@ const WEATHER = {
           r.joined = s.humidity.joined;
           r.joins = s.humidity.joins;
           r.frogs = f.frogs;
-          if ((r.first && !f.frog) || f.since > 100) { r.gaps = r.gaps.slice(-400); r.resting = r.resting.slice(-400); return resolve(r); }
+          if ((r.first && !f.frog) || f.since > 100) {
+            r.gaps = r.gaps.slice(-400); r.resting = r.resting.slice(-400); r.stuck.lastGaps = r.stuck.lastGaps.slice(-200);
+            return resolve(r);
+          }
           requestAnimationFrame(step);
         };
         requestAnimationFrame(step);
@@ -1611,23 +1644,43 @@ const WEATHER = {
         };
         requestAnimationFrame(step);
       }));
-      // off: draining, the leaves in it fading out with it (the weather's time four times as fast)
+      // the wind off, some leaves resting on the bottom and some floating: those in the water staying, the floating ones sinking
+      // (once the wind is gone and none is fading: then the weather's time 20 times as fast for 16 s of it)
+      await page.waitForFunction(() => { const w = Sky.state().wind.water; return w.rest >= 1 && w.float >= 2; });
+      await page.locator("#fxtest button[data-fx='wind']").click();
+      await page.waitForFunction(() => !Sky.state().effects.includes("wind") && Sky.state().particles.wind === 0 && !Sky.state().flood.leaves.fading);
+      seen.windOff = { before: await page.evaluate(() => Sky.state().flood.leaves.wet) };
+      await page.evaluate(() => Sky.timeScale(20));
+      const gone = await page.evaluate(() => Sky.state().clock);
+      await page.waitForFunction((c) => Sky.state().clock >= c + 16, gone);
+      Object.assign(seen.windOff, await page.evaluate(() => ({ after: Sky.state().flood.leaves.wet, flyers: Sky.state().wind.flyers.length,
+                                                               effects: Sky.state().effects, fading: Sky.state().flood.leaves.fading })));
+      // off: draining, the leaves in it staying till it's nearly gone, then gone with it (the weather's time four times as fast)
       await page.evaluate(() => Sky.timeScale(4));
+      const n0 = await page.evaluate(() => Sky.state().flood.leaves.all);
       await click();
       seen.off = await rain();
-      seen.drained = await page.evaluate(() => new Promise((resolve) => {
+      seen.drained = await page.evaluate((n0) => new Promise((resolve) => {
         const c0 = Sky.state().clock, depth0 = Sky.state().flood.depth;
+        let low = null;   // (how many leaves in it as it got down to its last 8 px)
         const step = () => {
           const s = Sky.state();
-          if (s.flood.depth > 0) return requestAnimationFrame(step);
+          if (s.flood.depth > 0) {
+            if (s.flood.depth <= 8 && low === null) low = s.flood.leaves.all;
+            return requestAnimationFrame(step);
+          }
           requestAnimationFrame(() => requestAnimationFrame(() => {
             const w = Sky.state().wind;
             resolve({ took: s.clock - c0, depth0, effects: Sky.state().effects, wet: w.water.float + w.water.sink + w.water.rest,
-                      fading: w.fading, frog: Sky.state().flood.frog });
+                      fading: w.fading, all: Sky.state().flood.leaves.all, frog: Sky.state().flood.frog, n0, low });
           }));
         };
         requestAnimationFrame(step);
-      }));
+      }), n0);
+      // a new flood (rain3 again): none of the leaves from before in it
+      for (let i = 0; i < 3; i++) await click();
+      await page.waitForFunction(() => Sky.state().flood.depth > 0);
+      seen.again = await page.evaluate(() => ({ url: location.search, leaves: Sky.state().flood.leaves }));
       seen.errors = errors;
       await context.close();
       return seen;
