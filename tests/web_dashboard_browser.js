@@ -845,7 +845,7 @@ const windSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
 }), ms);
 // uv's beams over 40 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame drawn 0.1 s on, Sky's
 // longest step): where each beam's halo was drawn (with uv alone, the glow, then each beam's halo and core), its least and greatest x
-// (art px), and how faint and bright it was
+// (art px), how many times it turned back (from going one way to the other), and how faint and bright it was
 const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
   const g = document.querySelector("#sky canvas").getContext("2d"), drawImage = g.drawImage, clearRect = g.clearRect, drawn = [];
   g.clearRect = function (...args) { drawn.push([]); return clearRect.apply(this, args); };   // (a frame begins)
@@ -855,7 +855,13 @@ const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
     const frames = drawn.filter((f) => f.length === drawn[0].length), beams = (frames[0].length - 1) / 2;
     resolve({ frames: frames.length, beams: Array.from({ length: beams }, (_, b) => {
       const at = frames.map((f) => f[1 + 2 * b]);
-      return { least: Math.min(...at.map((d) => d[0])), most: Math.max(...at.map((d) => d[0])),
+      let turns = 0, way = 0;
+      for (let i = 1; i < at.length; i++) {
+        const now = Math.sign(at[i][0] - at[i - 1][0]);
+        if (now && way && now !== way) turns++;
+        if (now) way = now;
+      }
+      return { least: Math.min(...at.map((d) => d[0])), most: Math.max(...at.map((d) => d[0])), turns,
                faint: Math.min(...at.map((d) => d[1])), bright: Math.max(...at.map((d) => d[1])) };
     }) });
   };

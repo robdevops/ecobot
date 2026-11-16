@@ -7,7 +7,7 @@ console error; the tiles rearranged (dragged with a mouse and with a touch's lon
 across reloads, reset), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds; a tile zoomed to
 fill the window and the gallery through the others (keys, mouse drags, a trackpad's swipe, touch swipes, both ends, the text still
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
-one canvas behind the tiles, "stop animations", reduced motion, the temporary test links and ?fx=, uv's beams swaying in place with no particles, the wind's leaves within the budget and blowing right to left), and the data's rain rate. With
+one canvas behind the tiles, "stop animations", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place with no particles, the wind's leaves within the budget and blowing right to left), and the data's rain rate. With
 ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
@@ -951,10 +951,12 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert got["particles"]["uv"] == {"uv": 0, "budget": got["particles"]["uv"]["budget"]}, got["particles"]
     wind = got["particles"]["wind"]
     assert 0 < wind["wind"] <= wind["budget"], wind
-    # uv's beams over 40 s: each swaying a few pixels about its own place (not travelling on), still brightening and dimming
+    # uv's beams over 40 s: each swaying a pixel or so about its own place (not travelling on), so slowly that it turns back at most
+    # once in that time (a sway in 80 s or more), still brightening and dimming
     uv = got["uv"]
     assert uv["errors"] == [] and uv["frames"] >= 300 and len(uv["beams"]) >= 4, uv
-    assert all(3 <= b["most"] - b["least"] <= 11 and b["bright"] - b["faint"] > 0.2 for b in uv["beams"]), uv
+    assert all(b["most"] - b["least"] <= 4 and b["turns"] <= 1 and b["bright"] - b["faint"] > 0.2 for b in uv["beams"]), uv
+    assert any(b["most"] > b["least"] for b in uv["beams"]), uv   # (swaying all the same)
     assert all(a["most"] < b["least"] for a, b in zip(uv["beams"], uv["beams"][1:])), uv   # (each in its own place, apart)
     # the wind blows right to left: its leaves leftward overall, as drawn on the canvas too (frame to frame); some caught in a loop
     # going rightward a moment (on a phone too)
