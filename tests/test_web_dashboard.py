@@ -1048,19 +1048,30 @@ async def test_several_effects_share_one_canvas_behind_the_see_through_tiles_zoo
 
 
 @needs_browser
-async def test_the_weather_can_be_stopped_kept_stopped_across_a_reload_and_started_again_or_reset(server, station):
+async def test_stop_animation_stops_and_clears_for_this_page_view_only_nothing_saved_a_reload_or_a_test_link_runs_them_again(server, station):
     got = await weather(server, "stop")
-    # "stop animation" (a test link's wind on too): nothing drawn, no loop, the test link's effect ended (?fx= gone), the frame stays,
-    # kept across a reload; "start animation" and the reset put the real one back
+    # "stop animation" (a test link's wind on too), its tooltip naming the setting for good
     assert got["simulating"]["effects"] == ["uv", "wind"] and got["simulating"]["link"] == "stop animation", got["simulating"]
+    assert got["simulating"]["title"] == "stop until reload; set MCP_DASHBOARD_ANIMATIONS=off to turn off for good", got["simulating"]
+    # ... nothing drawn, no loop, the test link's effect ended (?fx= gone), the frame stays; the link gone (no "start animation");
+    # nothing saved
     assert got["stopped"] | {"levels": None} == {"effects": ["uv"], "levels": None, "running": False, "framed": ["UV index"],
-                                                 "link": "start animation", "frames": 0, "ink": 0, "stored": False, "url": "",
+                                                 "link": None, "frames": 0, "ink": 0, "stored": None, "url": "",
                                                  "pressed": 0}, got["stopped"]
-    assert got["reloaded"]["link"] == "start animation" and got["reloaded"]["frames"] == 0 and not got["reloaded"]["running"]
-    for step in ("restarted", "reset"):
-        assert got[step]["link"] == "stop animation" and got[step]["running"] and got[step]["frames"] > 10, (step, got[step])
-    # from the keyboard: Enter on it stops them, the focus kept on the link
-    assert got["keyboard"]["link"] == got["keyboard"]["focused"] == "start animation" and not got["keyboard"]["running"], got["keyboard"]
+    # the readings calling for more, and "reset preferences": still stopped, nothing drawn, no link
+    reset = got["reset"]
+    assert reset["link"] is None and not reset["running"] and reset["frames"] == 0 and reset["ink"] == 0, reset
+    assert set(reset["framed"]) == {"UV index", "Wind"}, reset
+    # a reload: running as normal (an earlier version's saved {animations: false} ignored and dropped, the arrangement kept)
+    reloaded = got["reloaded"]
+    assert reloaded["link"] == "stop animation" and reloaded["running"] and reloaded["frames"] > 10, reloaded
+    assert reloaded["stored"] == {"order": [], "hidden": ["Rain"]}, reloaded
+    # stopped again, then a test link (heat): on again, its effect and the readings' with it, the link back
+    resumed = got["resumed"]
+    assert resumed["link"] == "stop animation" and resumed["running"] and resumed["frames"] > 10, resumed
+    assert set(resumed["effects"]) == {"uv", "wind", "heat"} and resumed["url"] == "?fx=heat", resumed
+    # from the keyboard: Enter on it stops them, the link gone (the focus not left on it)
+    assert got["keyboard"]["link"] is None and not got["keyboard"]["running"] and got["keyboard"]["focused"] == "BODY", got["keyboard"]
 
 
 @needs_browser
@@ -1087,9 +1098,9 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
     assert links["rain"] == [[0.35, 0], [1, 0], [1, 2], [0, 0]]   # (light, heavy, heavy with a flash flood (the test's own), off)
     melting = links["melting"]
     assert melting["grown"] > 2 and 0 < melting["reach"] < melting["grown"] and "ice" not in melting["effects"] and melting["running"], melting
-    # "stop animation" with only test links on: every one off, ?fx= gone, the animations stopped (kept), the link gone with them
+    # "stop animation" with only test links on: every one off, ?fx= gone, the animations stopped (nothing saved), the link gone
     assert links["cleared"] | {"levels": None, "running": None} == {"effects": [], "levels": None, "running": None, "framed": [],
-                                                                     "link": None, "url": "", "pressed": 0, "stored": False}
+                                                                     "link": None, "url": "", "pressed": 0, "stored": None}
     assert links["all"]["effects"] == EVERY and links["all"]["url"] == "?fx=rain2,haze3,uv,humidity2,wind,heat,ice"
     # humidity light (91 %) first, then heavy (100 %), then off
     assert links["humiditySteps"] == [{"level": 1, "url": "?fx=uv,humidity2,wind,heat", "label": "humidity: heavy"},
@@ -1321,7 +1332,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert again["before"] > 0 and again == {"before": again["before"], "trails": 0, "beads": 0, "stray": 0, "gone": again["gone"], "marks": again["marks"]}, again
     clean_glass(again["gone"])
     clean_glass(again["marks"])
-    # ... then its beads leaving trails, and "stop animation", "start animation", humidity on again: the glass fresh too
+    # ... then its beads leaving trails, and "stop animation", humidity on again (as a test link after it): the glass fresh too
     marked = got["humidity"]["alone"]["marked"]
     assert marked["trails"] > 30 and marked["ink"] > 0 and marked["cover"] > 0, marked
     started_afresh(got["humidity"]["alone"]["restarted"], "humidity")
@@ -1488,9 +1499,10 @@ def clean_glass(marks):
 
 
 def started_afresh(seen, effect):
-    """"stop animation", `effect` on, "start animation" (restarted() in the browser script): the loop stopped between,
-    and nothing from before: the glass clean, no drop, no stray pixel"""
-    assert seen["link"] == "stop animation" and seen["stopped"]["link"] == "start animation" and not seen["stopped"]["running"], seen
+    """"stop animation", then `effect` on (as a test link after it: restarted() in the browser script): the loop stopped and the link
+    gone between, then running again with the link back, and nothing from before: the glass clean, no drop, no stray pixel"""
+    assert seen["link"] == "stop animation" and seen["stopped"]["link"] is None and not seen["stopped"]["running"], seen
+    assert seen["again"] == {"running": True, "link": "stop animation"}, seen
     clean_glass(seen["stopped"]["marks"])
     clean_glass(seen["marks"])
     assert seen["stray"] == 0 and seen["drops"] == 0 and effect in seen["effects"], seen
@@ -1624,8 +1636,10 @@ async def test_a_gust_over_99_kmh_blows_a_cow_a_barn_or_a_chicken_across_far_beh
     link = got["link"]
     assert link["sent"] == 5 and set(link["kinds"]) == {"cow", "barn", "chicken"} and link["flying"] >= 1, link
     assert link["url"] == "?fx=gust" and link["pressed"] is None and "on" not in link["classes"].split(), link
-    # "stop animation": gone at once, nothing drawn, ?fx= gone; stopped, a gust sends none
+    # "stop animation": gone at once, nothing drawn, ?fx= gone; stopped, a live gust over 99 km/h sends none; the gust link after it
+    # starts them again, one sent
     assert got["stopped"] == {"flyers": 0, "running": False, "url": "", "ink": 0, "sent": 5}, got["stopped"]
+    assert got["resumed"] == {"sent": 6, "running": True}, got["resumed"]
     # ?fx=gust as the page opens: one sent
     opened = got["opened"]
     assert opened["sent"] == 1 and opened["effects"] == ["gust"] and opened["url"] == "?fx=gust" and opened["errors"] == [], opened

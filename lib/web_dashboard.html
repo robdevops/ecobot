@@ -13,7 +13,8 @@
      remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server.
      A click or tap on a gauge zooms its tile (title and gauge, no table) to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
      Behind everything, the weather as pixel art on one canvas (Sky): rain, haze, uv, humidity, wind, heat and ice, each while the
-     readings call for it, its tile framed in red; "stop animation" at the bottom left stops them. With MCP_DASHBOARD_ANIMATIONS off
+     readings call for it, its tile framed in red; "stop animation" at the bottom left stops and clears them for this page view only
+     (nothing saved: a reload brings them back; the link gone till then). With MCP_DASHBOARD_ANIMATIONS off
      the server sends data-animations="off" on <html> (lib/web_dashboard.py): none of it, for every viewer (no canvas drawn, no loop,
      no link, no test links), the rest of the page as ever. -->
 <style>
@@ -2985,7 +2986,7 @@ const Sky = (() => {
     if (target) target.focus();
   }
 
-  // What "reset preferences" puts back: every tile shown, in the default order, the animations on (and whatever a later stage keeps)
+  // What "reset preferences" puts back: every tile shown, in the default order (and whatever a later stage keeps)
   const resettable = () => prefs.hidden.length > 0;
   function reset() {
     Object.keys(prefs).forEach((k) => delete prefs[k]);
@@ -3043,9 +3044,10 @@ const Sky = (() => {
   // ---------- the data ----------
   // The bottom strip, at the bottom right: its link (only while it does something), then the time of the reading at the far right; and
   // at the bottom left, "stop animation" while an effect is called for
-  function link(words, action, name) {
+  function link(words, action, name, title) {
     const a = document.createElement("button");
     Object.assign(a, {type: "button", className: `link ${name}`, textContent: words});
+    if (title) a.title = title;
     a.addEventListener("click", action);
     return a;
   }
@@ -3056,7 +3058,7 @@ const Sky = (() => {
     const time = lost ? "reconnecting…" : asOf ? `last reading ${asOf.slice(11, 16)}` : "";
     if (time) parts.push(time);
     statusLine.replaceChildren(...parts.flatMap((p, i) => i ? [" · ", p] : [p]));
-    motion.replaceChildren(...ALLOWED && calling() ? [link(animated() ? "stop animation" : "start animation", toggleAnimations, "animations")] : []);
+    motion.replaceChildren(...animated() && calling() ? [link("stop animation", stopAnimations, "animations", STOP_TITLE)] : []);
     placeCorner();
   }
   // The bottom left corner beside the strip, in the room it leaves; where that's too little for the corner at its narrowest (a phone),
@@ -3566,7 +3568,12 @@ const Sky = (() => {
             ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: rate > 30 ? 1 : 0};
   }
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop animation" shows)
-  const animated = () => ALLOWED && prefs.animations !== false;
+  // Stopped ("stop animation"): for this page view only, nothing saved (a reload runs them again); for good: MCP_DASHBOARD_ANIMATIONS=off.
+  // A preference saved by an earlier version ({animations: false}) is ignored, and dropped.
+  let stopped = false;
+  const animated = () => ALLOWED && !stopped;
+  const STOP_TITLE = "stop until reload; set MCP_DASHBOARD_ANIMATIONS=off to turn off for good";
+  if ("animations" in prefs) { delete prefs.animations; save(); }
 
   // The effects called for, the readings' and the test links' together, to Sky and to the tiles' frames; "stop animation" as it changes
   function weather() {
@@ -3578,21 +3585,25 @@ const Sky = (() => {
     if (calling() !== was) showStatus();
   }
 
-  // "stop animation" / "start animation": kept with the preferences (the borders stay either way)
-  // "stop animation" also ends every simulated effect (the test links' "ecobot-fx-stop": they turn off, ?fx= gone); if nothing else
-  // holds, the link goes with them
-  function toggleAnimations() {
+  // "stop animation": stops the animations and clears everything drawn, for this page view (not saved; no "start animation": the link
+  // goes, nothing left to stop, till a reload). It also ends every simulated effect (the test links' "ecobot-fx-stop": they turn off,
+  // ?fx= gone). The real readings calling for an effect later don't start them again; a test link clicked afterwards does (its effect,
+  // and the readings' with it): see resume()
+  function stopAnimations() {
     const focused = document.activeElement && document.activeElement.classList.contains("animations");
-    if (animated()) {
-      prefs.animations = false;
-      document.dispatchEvent(new Event("ecobot-fx-stop"));
-      simulated = {};
-    } else delete prefs.animations;
-    save();
+    stopped = true;
+    document.dispatchEvent(new Event("ecobot-fx-stop"));
+    simulated = {};
     weather();
     showStatus();
-    const now = motion.querySelector(".animations");
-    if (focused && now) now.focus();
+    if (focused) document.activeElement.blur();   // (the link gone with its focus)
+  }
+  // A test link clicked after a stop: the animations run again, as on a fresh page view
+  function resume() {
+    if (!stopped) return;
+    stopped = false;
+    weather();
+    showStatus();
   }
 
   // A gust over 99 km/h (the live reading's: each new reading at most once, by its time): something big blown across far behind
@@ -3605,11 +3616,16 @@ const Sky = (() => {
     gustedAt = at;
     if (animated()) Sky.fling();
   }
-  document.addEventListener("ecobot-gust", () => { if (animated()) Sky.fling(); });
+  document.addEventListener("ecobot-gust", () => { resume(); if (animated()) Sky.fling(); });   // (a test link: after a stop, on again)
 
   // The temporary test links (the block near the page's end) simulate conditions: {effect: level}, as conditionsOf's. Only the effects
   // and the frames: the gauges keep their readings; nothing kept.
-  document.addEventListener("ecobot-fx", (e) => { simulated = e.detail || {}; weather(); });
+  // One with an effect on, after a stop, starts the animations again (resume()); "stop animation"'s own clearing ({}) doesn't.
+  document.addEventListener("ecobot-fx", (e) => {
+    simulated = e.detail || {};
+    if (Object.values(simulated).some((v) => v > 0)) resume();
+    weather();
+  });
 
   // ---------- the events: a new reading, fetched and drawn in place ----------
   let source = null;
@@ -3639,7 +3655,7 @@ const Sky = (() => {
 })();
 </script>
 <!-- TEMPORARY: effect test links. A "test:" row at the bottom left (in the corner, before "stop animation", which also ends them all: its
-     "ecobot-fx-stop"), one link per effect, simulating its condition (the effect and its
+     "ecobot-fx-stop"; a link clicked after it starts the animations again, with its effect), one link per effect, simulating its condition (the effect and its
      tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
      ?fx=haze3,wind,ice, ?fx=all (rain light, rain2 heavy (now and then a drop sticking to the glass), rain3 heavy with a flash
      flood (its first frog 30 s after the water starts rising; off: it drains), haze1-haze5 (or smog1-smog5, its earlier name), uv, humidity light (91 %), humidity2 heavy (100 %), wind, heat, ice; ?fx=all every one, no link of its own); and "gust" (?fx=gust), not

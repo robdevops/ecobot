@@ -297,8 +297,9 @@ swipe, a drag on the gauge, or a two-finger sideways swipe on a trackpad; it sto
 
 Behind the gauges, the weather is drawn as faint pixel art while the readings call for it: rain while it rains, a particulate haze from the US
 AQI's Moderate band up, UV beams at a UV index of 11, the glass fogging over at 90 % humidity (heavier to 100 %), beads condensing in the fog and running down it, wiping clear tracks, leaves blowing past
-above 15 km/h of wind, a heat haze from 35 °C and ice below 0 °C. "stop animation" at the bottom left stops them in that browser (kept with its arrangement), and ends any effect a temporary test link turned on;
-with reduced motion asked for, one still frame. To draw none of it for anyone, set `MCP_DASHBOARD_ANIMATIONS=off`.
+above 15 km/h of wind, a heat haze from 35 °C and ice below 0 °C. "stop animation" at the bottom left stops and clears them for that page view only, and ends any effect a temporary test link turned on;
+nothing is saved, so a reload brings them back. With reduced motion asked for, one still frame. To turn them off for good (for everyone),
+set `MCP_DASHBOARD_ANIMATIONS=off`.
 
 It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:

@@ -1425,16 +1425,16 @@ const rainBeads = (page, light, heavy, after, scale, from = "light") => page.eva
   };
   requestAnimationFrame(step);
 }), [light, heavy, after, scale, from]);
-// "stop animation" (an effect on: the link shows; it ends the test links' effects), then `detail` on (stopped still: "start
-// animation" shows), then "start animation", all at once (no frame between): the loop and the glass (humidity's marks) as stopped,
-// and once started, the glass, the frost and the rain's drops then
+// "stop animation" (an effect on: the link shows; it ends the test links' effects; the link gone), then `detail` on (as a test link
+// clicked after it: the animations on again), all at once (no frame between): the loop, the link and the glass (humidity's marks) as
+// stopped, and once started again, the glass, the frost and the rain's drops then
 const restarted = (page, detail) => page.evaluate((detail) => {
-  const toggle = () => document.querySelector("#motion .animations").click(), seen = {};
-  seen.link = document.querySelector("#motion .animations").textContent;
-  toggle();
+  const linkNow = () => { const a = document.querySelector("#motion .animations"); return a ? a.textContent : null; }, seen = {};
+  seen.link = linkNow();
+  document.querySelector("#motion .animations").click();
+  seen.stopped = { running: Sky.state().running, link: linkNow(), marks: Sky.state().humidity.marks() };
   document.dispatchEvent(new CustomEvent("ecobot-fx", { detail }));
-  seen.stopped = { running: Sky.state().running, link: document.querySelector("#motion .animations").textContent, marks: Sky.state().humidity.marks() };
-  toggle();
+  seen.again = { running: Sky.state().running, link: linkNow() };
   const f = Sky.frost();
   return { ...seen, marks: Sky.state().humidity.marks(), stray: Sky.state().humidity.stray(), drops: Sky.state().particles.rain,
            frost: f && { extent: f.extent, ink: f.ink, sparkles: f.sparkles }, effects: Sky.state().effects };
@@ -1471,7 +1471,7 @@ async function animationsOff(browser, url, out) {
 
 // The weather in parts, each its own page (and process: the tests run them side by side): "marks" (nothing called for, each effect at
 // its mark and just short of it, haze's bands, rain's strength, the ice's depth), "several" (several at once, the canvas, the tiles see-
-// through, their look, zoomed), "stop" ("stop animation", a reload, "start animation", the reset), "links" (the temporary test links;
+// through, their look, zoomed), "stop" ("stop animation", the readings, a reload, a test link after it, the reset), "links" (the temporary test links;
 // and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn),
 // "all" (?fx=all: its frame time, its brightness against Hazardous haze alone, its particles), "opened" (?fx= when the page opens, uv
 // and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, humidity's beads running down the
@@ -1584,35 +1584,41 @@ const WEATHER = {
     await calm(page, 5000);   // (the gauges' rise)
     await reads({ "UV index": 11 });
     await calm(page, 5000);   // (the gauge's move: frames of its own)
-    // "stop animation" (a test link's effect on too): nothing drawn, no loop, the test link's effect ended, the frames stay; kept;
-    // "reset preferences" starts them again
+    // "stop animation" (a test link's effect on too): nothing drawn, no loop, the test link's effect ended, the frames stay, the link
+    // gone (no "start animation"), nothing saved
     await page.locator("#fxtest button[data-fx='wind']").click();
-    out.simulating = await weatherSeen(page);
+    out.simulating = { ...await weatherSeen(page), title: await page.evaluate(() => document.querySelector("#motion .animations").title) };
     await page.locator("#motion .animations").click();
     await page.waitForTimeout(200);
-    out.stopped = { ...await weatherSeen(page), frames: await framesIn(page, 600), ink: await canvasInk(page),
-                    stored: JSON.parse(await page.evaluate((key) => localStorage.getItem(key), KEY)).animations,
+    out.stopped = { ...await weatherSeen(page), frames: await framesIn(page, 600), ink: await canvasInk(page), stored: await stored(page),
                     url: await page.evaluate(() => location.search),
                     pressed: await page.evaluate(() => document.querySelectorAll("#fxtest button.on").length) };
-    await page.reload({ waitUntil: "load" });
-    await page.waitForFunction(() => document.querySelectorAll(".tile.alert").length > 0);
-    await calm(page, 5000);   // (the gauges' rise)
-    out.reloaded = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
-    await page.locator("#motion .animations").click();
-    await page.waitForTimeout(100);
-    out.restarted = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
-    await page.locator("#motion .animations").click();   // (stopped again: reset puts them back)
+    // the readings calling for more (wind too) and a tile hidden and "reset preferences": still stopped (the reset not about them)
+    await reads({ "UV index": 11, Wind: 20 });
+    await calm(page, 5000);
     await page.mouse.move(...await at(page, "Rain", 0.5, 0.4));
     await calm(page);
     await tileOf(page, "Rain").locator(".close").click();
     await calm(page);
     await page.getByText("reset preferences").click();
     await page.waitForTimeout(100);
-    out.reset = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
-    // from the keyboard: Enter on the link stops them, the focus staying on it (now "start animation")
+    out.reset = { ...await weatherSeen(page), frames: await framesIn(page, 500), ink: await canvasInk(page) };
+    // a reload (an earlier version's saved {animations: false} kept beside the arrangement): running as normal, that value dropped
+    await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"], animations: false })), KEY);
+    await page.reload({ waitUntil: "load" });
+    await page.waitForFunction(() => document.querySelectorAll(".tile.alert").length > 0);
+    await calm(page, 5000);   // (the gauges' rise)
+    out.reloaded = { ...await weatherSeen(page), frames: await framesIn(page, 500), stored: JSON.parse(await stored(page)) };
+    // stopped again, then a test link: the animations on again, its effect and the readings' with it, the link back
+    await page.locator("#motion .animations").click();
+    await page.waitForFunction(() => !document.querySelector("#motion .animations"));
+    await page.locator("#fxtest button[data-fx='heat']").click();
+    await page.waitForTimeout(100);
+    out.resumed = { ...await weatherSeen(page), frames: await framesIn(page, 500), url: await page.evaluate(() => location.search) };
+    // from the keyboard: Enter on the link stops them; the link gone, the focus with it (not left on a removed element)
     await page.focus("#motion .animations");
     await page.keyboard.press("Enter");
-    out.keyboard = { ...await weatherSeen(page), focused: await page.evaluate(() => document.activeElement.textContent) };
+    out.keyboard = { ...await weatherSeen(page), focused: await page.evaluate(() => document.activeElement.tagName) };
     out.errors = errors;
     await context.close();
   },
@@ -1664,7 +1670,7 @@ const WEATHER = {
     await page.waitForFunction(() => !document.querySelector("#motion .animations"));
     out.links.cleared = { ...await weatherSeen(page), url: await page.evaluate(() => location.search),
                           pressed: await page.evaluate(() => document.querySelectorAll("#fxtest button.on").length),
-                          stored: JSON.parse(await page.evaluate((key) => localStorage.getItem(key), KEY)).animations };
+                          stored: await stored(page) };
     // every effect at once: ?fx=all (no link of its own)
     await page.goto(url + "?fx=all", { waitUntil: "load" });
     await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent));
@@ -2018,7 +2024,7 @@ const WEATHER = {
           const h = Sky.state().humidity;
           return { before, trails: h.trails, beads: h.beads.length, stray: h.stray(), gone, marks: h.marks() };
         }, before);
-        // (then its beads running and leaving trails (the weather's time 30 times as fast), and "stop animation", "start animation"
+        // (then its beads running and leaving trails (the weather's time 30 times as fast), and "stop animation", then the effect on again
         // and humidity on again: the glass fresh too)
         await p.page.evaluate(() => Sky.timeScale(30));
         await p.page.waitForFunction(() => Sky.state().humidity.trails > 30, null, { timeout: 20000 });
@@ -2084,7 +2090,7 @@ const WEATHER = {
         const s = Sky.state();
         return { gone, again: s.humidity.marks(), stray: s.humidity.stray(), drops: s.particles.rain };
       });
-      // ... and the same with "stop animation" and "start animation" between
+      // ... and the same with "stop animation" between, then the effect on again
       seen.streakedAgain = await heavyTill(30);
       seen.restarted = await restarted(p.page, { rain: 1 });
       seen.errors = p.errors;
@@ -2270,8 +2276,10 @@ const WEATHER = {
     await page.locator("#motion .animations").click();
     out.stopped = { ...await page.evaluate(() => ({ flyers: Sky.state().gust.flyers.length, running: Sky.state().running })),
                     url: await page.evaluate(() => location.search), ink: await canvasInk(page) };
-    await page.evaluate(() => document.dispatchEvent(new Event("ecobot-gust")));   // (stopped: none sent)
+    await reads({ gust: 150, asOf: "2026-11-16T10:30:00+11:00" });   // (stopped: a live gust over 99 km/h sends none)
     out.stopped.sent = await sent() - before;
+    await page.locator("#fxtest button[data-gust]").click();   // (the test link after a stop: on again, one sent)
+    out.resumed = { sent: await sent() - before, running: await page.evaluate(() => Sky.state().running) };
     out.errors = errors;
     await context.close();
     out.opened = await opened;
