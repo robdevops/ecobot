@@ -263,9 +263,9 @@ async def test_ecobot_mcp_down_for_a_moment_isnt_a_warning_but_down_for_longer_o
     monkeypatch.setattr(upstream, "QUIET_SECONDS", 0.6)
     port = free_port()
     task = asyncio.create_task(Upstream(f"http://127.0.0.1:{port}/mcp", TOKENS["bot"]).run())   # (nothing listens there yet)
-    await asyncio.sleep(0.3)
     warned = lambda: [r.getMessage() for r in caplog.records if r.levelname == "WARNING" and r.name == "lib.upstream"]
-    assert not warned() and "isn't reachable yet" in caplog.text
+    await until(lambda: "isn't reachable yet" in caplog.text, what="the first try, said quietly")   # (polled: a busy machine may be slow)
+    assert not warned()
     await until(warned, what="the warning, once it has been QUIET_SECONDS")   # (0.6 s on: polled, so a slow machine can't miss it)
     assert "for 0s" not in warned()[0]
     async with Serving(http_app(service, tokens=TOKENS.values()), port):

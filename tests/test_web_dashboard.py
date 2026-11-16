@@ -998,21 +998,48 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert windy["light"]["hits"] >= 3 and 0 < windy["light"]["push"] < 10, windy["light"]
     assert windy["light"]["kick"] == pytest.approx(windy["light"]["push"], rel=0.01), windy["light"]
     assert windy["leaves"]["kick"] > 2.5 * windy["light"]["kick"], (windy["leaves"], windy["light"])   # (heavy rain's knocks: far harder)
-    # humidity: its heavy beads run down the glass (36 s of it, on a small page): down only, never back up, well down; most wandering a
-    # little either side of where each began (never further than its bound), the lot not drifting either way; none reaching the
-    # window's bottom, each fading out in its lower half; its wet track behind it, drying (a pixel of each bead's track drier by the
-    # end, some dried out); faster on an earlier bead's track than off one. The same with the wind on: water on the glass isn't blown
+    # humidity: condensation beading all over the glass (36 s of it, on a small page), the beads appearing at every height (more toward
+    # the top), never a line of water along the top edge; its heavy beads running down: down only, never back up, well down; most
+    # wandering a little either side of where each began (never further than its bound), the lot not drifting either way; none
+    # reaching the window's bottom; its wet track behind it, drying (a pixel of each bead's track drier by the end, some dried out).
+    # Slow on dry glass (about half as fast as it was, about 6.6 px/s, pausing longer), as fast as ever on an earlier bead's track
+    # (about 24 px/s): many times as fast there. Beads that touch merge, their water adding up: bigger, a running one on further, and
+    # slower to dry away. Glass: mostly see-through (a faint body; they were opaque, about 217 of 255 as drawn), a crisp glint. The
+    # same with the wind on: water on the glass isn't blown
     for name, beads in got["humidity"].items():
-        assert beads["errors"] == [] and beads["runners"] >= 10 and beads["up"] == 0 and beads["down"] > 60, (name, beads)
+        assert beads["errors"] == [] and beads["runners"] >= 10 and beads["up"] == 0 and beads["down"] > 50, (name, beads)
         assert 2 <= beads["wander"] <= beads["meander"] and beads["wandered"] >= beads["runners"] / 2, (name, beads)
         assert abs(beads["offset"]) < 3, (name, beads)   # (about 1 or less; blown, many px)
-        assert beads["lowest"] < 0.95 and beads["ended"] and beads["ended"][0] >= 0.4 and beads["ended"][1] < 0.9, (name, beads)
+        assert beads["lowest"] < 0.95 and beads["ended"] and beads["ended"][1] < 0.9, (name, beads)
+        born = beads["born"]   # (each's height as it first showed, of the window's)
+        thirds = [sum(lo <= y < lo + 1 / 3 for y in born) for lo in (0, 1 / 3, 2 / 3)]
+        assert len(born) >= 20 and min(thirds) >= 2 and sum(y > 0.5 for y in born) >= 0.15 * len(born), (name, thirds, born)
+        assert thirds[0] >= 0.3 * len(born), (name, thirds)   # (more toward the top)
         assert beads["behind"] > 0.95 and beads["wet"] > 200 and beads["trails"] >= 10, (name, beads)
         assert beads["drier"] >= 0.8 * beads["trails"] and beads["dried"] > 0, (name, beads)
         (on_px, on_s), (off_px, off_s) = beads["on"], beads["off"]
-        assert on_s > 3 and on_px / on_s > 1.5 * off_px / off_s, (name, beads)   # (about 3 times as fast, its pauses fewer and shorter)
-        # (a track dried out: gone from the canvas too, nothing left showing on dry glass; no bead cut short, none vanishing at the top)
+        assert on_s > 3 and off_px / off_s < 4.5 and on_px / on_s > 18 and on_px / on_s > 4 * off_px / off_s, (name, beads)
+        # (merges: each bead's water the two's together, as a radius (the cube root of their radii cubed, summed), unless at the
+        # largest; a running one's end no higher, and only past its lowest if it was already, its sprite now taller)
+        assert beads["merges"] >= 3 and beads["merged"], (name, beads)
+        for m in beads["merged"]:
+            assert m["into"] > max(m["r"]), (name, m)
+            assert m["into"] == pytest.approx(beads["largest"]) or m["into"] ** 3 == pytest.approx(sum(r ** 3 for r in m["r"])), (name, m)
+            if m["end"]:
+                assert m["end"][0] <= m["end"][1] <= max(m["end"][0], m["end"][2]) + 1e-9, (name, m)
+        # (looked at as drawn: the still beads whole, every 10th frame)
+        assert beads["look"]["beads"] >= 20 and beads["look"]["mean"] < 110 and beads["look"]["most"] > 170, (name, beads["look"])
+        # (a track dried out: gone from the canvas too, nothing left showing on dry glass; no bead cut short, none vanishing (each
+        # merged into another, running, or dried away))
         assert beads["stray"] == 0 and beads["cut"] == 0 and beads["popped"] == 0, (name, beads)
+    # ... nothing at all drawn in the canvas's top two rows (humidity alone: no water along the top edge)
+    assert got["humidity"]["alone"]["top"] == 0, got["humidity"]["alone"]
+    # ... and the runs done after a merge (some on each page): bigger than the bead it was before it merged, and slower to dry away
+    for name, beads in got["humidity"].items():
+        merged = [d for d in beads["done"] if d["merged"]]
+        assert merged, (name, beads["done"])
+        for d in merged:
+            assert d["r"] > d["part"] and d["fade"] > d["partFade"], (name, d)
     # ... every other effect then on too, humidity's share of the budget shrinking: fewer beads, but none cut short mid-glass (each
     # running its course) and none swelling at the top vanishing
     squeezed = got["humidity"]["alone"]["squeezed"]

@@ -946,47 +946,65 @@ const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
   };
   requestAnimationFrame(step);
 }));
-// humidity's beads running down the glass, every frame over `frames` of Sky's (each 0.1 s of the page's time, its clock run on fast:
-// `pace`): how many ran; any that went up (between two frames, by more than nothing); the furthest one went down; the furthest one
-// wandered either side of where it began, and how many wandered 2 px or more; their mean offset from where they began (px, negative
-// leftward); the lowest any sprite reached (art px, its bottom row + 1) of the window's height; where those that ended were last seen
-// (lowest and highest, of the height); how often a bead that had moved had its track behind it; the most track pixels wet at once,
-// how many had dried by the end, and of a pixel of each bead's track (as it passed 20 px down), how many were drier by the end; px
-// run and s taken on an earlier track and off one; how many pixels showed on the tracks' canvas where the glass was dry, at the end;
-// how many beads were cut short (gone more than 10 px above where they'd end: a frame's run at most is 8.4) and how many swelling
-// at the top vanished (gone at a radius of 1 or more: one dropped flattens back into the edge first); the beads (the top's and the
-// running ones) at the start and at the end
+// humidity's beads condensing on the glass and running down it, every frame over `frames` of Sky's (each 0.1 s of the page's time,
+// its clock run on fast: `pace`): how many ran; any that went up (between two frames, by more than nothing); the furthest one went
+// down from where it began; the furthest one wandered either side of where it began, and how many wandered 2 px or more; their mean
+// offset from where they began (px, negative leftward); the lowest any sprite reached (art px, its bottom row + 1) of the window's
+// height; where those that ended were last seen (lowest and highest, of the height); how often a bead that had moved had its track
+// behind it; the most track pixels wet at once, how many had dried by the end, and of a pixel of each bead's track (as it passed 20
+// px down), how many were drier by the end; px run and s taken on an earlier track and off one; how many pixels showed on the
+// tracks' canvas where the glass was dry, at the end; how many beads were cut short (gone more than 10 px above where they'd end: a
+// frame's run at most is 8.4) and how many still ones vanished (gone at a radius of 1 or more, not faded, not merged into another);
+// the beads at the start and at the end; where the still ones appeared (each's height as it first showed, of the window's); merges,
+// and the runs done ({merged, r, ran, fade}); every 10th frame, the most pixels drawn in the canvas's top two rows, and the still
+// beads drawn whole (r 2 or more, not drying): of the canvas's pixels in their sprites, the alpha (0-255) of those drawn, mean and
+// most
 const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
   const last = new Map(), lastSites = new Map(), ended = [], first = Sky.state().frames, count = Sky.state().particles.humidity;
   let n = 0, up = 0, down = 0, wander = 0, offset = 0, samples = 0, lowest = 0, moved = 0, behind = 0, wet = 0, cut = 0, popped = 0;
-  const wandered = new Set(), trails = new Map();
+  let top = 0, inked = 0, alphas = 0, most = 0, looked = 0;
+  const wandered = new Set(), trails = new Map(), born = new Map();
+  const canvas = document.querySelector("#sky canvas"), g = canvas.getContext("2d");
   const step = () => {
-    const h = Sky.state().humidity, now = new Map(h.runners.map((d) => [d.id, d]));
-    for (const [id, d] of last) if (!now.has(id)) { ended.push(d.y / h.height); if (d.end - d.y > 10) cut++; }
+    const h = Sky.state().humidity, now = new Map(h.runners.map((d) => [d.id, d])), absorbed = new Set(h.absorbed);
+    for (const [id, d] of last) if (!now.has(id) && !absorbed.has(id)) { ended.push(d.y / h.height); if (d.end - d.y > 10) cut++; }
     const sites = new Map(h.sites.map((s) => [s.id, s]));
-    for (const [id, s] of lastSites) if (!sites.has(id) && s.r >= 1) popped++;
+    for (const [id, s] of lastSites) if (!sites.has(id) && !now.has(id) && !absorbed.has(id) && s.r >= 1 && s.alpha > 0.15) popped++;
     lastSites.clear();
-    for (const [id, s] of sites) lastSites.set(id, s);
+    for (const [id, s] of sites) { lastSites.set(id, s); if (s.r > 0 && !born.has(id)) born.set(id, s.y / h.height); }
     for (const d of h.runners) {
       const before = last.get(d.id);
       if (!before) n++;
       else if (d.y < before.y - 1e-9) up++;
-      down = Math.max(down, d.y - 1);
+      down = Math.max(down, d.y - d.y0);
       wander = Math.max(wander, Math.abs(d.x - d.x0));
       if (Math.abs(d.x - d.x0) >= 2) wandered.add(d.id);
       offset += d.x - d.x0; samples++;
       lowest = Math.max(lowest, d.bottom / h.height);
-      if (d.y > 12) { moved++; if (d.behind) behind++; }
-      if (d.y > 20 && d.trail && !trails.has(d.id)) trails.set(d.id, [...d.trail, h.wetAt(...d.trail)]);
+      if (d.y - d.y0 > 10) { moved++; if (d.behind) behind++; }
+      if (d.y - d.y0 > 20 && d.trail && !trails.has(d.id)) trails.set(d.id, [...d.trail, h.wetAt(...d.trail)]);
     }
     wet = Math.max(wet, h.wet);
     last.clear();
     for (const [id, d] of now) last.set(id, d);
+    if ((Sky.state().frames - first) % 10 === 0) {   // (the canvas as drawn this frame)
+      const rows = g.getImageData(0, 0, canvas.width, 2).data;
+      let k = 0;
+      for (let i = 3; i < rows.length; i += 4) if (rows[i]) k++;
+      top = Math.max(top, k);
+      for (const s of h.sites) if (s.r >= 2 && s.alpha === 1 && s.drawn) {
+        const [x, y, w, hh] = s.drawn, d = g.getImageData(x, y, w, hh).data;
+        for (let i = 3; i < d.length; i += 4) if (d[i]) { inked++; alphas += d[i]; most = Math.max(most, d[i]); }
+        looked++;
+      }
+    }
     if (Sky.state().frames - first < frames) return requestAnimationFrame(step);
     resolve({ runners: n, up, down, wander, meander: h.meander, wandered: wandered.size, offset: offset / Math.max(samples, 1), lowest,
               ended: ended.length ? [Math.min(...ended), Math.max(...ended)] : null, behind: behind / Math.max(moved, 1), wet,
               dried: h.dried, trails: trails.size, drier: [...trails.values()].filter(([x, y, w]) => h.wetAt(x, y) < w).length,
-              on: h.on, off: h.off, stray: h.stray(), cut, popped, count: [count, Sky.state().particles.humidity] });
+              on: h.on, off: h.off, stray: h.stray(), cut, popped, count: [count, Sky.state().particles.humidity],
+              born: [...born.values()], merges: h.merges, merged: h.merged, done: h.done, largest: h.largest, top,
+              look: { beads: looked, mean: alphas / Math.max(inked, 1), most } });
   };
   requestAnimationFrame(step);
 }), frames);
@@ -1228,7 +1246,8 @@ const WEATHER = {
       await uv.context.close();
       return seen;
     })();
-    // humidity's beads running down the glass over 36 s of the page's time, alone and with the wind, beside the rest (small: cheap)
+    // humidity's beads condensing on the glass and running down it over 36 s of the page's time, alone and with the wind, beside the rest
+    // (small: cheap)
     const beading = Promise.all(["humidity", "humidity,wind"].map(async (name) => {
       const p = await weatherPage(browser, url, { query: `?fx=${name}`, pace: 10, context: { viewport: { width: 640, height: 480 } } });
       const seen = await humiditySeen(p.page, 360);
