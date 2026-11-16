@@ -1158,13 +1158,13 @@ const Sky = (() => {
   // variation, no gaps or islands), dithered, a little denser toward the sides and the bottom corners; none in the top rows. How
   // thick follows the humidity (the effect's level: 90 % to 100 %, a light haze to a heavy fog), eased to a new level over a few s.
   // Then the beads, condensing out of the fog only (where it has formed and shows, not in a trail wiped through it; more often where
-  // it's thick, a little more toward the top), tiny (BORN: a px), fading in; a few a second (MISTING; the lighter the humidity, the more: heavier, its water goes to merging and running), on and
+  // it's thick, a little more toward the top), tiny (BORN: a px), fading in; a few a second (MISTING; the more humid, the more), on and
   // on, the glass more and more densely beaded, up to the most the budget allows (there, now and then the most isolated drying away
   // quietly for another). Tiny ones never run (nor grow, nor shrink): each stays where it condensed till it snaps together with
-  // another close by (SNAP px between their edges or less, about a bead's width, not only touching): the higher one pulled into the
+  // another close by (SNAP px between their edges or less, a pixel's gap, not only touching): the higher one pulled into the
   // lower quickly, quicker and quicker, merged there (their water adding up: two tiny, a small one) with a tiny jump (a size bigger
   // for POP s). A bead not running (under 1 px/s) and a tiny one close below it the same; a running one takes in any tiny one
-  // beside or above it as it passes. Only large ones (RUN_R and up: about four tiny ones' water) run (as below); smaller ones stay
+  // beside or above it as it passes. Only large ones (RUN_R and up: about eight tiny ones' water) run (as below); smaller ones stay
   // put (snapping as tiny ones do), a small one growing on the fog till it's large enough. Heavy rain (HEAVY_RAIN or more, the humidity high or not): now and
   // then (LANDING a second, RAIN_MOST on the glass at most) a drop sticks, landing at once as a large bead (RAIN_R) with a splash (a
   // ring of tiny droplets bursting out and fading in a few frames); none in lighter rain, and none forming once the rain eases.
@@ -1215,13 +1215,13 @@ const Sky = (() => {
     const GONE = 0.03;                 // a bead's water this little: gone (r about 0.3)
     const BORN = [0.5, 0.6];           // a bead condensing: its radius, tiny (a px: two of them together small, r 0.63 or more)
     const TINY = 0.61;                 // a condensed bead this small or less: tiny, never running (see snaps())
-    const RUN_R = 0.87;                // a bead runs only this big or bigger (about large: four tiny ones' water); smaller, it stays put
+    const RUN_R = 1.1;                 // a bead runs only this big or bigger (about eight tiny ones' water); smaller, it stays put
                                        // ... (growing, keeping or shrinking as its glass has it, snapping as tiny ones do)
-    const SNAP = 1.6;                  // px between two beads' edges (about a bead's width) or less, one of them tiny: they snap together
+    const SNAP = 1;                    // px between two beads' edges or less (a pixel's gap), one of them tiny: they snap together
     const SNAP_V = [6, 30, 120];       // the one pulled in: px/s to start, at most, and how fast it gets quicker (px/s²): a px or two
                                        // ... in a few frames
     const POP = 0.12;                  // s a bead just snapped together bulges a size for (a tiny jump as they coalesce)
-    const MISTING = 0.02;              // tiny beads condensing a s, for each px of the window's width (light 1.15 times this; heavy 0.3)
+    const MISTING = 0.02;              // tiny beads condensing a s, for each px of the window's width (light 0.95 times this; heavy 1.35)
     const TINY_COST = 0.25;            // a tiny bead, a quarter of a particle of the budget (a px, still: cheap)
     const GRID = 4;                    // px: the cells the tiny beads are looked up in (the snaps' checks)
     const QUICK = 3;                   // px/s on fog: a condensed bead slower than this dries away as the fog clears where it is
@@ -1811,7 +1811,7 @@ const Sky = (() => {
         const rainy = all.filter((b) => b.kind === "rain").length, tiny = all.filter((b) => b.still).length;
         cap = Math.max(0, Math.floor((Math.min(most - room, most - rainy) - (all.length - tiny - rainy)) / TINY_COST));
         if (e.level > 0) {
-          mist += MISTING * W * (1.15 - 0.85 * e.level) * dt;   // (light humidity beads up with tiny ones fastest; heavier, its water goes to merging and running)
+          mist += MISTING * W * (0.95 + 0.4 * e.level) * dt;   // (the more humid, the more tiny ones: light 0.95 times MISTING, heavy 1.35)
           for (let n = tiny; mist >= 1; mist--) {
             if (n < cap) { all.push(condense()); n++; continue; }
             if (random() < 0.75) continue;
