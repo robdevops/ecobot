@@ -718,7 +718,7 @@ async def test_zoomed_the_last_tile_stops_a_key_a_swipe_and_a_drag_its_text_is_s
 
 
 @needs_browser
-async def test_a_double_click_esc_the_bounce_cut_short_the_keyboard_and_esc_mid_zoom_and_one_tile_no_zoom(server, station):
+async def test_a_double_click_esc_the_bounce_cut_short_the_keyboard_and_esc_mid_zoom(server, station):
     got, default, full = await zoomed(server, station, "out")
     # Esc: back too, the order as it was
     assert got["esc"]["before"]["zoomed"] and got["esc"]["before"]["shown"] == "Wind" and not got["esc"]["after"]["zoomed"]
@@ -739,7 +739,6 @@ async def test_a_double_click_esc_the_bounce_cut_short_the_keyboard_and_esc_mid_
     assert kb["tab"]["focus"] != "Temperature" and kb["tab"]["focus"] not in default[2:] and kb["tab"]["zoomed"], kb
     assert not kb["esc"]["zoomed"] and kb["esc"]["focus"] == "Humidity" and kb["esc"]["reachable"] == default, kb
     assert kb["space"]["zoomed"] and kb["space"]["shown"] == "Humidity" == kb["space"]["focus"], kb
-    # one tile: no zoom cursor, no zoom
     # Esc mid-way through a zoom-in: back from where the tile is drawn (no jump on to the full size), its table hidden until it's in its
     # grid place; the others keep their tables while they fade out (not all gone at once on the first frame)
     esc = got["escMid"]
@@ -747,7 +746,29 @@ async def test_a_double_click_esc_the_bounce_cut_short_the_keyboard_and_esc_mid_
     assert esc["atEsc"] < full["width"] - 50 and esc["peakAfter"] < esc["atEsc"] * 1.15, esc
     assert esc["tableWhileLarge"] == 0 and esc["tableEnd"] == 1, esc
     assert esc["last"]["width"] == pytest.approx(got["gridRect"]["width"], abs=0.5), esc
-    assert got["single"] == {"cursor": "auto", "zoomed": False}
+
+
+@needs_browser
+async def test_a_single_tile_zooms_too_its_paging_only_bouncing_and_a_click_or_esc_goes_back(server, station):
+    got, default, full = await zoomed(server, station, "single")
+    one = got["single"]
+    # the magnifier over its gauge; a click zooms it to its title and gauge alone, filling the window
+    assert one["cursor"] == "zoom-in" and one["zoomed"] | {"look": None} == {"zoomed": True, "shown": "Humidity", "track": 0,
+                                                                             "cursor": "zoom-out", "look": None}, one
+    fills(one["zoomed"]["look"], 1024, 768)
+    assert near(one["zoomed"]["look"]["box"], full), one["zoomed"]
+    # a gallery of one: the keys nudge it and back, a drag either way gives a little and springs back, as does a trackpad's swipe
+    for name, key in one["keys"].items():
+        assert key["zoomed"] and key["shown"] == "Humidity" and key["track"] == 0 and key["extreme"] >= 20, (name, key)
+    for name, drag in one["dragged"].items():
+        assert drag["zoomed"] and drag["shown"] == "Humidity" and drag["track"] == 0 and 20 < abs(drag["during"]) < 400 * 0.6, (name, drag)
+    assert one["wheeled"] | {"prevented": None} == {"zoomed": True, "shown": "Humidity", "track": 0, "prevented": None}, one["wheeled"]
+    assert one["wheeled"]["prevented"] and all(one["wheeled"]["prevented"]), one["wheeled"]
+    # a click goes back, the tile in its place; Esc too
+    box = lambda r: r | {"left": r["x"], "top": r["y"]}
+    rect = one["back"].pop("rect")
+    assert one["back"] == {"zoomed": False, "shown": "Humidity", "track": 0} and near(box(rect), box(one["gridRect"])), (one["back"], rect)
+    assert one["esc"]["zoomed"] is False, one["esc"]
 
 
 @needs_browser

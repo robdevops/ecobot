@@ -17,8 +17,8 @@
 //   node web_dashboard_browser.js URL --zoom PART: the page at 1024x768 with a mouse and keys, a part of the zoom (zoomMode): "in" (the
 //     zoom cursors, a click zooming a tile; zoomed, prints {label} (Temperature's, beside the tile shown), waits for a line on stdin (the
 //     test has changed its reading), then pages with the keys past the first), "pager" (mouse drags and wheel deltaX), "last" (past the
-//     last, drags across the text, a click back), "out" (a double-click, Esc, the bounce cut short, the keyboard, Esc mid-zoom, a single
-//     tile: no zoom); prints {step: what was seen}.
+//     last, drags across the text, a click back), "out" (a double-click, Esc, the bounce cut short, the keyboard, Esc mid-zoom),
+//     "single" (a single tile zoomed, paging bouncing, back by a click and by Esc); prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --zoom-touch: the page at 390x844 with touch: a tap zooms, swipes (slow, a flick, on the text)
 //     page, a vertical swipe and a long press do nothing, a tap goes back where the page was scrolled; prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --weather PART: the page at 1024x768, its data altered on the way, a part of the weather behind the
@@ -454,7 +454,7 @@ const cursorAt = (page, [x, y]) => page.evaluate(([x, y]) => getComputedStyle(do
 // The zoom in four parts, each its own page (and process: the tests run them side by side): "in" (the cursors, a click zooming a
 // tile, the live reading beside it, the keys), "pager" (zoomed: mouse drags, a trackpad's swipes), "last" (zoomed: the last tile, a
 // drag across the text, a click back out), "out" (a double-click, Esc, the bounce cut short, the keyboard, Esc mid-way through a
-// zoom-in, a single tile)
+// zoom-in), "single" (a single tile zoomed: paging only bounces)
 async function zoomMode(browser, url, part) {
   const out = {};
   const { context, page, errors } = await open(browser, url, 1024, 768, { init: { fn: ZOOM_HELPERS } });
@@ -544,7 +544,7 @@ async function zoomMode(browser, url, part) {
     out.zoomOut = await zoomClick(page, shown, await at(page, shown, 0.85, 0.3));
     out.outRect = await tileOf(page, shown).boundingBox();
     out.outTable = await page.evaluate((shown) => window.__look(shown).table, shown);   // (its table back)
-  } else {
+  } else if (part === "out") {
     // a double-click (its clicks 300 ms apart, slower than the zoom): zoomed, not zoomed and straight back out
     const wind = await at(page, "Wind", 0.85, 0.3);
     await page.mouse.move(...wind);
@@ -628,16 +628,32 @@ async function zoomMode(browser, url, part) {
                      tableWhileLarge: Math.max(...after.filter((x) => x.width > last.width + 1).map((x) => x.table)), tableEnd: last.table };
       await calm(page);
     }
-    // one tile only: no zoom cursor, a click zooms nothing
-    await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: [...document.querySelectorAll(".tile .title")].map((t) => t.textContent).filter((t) => t !== "Rain") })), KEY);
+  } else if (part === "single") {
+    // one tile only: the zoom cursor, a click zooms it (title and gauge, no table); the keys, a drag and a trackpad's swipe only
+    // bounce (a gallery of one); a click goes back, Esc too
+    await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: [...document.querySelectorAll(".tile .title")].map((t) => t.textContent).filter((t) => t !== "Humidity") })), KEY);
     await page.reload({ waitUntil: "load" });
-    await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
-    await calm(page, 300);
-    const one = await at(page, "Rain", 0.85, 0.3);
-    out.single = { cursor: await cursorAt(page, one) };
+    await page.waitForFunction(() => document.querySelectorAll(".tile").length === 1);
+    await calm(page, 1500);   // (the gauge's rise)
+    const one = await at(page, "Humidity", 0.85, 0.3);
+    out.single = { cursor: await cursorAt(page, one), gridRect: await tileOf(page, "Humidity").boundingBox() };
     await page.mouse.click(...one);
     await calm(page);
-    out.single.zoomed = await page.evaluate(() => document.body.classList.contains("zoomed"));
+    out.single.zoomed = { ...await page.evaluate(() => window.__state()), cursor: await cursorAt(page, one),
+                          look: await page.evaluate(() => window.__look("Humidity")) };
+    out.single.keys = { right: await keyStep(page, "ArrowRight"), left: await keyStep(page, "ArrowLeft"), space: await keyStep(page, " ") };
+    out.single.dragged = { left: await pagerDrag(page, [800, 300], -400), right: await pagerDrag(page, [200, 300], 400) };
+    for (let i = 0; i < 8; i++) { await page.mouse.wheel(50, 0); await page.waitForTimeout(16); }
+    await swiped(page);
+    out.single.wheeled = { ...await page.evaluate(() => window.__state()), prevented: await page.evaluate(() => window.__wheels) };
+    await page.mouse.click(...one);
+    await calm(page);
+    out.single.back = { ...await page.evaluate(() => window.__state()), rect: await tileOf(page, "Humidity").boundingBox() };
+    await page.mouse.click(...one);
+    await calm(page);
+    await page.keyboard.press("Escape");
+    await calm(page);
+    out.single.esc = await page.evaluate(() => window.__state());
   }
   out.errors = errors;
   await context.close();

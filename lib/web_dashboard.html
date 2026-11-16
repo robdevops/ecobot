@@ -89,9 +89,9 @@
   #message { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; text-align: center;
     font-size: 20px; color: var(--soft); }
   body.unavailable #message { display: flex; }
-  /* The cursor: over a gauge, a magnifier with + while there's more than one tile (a click zooms it), with − in the zoomed view (a
-     click goes back); over the text, the usual one. (.tablearea: under the table's chips, so the gaps between them count as the table.) */
-  body.many:not(.zoomed) .tile { cursor: zoom-in; }
+  /* The cursor: over a gauge, a magnifier with + (a click zooms it, a single tile too), with − in the zoomed view (a click goes
+     back); over the text, the usual one. (.tablearea: under the table's chips, so the gaps between them count as the table.) */
+  body:not(.zoomed) .tile { cursor: zoom-in; }
   body.zoomed #grid { cursor: zoom-out; }
   .title, .unit, .chip, .figure, .tile svg text.reading { cursor: auto; }
   .tablearea { cursor: default; }
@@ -1160,7 +1160,6 @@ const Sky = (() => {
     document.body.dataset.columns = cols;
     document.body.dataset.scroll = scroll ? "yes" : "no";
     document.documentElement.classList.toggle("scroll", scroll);   // (a scrolled page stops with a row at the top)
-    document.body.classList.toggle("many", n > 1);   // (more than one tile: a click zooms one)
     if (zoom) galleryLayout();
   }
 
@@ -1259,7 +1258,7 @@ const Sky = (() => {
       if (focused && grid.contains(focused)) focused.focus({preventScroll: true});
     }
     if (drawn.size) opening = false;   // (only the first drawing rises from 0; a tile drawn later starts at its reading)
-    if (zoom && boxes.length < 2) zoomOut(false);   // (the others gone from the readings, nothing to zoom between)
+    if (zoom && !boxes.length) zoomOut(false);   // (every tile gone from the readings: nothing to show)
     document.body.classList.toggle("unavailable", !boxes.length);
     message.textContent = tiles.length ? "Every gauge is hidden." : unavailable;
     layout();
@@ -1696,22 +1695,23 @@ const Sky = (() => {
     if (box && draggable(e, box)) e.preventDefault();
   });
 
-  // Enter or Space on a tile focused (more than one shown): zoomed, as by a click. (Zoomed, the keys above page instead.)
+  // Enter or Space on a tile focused: zoomed, as by a click. (Zoomed, the keys above page instead.)
   grid.addEventListener("keydown", (e) => {
     if (zoom || e.altKey || e.ctrlKey || e.metaKey || (e.key !== "Enter" && e.key !== " ")) return;
-    if (!e.target.classList.contains("tile") || grid.children.length < 2) return;
+    if (!e.target.classList.contains("tile")) return;
     e.preventDefault();
     zoomIn(e.target);
   });
 
-  // A click or a tap without moving: on a gauge, zooms its tile (more than one shown); zoomed, goes back (a mouse's on the text excepted).
+  // A click or a tap without moving: on a gauge, zooms its tile (a single one too: a gallery of one, paging only bouncing); zoomed,
+  // goes back (a mouse's on the text excepted).
   // (A touch held as long as a long press isn't a tap; the second click of a double-click, or tap of a double tap, isn't another.)
   grid.addEventListener("click", (e) => {
     if (e.detail > 1 || performance.now() < zoomUntil || Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) > MOUSE_SLOP) return;
     if (lastDown.touch && e.timeStamp - lastDown.t >= LONG_PRESS_MS) return;
     const box = e.target.closest(".tile");
     if (zoom) { if (lastDown.touch || !box || draggable(e, box)) zoomOut(); }
-    else if (box && grid.children.length > 1 && draggable(e, box)) zoomIn(box);
+    else if (box && draggable(e, box)) zoomIn(box);
   });
 
   // A drag, zoomed: {pointerId, touch, x0, y0, t0, onText, moved, paging, ignored, base, samples: [[time, x]]}. A mouse's pages from
