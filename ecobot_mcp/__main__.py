@@ -82,7 +82,8 @@ async def main():
                  ", ".join(hosts))
         if cfg.mcp_dashboard:
             log.info("Dashboard: http://%s:%d/dashboard (read-only, no token, any Host; MCP_DASHBOARD=off turns it off)%s", shown, port,
-                     "" if cfg.mcp_dashboard_animations else "; no weather behind its gauges (MCP_DASHBOARD_ANIMATIONS=off)")
+                     {"off": "; no weather behind its gauges (MCP_DASHBOARD_ANIMATIONS=off)",
+                      "low": "; low motion: nothing moves, updates once a minute (MCP_DASHBOARD_ANIMATIONS=low)"}.get(cfg.mcp_dashboard_animations, ""))
         log.info("Chart links (?charts=link): %s/<id>.png, kept %d h in memory (no token: an id is its key)",
                  cfg.mcp_chart_base_url or f"http://{shown}:{port}/charts (or as the MCP request reached it)", cfg.mcp_chart_link_hours)
         waiting = asyncio.create_task(stop.wait())

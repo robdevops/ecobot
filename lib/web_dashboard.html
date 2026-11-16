@@ -16,7 +16,11 @@
      readings call for it, its tile framed in red; "stop animation" at the bottom left stops and clears them for this page view only
      (nothing saved: a reload brings them back; the link gone till then). With MCP_DASHBOARD_ANIMATIONS off
      the server sends data-animations="off" on <html> (lib/web_dashboard.py): none of it, for every viewer (no canvas drawn, no loop,
-     no link, no test links), the rest of the page as ever. -->
+     no link, no test links), the rest of the page as ever. With "low" (low motion, for e-ink displays: data-animations="low"),
+     nothing moves: the weather one faint still frame, drawn again only as the conditions change; no transitions (the zoom, the
+     tiles' reflow, fades and the gallery's slide in one step); the gauges put at their new readings at once; the data's updates
+     applied at most once a minute, all at once; no "stop animation" (nothing to stop). Reduced motion asked for: as low, but for the
+     updates and the link. -->
 <style>
   :root { --bg: #14191D; --ink: #E8EAED; --soft: #B8BDC2; }
   * { box-sizing: border-box; }
@@ -122,6 +126,8 @@
   .tile.zooming { z-index: 2; }        /* (the tile zooming in or out, over the others) */
   body.paging, body.paging * { cursor: grabbing !important; -webkit-user-select: none !important; user-select: none !important; }
   @media (prefers-reduced-motion: reduce) { .tile, .grip, .close, #remove, .tile :is(.unit, .chip, .figure, .tablearea) { transition: none !important; } }
+  /* Low motion (MCP_DASHBOARD_ANIMATIONS=low, for e-ink): no transition anywhere, each change in one step */
+  html[data-animations="low"] :is(*, *::before, *::after) { transition: none !important; }
 </style>
 </head>
 <body>
@@ -138,7 +144,8 @@
 // pixelated). Every sprite and texture is drawn once to a small offscreen canvas and blitted; one loop (at most 30 frames a second)
 // for every effect, each frame cleared once and drawn back to front (ORDER). The effects share a particle budget and a cap on their
 // strength together, so several at once are no busier or brighter than one strong one. Nothing runs while no effect is on or fading
-// out; the tab hidden, it waits; with reduced motion, one still, faint frame and no loop.
+// out; the tab hidden, it waits; with reduced motion, or low motion (MCP_DASHBOARD_ANIMATIONS=low), one still, faint frame and no loop
+// (low motion: drawn again only as the conditions change).
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), haze: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
 //   100 %), uv, wind, heat: 0 or 1, ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
 //   sooner)}; animate false (the page's "stop animation", or
@@ -180,7 +187,7 @@
 //   last row + 1, or null: not running, wet: its trail there, in its middle)},
 //   flood (a flash flood: its depth, its surface, its frog and its waves, as flood.probe() gives them; the wind's water, took, rested,
 //   floating, resting, wet, all, shows(): its leaves in it, as flood.leaves() gives them (the flood's too, as leaves), and flyers: the leaves
-//   flying, each [id, its lowest row over the water under it or null, x, y]; the rain's under: drops drawn below its surface), gust (what's blown across: gust.probe()), for the tests. Sky.timeScale(k): the
+//   flying, each [id, its lowest row over the water under it or null, x, y]; the rain's under: drops drawn below its surface), gust (what's blown across: gust.probe()), stills (how many still frames have been drawn: reduced or low motion), for the tests. Sky.timeScale(k): the
 //   weather's time k times as fast, each frame (test-only). Sky.advance(n) (test-only): n frames now (window.__skyTest: see the
 //   loop); Sky.clock() (test-only): {frames, clock, running}, as Sky.state() has them, cheaply. Sky.frost() (test-only):
 //   the ice now, {extent, target: where it's going (on its own measure), growing, frosted, crystals: the share of the window under
@@ -195,7 +202,10 @@
 //   target, sparkles}, cheap.
 const Sky = (() => {
   const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
-  const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Low motion (MCP_DASHBOARD_ANIMATIONS=low: e-ink), as reduced motion: one still, faint frame and no loop; drawn again only as the
+  // conditions change (or the window's size)
+  const LOW = document.documentElement.dataset.animations === "low";
+  const STILL = LOW || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const FRAME_MS = 1000 / 30;          // the frame rate's cap: art moving a pixel at a time needs no more
   const FADE_S = 1.5;                  // an effect fades in, and out, over this long
   const ART_PX = 480;                  // the art's width (or height, if taller) about this many pixels: P = 3 on a laptop, 4 on 1920
@@ -2968,14 +2978,21 @@ const Sky = (() => {
     return made;
   }
 
+  let stillKey = null, stills = 0;   // (the still frame's conditions and size; how many still frames were drawn)
   function start() {
     if (!animate || !alive()) {
       cancelAnimationFrame(frame);
       frame = 0;
+      if (LOW && stillKey === "") return;   // (low motion: cleared already, not again)
+      stillKey = "";
       ctx.clearRect(0, 0, W, H);
       return;
     }
-    if (STILL) {   // one still, faint frame: the particles where they'd be a few seconds in
+    if (STILL) {   // one still, faint frame: the particles where they'd be a few seconds in (low motion: only for new conditions)
+      const key = JSON.stringify([W, H, P, ORDER.map((k) => effects[k].level > 0 ? Math.max(1, Math.round(effects[k].level * 4)) : 0)]);   // (in quarters)
+      if (LOW && key === stillKey) return;
+      stillKey = key;
+      stills++;
       clock = 4;
       tick(0);
       draw(STILL_HINT);
@@ -3024,7 +3041,7 @@ const Sky = (() => {
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
                               wind: effects.wind.probe(), rain: effects.rain.probe(), haze: effects.haze.probe(),
                               humidity: effects.humidity.probe(), flood: effects.flood.probe(),
-                              gust: effects.gust.probe()})};
+                              gust: effects.gust.probe(), stills})};
 })();
 </script>
 <script>
@@ -3038,7 +3055,12 @@ const Sky = (() => {
   const MIN_SCROLL_TILE = 150;         // ... and then the narrowest a column may be (two on a 320-375 px phone, not one huge one)
   const MOVE_MS = 900;                 // how long a gauge takes to move to a new reading
   const RISE_MS = 1000;                // ... and, when the page opens, to rise from its floor (0) to its reading
-  const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Low motion (MCP_DASHBOARD_ANIMATIONS=low, the page served with data-animations="low": e-ink): nothing moves, as with reduced
+  // motion (STILL: the gauges put at their readings at once, no zoom, reflow or slide), and the data's updates applied at most once
+  // every LOW_MS, all at once (fewer redraws of a slow screen)
+  const LOW = document.documentElement.dataset.animations === "low";
+  const STILL = LOW || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const LOW_MS = (window.__lowTest || {}).every || 60000;   // (test-only: window.__lowTest {every: ms}, set before the page loads)
   const PAD = 8, STATUS = 18;
   const NS = "http://www.w3.org/2000/svg";
   const PREFS_KEY = "ecobot.dashboard.v1";   // the preferences (localStorage, one versioned key): {order, hidden} and later stages' own
@@ -3558,7 +3580,7 @@ const Sky = (() => {
     const time = readingTime();
     parts.push(...[time].flat().filter(Boolean));
     statusLine.replaceChildren(...parts.flatMap((p, i) => i ? [" · ", p] : [p]));
-    motion.replaceChildren(...animated() && calling() ? [link("stop animation", stopAnimations, "animations", STOP_TITLE)] : []);
+    motion.replaceChildren(...animated() && calling() && !LOW ? [link("stop animation", stopAnimations, "animations", STOP_TITLE)] : []);   // (low motion: nothing to stop)
     placeCorner();
   }
   // The bottom left corner beside the strip, in the room it leaves; where that's too little for the corner at its narrowest (a phone),
@@ -3595,8 +3617,14 @@ const Sky = (() => {
     gusting(data);
   }
 
-  let fetching = null;
+  // The data fetched and drawn now; with low motion, at most once every LOW_MS: asked sooner, then (once, whatever asked meanwhile)
+  let fetching = null, fetchedAt = -Infinity, later = 0;
   async function refresh() {
+    if (LOW) {
+      const wait = fetchedAt + LOW_MS - performance.now();
+      if (wait > 0) { later = later || setTimeout(() => { later = 0; refresh(); }, wait); return; }
+      fetchedAt = performance.now();
+    }
     if (fetching) return fetching;
     fetching = (async () => {
       try {

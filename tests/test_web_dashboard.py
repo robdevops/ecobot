@@ -434,32 +434,38 @@ def test_mcp_dashboard_is_read_as_on_or_off(monkeypatch, tmp_path):
     assert Config.from_env(bot=False).mcp_dashboard is False
 
 
-def test_mcp_dashboard_animations_is_read_as_on_or_off_on_by_default_and_a_typo_keeps_it_on_with_a_warning(monkeypatch, tmp_path, caplog):
+def test_mcp_dashboard_animations_is_read_as_on_off_or_low_on_by_default_and_a_typo_keeps_it_on_with_a_warning(monkeypatch, tmp_path, caplog):
     from lib.config import Config
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
     monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("MCP_DASHBOARD_ANIMATIONS", raising=False)
-    assert Config.from_env(bot=False).mcp_dashboard_animations is True
-    for value, want in (("off", False), ("OFF", False), ("on", True), ("", True)):
+    assert Config.from_env(bot=False).mcp_dashboard_animations == "on"
+    for value, want in (("off", "off"), ("OFF", "off"), ("no", "off"), ("on", "on"), ("true", "on"), ("", "on"), ("low", "low"), ("LOW", "low")):
         monkeypatch.setenv("MCP_DASHBOARD_ANIMATIONS", value)
-        assert Config.from_env(bot=False).mcp_dashboard_animations is want, value
+        assert Config.from_env(bot=False).mcp_dashboard_animations == want, value
     caplog.set_level("WARNING", logger="lib.config")
     monkeypatch.setenv("MCP_DASHBOARD_ANIMATIONS", "sometimes")
-    assert Config.from_env(bot=False).mcp_dashboard_animations is True
+    assert Config.from_env(bot=False).mcp_dashboard_animations == "on"
     assert any("MCP_DASHBOARD_ANIMATIONS" in r.getMessage() and "'sometimes'" in r.getMessage() for r in caplog.records), caplog.records
 
 
-async def test_the_page_is_told_whether_to_draw_the_weather_behind_its_gauges(server):
-    """MCP_DASHBOARD_ANIMATIONS: the page served with data-animations="on" on its <html> (the default), or "off"; nothing else changes."""
+async def test_the_page_is_told_whether_to_draw_the_weather_behind_its_gauges_and_whether_anything_moves(server):
+    """MCP_DASHBOARD_ANIMATIONS: the page served with data-animations="on" on its <html> (the default), "off" or "low" (low motion);
+    nothing else changes. (True and False, as earlier: "on" and "off"; anything else refused.)"""
     pages = {}
-    for animations in (True, False):
+    for animations in ("on", "off", "low", True, False, None):
         port = free_port()
-        async with Serving(http_app(server, tokens=(TOKEN,), dashboard_animations=animations), port):
+        async with Serving(http_app(server, tokens=(TOKEN,), **({} if animations is None else {"dashboard_animations": animations})), port):
             pages[animations] = (await get(f"http://127.0.0.1:{port}/dashboard")).text
-    assert pages[True].count('<html lang="en" data-animations="on">') == 1 and '<html lang="en" data-animations="off">' not in pages[True]
-    assert pages[False].count('<html lang="en" data-animations="off">') == 1
-    assert pages[False].replace('data-animations="off"', 'data-animations="on"', 1) == pages[True]
+    assert pages["on"].count('<html lang="en" data-animations="on">') == 1 and '<html lang="en" data-animations="off">' not in pages["on"]
+    assert pages["off"].count('<html lang="en" data-animations="off">') == 1
+    assert pages["low"].count('<html lang="en" data-animations="low">') == 1
+    for value in ("off", "low"):
+        assert pages[value].replace(f'data-animations="{value}"', 'data-animations="on"', 1) == pages["on"], value
+    assert pages[True] == pages[None] == pages["on"] and pages[False] == pages["off"]
+    with pytest.raises(ValueError, match="sometimes"):
+        WebDashboard(server, animations="sometimes")
 
 
 # ---------- the page in a browser ----------
@@ -1204,6 +1210,28 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
     assert off["tiles"] == titles_of(station) and off["strip"] == "last reading 18:42", off
     # a tile hidden: "reset preferences" in the strip as ever; still nothing drawn
     assert off["hidden"] == {"strip": "reset preferences · last reading 18:42", "frames": 0, "ink": 0, "running": False}, off["hidden"]
+    # MCP_DASHBOARD_ANIMATIONS low (low motion, for e-ink: the page as served then, data-animations="low"): nothing moves. Opened
+    # with nothing called for: nothing drawn, no frame asked for (the gauges at their readings at once, no rise); no transition
+    low = got["low"]
+    assert low["opened"] | {"levels": None} == {"effects": [], "levels": None, "running": False, "framed": [], "link": None, "frames": 0,
+                                                "drawn": 0, "stills": 0, "gust": 0, "ink": 0}, low["opened"]
+    assert low["transitions"] == 0, low["transitions"]
+    # every effect called for (but the heat: below 0 °C; a gust over 99 km/h too): one faint still frame, no loop, no frame asked for (the gauges and the UV's red
+    # hand put at their new readings at once), nothing blown across, no "stop animation" (nothing to stop)
+    assert low["called"] | {"levels": None, "ink": None} == {
+        "effects": [e for e in EVERY if e != "heat"], "levels": None, "running": False, "framed": low["called"]["framed"], "link": None, "frames": 0, "drawn": 0,
+        "stills": 1, "gust": 0, "ink": None, "hand": "rotate(-27.50 240 203)"}, low["called"]
+    assert low["called"]["ink"] > 0, low["called"]
+    # the data asked for again and again, the same conditions: fetched once more, no new frame; new conditions: one new still frame
+    assert low["same"] == {k: v for k, v in low["called"].items() if k != "hand"}, low["same"]
+    assert low["changed"]["stills"] == 2 and low["changed"]["effects"] == [e for e in EVERY if e not in ("heat", "uv")] and low["changed"]["frames"] == 0, low["changed"]
+    # the data applied at most once a minute (here every 1.2 s): the page's opening fetch and three more, each 1.2 s or more after the last
+    at = low["dataAt"]
+    assert len(at) == 4 and all(b - a >= 1200 - 20 for a, b in zip(at, at[1:])), at
+    # zoomed, paged and back, a tile hidden: each in one step, no animation, no tile moving; still no frame asked for
+    assert low["zoomed"] == {"zoomed": True, "animations": 0} and low["paged"] == {"animations": 0, "transition": "0s"}, low
+    assert low["back"] == {"zoomed": False, "animations": 0}, low["back"]
+    assert low["hidden"] == {"animations": 0, "moved": 0, "tiles": len(titles_of(station)) - 1} and low["frames"] == 0, low
 
 
 EVERY = ["haze", "heat", "uv", "rain", "wind", "humidity", "ice"]

@@ -33,7 +33,7 @@
 //     in this one browser: a list of their reports, in that order.)
 //   node web_dashboard_browser.js URL --weather PART: the page at 1024x768, its data altered on the way, a part of the weather behind the
 //     tiles (WEATHER): each reading at, and just short of, the mark that calls up its effect; the canvas behind the tiles and the tiles'
-//     red frames; "stop animation"; the temporary test links; every effect at once (?fx=all: the frame time, the light, the particles);
+//     red frames; "stop animation"; the temporary test links (beside them, MCP_DASHBOARD_ANIMATIONS off and low); every effect at once (?fx=all: the frame time, the light, the particles);
 //     a flash flood;
 //     ?fx= as the page opens, a phone, reduced motion; prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --fill CASES: for each case {name: [width, height, hidden titles]}, the page with those hidden;
@@ -1708,10 +1708,67 @@ async function animationsOff(browser, url, out) {
   await context.close();
 }
 
+// MCP_DASHBOARD_ANIMATIONS low (low motion, for e-ink displays: data-animations="low" on its <html>): nothing moves. The weather one
+// faint still frame, drawn again only as the conditions change; no loop, no frames for the gauges (put at their readings at once), no
+// transition, no zoom animation or slide; the data applied at most once a minute (here LOW_EVERY ms: window.__lowTest), however often
+// it is asked for; no "stop animation"
+const LOW_EVERY = 1200;
+async function lowMotion(browser, url, out) {
+  const { context, page, errors, reads } = await weatherPage(browser, url, { animations: "low", init: { fn: (every) => {
+    window.__lowTest = { every };
+    window.__dataAt = [];   // (when each fetch of the data was made)
+    window.__own = 0;       // (the frames the page's own script asked for: not the test's own waits, polled by frames)
+    const ask = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (f) => { if (new Error().stack.includes(location.origin)) window.__own++; return ask(f); };
+    const get = window.fetch.bind(window);
+    window.fetch = (...args) => { if (/\/data$/.test(String(args[0]))) window.__dataAt.push(performance.now()); return get(...args); };
+  }, arg: LOW_EVERY } });
+  const opening = await page.evaluate(() => window.__own);   // (the frames asked for as it opened: its layout's)
+  const seen = async () => ({ ...await weatherSeen(page), ...await page.evaluate((opening) => ({ frames: window.__own - opening, drawn: Sky.state().frames,
+                                                                                          stills: Sky.state().stills, gust: Sky.state().gust.sent }), opening),
+                              ink: await canvasInk(page) });
+  out.opened = await seen();
+  out.transitions = await page.evaluate(() => [...document.querySelectorAll(".tile, .tile *, #remove, #fxtest, #fxtest button")]
+    .map((e) => getComputedStyle(e).transitionDuration).filter((d) => d.split(",").some((t) => parseFloat(t) > 0)).length);
+  const hand = () => page.evaluate(() => {
+    const t = [...document.querySelectorAll(".tile")].find((e) => e.querySelector(".title").textContent === "UV index");
+    return t.querySelector("svg .hour").getAttribute("transform");
+  });
+  const called = { "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160, gust: 130, hour: { "UV index": 9 } };
+  await reads(called);   // (the page asks at once: fetched LOW_EVERY after the last)
+  out.called = { ...await seen(), hand: await hand() };
+  // asked for again and again (each event, the page shown again): fetched once, LOW_EVERY after the last; the same conditions: no new frame
+  await page.evaluate(() => { for (let i = 0; i < 5; i++) document.dispatchEvent(new Event("visibilitychange")); });
+  await reads(called);
+  await page.waitForTimeout(300);   // (time for another fetch, or a frame, were there one)
+  out.same = await seen();
+  // new conditions (the UV gone, the ice deeper): one new still frame
+  await reads({ ...called, "UV index": 3, Temperature: -8 });
+  out.changed = await seen();
+  out.dataAt = await page.evaluate(() => window.__dataAt);
+  // zoomed and back, paged, a tile hidden: each in one step, no animation
+  const animations = () => page.evaluate(() => document.getAnimations().length);
+  await page.mouse.click(...await at(page, "Humidity", 0.5, 0.4));
+  out.zoomed = { zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")), animations: await animations() };
+  await page.keyboard.press("ArrowRight");
+  out.paged = { animations: await animations(), transition: await page.evaluate(() => getComputedStyle(document.getElementById("grid")).transitionDuration) };
+  await page.keyboard.press("Escape");
+  out.back = { zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")), animations: await animations() };
+  await page.mouse.move(...await at(page, "Humidity", 0.5, 0.4));
+  await tileOf(page, "Humidity").locator(".close").click();
+  out.hidden = await page.evaluate(() => ({ animations: document.getAnimations().length,
+                                            moved: [...document.querySelectorAll(".tile")].filter((b) => getComputedStyle(b).transform !== "none").length,
+                                            tiles: document.querySelectorAll(".tile").length }));
+  out.frames = await page.evaluate((opening) => window.__own - opening, opening);
+  out.opening = opening;
+  out.errors = errors;
+  await context.close();
+}
+
 // The weather in parts, each its own page (and process: the tests run them side by side): "marks" (nothing called for, each effect at
 // its mark and just short of it, haze's bands, rain's strength, the ice's depth), "several" (several at once, the canvas, the tiles see-
 // through, their look, zoomed), "stop" ("stop animation", the readings, a reload, a test link after it, the reset), "links" (the temporary test links;
-// and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn),
+// and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn, and low: nothing moving),
 // "all" (?fx=all: its frame time, its brightness against Hazardous haze alone, its particles), "opened" (?fx= when the page opens, uv
 // and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, humidity's beads running down the
 // glass alone and in the wind, a phone's strip, reduced motion), "flood" (a flash flood: its mark, its rise, its surface and waves,
@@ -1863,6 +1920,7 @@ const WEATHER = {
   },
   async links(browser, url, out) {
     const off = animationsOff(browser, url, out.off = {});   // (beside the rest)
+    const low = lowMotion(browser, url, out.low = {});        // (beside the rest too)
     // phones (360x740, 390x844), every effect on (their links' longest): the row without "test:", all of it and "stop animation" in
     // sight, unscrolled (beside the rest, as the off page)
     const phones = Promise.all([[360, 740], [390, 844]].map(async ([width, height]) => {
@@ -1915,8 +1973,9 @@ const WEATHER = {
     await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent));
     out.links.all = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
     await off;
+    await low;
     [out.phone360, out.phone390] = await phones;
-    out.errors = [...errors, ...out.off.errors];
+    out.errors = [...errors, ...out.off.errors, ...out.low.errors];
     await context.close();
   },
   async all(browser, url, out) {
