@@ -1172,19 +1172,27 @@ async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alon
     assert got["costFrosted"]["cost"] < 8 and got["costFrosted"]["crystals"] > 0.15, got["costFrosted"]
     # several at once no brighter than one strong one: every effect on (the ice grown all the way in), against Hazardous haze alone
     assert 0 < got["light"]["all"] <= got["light"]["haze5"], got["light"]
-    # the haze (the particulates), each band alone: an even veil over the whole window (its blocks' spread under 0.15 of their mean;
-    # the banks it was spread over 1), no heavier near the ground (its bottom fifth, and its top, within 5 % of the whole window's
-    # mean: the banks' bottom was over 2, their top 0), denser with each band
+    # the haze (the particulates), each band alone: soft clouds over the whole window, more of it under them with each band (at
+    # Moderate a few scattered ones, under a quarter of it; at Hazardous most of it), and denser
     levels = got["haze"]["levels"]
     assert [lv["level"] for lv in levels] == [1, 2, 3, 4, 5], levels
-    assert all(lv["spread"] < 0.15 and 0.95 <= lv["bottom"] / lv["mean"] <= 1.05 and 0.95 <= lv["top"] / lv["mean"] <= 1.05
-               for lv in levels), [(round(lv["spread"], 3), round(lv["bottom"] / lv["mean"], 3), round(lv["top"] / lv["mean"], 3)) for lv in levels]
-    assert all(a["mean"] * 1.2 < b["mean"] for a, b in zip(levels, levels[1:])) and levels[0]["mean"] > 15, levels
-    assert max(lv["spread"] for lv in levels) > 0.02, levels                 # (its gentle swell there, though)
-    # ... its grain drifting right to left, the wind's way: every mote leftward (about 3 px/s), its veil too; faster in the wind
+    covers = [round(lv["cover"], 3) for lv in levels]
+    assert 0.03 < covers[0] < 0.25 and covers[-1] > 0.6 and all(a * 1.15 < b for a, b in zip(covers, covers[1:])), covers
+    assert all(a["mean"] * 1.2 < b["mean"] for a, b in zip(levels, levels[1:])), [lv["mean"] for lv in levels]
+    # ... dithered irregularly: no grid in its pixels (its strongest fine frequency's power, over the median's: under 400; the even
+    # veil's ordered dither, 75000 and more)
+    assert all(lv["grid"] < 400 for lv in levels), [round(lv["grid"]) for lv in levels]
+    # ... each cloud lit from above: its upper half lighter than its lower (by 15 % or more: its lit top over its darker core and
+    # underside)
+    looks = [look for lv in levels for look in lv["looks"]]
+    assert all(len(lv["looks"]) >= 2 for lv in levels) and all(upper > 1.15 * lower for upper, lower in looks), looks
+    # ... drifting right to left, the wind's way: every cloud and mote leftward (about 3 px/s), its drift too; faster in the wind
     calm, windy = got["haze"]["calm"], got["haze"]["windy"]
     assert calm["n"] >= 20 and calm["left"] == calm["n"] and 1.5 < calm["speed"] < 6 and calm["slide"] > 2, calm
     assert windy["n"] >= 20 and windy["left"] == windy["n"] and windy["speed"] > 2 * calm["speed"] and windy["slide"] > 2 * calm["slide"], windy
+    for clouds in (calm["clouds"], windy["clouds"]):
+        assert clouds["n"] >= 20 and clouds["left"] == clouds["n"] and clouds["speed"] > 1, clouds
+    assert windy["clouds"]["speed"] > 2 * calm["clouds"]["speed"], (calm, windy)
     together = got["particles"]["all"]
     assert together["uv"] == 0 and together["wind"] > 0 and together["rain"] > 0, together
     assert sum(v for k, v in together.items() if k != "budget") <= together["budget"] + 3, together   # (each rounded)
@@ -1211,6 +1219,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert all(b["most"] - b["least"] <= 4 and b["turns"] <= 1 and b["bright"] - b["faint"] > 0.2 for b in uv["beams"]), uv
     assert any(b["most"] > b["least"] for b in uv["beams"]), uv   # (swaying all the same)
     assert all(a["most"] < b["least"] for a, b in zip(uv["beams"], uv["beams"][1:])), uv   # (each in its own place, apart)
+    # ... their glow dithered irregularly: no grid in its pixels (as gridPeak sees it: under 100; ordered, about 660)
+    assert uv["grid"] < 100, uv["grid"]
     # heavy rain in the wind: its drops blown leftward, faster than with no wind; bunched by the gust bands into curtains and gaps,
     # their density across uneven, and changing as the bands pass, far more than the rain alone (scattered evenly: about 1)
     alone, windy = got["rain"]["alone"], got["rain"]["windy"]
@@ -1352,6 +1362,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert light["errors"] == [] and light["popped"] == 0 and light["stray"] == 0, light
     assert 0.1 < light["fog"]["haze"] < 0.7 * heavy["fog"]["haze"], (light["fog"], heavy["fog"])
     assert 0 < light["showing"]["still"] < 0.5 * heavy["showing"]["still"], (light["showing"], heavy["showing"])
+    # the fog dithered irregularly: no grid in its pixels (as gridPeak sees it: under 100; ordered, about 420)
+    assert heavy["grid"] < 100, heavy["grid"]
     assert light["first"]["after"] >= 2 and light["first"]["fog"] > 0.1 and light["first"]["formed"]["edge"] > 0.1, light["first"]
     # ... in each, the fog a fairly even haze (gently varied, no gaps: its spread inside, about 0.1; it was patchy, about 0.4, with
     # gaps), a little denser at the edges (the sides and the bottom) than in the middle; dense (its mean opacity as drawn: heavy about
@@ -1490,6 +1502,9 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     fingers = sorted(cold["fingers"])
     assert fingers[-1] > 0.35 and fingers[0] < 0.6 * fingers[-1] and fingers[-1] - fingers[len(fingers) // 2] > 0.05, fingers
     assert frost["sparkles"] >= 1, frost["sparkles"]
+    # ... its haze dithered irregularly: its commonest shade (the haze's faint one) on no grid, about a third of its pixels in their
+    # 4 commonest places of 16 (x mod 4, y mod 4: on an ordered 4x4 dither, as it was, over 0.8)
+    assert cold["grid"]["n"] > 500 and cold["grid"]["share"] < 0.5, cold["grid"]
     # ... and varied, as real frost on a window: fern fronds, short plumes, needles radiating from a point; ahead of the front only a
     # sparse dusting of tiny specks (a pixel or two each: no snowflake-shaped stars or plates), a few fronds from a little way in (as if from a scratch); the fronds' lengths and their branches' spacing spread widely, the
     # branches mostly near 60° to their stems (ice's hexagonal habit), each frond its own; the seeds along the edges uneven, crowded
@@ -1626,6 +1641,8 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     # under the level as drawn on as those just above (the haze, the heat, the rain's spray, the fog, all down to the wavy surface)
     cut = linked["cut"]
     assert cut["n"] >= 100 and cut["at"] >= 0.8 * cut["above"], cut
+    # ... its body dithered irregularly: no grid in its pixels (as gridPeak sees it, its bottom 32 rows: under 100; ordered, about 200)
+    assert linked["grid"] < 100, linked["grid"]
     # ... the wind off (and gone): the leaves in the water its own, staying (those resting still resting, none fading), the floating
     # ones sinking or resting by 16 s on, none flying
     off = linked["windOff"]

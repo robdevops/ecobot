@@ -215,9 +215,54 @@ const Sky = (() => {
   const between = (a, b) => a + (b - a) * random();
   const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
   const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-  // Ordered dithering (Bayer 4x4): a level 0-1 at pixel (x, y) as one of n shades (0 to n-1), or -1 for none
+  // Dithering without a grid: a threshold 0-1 at each pixel from a 32 px tile of blue noise (made once, void and cluster: its
+  // points as evenly spread as can be, no pattern), each tile of the window that tile turned, flipped and shifted its own way
+  // (hashed), so nothing repeats in rows or columns over a large area as an ordered (Bayer) grid's does. dither(x, y): the
+  // threshold; shadeOf(v, x, y, n): a level 0-1 there as one of n shades (0 to n-1), or -1 for none. (The gust's small sprites keep
+  // an ordered 4x4 dither, BAYER: a hand-drawn sprite's own texture.)
   const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
-  const shadeOf = (v, x, y, n) => Math.min(n - 1, Math.floor(v * n + BAYER[(y & 3) * 4 + (x & 3)] - 1));
+  const BLUE = (() => {
+    const N = 32, n = N * N, rand = seeded(9131), on = new Uint8Array(n), energy = new Float32Array(n), rank = new Float32Array(n);
+    const kernel = new Float32Array(n);   // (a gaussian's weight by toroidal offset)
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const dx = Math.min(x, N - x), dy = Math.min(y, N - y);
+      kernel[y * N + x] = Math.exp(-(dx * dx + dy * dy) / (2 * 1.5 * 1.5));
+    }
+    const flip = (i, v) => {
+      on[i] = v;
+      const ix = i % N, iy = (i / N) | 0, sign = v ? 1 : -1;
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) energy[y * N + x] += sign * kernel[((y - iy + N) % N) * N + (x - ix + N) % N];
+    };
+    const extreme = (want, most) => {   // the point (on or off, `want`) with the most energy (the tightest cluster) or the least (void)
+      let best = -1, at = most ? -Infinity : Infinity;
+      for (let i = 0; i < n; i++) if (on[i] === want && (most ? energy[i] > at : energy[i] < at)) { at = energy[i]; best = i; }
+      return best;
+    };
+    const first = Math.round(n / 10);
+    for (let k = 0; k < first; k++) { let i; do i = Math.floor(rand() * n); while (on[i]); flip(i, 1); }
+    for (let k = 0; k < 4 * n; k++) {   // (spread out: the tightest cluster's point into the largest void, till that's itself)
+      const a = extreme(1, true);
+      flip(a, 0);
+      const b = extreme(0, false);
+      flip(b, 1);
+      if (a === b) break;
+    }
+    const start = on.slice(), startEnergy = energy.slice();
+    for (let k = first - 1; k >= 0; k--) { const a = extreme(1, true); flip(a, 0); rank[a] = k; }
+    on.set(start); energy.set(startEnergy);
+    for (let k = first; k < n; k++) { const b = extreme(0, false); flip(b, 1); rank[b] = k; }
+    return rank.map((r) => (r + 0.5) / n);
+  })();
+  const dither = (x, y) => {
+    let h = Math.imul((x >> 5) * 73856093 ^ (y >> 5) * 19349663, 0x9E3779B1);
+    h ^= h >>> 15;
+    let u = x & 31, v = y & 31;
+    if (h & 1) u = 31 - u;
+    if (h & 2) v = 31 - v;
+    if (h & 4) { const t = u; u = v; v = t; }
+    return BLUE[(((v + (h >>> 8)) & 31) << 5) + ((u + (h >>> 16)) & 31)];
+  };
+  const shadeOf = (v, x, y, n) => Math.min(n - 1, Math.floor(v * n + dither(x, y) - 1));
   // Value noise, smooth, 0-1, repeating every `period` cells across (a texture that wraps sideways)
   const hash = (i, j, s) => {
     let h = (Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(s, 1442695041)) | 0;
@@ -405,48 +450,184 @@ const Sky = (() => {
     };
   });
 
-  // ---------- haze: the particulates the air sensor measures, an even veil over the whole window; denser and redder with each AQI band ----------
-  // Fine dust hangs evenly in the air, not in banks: an even dithered tint (its density the band's, faint at Moderate, heavy at
-  // Hazardous) with only a very gentle, large-scale swell in it, and a sparse grain of tiny motes (dust, three deep: the far ones
-  // dimmer and slower). Both drift right to left, the wind's way: slowly in calm air, faster with the wind on, quickening in its
-  // gusts (wind.breeze()). In a flood, none below its surface. (The veil is one texture, wrapping sideways: dithered evenly, its
-  // swell in its pixels' alpha, slid in steps of its dither's 4 px, so its dots stay put and only its swell moves; the motes, a few
-  // dozen 1 px rectangles.)
-  const HAZE = [   // each band's four shades, dark to light: Moderate (ochre), USG (amber), Unhealthy (rust), Very Unhealthy, Hazardous (maroon)
-    ["#2A2616", "#433C21", "#5F552D", "#7C6E38"], ["#2D2216", "#4A3420", "#6A4A29", "#8A6132"],
-    ["#2B1B17", "#462820", "#62352B", "#7C4335"], ["#28181F", "#3E2330", "#563040", "#6C3C4E"],
-    ["#22101A", "#371722", "#4E1F2C", "#652938"]].map((r) => r.map(rgb));
+  // ---------- haze: the particulates the air sensor measures, as soft clouds drifting across the whole window; more, denser and redder with each AQI band ----------
+  // Billowing masses (rounded tops, soft undersides, their edges breaking up into wisps), three deep: the far ones smaller, fainter,
+  // flatter in tone and slower, the near ones larger. Lit from above (and a little from the left): the light falls off as it goes
+  // into the cloud (its density summed on the way), so their upper surfaces and thin rims are lighter, their thick cores and
+  // undersides darker;
+  // shaded in the band's ramp (six shades: ochre at Moderate to maroon at Hazardous), blue-noise dithered only where one shade meets
+  // the next, and their alpha in a few steps dithered the same at their edges (where they break up). How many and how thick follow
+  // the band: at Moderate a few thin scattered ones, at Hazardous dense masses over most of the window. They drift right to left, the
+  // wind's way: slowly in calm air, faster with the wind on, quickening in its gusts (wind.breeze()); and slowly change shape as they
+  // go (the noise in them rolling through, their puffs swelling and shrinking). A sparse grain of faint dust motes among them. In a
+  // flood, none below its surface. The band changing: those it no longer needs fading out, the more it does fading in. (Each cloud a
+  // sprite of its own, from its puffs and a place in its depth's noise (made once for the window's size); lit again every few
+  // seconds, a few thousand px of clouds a frame; gone off the left, it comes in again at the right as a new one. Its own
+  // randomness: the other effects' unchanged by it.)
+  const HAZE = [   // each band's six shades, dark (a core, an underside) to light (a lit top, a rim)
+    ["#1E1B10", "#2D2817", "#403920", "#5A512B", "#776A37", "#968750"],    // Moderate (ochre)
+    ["#221810", "#332417", "#48321F", "#664728", "#855E32", "#A47A47"],    // Unhealthy for Sensitive Groups (amber)
+    ["#21130F", "#311D17", "#44271F", "#5F342A", "#794334", "#945848"],    // Unhealthy (rust)
+    ["#1E1117", "#2C1922", "#3C222F", "#53303F", "#6A3D4F", "#845266"],    // Very Unhealthy (plum)
+    ["#1A0C12", "#271119", "#361722", "#4C1F2C", "#642939", "#7E3A4A"]].map((r) => r.map(rgb));   // Hazardous (maroon)
   const haze = effect((e) => {
-    const DENSITY = [0.36, 0.52, 0.68, 0.84, 0.97];   // the veil's cover, each band (of its pixels)
-    const SWELL = 0.6;                 // its gentle large-scale variation: its alpha's, for each 1 of the noise's own (about 6 % either way)
-    const CALM = 3, BREEZE = 7;        // its drift leftward, px/s (the middle motes'): in calm air; more for the wind (its breeze 1-3)
-    const DEPTHS = [{pace: 0.55, alpha: 0.4, share: 0.45}, {pace: 1, alpha: 0.6, share: 0.35}, {pace: 1.6, alpha: 0.85, share: 0.2}];
-    let built = 0, veil = null, span = 0, slide = 0, speed = 0, motes = [], born = 0, dust = [];
-    function build(level) {
-      built = level;
-      const shades = HAZE[level - 1], cover = DENSITY[level - 1];
-      span = Math.ceil(W / 4) * 4;     // (a whole number of dither tiles across: it wraps seamlessly)
-      const cells = Math.max(2, Math.round(span / 150)), across = cells / span;
-      // (its swell: soft noise, each row's mean taken out, so every height is as dense as any other, on the whole: no band anywhere)
-      const swell = new Float32Array(span * H);
-      for (let y = 0; y < H; y++) {
-        let mean = 0;
-        for (let x = 0; x < span; x++) {
-          const n = 0.65 * noise(x * across, y / 150, cells, 41) + 0.35 * noise(x * across * 2, y / 75, cells * 2, 43);
-          swell[y * span + x] = n;
-          mean += n / span;
+    const COVER = [0.12, 0.27, 0.45, 0.65, 0.85];   // about how much of the window is under cloud, each band
+    const THICK = [0.75, 0.8, 0.86, 0.93, 1];      // ... and how opaque it is
+    const CALM = 3, BREEZE = 7;                    // the drift leftward, px/s (the middle depth's): in calm air; more for the wind (1-3)
+    const DEPTHS = [   // far to near: size (of across()), drift (of the middle's), alpha, share of the cover, contrast,
+      {size: 0.18, pace: 0.5, alpha: 0.6, share: 0.18, contrast: 0.55, relight: 4},      // how often lit again (s)
+      {size: 0.28, pace: 1, alpha: 0.82, share: 0.32, contrast: 0.8, relight: 3},
+      {size: 0.42, pace: 1.6, alpha: 1, share: 0.5, contrast: 1, relight: 2}];
+    const FILL = 0.45;                 // (a cloud's share of its sprite)
+    const LIGHTS = 6000;               // (the px of clouds lit again in a frame, about: the first whatever its size)
+    const ALPHA = [0, 0.35, 0.6, 0.82, 0.96];      // its alpha's steps, by density
+    const MOTES = [{pace: 0.55, alpha: 0.25, share: 0.45}, {pace: 1, alpha: 0.35, share: 0.35}, {pace: 1.6, alpha: 0.5, share: 0.2}];
+    const own = seeded((TEST.seed || 1115) + 38), within = (a, b) => a + (b - a) * own();
+    const across = () => Math.sqrt(W * H) * 1.155;   // (the clouds' sizes by: the window's width at 4:3, as wide on a tall phone)
+    let built = 0, clouds = [], slide = 0, speed = 0, motes = [], born = 0, made = 0, dust = [], lit = 0;
+    function shape(c) {   // a new cloud: its size, its puffs (along a base, biggest in the middle) and its place in the noise
+      const d = DEPTHS[c.depth];
+      c.id = ++made;
+      c.w = Math.max(16, Math.round(across() * d.size * within(0.7, 1.35)));
+      c.h = Math.max(8, Math.round(c.w * within(0.36, 0.52)));
+      c.base = c.h * within(0.62, 0.72);   // (its puffs sit on this; below it, the underside fades)
+      const n = 3 + Math.floor(own() * 4);
+      c.puffs = [];
+      for (let i = 0; i < n; i++) {   // (big ones on its base, each crowned with a few smaller: cauliflower tops)
+        const u = (i + 0.5 + within(-0.3, 0.3)) / n, r = c.h * (0.18 + 0.24 * Math.sin(Math.PI * clamp(u, 0, 1))) * within(0.85, 1.15);
+        const p = {x: c.w * (0.14 + 0.72 * u), y: c.base - r * within(0.3, 0.7), r};
+        c.puffs.push(p);
+        for (let k = Math.floor(within(1, 4)); k > 0; k--) {
+          const a = within(-2.7, -0.45), q = r * within(0.35, 0.6);
+          c.puffs.push({x: p.x + Math.cos(a) * (r - q * 0.5) * 1.15, y: p.y + Math.sin(a) * (r - q * 0.5), r: q});
         }
-        for (let x = 0; x < span; x++) swell[y * span + x] -= mean;
       }
-      veil = painted(span, H, (x, y) => {
-        const b = BAYER[(y & 3) * 4 + (x & 3)];
-        if (b >= cover) return null;
-        // (its tone: mostly the band's third shade, a sprinkle of the lightest, more of it the denser; the second where it thins)
-        const tone = BAYER[((y + 2) & 3) * 4 + ((x + 1) & 3)];
-        return [...shades[tone < 0.1 + 0.2 * cover ? 3 : b > cover - 0.13 ? 1 : 2], Math.round(255 * clamp(0.84 + SWELL * swell[y * span + x], 0.5, 1))];
+      for (const p of c.puffs) Object.assign(p, {beat: within(0.06, 0.12), rate: within(0.15, 0.3), phase: within(0, 7)});
+      // (its noise: a place in its depth's, rolling through it sideways for as long as it lasts)
+      c.place = own();   // (its place down its depth's noise, of what's free)
+      c.roll = within(0, 1e4);
+      c.spin = within(0.3, 0.7);       // (px/s its noise rolls through it, leftward: slower than it drifts)
+      c.ox = Math.floor(own() * 1024); c.oy = Math.floor(own() * 1024);   // (its dither's own)
+      c.age = within(0, 60);
+      c.sprite = canvasOf(c.w, c.h);
+      c.img = c.sprite.getContext("2d").createImageData(c.w, c.h);
+      c.next = -1;
+    }
+    const density = new Float32Array(1 << 15), sharp = new Float32Array(1 << 15);   // (scratch, reused)
+    // Each depth's noise, made once for the window's size, shared by its clouds (each at a place of its own in it): three octaves,
+    // wider than tall, wrapping sideways; and the wisps' (long strands). Its cell sized to the depth's clouds.
+    let textures = [];
+    function layered(out, w, h, octaves) {   // value noise as noise() makes it, octaves [cell across, cell down, weight, seed] added
+      // into `out` (w x h, wrapping sideways: w a whole number of cells across), faster: each row's and column's cells and weights once
+      for (const [cx, cy, weight, seed] of octaves) {
+        const across = Math.round(w / cx), ix = new Int32Array(w), sx = new Float32Array(w);
+        for (let x = 0; x < w; x++) { const u = x / cx, i = Math.floor(u), f = u - i; ix[x] = i % across; sx[x] = f * f * (3 - 2 * f); }
+        const down = Math.floor((h - 1) / cy) + 2, lattice = new Float32Array(across * down);
+        for (let j = 0; j < down; j++) for (let i = 0; i < across; i++) lattice[j * across + i] = hash(i, j, seed);
+        for (let y = 0; y < h; y++) {
+          const v = y / cy, j = Math.floor(v), g = v - j, sy = g * g * (3 - 2 * g), r0 = j * across, r1 = r0 + across;
+          for (let x = 0, o = y * w; x < w; x++, o++) {
+            const i0 = ix[x], i1 = i0 + 1 === across ? 0 : i0 + 1, s = sx[x];
+            const top = lattice[r0 + i0] + (lattice[r0 + i1] - lattice[r0 + i0]) * s, bottom = lattice[r1 + i0] + (lattice[r1 + i1] - lattice[r1 + i0]) * s;
+            out[o] += weight * (top + (bottom - top) * sy);
+          }
+        }
+      }
+    }
+    function texture(depth) {
+      if (textures[depth]) return textures[depth];
+      const d = DEPTHS[depth], most = across() * d.size * 1.35, cell = 2 * Math.max(3, Math.round(most * 0.44 / 6 / 1.15));
+      const w = Math.ceil(1.6 * most / (4 * cell)) * 4 * cell, h = Math.ceil(most * 0.52 * 1.4), seed = 7000 + depth * 10;
+      const t = {w, h, noise: new Float32Array(w * h), wisp: new Float32Array(w * h)};
+      layered(t.noise, w, h, [[2 * cell, cell, 0.5, seed], [cell, cell / 2, 0.32, seed + 1], [cell / 2, cell / 4, 0.18, seed + 2]]);
+      layered(t.wisp, w, h, [[2 * cell, cell / 1.5, 1, seed + 3]]);
+      return (textures[depth] = t);
+    }
+    function light(c) {   // the cloud's look now: its density, lit from above, into its band's shades
+      const tex = texture(c.depth), tw = tex.w, ty = Math.floor(c.place * Math.max(1, tex.h - c.h));
+      const {w, h} = c, d = DEPTHS[c.depth], ramp = HAZE[built - 1], px = c.img.data, dens = density.length >= w * h ? density : new Float32Array(w * h);
+      // (its shape: the most of its puffs' cones at each pixel, each puff's only over its own box: below -0.5 nothing shows)
+      const r0 = Math.floor(c.roll), f = c.roll - r0, under = h - c.base, shape = sharp.length >= w * h ? sharp : new Float32Array(w * h);
+      shape.fill(-0.5, 0, w * h);
+      for (const p of c.puffs) {
+        const r = p.r * (1 + p.beat * Math.sin(c.age * p.rate + p.phase)), rx = r * 1.25;
+        const x0 = Math.max(0, Math.floor(p.x - 1.5 * rx)), x1 = Math.min(w - 1, Math.ceil(p.x + 1.5 * rx));
+        const y0 = Math.max(0, Math.floor(p.y - 1.5 * r)), y1 = Math.min(h - 1, Math.ceil(p.y + 1.5 * r));
+        for (let y = y0; y <= y1; y++) {
+          const dy = (y - p.y) / r, dy2 = dy * dy;
+          for (let x = x0, i = y * w + x0; x <= x1; x++, i++) {
+            const dx = (x - p.x) / rx, v = 1 - Math.sqrt(dx * dx + dy2);
+            if (v > shape[i]) shape[i] = v;
+          }
+        }
+      }
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        let s = shape[y * w + x];
+        if (s <= -0.5) { dens[y * w + x] = 0; continue; }
+        if (y > c.base) s -= 0.9 * (y - c.base) / under;   // (a soft underside)
+        const row = (y + ty) * tw, a = row + (x + r0) % tw, b = row + (x + r0 + 1) % tw, tn = tex.noise, tk = tex.wisp;
+        const n = tn[a] + (tn[b] - tn[a]) * f, k = tk[a] + (tk[b] - tk[a]) * f;
+        let v = 1.5 * s + 1.2 * (n - 0.5) - 0.05;
+        if (s > -0.45 && s < 0.2) v = Math.max(v, (k - 0.62) * 2.4 * (1 - Math.abs(s + 0.12) / 0.33) * (0.3 + x / w));   // (wisps about its edge, trailing
+        // most to the right, behind it)
+        const edge = Math.min(x + 1, w - x, y + 1, h - y) / 3;   // (nothing at the sprite's own edge)
+        dens[y * w + x] = clamp(v, 0, 1) * Math.min(1, edge);
+      }
+      // (the light from above and a little to the left: the density on the way in summed, half from straight above, half from up
+      // and to the left)
+      const deep = h * 0.16, tau = new Float32Array(w);
+      for (let y = 0; y < h; y++) {
+        let left = 0;
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x, v = dens[i], o = i * 4, up = tau[x];
+          tau[x] = v + 0.5 * (up + left);
+          left = up;
+          if (v <= 0) { px[o + 3] = 0; continue; }
+          const t1 = dither(x + c.ox, y + c.oy), t2 = dither(x + c.ox + 517, y + c.oy + 211);
+          const step = Math.min(4, Math.max(0, Math.floor(v * 4.4 + (v < 0.3 ? 0.8 : 0.35) * (t2 - 0.5) + 0.35)));
+          if (!step) { px[o + 3] = 0; continue; }
+          // (its tone: the light left after the cloud on the way; thin parts, its rim, a touch lighter; the far ones' flatter)
+          let tone = 0.95 * Math.exp(-tau[x] / deep) + 0.2 * (1 - v) - 0.08;
+          tone = 0.45 + (tone - 0.45) * d.contrast;
+          const shade = Math.min(5, Math.max(0, Math.floor(tone * 6 + 0.4 * (t1 - 0.5))));
+          const col = ramp[shade];
+          px[o] = col[0]; px[o + 1] = col[1]; px[o + 2] = col[2]; px[o + 3] = Math.round(255 * ALPHA[step]);
+        }
+      }
+      c.sprite.getContext("2d").putImageData(c.img, 0, 0);
+      c.next = c.age + d.relight * within(0.8, 1.2);
+      lit++;
+    }
+    const counts = (level) => {   // how many clouds of each depth: their area together so that about COVER of the window is under one
+      const area = -Math.log(1 - COVER[level - 1]) * W * H;
+      return DEPTHS.map((d) => Math.max(1, Math.round(area * d.share / (FILL * (across() * d.size) ** 2 * 0.44))));
+    };
+    function build(level) {   // the band's clouds: those there kept (lit in its shades), more fading in or some fading out
+      const fresh = !clouds.length;
+      built = level;
+      const want = counts(level), kept = [];
+      DEPTHS.forEach((d, depth) => {
+        const mine = clouds.filter((c) => c.depth === depth && !c.leaving), leaving = clouds.filter((c) => c.depth === depth && c.leaving);
+        if (mine.length > want[depth]) {   // (fewer: those kept spread across the window, the rest fading out)
+          mine.sort((a, b) => a.x - b.x);
+          const keep = new Set(Array.from({length: want[depth]}, (_, i) => mine[Math.floor((i + 0.5) * mine.length / want[depth])]));
+          for (const c of mine) if (!keep.has(c)) { c.leaving = true; leaving.push(c); }
+          mine.splice(0, mine.length, ...mine.filter((c) => keep.has(c)));
+        }
+        for (let k = 0, more = want[depth] - mine.length; k < more; k++) {
+          const c = {depth, shown: fresh || STILL ? 1 : 0};
+          shape(c);
+          // (spread across the window, the new ones among themselves, each at its own height)
+          c.x = Math.round(-0.6 * c.w + (W + 0.2 * c.w) * (k + own()) / more);
+          c.y = within(-0.3 * c.h, H - 0.7 * c.h);
+          mine.push(c);
+        }
+        kept.push(...mine, ...(STILL ? [] : leaving));
       });
-      // (the motes: the band's lightest, paler still, as dust catching the light)
-      dust = [0.1, 0.22, 0.36].map((k) => `rgb(${shades[3].map((c) => Math.round(c + (225 - c) * k)).join(",")})`);
+      clouds = kept;
+      for (const c of clouds) c.next = -1;   // (each lit in the band's shades as soon as can be: a few frames)
+      dust = [0.15, 0.28, 0.4].map((k) => `rgb(${HAZE[level - 1][5].map((v) => Math.round(v + (225 - v) * k)).join(",")})`);
+      if (fresh) slide = 0;
     }
     const place = (m, anywhere) => {
       m.id = ++born;
@@ -455,27 +636,74 @@ const Sky = (() => {
       m.phase = between(0, 7);
       m.bob = between(0.6, 2);         // (px/s: a slow wander up and down)
     };
+    // (for the tests: a cloud's look as lit last: the mean luminance (by alpha) of the upper half of its rows that show anything,
+    // and of the lower half; the mean alpha (0-1) of the pixels its density puts deep inside (alpha's top step) and at its edges
+    // (the lowest step); or null)
+    function look(id) {
+      const c = clouds.find((c) => c.id === id);
+      if (!c) return null;
+      const px = c.img.data, rows = [];
+      for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) if (px[(y * c.w + x) * 4 + 3]) { rows.push(y); break; }
+      if (!rows.length) return null;
+      const mid = (rows[0] + rows[rows.length - 1] + 1) / 2, sum = [0, 0], weight = [0, 0];
+      for (let y = rows[0]; y <= rows[rows.length - 1]; y++) for (let x = 0; x < c.w; x++) {
+        const o = (y * c.w + x) * 4, a = px[o + 3] / 255, half = y < mid ? 0 : 1;
+        sum[half] += a * (0.2126 * px[o] + 0.7152 * px[o + 1] + 0.0722 * px[o + 2]);
+        weight[half] += a;
+      }
+      return {upper: sum[0] / Math.max(weight[0], 1e-6), lower: sum[1] / Math.max(weight[1], 1e-6), rows: rows.length};
+    }
     return {
-      strength: () => [0.4, 0.48, 0.56, 0.64, 0.72][Math.max(1, built || e.level) - 1],
-      need: () => (W * H / 1800) * (0.6 + 0.2 * Math.max(1, e.level || built)),   // (sparse: about 65 at Moderate on a laptop, 130 at Hazardous)
+      strength: () => [0.44, 0.52, 0.6, 0.7, 0.82][Math.max(1, built || e.level) - 1],
+      need: () => (W * H / 1800) * (0.6 + 0.2 * Math.max(1, e.level || built)),   // (the motes: about 65 at Moderate on a laptop)
       count: () => motes.length,
-      forget() { motes = []; slide = 0; },
-      resize() { built = 0; motes = []; },
-      // (for the tests: its band as drawn, how far its veil has slid leftward (px), its drift now (px/s, leftward), its motes [id, x, y])
-      probe: () => ({level: built, slide, speed, motes: motes.map((m) => [m.id, m.x, m.y])}),
+      forget() { motes = []; slide = 0; clouds = []; built = 0; },
+      resize() { built = 0; motes = []; clouds = []; textures = []; },
+      // (for the tests: its band as drawn, how far it has drifted leftward (px, the middle depth's), its drift now (px/s), its motes
+      // [id, x, y], its clouds [id, depth, x, y, w, h] (art px, on the window), how many times a cloud has been lit, how many on show
+      // are yet to be lit in its band's shades (a few frames after it changes), how many are fading in or out (FADE_S after),
+      // look(id))
+      probe: () => ({level: built, slide, speed, motes: motes.map((m) => [m.id, m.x, m.y]), lit, look,
+                     pending: clouds.filter((c) => c.next < 0 && c.x < W && c.x + c.w > 0).length,
+                     settling: clouds.filter((c) => c.leaving || c.shown < 1).length,
+                     clouds: clouds.map((c) => [c.id, c.depth, c.x, c.y, c.w, c.h])}),
       step(dt, t, share) {
-        if (e.level > 0 && (e.level !== built || !veil)) build(e.level);
+        if (e.level > 0 && e.level !== built) build(e.level);
         speed = CALM + BREEZE * wind.breeze();
         slide += speed * dt;
+        for (const c of clouds) {
+          c.x -= speed * DEPTHS[c.depth].pace * dt;
+          c.age += dt;
+          c.roll += c.spin * dt;
+          c.shown = clamp(c.shown + (c.leaving ? -dt : dt) / FADE_S, 0, 1);   // (the band changed: fading in, or out)
+          if (c.x + c.w < 0 && !c.leaving) {   // (gone off the left: a new one coming in at the right, lit as it shows)
+            const right = c.x + c.w;
+            shape(c);
+            c.x = W + right + within(0, 0.3 * c.w);
+            c.y = within(-0.3 * c.h, H - 0.7 * c.h);
+          }
+        }
+        clouds = clouds.filter((c) => !c.leaving || (c.shown > 0 && c.x + c.w > 0));
+        if (built) {   // (those due lit again, the longest due first, about LIGHTS px of them a frame)
+          const due = clouds.filter((c) => c.age >= c.next && c.x < W && c.x + c.w > 0).sort((a, b) => (a.next - a.age) - (b.next - b.age));
+          let spent = 0;
+          const most = STILL ? Infinity : due.length && due[0].next < 0 ? 4 * LIGHTS : LIGHTS;   // (more while some on show are yet to be
+          // lit at all; reduced motion: every one, its one still frame)
+          for (const c of due) {
+            if (spent && (spent + c.w * c.h > most || !textures[c.depth])) break;   // (a depth's noise made: that frame's share)
+            light(c);
+            spent += c.w * c.h;
+          }
+        }
         const n = Math.round(this.need() * share);
         while (motes.length < n) {   // (the depths in their shares, far first: drawn back to front)
-          const k = motes.length / Math.max(n, 1), m = {depth: k < DEPTHS[0].share ? 0 : k < DEPTHS[0].share + DEPTHS[1].share ? 1 : 2};
+          const k = motes.length / Math.max(n, 1), m = {depth: k < MOTES[0].share ? 0 : k < MOTES[0].share + MOTES[1].share ? 1 : 2};
           place(m, true);
           motes.push(m);
         }
         if (motes.length > n) motes.length = n;
         for (const m of motes) {
-          m.x -= speed * DEPTHS[m.depth].pace * dt;
+          m.x -= speed * MOTES[m.depth].pace * dt;
           m.y += Math.sin(t * 0.45 + m.phase) * m.bob * dt;
           if (m.x < -1 || m.y < -2 || m.y > H + 2) place(m, false);
         }
@@ -483,13 +711,16 @@ const Sky = (() => {
       draw(g, alpha) {
         if (!built) return;
         flood.above(g, () => {
-          const x = -(Math.floor(slide / 4) * 4 % span);
-          g.globalAlpha = alpha;
-          g.drawImage(veil, x, 0);
-          if (x + span < W) g.drawImage(veil, x + span, 0);
+          const thick = THICK[built - 1];
+          for (const c of clouds) {   // (far first: they're kept in depth order)
+            if (c.x >= W || c.x + c.w <= 0 || c.y >= H || c.y + c.h <= 0) continue;
+            if (!c.shown) continue;
+            g.globalAlpha = alpha * thick * DEPTHS[c.depth].alpha * c.shown;
+            g.drawImage(c.sprite, Math.round(c.x), Math.round(c.y));
+          }
           let depth = -1;
           for (const m of motes) {
-            if (m.depth !== depth) { depth = m.depth; g.fillStyle = dust[depth]; g.globalAlpha = alpha * DEPTHS[depth].alpha; }
+            if (m.depth !== depth) { depth = m.depth; g.fillStyle = dust[depth]; g.globalAlpha = alpha * MOTES[depth].alpha; }
             g.fillRect(Math.round(m.x), Math.round(m.y), 1, 1);
           }
         });
@@ -2222,7 +2453,7 @@ const Sky = (() => {
         for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
           const X = x + dx, Y = y + dy, far = Math.abs(dx) + Math.abs(dy);
           if (!far || X < 0 || Y < 0 || X >= W || Y >= H || far > 3) continue;
-          if (BAYER[(Y & 3) * 4 + (X & 3)] > (far === 1 ? 0.3 : 0.08)) continue;
+          if (dither(X, Y) > (far === 1 ? 0.3 : 0.08)) continue;
           const j = Y * W + X;
           if (at + far < bloomAt[j]) bloomAt[j] = at + far;
         }
@@ -2242,7 +2473,7 @@ const Sky = (() => {
       shades = [0, 1].map((s) => {
         const at = new Float32Array(n), list = [];
         for (const i of hazed) {
-          const b = BAYER[(((i / W) | 0) & 3) * 4 + ((i % W) & 3)], c = (s ? 2 - b : 1 - b) / 2 / 0.62;
+          const b = dither(i % W, (i / W) | 0), c = (s ? 2 - b : 1 - b) / 2 / 0.62;
           if (c >= 1) continue;
           at[i] = hazeIn[i] / (1 - Math.pow(c, 1 / 1.3));
           if (at[i] <= deepest + 1) list.push(i);
@@ -2429,7 +2660,7 @@ const Sky = (() => {
           edge = z[j] < 0 || (z[j] > z[i] && mat[j] !== mat[i]);
         }
         const ramp = GUST_RAMPS[mat[i]];
-        px[i] = pack(edge ? ramp[0] : ramp[1 + clamp(shadeOf(light[i], x, y, 3), 0, 2)]);
+        px[i] = pack(edge ? ramp[0] : ramp[1 + clamp(Math.min(2, Math.floor(light[i] * 3 + BAYER[(y & 3) * 4 + (x & 3)] - 1)), 0, 2)]);
       }
       for (const [x, y, c] of over) if (x >= 0 && y >= 0 && x < w && y < h) px[y * w + x] = pack(c);
       return {w, h, px};

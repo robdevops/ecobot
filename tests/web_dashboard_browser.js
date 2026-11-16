@@ -1127,46 +1127,114 @@ const canvasLight = (page) => page.evaluate(() => {   // how bright the canvas i
   for (let i = 0; i < d.length; i += 4) sum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * d[i + 3] / 255;
   return sum / (d.length / 4);
 });
-// The haze alone (faded in), at each band in turn, 1 to 5 (each a frame or two on, as drawn): over the window in blocks of 16 art px,
-// the canvas's mean alpha (0-255) in each: their mean, and their spread (standard deviation) over that; the mean alpha of the window's
-// bottom fifth and its top fifth. Then on a clock 4 times as fast, the haze 5 with no wind, then with it (faded in): its motes' moves
-// over 20 frames (each the same mote, not come in again at the right), how many went left, right; their mean speed leftward (px/s of
-// the weather's time); and its veil's slide, the same
-const hazeSeen = (page) => page.evaluate(async () => {
-  const frames = (n) => new Promise((resolve) => { const end = Sky.state().frames + n; const on = () => Sky.state().frames >= end ? resolve() : __next(on); on(); });
-  const fx = (detail) => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail }));
-  const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), B = 16, out = { levels: [] };
-  for (let level = 1; level <= 5; level++) {
-    fx({ haze: level });
-    await frames(2);
-    const d = g.getImageData(0, 0, c.width, c.height).data, w = Math.floor(c.width / B), h = Math.floor(c.height / B), blocks = [];
-    for (let by = 0; by < h; by++) for (let bx = 0; bx < w; bx++) {
-      let sum = 0;
-      for (let y = by * B; y < (by + 1) * B; y++) for (let x = bx * B; x < (bx + 1) * B; x++) sum += d[(y * c.width + x) * 4 + 3];
-      blocks.push(sum / (B * B));
-    }
-    const mean = blocks.reduce((a, b) => a + b, 0) / blocks.length;
-    const spread = Math.sqrt(blocks.reduce((a, b) => a + (b - mean) ** 2, 0) / blocks.length) / mean;
-    const rows = (y0, y1) => { let sum = 0; for (let y = y0; y < y1; y++) for (let x = 0; x < c.width; x++) sum += d[(y * c.width + x) * 4 + 3]; return sum / ((y1 - y0) * c.width); };
-    const fifth = Math.floor(c.height / 5);
-    out.levels.push({ level: Sky.state().haze.level, mean, spread, bottom: rows(c.height - fifth, c.height), top: rows(0, fifth) });
+// The canvas's strongest regular pattern (an ordered dither's grid shows as one): in `rect` of it (power-of-two sides; the largest
+// square from its top left if none), what one sees (each pixel's luminance by its alpha) less its 5x5 neighbourhood's mean (the fine
+// texture only: the dithering), windowed (Hann) and through a 2D FFT; of its frequencies of wavelengths 8 px or shorter, the
+// strongest's power over their median's ({ratio, at: [u, v]}). Irregular dithering: under a hundred or so; an ordered 4x4 one, thousands
+const gridPeak = (page, rect) => page.evaluate((rect) => {
+  const c = document.querySelector("#sky canvas"), side = 1 << Math.floor(Math.log2(Math.min(c.width, c.height)));
+  const [X, Y, w, h] = rect || [0, 0, side, side];
+  const d = c.getContext("2d").getImageData(X, Y, w, h).data, v = new Float64Array(w * h);
+  for (let i = 0; i < w * h; i++) v[i] = (0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2]) * d[i * 4 + 3] / 255;
+  const re = new Float64Array(w * h), im = new Float64Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let sum = 0, n = 0;
+    for (let yy = Math.max(0, y - 2); yy <= Math.min(h - 1, y + 2); yy++) for (let xx = Math.max(0, x - 2); xx <= Math.min(w - 1, x + 2); xx++) { sum += v[yy * w + xx]; n++; }
+    re[y * w + x] = (v[y * w + x] - sum / n) * (0.5 - 0.5 * Math.cos(2 * Math.PI * (x + 0.5) / w)) * (0.5 - 0.5 * Math.cos(2 * Math.PI * (y + 0.5) / h));
   }
-  Sky.timeScale(4);
-  const moves = async () => {
-    const a = Sky.state(), was = new Map(a.haze.motes.map(([id, x, y]) => [id, x]));
-    await frames(20);
-    const b = Sky.state(), dt = b.clock - a.clock, dx = [];
-    for (const [id, x] of b.haze.motes) if (was.has(id)) dx.push(x - was.get(id));
-    return { n: dx.length, left: dx.filter((v) => v < 0).length, right: dx.filter((v) => v > 0).length,
-             speed: -dx.reduce((s, v) => s + v, 0) / Math.max(dx.length, 1) / dt, slide: (b.haze.slide - a.haze.slide) / dt };
+  const fft = (n, off, stride) => {   // (in place, radix 2)
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) { const a = off + i * stride, b = off + j * stride; [re[a], re[b]] = [re[b], re[a]]; [im[a], im[b]] = [im[b], im[a]]; }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const wr = Math.cos(-2 * Math.PI / len), wi = Math.sin(-2 * Math.PI / len);
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+        for (let k = 0; k < len / 2; k++) {
+          const a = off + (i + k) * stride, b = off + (i + k + len / 2) * stride;
+          const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+          re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+          const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+        }
+      }
+    }
   };
-  out.calm = await moves();
-  fx({ haze: 5, wind: 1 });
-  await frames(15);   // (the wind faded in: 1.5 s of the weather's time)
-  out.windy = await moves();
-  Sky.timeScale(1);
-  return out;
+  for (let y = 0; y < h; y++) fft(w, y * w, 1);
+  for (let x = 0; x < w; x++) fft(h, x, w);
+  const powers = [];
+  let most = 0, at = null;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const u = Math.min(x, w - x), t = Math.min(y, h - y);
+    if (u < w / 8 && t < h / 8) continue;   // (wavelengths over 8 px: the shapes, not their dithering)
+    const p = re[y * w + x] ** 2 + im[y * w + x] ** 2;
+    powers.push(p);
+    if (p > most) { most = p; at = [u, t]; }
+  }
+  powers.sort((a, b) => a - b);
+  return { ratio: most / Math.max(powers[powers.length >> 1], 1e-9), at };
+}, rect || null);
+// How regularly the canvas's commonest colour (RGBA) sits on a 4 px grid: the share of its pixels in their 4 commonest places of the
+// 16 (x mod 4, y mod 4), and how many there are (an ordered 4x4 dither's shade: near 1; irregular dithering: about 0.3)
+const gridShare = (page) => page.evaluate(() => {
+  const c = document.querySelector("#sky canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, by = new Map();
+  for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+    const i = (y * c.width + x) * 4;
+    if (!d[i + 3]) continue;
+    const key = ((d[i] << 24) | (d[i + 1] << 16) | (d[i + 2] << 8) | d[i + 3]) >>> 0;
+    if (!by.has(key)) by.set(key, new Uint32Array(16));
+    by.get(key)[(y & 3) * 4 + (x & 3)]++;
+  }
+  let bins = new Uint32Array(16), n = 0;
+  for (const b of by.values()) { const all = b.reduce((s, v) => s + v, 0); if (all > n) { n = all; bins = b; } }
+  return { share: [...bins].sort((a, b) => b - a).slice(0, 4).reduce((s, v) => s + v, 0) / Math.max(n, 1), n };
 });
+// The haze alone (faded in), at each band in turn, 1 to 5, once its clouds are lit in the band's shades and done fading in or out:
+// the share of the canvas drawn (its cover) and its mean alpha (0-255), its strongest regular pattern (gridPeak), and each cloud's
+// look as lit (on show: the mean light of its upper half and of its lower). Then on a clock 4 times as fast, the haze 5 with no wind,
+// then with it (faded in): over 20 frames its motes' moves and its clouds' (each the same one, not come in again at the right), how
+// many went left, right, their mean speed leftward (px/s of the weather's time); and its drift's (slide), the same
+const hazeSeen = async (page) => {
+  const out = { levels: [] };
+  for (let level = 1; level <= 5; level++) {
+    await page.evaluate((level) => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { haze: level } })), level);
+    await driveUntil(page, (level) => { const h = Sky.state().haze; return h.level === level && !h.pending && !h.settling; }, level);
+    const seen = await page.evaluate(() => {
+      const c = document.querySelector("#sky canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, h = Sky.state().haze;
+      let drawn = 0, alpha = 0;
+      for (let i = 3; i < d.length; i += 4) { drawn += d[i] > 0; alpha += d[i]; }
+      const looks = h.clouds.filter(([, , x, y, w, hh]) => x < c.width && x + w > 0 && y < c.height && y + hh > 0).map(([id]) => h.look(id));
+      return { level: h.level, cover: drawn / (d.length / 4), mean: alpha / (d.length / 4), looks: looks.filter(Boolean).map((l) => [l.upper, l.lower]) };
+    });
+    seen.grid = (await gridPeak(page)).ratio;
+    out.levels.push(seen);
+  }
+  return page.evaluate(async (out) => {
+    const frames = (n) => new Promise((resolve) => { const end = Sky.state().frames + n; const on = () => Sky.state().frames >= end ? resolve() : __next(on); on(); });
+    const fx = (detail) => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail }));
+    Sky.timeScale(4);
+    const moved = (a, b, dt, key, at) => {   // (at: where its x is in each entry)
+      const was = new Map(a[key].map((m) => [m[0], m[at]])), dx = [];
+      for (const m of b[key]) if (was.has(m[0])) dx.push(m[at] - was.get(m[0]));
+      return { n: dx.length, left: dx.filter((v) => v < 0).length, right: dx.filter((v) => v > 0).length,
+               speed: -dx.reduce((s, v) => s + v, 0) / Math.max(dx.length, 1) / dt };
+    };
+    const moves = async () => {
+      const a = Sky.state();
+      await frames(20);
+      const b = Sky.state(), dt = b.clock - a.clock;
+      return { ...moved(a.haze, b.haze, dt, "motes", 1), clouds: moved(a.haze, b.haze, dt, "clouds", 2), slide: (b.haze.slide - a.haze.slide) / dt };
+    };
+    out.calm = await moves();
+    fx({ haze: 5, wind: 1 });
+    await frames(15);   // (the wind faded in: 1.5 s of the weather's time)
+    out.windy = await moves();
+    Sky.timeScale(1);
+    return out;
+  }, out);
+};
 // The wind's leaves for `ms` of the weather's own time (Sky's clock: as much of it, however long a busy machine takes to draw it), every
 // frame: their mean speed across on screen (negative: leftward), how many at most went against the wind (rightward: in a
 // loop); and where each was drawn on the canvas (with the wind alone, every sprite drawn is a leaf: its middle, so a leaf turning
@@ -1941,6 +2009,9 @@ const WEATHER = {
         };
         __next(step);
       }));
+      // (still full: its body's dithering, in its bottom 32 rows, the middle 256 px across)
+      const [cw, ch] = await page.evaluate(() => Sky.state().size);
+      seen.grid = (await gridPeak(page, [Math.floor((cw - 256) / 2), ch - 32, 256, 32])).ratio;
       // the wind off, some leaves resting on the bottom and some floating: those in the water staying, the floating ones sinking
       // (once the wind is gone and none is fading: then the weather's time 20 times as fast for 16 s of it)
       await driveUntil(page, () => { const w = Sky.state().wind.water; return w.rest >= 1 && w.float >= 2; });
@@ -2088,6 +2159,7 @@ const WEATHER = {
       seen.cold = await frost();
       seen.cold.took = seen.cold.clock - from;
       seen.cold.pixels = await pixels();
+      seen.cold.grid = await gridShare(p.page);   // (its commonest shade: its haze's faint one)
       seen.cold.size = await p.page.evaluate(() => { const c = document.querySelector("#sky canvas"); return [c.width, c.height]; });
       from = await fx({});
       await until((t) => Sky.state().clock >= t, from + 30);
@@ -2109,7 +2181,9 @@ const WEATHER = {
     };
     const swaying = (async () => {
       const uv = await weatherPage(browser, url, { query: "?fx=uv", pace: 10, driven: true, context: { viewport: { width: 640, height: 480 } } });   // (small: cheap)
-      const seen = await uvSeen(uv.page), frost = await frostSeen(uv);
+      const seen = await uvSeen(uv.page);
+      seen.grid = (await gridPeak(uv.page)).ratio;   // (its glow's dithering)
+      const frost = await frostSeen(uv);
       seen.errors = frost.errors = uv.errors;
       await uv.context.close();
       return [seen, frost];
@@ -2121,6 +2195,7 @@ const WEATHER = {
       await p.page.evaluate(() => Sky.timeScale(6));
       await lookable(p.page);
       const seen = await humiditySeen(p.page, name === "humidity" ? 200 : 360);
+      if (name === "humidity2") seen.grid = (await gridPeak(p.page)).ratio;   // (its fog's dithering)
       await p.page.evaluate((k) => Sky.timeScale(k), name === "humidity2,wind" ? 1 : 2);
       if (name === "humidity2") seen.snapped = await snapped(p.page);
       if (name === "humidity2,wind") {   // (then its trails' time 60 times as fast, through the fog; then humidity off: the fog clearing)
