@@ -1,6 +1,7 @@
 """The gauges' live web page beside /mcp (lib/web_dashboard.py), under uvicorn as tests/test_mcp_listen.py serves the app: the page, its
 data (the tiles gauge_sheet lays out from current with context), its events (one when the live reading's gauges change, from the
-server's own change detection), no token and any Host for it while /mcp still asks for both, MCP_DASHBOARD off (404), the request log,
+server's own change detection), no token and any Host for it while /mcp still asks for both, MCP_DASHBOARD off (404), MCP_DASHBOARD_INDOOR
+off (no indoor reading drawn, in the data or in the events), the request log,
 and a shutdown that doesn't wait on an open stream. Then the page in a browser (Playwright's Chromium, through node, skipped without
 it) at a phone's, a tablet's and a desktop's sizes: every tile on the screen where the size allows, nothing wider than the window, no
 console error; the tiles rearranged (dragged with a mouse and with a touch's long press, hidden by the × and the remove zone, kept
@@ -434,6 +435,82 @@ def test_mcp_dashboard_is_read_as_on_or_off(monkeypatch, tmp_path):
     assert Config.from_env(bot=False).mcp_dashboard is False
 
 
+INDOOR_TITLES = ["Indoor temperature", "Indoor humidity"]
+
+
+async def test_with_mcp_dashboard_indoor_off_no_indoor_reading_is_drawn_or_sent_in_the_data_or_the_events(server, station):
+    """MCP_DASHBOARD_INDOOR (privacy: the page needs no token): on (the default), the indoor tiles as any other's; off, none of them in
+    /dashboard/data (no indoor value anywhere in it: as with no indoor sensor) and an indoor change alone sends no event, the events
+    carrying nothing indoor; the rest of the data, and the page itself, as with it on."""
+    station.reads("indoor", "temperature", "23.7")
+    station.reads("indoor", "humidity", "47")
+    got, pages = {}, {}
+    port = free_port()
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):                     # on: the default
+        got[True] = (await get(f"http://127.0.0.1:{port}/dashboard/data")).text
+        pages[True] = (await get(f"http://127.0.0.1:{port}/dashboard")).text
+    port = free_port()
+    events, opened, raw = [], asyncio.Event(), []
+    async with Serving(http_app(server, tokens=(TOKEN,), dashboard_indoor=False), port) as serving:
+        got[False] = (await get(f"http://127.0.0.1:{port}/dashboard/data")).text
+        pages[False] = (await get(f"http://127.0.0.1:{port}/dashboard")).text
+
+        # the events: an indoor change alone sends none (nor tells one happened); an outdoor one does, and nothing indoor in it
+        async def read():
+            async with httpx.AsyncClient(timeout=None) as http, http.stream("GET", f"http://127.0.0.1:{port}/dashboard/events") as response:
+                async for line in response.aiter_lines():
+                    opened.set()
+                    raw.append(line)
+                    if line.startswith("event: "):
+                        events.append(line[len("event: "):])
+        reader = asyncio.create_task(read())
+        await asyncio.wait_for(opened.wait(), 5)
+        await server.publish_changes()
+        station.reads("indoor", "temperature", "24.9")
+        assert await server.publish_changes() == [WEATHER_URI]                   # (published to MCP clients as ever)
+        station.reads("indoor", "humidity", "52")
+        assert await server.publish_changes() == [WEATHER_URI]
+        station.reads("outdoor", "temperature", "13.4")
+        await server.publish_changes()
+        await until(lambda: events == ["readings"], what="the outdoor change's event")
+        await serving.stop()
+        await asyncio.wait_for(reader, 5)
+    on, off = json.loads(got[True]), json.loads(got[False])
+    titles = [t["title"] for t in on["tiles"]]
+    assert set(INDOOR_TITLES) <= set(titles) and WebDashboard(server).indoor is True
+    assert [t["title"] for t in off["tiles"]] == [t for t in titles if t not in INDOOR_TITLES]
+    assert off["tiles"] == [t for t in on["tiles"] if t["title"] not in INDOOR_TITLES]
+    assert {k: v for k, v in off.items() if k != "tiles"} == {k: v for k, v in on.items() if k != "tiles"}
+    assert "indoor" not in got[False].lower() and "23.7" not in got[False] and "indoor" in got[True].lower()
+    assert pages[False] == pages[True] and "indoor" not in re.sub(r"<!--.*?-->|//[^\n]*", "", pages[False]).lower()
+    assert events == ["readings"] and not any("indoor" in line.lower() or "24.9" in line or "52" in line for line in raw), raw
+    # ... and with it on, an indoor change alone sends one
+    assert readings_of(station.live) != readings_of({**station.live, "indoor": {"temperature": {"value": "30"}}})
+    assert readings_of(station.live, False) == readings_of({**station.live, "indoor": {"temperature": {"value": "30"}}}, False)
+    dashboard = WebDashboard(server, (WEATHER_URI, AIR_URI))
+    queue = asyncio.Queue()
+    dashboard._streams.add(queue)
+    station.reads("indoor", "temperature", "26.1")
+    await server.publish_changes()
+    assert queue.qsize() == 1
+
+
+def test_mcp_dashboard_indoor_is_read_as_on_or_off_on_by_default_and_a_typo_keeps_it_on_with_a_warning(monkeypatch, tmp_path, caplog):
+    from lib.config import Config
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
+    monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
+    monkeypatch.delenv("MCP_DASHBOARD_INDOOR", raising=False)
+    assert Config.from_env(bot=False).mcp_dashboard_indoor is True
+    for value, want in (("off", False), ("no", False), ("FALSE", False), ("0", False), ("on", True), ("yes", True), ("", True)):
+        monkeypatch.setenv("MCP_DASHBOARD_INDOOR", value)
+        assert Config.from_env(bot=False).mcp_dashboard_indoor is want, value
+    caplog.set_level("WARNING", logger="lib.config")
+    monkeypatch.setenv("MCP_DASHBOARD_INDOOR", "hidden")
+    assert Config.from_env(bot=False).mcp_dashboard_indoor is True
+    assert any("MCP_DASHBOARD_INDOOR" in r.getMessage() and "'hidden'" in r.getMessage() for r in caplog.records), caplog.records
+
+
 def test_mcp_dashboard_animations_is_read_as_on_off_or_low_on_by_default_and_a_typo_keeps_it_on_with_a_warning(monkeypatch, tmp_path, caplog):
     from lib.config import Config
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -508,7 +585,9 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     url = f"http://127.0.0.1:{port}/dashboard"
     station.reads("wind", "wind_gust", "12")
     station.held({GUST: 37.0, RATE: 4.2, SOLAR: 820.0, UVI: 6.5})        # (the past hour: higher than the readings now, all but 0)
-    async with Serving(http_app(server, tokens=(TOKEN,)), port):
+    station.reads("indoor", "temperature", "23.7")                       # an indoor sensor, served with MCP_DASHBOARD_INDOOR off:
+    station.reads("indoor", "humidity", "47")                            # its tiles never drawn (the same tiles as with none)
+    async with Serving(http_app(server, tokens=(TOKEN,), dashboard_indoor=False), port):
         sizes = await asyncio.create_subprocess_exec("node", str(BROWSER), url, str(shots), json.dumps(SIZES), stdout=subprocess.PIPE,
                                                      stderr=subprocess.PIPE)   # (not asyncio.to_thread: the tests run it inline)
         out, err = await asyncio.wait_for(sizes.communicate(), 180)
@@ -534,6 +613,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         got = report[name]
         assert got["errors"] == [], (name, got["errors"])
         assert got["tiles"] == n and got["scrollWidth"] <= width, (name, got)
+        assert [g["title"] for g in got["gauges"]] == [t.title for t in sheet], (name, got["gauges"])   # (no indoor tile drawn)
         assert got["status"] == "last reading 18:42", (name, got)   # (the US AQI's 56, Moderate: haze behind the tiles)
         assert all(r["right"] <= width + 0.5 and r["left"] >= -0.5 for r in got["rects"]), (name, got)
         assert (shots / f"dashboard-{name}.png").exists() and (shots / f"dashboard-{name}-zoomed.png").exists()

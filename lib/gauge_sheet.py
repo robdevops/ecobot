@@ -12,7 +12,8 @@ table: highs and lows of a direction mean nothing. It is left out only when curr
 
 A tile is left out when current has neither a reading nor a figure for it (no indoor sensor, no air sensor, a reading the air sensor
 never sent), and drawn dimmed at its floor when it has figures but no reading now. The web page's dashboard is every gauge's; the
-Status picture its three (STATUS).
+Status picture its three (STATUS). `indoor` False (MCP_DASHBOARD_INDOOR off, the web page's only) leaves out every indoor reading's
+tile (INDOOR: the indoor sensor's group), as if current had none.
 """
 
 import math
@@ -26,6 +27,7 @@ from .specs import Dashboard, Tile
 
 ROWS = dict(zip(PERIODS, ("today", "month", "year")))   # a tile's rows, as current's context names them
 STATION = "station"
+INDOOR = "indoor"        # the indoor sensor's readings' group (current's, the live reading's): Indoor temperature, Indoor humidity
 FIRST = ("Temperature", "Humidity", "Atmospheric pressure", "Rain", "UV index", "US AQI")   # the dashboard's first tiles, in this order;
 # the rest follow in their own order (the weather station's, then the air sensor's)
 PER_ROW = 3              # tiles to a row, up to ROWS_OF_THREE rows; more tiles: the columns that make them largest on a square
@@ -107,14 +109,21 @@ def per_row(n: int) -> int:
     return max(range(4, 7), key=lambda cols: min(1 / cols, CELL_W / CELL_H / math.ceil(n / cols)))
 
 
-def sheet(result: dict, titles=None) -> Dashboard | None:
-    """The gauges of these titles (all when None) from current's result with context, FIRST's first; None when it has none of them (an
-    error, the station not answering, nothing read)."""
+def is_indoor(gauge: Gauge | AirGauge) -> bool:
+    """Is this gauge an indoor reading's (the indoor sensor's group): left out of the web page with MCP_DASHBOARD_INDOOR off."""
+    return gauge.reading.split(".", 1)[0] == INDOOR
+
+
+def sheet(result: dict, titles=None, indoor: bool = True) -> Dashboard | None:
+    """The gauges of these titles (all when None) from current's result with context, FIRST's first, the indoor ones only with `indoor`;
+    None when it has none of them (an error, the station not answering, nothing read)."""
     if "error" in result or STATION in (result.get("unavailable") or {}):
         return None
     sensors = result.get("sensors") or {}
     tiles = []
     for gauge in (*gauges_of(titles), *air_gauges_of(titles)):
+        if not indoor and is_indoor(gauge):
+            continue
         group, name = gauge.reading.split(".", 1)
         entry = (sensors.get(group) or {}).get(name)
         if isinstance(gauge, AirGauge) and gauge.aqi and (entry is not None or "pm10" in (sensors.get(group) or {})):
@@ -125,4 +134,4 @@ def sheet(result: dict, titles=None) -> Dashboard | None:
     return Dashboard(tiles, per_row(len(tiles))) if tiles else None
 
 
-__all__ = ["AIR_GAUGES", "GAUGES", "STATUS", "call", "per_row", "sheet"]
+__all__ = ["AIR_GAUGES", "GAUGES", "INDOOR", "STATUS", "call", "is_indoor", "per_row", "sheet"]

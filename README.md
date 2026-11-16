@@ -306,7 +306,9 @@ and new readings applied at most once a minute, all at once.
 It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
 Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To
-turn it off, set `MCP_DASHBOARD=off`.
+turn it off, set `MCP_DASHBOARD=off`. To keep your home's own readings off it (privacy), set `MCP_DASHBOARD_INDOOR=off`: the indoor
+tiles (Indoor temperature, Indoor humidity) are then neither drawn nor sent, and nothing indoor leaves ecobot-mcp through the dashboard.
+The bot, the MCP tools, the Status picture and the alerts still have them.
 
 To put it on a site of its own behind a reverse proxy, map the site's root to `/dashboard/` (it answers there too), e.g. with nginx
 `location / { proxy_pass http://deb1:8765/dashboard/; }`. The live updates need nothing more: they tell nginx not to buffer them.

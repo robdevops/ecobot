@@ -32,6 +32,11 @@ With "low" (low motion, for e-ink displays): data-animations="low", and nothing 
 (redrawn only as the conditions change), no transitions, the gauges put at their new readings at once, the data's updates applied at most
 once a minute, all at once; no "stop animation".
 
+MCP_DASHBOARD_INDOOR off (privacy: the page needs no token): no indoor reading leaves the server through it. Its tiles (Indoor temperature,
+Indoor humidity: any gauge of the indoor sensor's group, gauge_sheet.INDOOR) are left out of /dashboard/data's sheet, as if the station had
+no indoor sensor, and /dashboard/events counts none of them in, so an indoor change alone sends no event (nor tells one happened). The bot,
+the MCP tools, the Status picture and the alerts are as ever.
+
 No token is asked for (it is the weather and air readings only) and the Host isn't checked: a browser opens it by the machine's name. The MCP
 endpoint keeps both. MCP_DASHBOARD off: none of the four routes is served (404). `close()` ends the open streams, so uvicorn's
 graceful shutdown doesn't wait on them (ecobot_mcp's Uvicorn calls it once it stops accepting connections)."""
@@ -76,13 +81,14 @@ HOUR_SECONDS = 3600          # a red hand's reach back: the highest of the past 
 HOURLY = {g.title: g.hourly for g in GAUGES if g.hourly}   # the dials with a red hand, and the reading whose past hour it shows
 
 
-def readings_of(live: dict | None) -> tuple | None:
+def readings_of(live: dict | None, indoor: bool = True) -> tuple | None:
     """What the gauges show now of a live reading ({group: {field: {value, ...}}}): each gauge's reading (the wind's direction's, its
-    compass, too), those their red hands count in (the wind's: the gust, counted into its Gust too), and the piezo gauge's rain rate (the
-    page's rain behind the tiles). None without one."""
+    compass, too; the indoor ones only with `indoor`), those their red hands count in (the wind's: the gust, counted into its Gust too),
+    and the piezo gauge's rain rate (the page's rain behind the tiles). None without one."""
     if not live:
         return None
-    return (*(live_value(live, where) for g in GAUGES for where in dict.fromkeys((g.live, *([g.hourly] if g.hourly else [])))),
+    gauges = [g for g in GAUGES if indoor or not gauge_sheet.is_indoor(g)]
+    return (*(live_value(live, where) for g in gauges for where in dict.fromkeys((g.live, *([g.hourly] if g.hourly else [])))),
             live_value(live, ("rainfall_piezo", "rain_rate")))   # (the piezo gauge's rain rate: the page's rain, with no gauge of its own)
 
 
@@ -121,10 +127,11 @@ class WebDashboard:
     """The page, its data and its event streams over an EcobotServer (its service's `current`, its bus and its context); `uris` the
     resources whose updates are the station's live reading's and the air sensor's (ecobot://now/weather, ecobot://now/air);
     `animations` (MCP_DASHBOARD_ANIMATIONS: "on", "off" or "low"; True and False are "on" and "off") off: the page draws no weather
-    behind its gauges; low: nothing on it moves."""
+    behind its gauges; low: nothing on it moves. `indoor` (MCP_DASHBOARD_INDOOR) False: no indoor reading in its data or its events."""
 
-    def __init__(self, server, uris: tuple[str, ...] = ("ecobot://now/weather", "ecobot://now/air"), animations: bool | str = "on"):
-        self.server, self.uris = server, tuple(uris)
+    def __init__(self, server, uris: tuple[str, ...] = ("ecobot://now/weather", "ecobot://now/air"), animations: bool | str = "on",
+                 indoor: bool = True):
+        self.server, self.uris, self.indoor = server, tuple(uris), bool(indoor)
         self.animations = ("on" if animations else "off") if isinstance(animations, bool) else animations
         if self.animations not in MOTIONS:
             raise ValueError(f"animations: {animations!r} is not one of {', '.join(MOTIONS)}")
@@ -139,7 +146,7 @@ class WebDashboard:
         (fetch off): an open request on the LAN never asks the station (the keep-warm keeps the live reading, and the events come from it)."""
         tool = self.server.service.get("current")
         result = json.loads(await tool.call(gauge_sheet.call(), {"fetch": False})) if tool else {"error": "no current"}
-        sheet = gauge_sheet.sheet(result)
+        sheet = gauge_sheet.sheet(result, indoor=self.indoor)   # (indoor off: no indoor tile, nothing indoor sent)
         live = self._kept_live()
         out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": [tile_json(t) for t in sheet.tiles] if sheet else [], "look": look(),
                "rain_rate": rain_rate_of(result, live), "gust": now_of(result, live, GUST),
@@ -215,7 +222,7 @@ class WebDashboard:
         """(the station's gauges' readings, the air sensor's) as they are kept."""
         try:
             air = getattr(self.server.ctx.air, "_current", None)
-            return readings_of(self._kept_live()), air_readings_of(air[0] if air else None)
+            return readings_of(self._kept_live(), self.indoor), air_readings_of(air[0] if air else None)
         except Exception as e:   # (never stops the publishing)
             log.warning("Dashboard: couldn't read the live reading: %s: %s", type(e).__name__, e)
             return None

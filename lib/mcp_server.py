@@ -503,15 +503,17 @@ def prompt(name: str, arguments: dict | None = None) -> types.GetPromptResult:
 
 
 def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "localhost"), issuer_url: str = "http://127.0.0.1:8765",
-             path: str = "/mcp", dashboard: bool = True, dashboard_animations: bool | str = "on"):
+             path: str = "/mcp", dashboard: bool = True, dashboard_animations: bool | str = "on",
+             dashboard_indoor: bool = True):
     """The Streamable HTTP app (Starlette) at `path`: the Host header checked against `allowed_hosts`, and, with `tokens` (AUTH_TOKENS),
     every request's bearer token (TokenCheck). `issuer_url` is required by the SDK with auth but unused: no OAuth metadata is published
     (resource_server_url=None). With `dashboard` (MCP_DASHBOARD), the gauges' live page beside it at /dashboard (lib/web_dashboard.py):
     read-only, no token, any Host, its weather behind the gauges unless `dashboard_animations` is off, nothing moving with "low" (MCP_DASHBOARD_ANIMATIONS);
+    with `dashboard_indoor` False (MCP_DASHBOARD_INDOOR off) no indoor reading on it, drawn or sent;
     `app.state.closing` ends its event streams at shutdown. Always, the chart links' pictures at
     /charts/<id>.png (EcobotServer.chart_picture): no token, any Host either."""
     check = TokenCheck(tokens) if tokens else None
-    web = WebDashboard(server, (WEATHER_URI, AIR_URI), animations=dashboard_animations) if dashboard else None
+    web = WebDashboard(server, (WEATHER_URI, AIR_URI), animations=dashboard_animations, indoor=dashboard_indoor) if dashboard else None
     app = server.server.streamable_http_app(
         streamable_http_path=path, transport_security=host_settings(allowed_hosts),
         auth=AuthSettings(issuer_url=issuer_url, resource_server_url=None) if check else None, token_verifier=check,
