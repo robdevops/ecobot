@@ -219,8 +219,8 @@ rain is summarised.
 
 **`current`'s result:** `{as_of, sensors: {"outdoor": {"temperature": {value, unit, text: "12.3 °C", [emoji], [today: {low, low_text,
 low_when, high…}], [month…], [year…]}}, "rainfall": {"rain": {…, [today: {total}], [month: {total, wettest_day}], [year…]}}, "wind":
-{"wind_speed": {…, [today: {high_gust…}]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`: with `context`, everything the
-bot's gauges show (rain as totals and its wettest day, wind's highest gust); with `context` and no readings named, every gauge's reading
+{"wind_speed": {…, [today: {high…, high_gust…}]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`: with `context`, everything the
+bot's gauges show (rain as totals and its wettest day, wind speed's highest and its highest gust); with `context` and no readings named, every gauge's reading
 the station sends now, those its file hasn't recorded yet (outside the catalogue) too, as the gauges show them. The air sensor's
 air-quality readings have their highs and lows with `context` too (from its day rows, with their day but no time of day), so a
 reading it lacks now, or the sensor not answering, still gives its figures with `value` null.

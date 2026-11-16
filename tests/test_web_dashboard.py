@@ -9,7 +9,9 @@ fill the window and the gallery through the others (keys, mouse drags, a trackpa
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
 one canvas behind the tiles, "stop animation", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place
 with no particles, the wind's leaves within the budget and blowing right to left, rain in the wind bunched into curtains, its drops
-knocking the leaves they hit, humidity's fog and its beads, heavy rain's drops sticking to the glass), and the data's rain rate.
+knocking the leaves they hit, humidity's fog and its beads, heavy rain's drops sticking to the glass), the data's rain rate, and the
+dials' thin red hands at the past hour's highest (the wind's gust, rain rate, sun, UV: read from the file and the reading now, moving
+smoothly, at once with reduced motion) with the wind's Gust column.
 With ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
@@ -35,7 +37,11 @@ from lib.gauge_look import look, tile_json
 from lib.mcp_server import AIR_URI, EcobotServer, WEATHER_URI, http_app
 from lib.service.context import Context
 from lib.service.names import Catalogue
-from lib.web_dashboard import DESCRIPTION, ICON, ICON_URL, PAGE, WebDashboard, air_readings_of, rain_rate_of, readings_of
+from lib.ecowitt.dashboard import GUST
+from lib.ecowitt.reads import highest_on
+from lib.gauge_look import START, SWEEP
+from lib.web_dashboard import (DESCRIPTION, HOUR_SECONDS, HOURLY, ICON, ICON_URL, PAGE, WebDashboard, air_readings_of, rain_rate_of,
+                               readings_of)
 from tests.chart_samples import _air, _station
 from tests.fakes import TZ, StandInService, gauges_result
 from tests.test_mcp_listen import Serving, free_port, until
@@ -70,8 +76,15 @@ class Station:
 
     def reads(self, group: str, field: str, value: str):
         self.live = json.loads(json.dumps(self.live))
-        self.live[group][field]["value"] = value
+        self.live.setdefault(group, {}).setdefault(field, {})["value"] = value
         self.eco._live = (time.time(), self.live)
+
+    def held(self, highs: dict):
+        """The station's file holds these highest of the past hour ({(group, field): value}, highest_on's), as the dashboard reads it."""
+        async def read(fn, mac, wheres, start, end):
+            assert fn is highest_on and mac == "fake" and end - start == HOUR_SECONDS + 60 and abs(end - 60 - time.time()) < 5
+            return {w: v for w, v in highs.items() if w in wheres}
+        self.eco.storage, self.eco.mac = NS(read=read), "fake"
 
     def air_reads(self, column: str, value: float | None):
         """The air sensor's latest has this reading (None: it hasn't)."""
@@ -153,6 +166,56 @@ async def test_the_data_carries_the_stations_rain_rate_now_its_rain_gauges_or_el
     assert rain_rate_of({"sensors": {"rainfall": {"rain_rate": {"value": 0.0}}, "rainfall_piezo": {"rain_rate": {"value": 3.2}}}}) == 0.0
     live = {"rainfall_piezo": {"rain_rate": {"value": "1.5"}}}
     assert readings_of({**station.live, **live}) != readings_of(station.live)    # the piezo's rate changing: an event, the page fetches it
+
+
+RATE, SOLAR, UVI = ("rainfall", "rain_rate"), ("solar_and_uvi", "solar"), ("solar_and_uvi", "uvi")
+
+
+async def test_the_data_carries_the_past_hours_highest_of_the_wind_gust_rain_rate_sun_and_uv_and_the_gust_now(server, station):
+    """The dials' thin red hands: each one's reading's highest of the past hour (Wind: its gust), the higher of the file's (its minutes
+    and 5-minute readings: highest_on) and the reading now; with no file, the reading now; null with neither. And the gust now."""
+    page = WebDashboard(server)
+    assert HOURLY == {"Wind": GUST, "Rain rate": RATE, "Solar radiation": SOLAR, "UV index": UVI}
+    got = await page.data()
+    assert got["hour_highs"] == {"Rain rate": 0.0, "Solar radiation": 0.0, "UV index": 0.0, "Wind": None} and got["gust"] is None
+    station.reads("wind", "wind_gust", "12")                                     # (no file: the readings now alone)
+    got = await page.data()
+    assert got["hour_highs"]["Wind"] == 12.0 and got["gust"] == 12.0
+    station.held({GUST: 37.0, RATE: 4.2, SOLAR: 820.0})                         # the file's past hour: higher than now, but the UV's
+    station.reads("solar_and_uvi", "uvi", "2")
+    got = await page.data()
+    assert got["hour_highs"] == {"Wind": 37.0, "Rain rate": 4.2, "Solar radiation": 820.0, "UV index": 2.0} and got["gust"] == 12.0
+    station.reads("wind", "wind_gust", "41")                                     # a gust above the past hour's: it is the highest
+    assert (await page.data())["hour_highs"]["Wind"] == 41.0
+    station.held({})                                                             # the peaks an hour old: the next highest, the readings now
+    assert (await page.data())["hour_highs"] == {"Wind": 41.0, "Rain rate": 0.0, "Solar radiation": 0.0, "UV index": 2.0}
+    station.live = json.loads(json.dumps(station.live))                          # a reading now from over an hour ago: not counted
+    station.live["wind"]["wind_gust"]["time"] = str(int(time.time()) - HOUR_SECONDS - 120)
+    station.eco._live = (time.time(), station.live)
+    assert (await page.data())["hour_highs"]["Wind"] is None
+
+    async def broken(*a):
+        raise OSError("disk")
+    station.eco.storage = NS(read=broken)                                        # the file not read: the readings now
+    assert (await page.data())["hour_highs"]["UV index"] == 2.0
+    station.reads("wind", "wind_gust", "9")
+    assert readings_of(station.live) != readings_of({**station.live, "wind": {**station.live["wind"], "wind_gust": {"value": "10"}}})
+
+
+async def test_the_past_hours_highest_is_read_from_the_minutes_and_the_5_minute_readings_with_their_bands(tmp_path):
+    """highest_on: of a reading's minutes and 5-minute readings from start to end, each with the highest of its band, a band alone (a
+    5-minute mark not fetched yet) too; nothing older or newer, nor a 30-minute reading; one with none left out."""
+    from lib.storage import Storage
+    storage = Storage(tmp_path / "s.sqlite", TZ)
+    mac, now = "AA:BB", 1_794_279_900
+    with storage.writer.transaction() as w:
+        w.put_minutes(mac, {"wind": {"wind_gust": {"unit": "km/h", "list": {str(now - 4000): "70", str(now - 3000): "33", str(now - 60): "21"}}},
+                            "solar_and_uvi": {"uvi": {"unit": "", "list": {str(now - 120): "3"}}}}, now)
+        w.put_ranges(mac, {"wind.wind_gust": {now - 900: (3, 20.0, 45.0)}, "solar_and_uvi.solar": {now - 600: (2, 400.0, 610.0)}})
+    got = await storage.read(highest_on, mac, [GUST, SOLAR, UVI, RATE], now - 3600, now)
+    assert got == {GUST: 45.0, SOLAR: 610.0, UVI: 3.0}
+    assert await storage.read(highest_on, mac, [GUST], now - 600, now) == {GUST: 21.0}
+    storage.close()
 
 
 async def test_the_page_answers_at_dashboard_slash_too_so_a_proxy_mapping_a_sites_root_there_gets_no_redirect_to_the_lan(server):
@@ -389,6 +452,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     shots.mkdir(parents=True, exist_ok=True)
     port = free_port()
     url = f"http://127.0.0.1:{port}/dashboard"
+    station.reads("wind", "wind_gust", "12")
+    station.held({GUST: 37.0, RATE: 4.2, SOLAR: 820.0, UVI: 6.5})        # (the past hour: higher than the readings now, all but 0)
     async with Serving(http_app(server, tokens=(TOKEN,)), port):
         sizes = await asyncio.create_subprocess_exec("node", str(BROWSER), url, str(shots), json.dumps(SIZES), stdout=subprocess.PIPE,
                                                      stderr=subprocess.PIPE)   # (not asyncio.to_thread: the tests run it inline)
@@ -401,6 +466,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         before = json.loads(await asyncio.wait_for(live.stdout.readline(), 60))
         station.reads("outdoor", "temperature", "21.5")
         station.reads("wind", "wind_direction", "300")                           # (and the wind backs from the east to WNW)
+        station.held({GUST: 60.0, RATE: 4.2, SOLAR: 820.0, UVI: 6.5})            # (and the past hour's highest gust rises)
         await server.publish_changes()
         live.stdin.write(b"go\n")
         await live.stdin.drain()
@@ -409,6 +475,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         after = json.loads(out)
     sheet = gauge_sheet.sheet(Station().current(gauge_sheet.call(), {"fetch": False})).tiles
     n, kinds = len(sheet), [t.kind for t in sheet]
+    wind = next(t for t in gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False})).tiles if t.title == "Wind")
     for name, (width, height) in SIZES.items():
         got = report[name]
         assert got["errors"] == [], (name, got["errors"])
@@ -441,6 +508,17 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
             assert z["box"]["left"] - 1 <= r["left"] and r["right"] <= z["box"]["right"] + 1 and z["box"]["top"] - 1 <= r["top"] and r["bottom"] <= z["box"]["bottom"] + 1, (r, z)
         assert z["ring"]["width"] > z["box"]["width"] * 0.45, z
         assert (shots / f"dashboard-{name}-compass.png").exists()
+        # the dials with a thin red hand at the past hour's highest (Wind's gust, Rain rate's, Solar radiation's, UV's), over the dial
+        # and the needle, under the hub; none on any other tile; the Wind's table: its highest speed, and its highest gust beside it
+        hands = got["hands"]
+        assert {t for t, h in hands.items() if h} == set(HOURLY), hands
+        for title, value in {"Wind": 37.0, "Rain rate": 4.2, "Solar radiation": 820.0, "UV index": 6.5}.items():
+            h, tile = hands[title], next(t for t in sheet if t.title == title)
+            assert h["turn"] == hand_turn(tile, value) and h["shown"], (name, title, h)
+            assert h["colour"] == look()["hour_hand"] and h["width"] <= 1.5 and h["needleWidth"] > 10 * h["width"], (name, title, h)
+            assert h["order"][0] < h["order"][1] < h["order"][2], (name, title, h)
+        assert hands["Wind"]["heads"] == ["▲ Max", "» Gust"] and wind.columns == ("Max", "Gust"), hands["Wind"]
+        assert hands["Wind"]["daily"] == [f"{v:.0f}" for v in wind.rows["Daily"]] and wind.rows["Daily"][1] >= 12, (hands["Wind"], wind)
     for name in ("tablet-landscape", "tablet-portrait", "desktop"):            # these fit every tile without scrolling
         got = report[name]
         assert got["scroll"] == "no" and got["scrollHeight"] <= SIZES[name][1], (name, got)
@@ -456,6 +534,21 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     assert (c["label"], c["reading"], c["turn"]) == ("Wind direction 300° WNW", "300° WNW", "rotate(300.00 240 188)"), c
     turns = c["turns"]
     assert all(t <= 99.01 or t >= 299.99 for t in turns) and any(t < 30 for t in turns) and any(t > 330 for t in turns), turns
+    # the Wind's red hand moved smoothly, frame by frame, from the past hour's highest gust before (37) to the new one (60)
+    windy = next(t for t in sheet if t.title == "Wind")
+    h, frames = after["hands"]["Wind"], after["hands"]["frames"]
+    assert h["turn"] == hand_turn(windy, 60.0) and frames[0] == turn_of(windy, 37.0) and frames[-1] == turn_of(windy, 60.0), h
+    between = [f for f in frames if turn_of(windy, 37.0) < f < turn_of(windy, 60.0)]
+    assert len(set(between)) >= 8 and all(a <= b for a, b in zip(frames, frames[1:])), frames
+
+
+def turn_of(tile, value: float) -> float:
+    """A red hand's turn (degrees, SVG's: clockwise) at this reading on a dial (gauge_look's START and SWEEP; drawn pointing right)."""
+    return round(-(START - SWEEP * min(max((value - tile.low) / (tile.high - tile.low), 0), 1)), 2)
+
+
+def hand_turn(tile, value: float) -> str:
+    return f"rotate({turn_of(tile, value):.2f} 240 203)"
 
 
 @needs_browser
@@ -1253,6 +1346,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     still = got["still"]
     assert still["effects"] == ["uv", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still
     assert still["ink"] > 0 and sorted(still["framed"]) == ["Temperature", "UV index"] and still["link"] == "stop animation", still
+    assert still["hand"] == "rotate(-27.50 240 203)", still["hand"]                 # (the UV's red hand at once at 9: no frames for it)
     # ... and humidity's still frame as it would be some minutes in: the fog formed, many beads on it, some that have run, their trails
     beading = still["humidity"]
     assert beading["fog"] == 1 and beading["beads"] >= 20 and beading["ran"] >= 2 and beading["trails"] > 30 and beading["stray"] == 0, beading

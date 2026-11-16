@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from ..lines import Plotted, Sample
 from ..storage.catalogue import BY_NAME, KINDS, column_of, field_of
 from ..storage.read import Reader
-from ..storage.schema import some_value
+from ..storage.schema import q, some_value
 from .api import cycle_seconds
 from .period import Period, period_on
 
@@ -62,6 +62,26 @@ def first_minute_on(r: Reader, mac: str, groups: list[str], start: int, end: int
                           f"AND {some_value([c.name for c in KINDS[kind]])}", (*ids, start, end)).fetchone()[0]
              for kind in dict.fromkeys(s.kind for s in sensors) for ids in [[s.id for s in sensors if s.kind == kind]]]
     return min((t for t in found if t is not None), default=None)
+
+
+def highest_on(r: Reader, mac: str, wheres: list[tuple[str, str]], start: int, end: int) -> dict[tuple[str, str], float]:
+    """{(group, field): the highest of the reading from start to end}, of its minutes (Home Assistant's) and its 5-minute readings, each
+    with the highest of its band where it has one (the bot's live readings counted into it: a 5-minute row holding only a band counts
+    too). A reading with none is left out. One query per kind of sensor (the web page's red hands: the past hour's highest)."""
+    by_sensor: dict = {}
+    for where in wheres:
+        sensor, place = r.sensor(mac, where[0]), column_of(*where)
+        if sensor is not None and place is not None and place[1] == "value":
+            by_sensor.setdefault((sensor.kind, sensor.id), []).append((where, place[0]))
+    out: dict[tuple[str, str], float] = {}
+    for (kind, sensor), columns in by_sensor.items():
+        picks = ", ".join(f"MAX({q(c)}), MAX({q(c + '_hi')})" for _, c in columns)
+        got = r.db.execute(f"SELECT {picks} FROM {kind} WHERE sensor = ? AND res IN ('1min', '5min') AND ts BETWEEN ? AND ?",
+                           (sensor, start, end)).fetchone()
+        for i, (where, _) in enumerate(columns):
+            if found := [v for v in got[2 * i:2 * i + 2] if v is not None]:
+                out[where] = float(max(found))
+    return out
 
 
 def newest_minute_on(r: Reader, mac: str) -> int | None:

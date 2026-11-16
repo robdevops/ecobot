@@ -236,7 +236,7 @@ class Tile:
     low: float                             # the scale's ends
     high: float
     colours: tuple[str, ...]               # the scale's bands, from the low end to the high one
-    columns: tuple[str, ...] = ()          # what the table under the gauge lists: "Max", "Min" or "Total"
+    columns: tuple[str, ...] = ()          # what the table under the gauge lists: "Max", "Min", "Gust" (wind) or "Total"
     rows: dict[str, tuple[float | None, ...]] = field(default_factory=dict)   # "Daily" / "Monthly" / "Yearly" -> a figure per column
     ticks: tuple[float, ...] = ()          # the scale's labels
     decimals: int = 1

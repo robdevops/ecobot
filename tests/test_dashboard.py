@@ -275,7 +275,7 @@ GAUGE_RESULT = {
                     "humidity": {"value": 94, "unit": "%", "text": "94 %", "today": {"high": 94, "low": 60}}},
         "rainfall": {"rain": {"value": 6.3, "unit": "mm", "text": "6.3 mm", "today": {"total": 6.3},
                               "month": {"total": 49.8, "wettest_day": {"rain": 20.1}}, "year": {"total": 400.2, "wettest_day": {"rain": 41.0}}}},
-        "wind": {"wind_speed": {"value": 14, "unit": "km/h", "today": {"high_gust": 31.0}},
+        "wind": {"wind_speed": {"value": 14, "unit": "km/h", "today": {"high": 18.0, "high_gust": 31.0}},
                  "wind_direction": {"value": 99, "unit": "°", "text": "99°", "compass": "E"}},
         "indoor": {"temperature": {"value": None, "unit": "°C", "year": {"high": 30.0, "low": 12.0}}},   # no reading now: dimmed
         "solar_and_uvi": {"uvi": {"value": None, "unit": ""}}},                                          # nothing at all: left out
@@ -293,7 +293,8 @@ def test_the_gauges_sheet_is_drawn_from_currents_readings_and_their_context():
     assert t.rows == {"Daily": (14.0, 9.5), "Monthly": (21.0, 4.0), "Yearly": (38.0, -1.0)}
     assert tiles["Humidity"].value == 94.0 and isinstance(tiles["Humidity"].value, float)       # as the station's reading was read
     assert tiles["Humidity"].rows["Monthly"] == (None, None)
-    assert tiles["Wind"].rows == {"Daily": (31.0,), "Monthly": (None,), "Yearly": (None,)}      # its highest gust
+    assert tiles["Wind"].columns == ("Max", "Gust")                                             # its highest speed, and gust where
+    assert tiles["Wind"].rows == {"Daily": (18.0, 31.0), "Monthly": (None, None), "Yearly": (None, None)}   # Min usually is
     assert tiles["Rain"].rows == {"Daily": (None, 6.3), "Monthly": (20.1, 49.8), "Yearly": (41.0, 400.2)}
     assert tiles["Indoor temperature"].value is None and tiles["Indoor temperature"].rows["Yearly"] == (30.0, 12.0)
     status = gauge_sheet.sheet(GAUGE_RESULT, STATUS_TITLES)
