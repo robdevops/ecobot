@@ -17,8 +17,8 @@
 //   node web_dashboard_browser.js URL --zoom PART: the page at 1024x768 with a mouse and keys, a part of the zoom (zoomMode): "in" (the
 //     zoom cursors, a click zooming a tile; zoomed, prints {label} (Temperature's, beside the tile shown), waits for a line on stdin (the
 //     test has changed its reading), then pages with the keys past the first), "pager" (mouse drags and wheel deltaX), "last" (past the
-//     last, drags across the text, a click back), "out" (a double-click, Esc, the bounce cut short, the keyboard, Esc mid-zoom),
-//     "single" (a single tile zoomed, paging bouncing, back by a click and by Esc); prints {step: what was seen}.
+//     last, drags across the text, a click back; then a single tile zoomed, paging bouncing, back by a click and by Esc), "out" (a
+//     double-click, Esc, the bounce cut short, the keyboard, Esc mid-zoom); prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --zoom-touch: the page at 390x844 with touch: a tap zooms, swipes (slow, a flick, on the text)
 //     page, a vertical swipe and a long press do nothing, a tap goes back where the page was scrolled; prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --weather PART: the page at 1024x768, its data altered on the way, a part of the weather behind the
@@ -453,8 +453,8 @@ const cursorAt = (page, [x, y]) => page.evaluate(([x, y]) => getComputedStyle(do
 
 // The zoom in four parts, each its own page (and process: the tests run them side by side): "in" (the cursors, a click zooming a
 // tile, the live reading beside it, the keys), "pager" (zoomed: mouse drags, a trackpad's swipes), "last" (zoomed: the last tile, a
-// drag across the text, a click back out), "out" (a double-click, Esc, the bounce cut short, the keyboard, Esc mid-way through a
-// zoom-in), "single" (a single tile zoomed: paging only bounces)
+// drag across the text, a click back out; then a single tile zoomed, paging only bouncing), "out" (a double-click, Esc, the bounce cut
+// short, the keyboard, Esc mid-way through a zoom-in)
 async function zoomMode(browser, url, part) {
   const out = {};
   const { context, page, errors } = await open(browser, url, 1024, 768, { init: { fn: ZOOM_HELPERS } });
@@ -544,6 +544,31 @@ async function zoomMode(browser, url, part) {
     out.zoomOut = await zoomClick(page, shown, await at(page, shown, 0.85, 0.3));
     out.outRect = await tileOf(page, shown).boundingBox();
     out.outTable = await page.evaluate((shown) => window.__look(shown).table, shown);   // (its table back)
+    // one tile only: the zoom cursor, a click zooms it (title and gauge, no table); the keys, a drag and a trackpad's swipe only
+    // bounce (a gallery of one); a click goes back, Esc too
+    await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: [...document.querySelectorAll(".tile .title")].map((t) => t.textContent).filter((t) => t !== "Humidity") })), KEY);
+    await page.reload({ waitUntil: "load" });
+    await page.waitForFunction(() => document.querySelectorAll(".tile").length === 1);
+    await calm(page, 1500);   // (the gauge's rise)
+    const one = await at(page, "Humidity", 0.85, 0.3);
+    out.single = { cursor: await cursorAt(page, one), gridRect: await tileOf(page, "Humidity").boundingBox() };
+    await page.mouse.click(...one);
+    await calm(page);
+    out.single.zoomed = { ...await page.evaluate(() => window.__state()), cursor: await cursorAt(page, one),
+                          look: await page.evaluate(() => window.__look("Humidity")) };
+    out.single.keys = { right: await keyStep(page, "ArrowRight"), left: await keyStep(page, "ArrowLeft"), space: await keyStep(page, " ") };
+    out.single.dragged = { left: await pagerDrag(page, [800, 300], -400), right: await pagerDrag(page, [200, 300], 400) };
+    for (let i = 0; i < 8; i++) { await page.mouse.wheel(50, 0); await page.waitForTimeout(16); }
+    await swiped(page);
+    out.single.wheeled = { ...await page.evaluate(() => window.__state()), prevented: await page.evaluate(() => window.__wheels) };
+    await page.mouse.click(...one);
+    await calm(page);
+    out.single.back = { ...await page.evaluate(() => window.__state()), rect: await tileOf(page, "Humidity").boundingBox() };
+    await page.mouse.click(...one);
+    await calm(page);
+    await page.keyboard.press("Escape");
+    await calm(page);
+    out.single.esc = await page.evaluate(() => window.__state());
   } else if (part === "out") {
     // a double-click (its clicks 300 ms apart, slower than the zoom): zoomed, not zoomed and straight back out
     const wind = await at(page, "Wind", 0.85, 0.3);
@@ -628,32 +653,6 @@ async function zoomMode(browser, url, part) {
                      tableWhileLarge: Math.max(...after.filter((x) => x.width > last.width + 1).map((x) => x.table)), tableEnd: last.table };
       await calm(page);
     }
-  } else if (part === "single") {
-    // one tile only: the zoom cursor, a click zooms it (title and gauge, no table); the keys, a drag and a trackpad's swipe only
-    // bounce (a gallery of one); a click goes back, Esc too
-    await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: [...document.querySelectorAll(".tile .title")].map((t) => t.textContent).filter((t) => t !== "Humidity") })), KEY);
-    await page.reload({ waitUntil: "load" });
-    await page.waitForFunction(() => document.querySelectorAll(".tile").length === 1);
-    await calm(page, 1500);   // (the gauge's rise)
-    const one = await at(page, "Humidity", 0.85, 0.3);
-    out.single = { cursor: await cursorAt(page, one), gridRect: await tileOf(page, "Humidity").boundingBox() };
-    await page.mouse.click(...one);
-    await calm(page);
-    out.single.zoomed = { ...await page.evaluate(() => window.__state()), cursor: await cursorAt(page, one),
-                          look: await page.evaluate(() => window.__look("Humidity")) };
-    out.single.keys = { right: await keyStep(page, "ArrowRight"), left: await keyStep(page, "ArrowLeft"), space: await keyStep(page, " ") };
-    out.single.dragged = { left: await pagerDrag(page, [800, 300], -400), right: await pagerDrag(page, [200, 300], 400) };
-    for (let i = 0; i < 8; i++) { await page.mouse.wheel(50, 0); await page.waitForTimeout(16); }
-    await swiped(page);
-    out.single.wheeled = { ...await page.evaluate(() => window.__state()), prevented: await page.evaluate(() => window.__wheels) };
-    await page.mouse.click(...one);
-    await calm(page);
-    out.single.back = { ...await page.evaluate(() => window.__state()), rect: await tileOf(page, "Humidity").boundingBox() };
-    await page.mouse.click(...one);
-    await calm(page);
-    await page.keyboard.press("Escape");
-    await calm(page);
-    out.single.esc = await page.evaluate(() => window.__state());
   }
   out.errors = errors;
   await context.close();
@@ -762,6 +761,10 @@ async function weatherPage(browser, url, options = {}) {
     };
   }, options.pace || 1);
   if (options.init) await context.addInitScript(options.init.fn, options.init.arg);
+  if (options.animations) await context.route((u) => u.pathname.endsWith("/dashboard"), async (route) => {   // (as served with
+    const response = await route.fetch(), page = await response.text();                                       // MCP_DASHBOARD_ANIMATIONS)
+    await route.fulfill({ response, body: page.replace('data-animations="on"', `data-animations="${options.animations}"`) });
+  });
   if (options.bare) await context.route((u) => u.pathname.endsWith("/dashboard"), async (route) => {   // (the page as it will be:
     const response = await route.fetch(), page = await response.text();                                // no temporary test links)
     await route.fulfill({ response, body: page.replace(/<!-- TEMPORARY:[\s\S]*<!-- END TEMPORARY: effect test links -->/, "") });
@@ -864,11 +867,35 @@ const framesIn = async (page, ms) => {   // the frames the page asked for in thi
   return (await page.evaluate(() => window.__frames)) - before;
 };
 
+// MCP_DASHBOARD_ANIMATIONS off (the page as ecobot-mcp serves it then: data-animations="off" on its <html>): every effect asked for
+// and called for, nothing drawn; the rest as ever
+async function animationsOff(browser, url, out) {
+  const { context, page, errors, reads } = await weatherPage(browser, url, { query: "?fx=all", animations: "off" });
+  await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160 });
+  const seen = async () => ({ ...await weatherSeen(page), frames: await page.evaluate(() => Sky.state().frames), ink: await canvasInk(page),
+                              ...await page.evaluate(() => ({ sky: getComputedStyle(document.getElementById("sky")).display,
+                                                              corner: getComputedStyle(document.getElementById("corner")).display,
+                                                              row: !!document.getElementById("fxtest") && document.getElementById("fxtest").checkVisibility() })) });
+  await page.waitForTimeout(500);   // (time for frames, were any drawn)
+  out.off = await seen();
+  out.tiles = await titles(page);
+  out.strip = await statusText(page);
+  await page.mouse.move(...await at(page, "Rain", 0.5, 0.4));
+  await calm(page);
+  await tileOf(page, "Rain").locator(".close").click();
+  await page.waitForTimeout(300);
+  const { frames, ink, running } = await seen();
+  out.hidden = { strip: await statusText(page), frames, ink, running };
+  out.errors = errors;
+  await context.close();
+}
+
 // The weather in parts, each its own page (and process: the tests run them side by side): "marks" (nothing called for, each effect at
 // its mark and just short of it, smog's bands, rain's strength, the ice's depth), "several" (several at once, the canvas, the tiles see-
-// through, their look, zoomed), "stop" ("stop animations", a reload, "start animations", the reset), "links" (the temporary test links),
+// through, their look, zoomed), "stop" ("stop animations", a reload, "start animations", the reset), "links" (the temporary test links;
+// and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn),
 // "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
-// and the wind alone, uv's beams over 40 s, a phone's strip, reduced motion), "off" (MCP_DASHBOARD_ANIMATIONS off: nothing drawn)
+// and the wind alone, uv's beams over 40 s, a phone's strip, reduced motion)
 const WEATHER = {
   async marks(browser, url, out) {
     const { context, page, errors, reads } = await weatherPage(browser, url);
@@ -1002,6 +1029,7 @@ const WEATHER = {
     await context.close();
   },
   async links(browser, url, out) {
+    const off = animationsOff(browser, url, out.off = {});   // (beside the rest)
     // the temporary test links: each turns its effect and frame on (the gauges keep their readings), "clear" ends them; the URL follows
     const { context, page, errors } = await weatherPage(browser, url);
     await calm(page, 5000);   // (the gauges' rise)
@@ -1033,7 +1061,8 @@ const WEATHER = {
     await page.goto(url + "?fx=all", { waitUntil: "load" });
     await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent));
     out.links.all = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
-    out.errors = errors;
+    await off;
+    out.errors = [...errors, ...out.off.errors];
     await context.close();
   },
   async all(browser, url, out) {
@@ -1060,32 +1089,11 @@ const WEATHER = {
     out.errors = errors;
     await context.close();
   },
-  async off(browser, url, out) {
-    // MCP_DASHBOARD_ANIMATIONS off (the test serves the page so): every effect asked for and called for, nothing drawn
-    const { context, page, errors, reads } = await weatherPage(browser, url, { query: "?fx=all" });
-    await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160 });
-    const seen = async () => ({ ...await weatherSeen(page), frames: await page.evaluate(() => Sky.state().frames), ink: await canvasInk(page),
-                                ...await page.evaluate(() => ({ sky: getComputedStyle(document.getElementById("sky")).display,
-                                                                corner: getComputedStyle(document.getElementById("corner")).display,
-                                                                row: !!document.getElementById("fxtest") && document.getElementById("fxtest").checkVisibility() })) });
-    await page.waitForTimeout(500);   // (time for frames, were any drawn)
-    out.off = await seen();
-    out.tiles = await titles(page);
-    out.strip = await statusText(page);
-    await page.mouse.move(...await at(page, "Rain", 0.5, 0.4));
-    await calm(page);
-    await tileOf(page, "Rain").locator(".close").click();
-    await page.waitForTimeout(300);
-    const { frames, ink, running } = await seen();
-    out.hidden = { strip: await statusText(page), frames, ink, running };
-    out.errors = errors;
-    await context.close();
-  },
   async opened(browser, url, out) {
     const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
     // uv's beams over 40 s of the page's time, on a page of their own beside the rest: each swaying about its place
     const swaying = (async () => {
-      const uv = await weatherPage(browser, url, { query: "?fx=uv", pace: 10 });
+      const uv = await weatherPage(browser, url, { query: "?fx=uv", pace: 10, context: { viewport: { width: 640, height: 480 } } });   // (small: cheap)
       const seen = { ...await uvSeen(uv.page), errors: uv.errors };
       await uv.context.close();
       return seen;

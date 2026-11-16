@@ -494,10 +494,10 @@ def test_what_the_events_compare_of_the_air_is_its_gauges_readings():
 
 
 # ---------- arranging the tiles (drag, hide, reset, preferences) and their fill ----------
-async def run_page(server, *args, timeout=120, **app) -> dict:
-    """The page served (`app`: http_app's options), driven by the browser script with these arguments; its report."""
+async def run_page(server, *args, timeout=120) -> dict:
+    """The page served, driven by the browser script with these arguments; its report."""
     port = free_port()
-    async with Serving(http_app(server, tokens=(TOKEN,), **app), port):
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):
         page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", *args,
                                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = await asyncio.wait_for(page.communicate(), timeout)
@@ -723,7 +723,7 @@ async def test_zoomed_the_gallery_pages_by_mouse_drags_and_a_trackpads_swipes_sp
 
 
 @needs_browser
-async def test_zoomed_the_last_tile_stops_a_key_a_swipe_and_a_drag_its_text_is_selectable_and_a_click_goes_back(server, station):
+async def test_zoomed_the_last_tile_stops_paging_its_text_is_selectable_a_click_goes_back_and_a_single_tile_zooms_too(server, station):
     got, default, full = await zoomed(server, station, "last")
     # the last: → past it nudges and stays, as do a swipe and a drag on
     last = got["last"]
@@ -743,6 +743,25 @@ async def test_zoomed_the_last_tile_stops_a_key_a_swipe_and_a_drag_its_text_is_s
     assert zoom_out["last"]["width"] == pytest.approx(got["gridRect"]["width"], abs=0.5)
     tables = zoom_out["tables"]                                                   # (its table back: hidden as it shrinks, then fading in)
     assert tables[0] == 0 and tables[-1] == 1 and all(a <= b for a, b in zip(tables, tables[1:])) and got["outTable"] == ["visible 1"], (tables, got["outTable"])
+    # a single tile (Humidity, the others hidden) zooms too, a gallery of one
+    one = got["single"]
+    # the magnifier over its gauge; a click zooms it to its title and gauge alone, filling the window
+    assert one["cursor"] == "zoom-in" and one["zoomed"] | {"look": None} == {"zoomed": True, "shown": "Humidity", "track": 0,
+                                                                             "cursor": "zoom-out", "look": None}, one
+    fills(one["zoomed"]["look"], 1024, 768)
+    assert near(one["zoomed"]["look"]["box"], full), one["zoomed"]
+    # a gallery of one: the keys nudge it and back, a drag either way gives a little and springs back, as does a trackpad's swipe
+    for name, key in one["keys"].items():
+        assert key["zoomed"] and key["shown"] == "Humidity" and key["track"] == 0 and key["extreme"] >= 20, (name, key)
+    for name, drag in one["dragged"].items():
+        assert drag["zoomed"] and drag["shown"] == "Humidity" and drag["track"] == 0 and 20 < abs(drag["during"]) < 400 * 0.6, (name, drag)
+    assert one["wheeled"] | {"prevented": None} == {"zoomed": True, "shown": "Humidity", "track": 0, "prevented": None}, one["wheeled"]
+    assert one["wheeled"]["prevented"] and all(one["wheeled"]["prevented"]), one["wheeled"]
+    # a click goes back, the tile in its place; Esc too
+    box = lambda r: r | {"left": r["x"], "top": r["y"]}
+    rect = one["back"].pop("rect")
+    assert one["back"] == {"zoomed": False, "shown": "Humidity", "track": 0} and near(box(rect), box(one["gridRect"])), (one["back"], rect)
+    assert one["esc"]["zoomed"] is False, one["esc"]
 
 
 @needs_browser
@@ -777,29 +796,6 @@ async def test_a_double_click_esc_the_bounce_cut_short_the_keyboard_and_esc_mid_
 
 
 @needs_browser
-async def test_a_single_tile_zooms_too_its_paging_only_bouncing_and_a_click_or_esc_goes_back(server, station):
-    got, default, full = await zoomed(server, station, "single")
-    one = got["single"]
-    # the magnifier over its gauge; a click zooms it to its title and gauge alone, filling the window
-    assert one["cursor"] == "zoom-in" and one["zoomed"] | {"look": None} == {"zoomed": True, "shown": "Humidity", "track": 0,
-                                                                             "cursor": "zoom-out", "look": None}, one
-    fills(one["zoomed"]["look"], 1024, 768)
-    assert near(one["zoomed"]["look"]["box"], full), one["zoomed"]
-    # a gallery of one: the keys nudge it and back, a drag either way gives a little and springs back, as does a trackpad's swipe
-    for name, key in one["keys"].items():
-        assert key["zoomed"] and key["shown"] == "Humidity" and key["track"] == 0 and key["extreme"] >= 20, (name, key)
-    for name, drag in one["dragged"].items():
-        assert drag["zoomed"] and drag["shown"] == "Humidity" and drag["track"] == 0 and 20 < abs(drag["during"]) < 400 * 0.6, (name, drag)
-    assert one["wheeled"] | {"prevented": None} == {"zoomed": True, "shown": "Humidity", "track": 0, "prevented": None}, one["wheeled"]
-    assert one["wheeled"]["prevented"] and all(one["wheeled"]["prevented"]), one["wheeled"]
-    # a click goes back, the tile in its place; Esc too
-    box = lambda r: r | {"left": r["x"], "top": r["y"]}
-    rect = one["back"].pop("rect")
-    assert one["back"] == {"zoomed": False, "shown": "Humidity", "track": 0} and near(box(rect), box(one["gridRect"])), (one["back"], rect)
-    assert one["esc"]["zoomed"] is False, one["esc"]
-
-
-@needs_browser
 async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_tap_goes_back_where_the_page_was(server, station):
     got = await run_page(server, "--zoom-touch")
     default = titles_of(station)
@@ -822,9 +818,9 @@ EFFECTS = {"rain": "Rain", "smog": "US AQI", "uv": "UV index", "humidity": "Humi
            "ice": "Temperature"}
 
 
-async def weather(server, part: str, **app) -> dict:
+async def weather(server, part: str) -> dict:
     """One part of the weather behind the tiles, its own page in its own browser (the parts run side by side): its report, no error."""
-    got = await run_page(server, "--weather", part, **app)
+    got = await run_page(server, "--weather", part)
     assert got["errors"] == [], got["errors"]
     return got
 
@@ -883,7 +879,7 @@ async def test_the_weather_can_be_stopped_kept_stopped_across_a_reload_and_start
 
 
 @needs_browser
-async def test_the_temporary_test_links_turn_each_effect_on_and_clear_them_the_url_following(server, station):
+async def test_the_temporary_test_links_turn_each_effect_on_and_clear_them_and_with_animations_off_nothing_is_drawn(server, station):
     got = await weather(server, "links")
     # the temporary test links: each its effect and frame (the gauges keep their readings), the URL following; smog steps through its
     # bands, rain light then heavy; ice melts back; "clear" ends them all; no "all" link, but ?fx=all
@@ -908,22 +904,19 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_clear_them_the_u
     assert links["all"]["effects"] == EVERY and links["all"]["url"] == "?fx=rain2,smog3,uv,humidity,wind,heat,ice"
     assert links["role"] == "group" and links["pressed"] == {"rain": "false", "smog": "false", "uv": "true", "humidity": "true",
                                                              "wind": "true", "heat": "true", "ice": "false"}, links["pressed"]
+    # MCP_DASHBOARD_ANIMATIONS off (the page as served then, data-animations="off"), every effect asked for (?fx=all) and called for by
+    # the readings, the animations not stopped in the browser: no loop, nothing drawn, no link, no test links; the tiles and the
+    # strip as ever
+    off = got["off"]
+    assert off["off"] == {"effects": off["off"]["effects"], "levels": off["off"]["levels"], "running": False, "framed": off["off"]["framed"],
+                          "link": None, "frames": 0, "ink": 0, "sky": "none", "corner": "none", "row": False}, off["off"]
+    assert off["off"]["effects"] == EVERY, off["off"]                                    # (asked for all the same: just never drawn)
+    assert off["tiles"] == titles_of(station) and off["strip"] == "last reading 18:42", off
+    # a tile hidden: "reset preferences" in the strip as ever; still nothing drawn
+    assert off["hidden"] == {"strip": "reset preferences · last reading 18:42", "frames": 0, "ink": 0, "running": False}, off["hidden"]
 
 
 EVERY = ["smog", "heat", "uv", "rain", "wind", "humidity", "ice"]
-
-
-@needs_browser
-async def test_with_mcp_dashboard_animations_off_no_weather_is_drawn_behind_the_tiles_for_anyone_and_the_rest_is_as_ever(server, station):
-    got = await weather(server, "off", dashboard_animations=False)
-    # every effect asked for (?fx=all) and called for by the readings, the animations not stopped in the browser: no loop, nothing
-    # drawn, no link, no test links; the tiles and the strip as ever
-    assert got["off"] == {"effects": got["off"]["effects"], "levels": got["off"]["levels"], "running": False, "framed": got["off"]["framed"],
-                          "link": None, "frames": 0, "ink": 0, "sky": "none", "corner": "none", "row": False}, got["off"]
-    assert got["off"]["effects"] == EVERY, got["off"]                                    # (asked for all the same: just never drawn)
-    assert got["tiles"] == titles_of(station) and got["strip"] == "last reading 18:42", got
-    # a tile hidden: "reset preferences" in the strip as ever; still nothing drawn
-    assert got["hidden"] == {"strip": "reset preferences · last reading 18:42", "frames": 0, "ink": 0, "running": False}, got["hidden"]
 
 
 def just_right_of_clear(corner):
