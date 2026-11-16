@@ -1003,9 +1003,9 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     # wandering a little either side of where each began (never further than its bound), the lot not drifting either way; none
     # reaching the window's bottom; its wet track behind it, drying (a pixel of each bead's track drier by the end, some dried out).
     # Slow on dry glass (about half as fast as it was, about 6.6 px/s, pausing longer), as fast as ever on an earlier bead's track
-    # (about 24 px/s): many times as fast there. Beads that touch merge, their water adding up: bigger, a running one on further, and
-    # slower to dry away. Glass: mostly see-through (a faint body; they were opaque, about 217 of 255 as drawn), a crisp glint. The
-    # same with the wind on: water on the glass isn't blown
+    # (about 25 px/s, within 15 %): many times as fast there. Beads that touch merge, their water adding up: bigger, a running one on
+    # further, and slower to dry away. Glass: mostly see-through (a faint body; they were opaque, about 217 of 255 as drawn), a crisp
+    # glint. The same with the wind on: water on the glass isn't blown
     for name, beads in got["humidity"].items():
         assert beads["errors"] == [] and beads["runners"] >= 10 and beads["up"] == 0 and beads["down"] > 50, (name, beads)
         assert 2 <= beads["wander"] <= beads["meander"] and beads["wandered"] >= beads["runners"] / 2, (name, beads)
@@ -1018,7 +1018,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
         assert beads["behind"] > 0.95 and beads["wet"] > 200 and beads["trails"] >= 10, (name, beads)
         assert beads["drier"] >= 0.8 * beads["trails"] and beads["dried"] > 0, (name, beads)
         (on_px, on_s), (off_px, off_s) = beads["on"], beads["off"]
-        assert on_s > 3 and off_px / off_s < 4.5 and on_px / on_s > 18 and on_px / on_s > 4 * off_px / off_s, (name, beads)
+        assert on_s > 3 and off_px / off_s < 4.5 and on_px / on_s > 22 and on_px / on_s > 4 * off_px / off_s, (name, beads)
         # (merges: each bead's water the two's together, as a radius (the cube root of their radii cubed, summed), unless at the
         # largest; a running one's end no higher, and only past its lowest if it was already, its sprite now taller)
         assert beads["merges"] >= 3 and beads["merged"], (name, beads)
@@ -1029,6 +1029,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
                 assert m["end"][0] <= m["end"][1] <= max(m["end"][0], m["end"][2]) + 1e-9, (name, m)
         # (looked at as drawn: the still beads whole, every 10th frame)
         assert beads["look"]["beads"] >= 20 and beads["look"]["mean"] < 110 and beads["look"]["most"] > 170, (name, beads["look"])
+        # (the glass well beaded: more beads condensing on it at a time than running, the tiny ones cheap in the budget)
+        assert beads["showing"]["still"] > beads["showing"]["running"] > 0, (name, beads["showing"])
         # (a track dried out: gone from the canvas too, nothing left showing on dry glass; no bead cut short, none vanishing (each
         # merged into another, running, or dried away))
         assert beads["stray"] == 0 and beads["cut"] == 0 and beads["popped"] == 0, (name, beads)

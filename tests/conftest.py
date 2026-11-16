@@ -25,12 +25,14 @@ SLOW = {line.strip() for line in (Path(__file__).parent / "slow_tests.txt").read
 def pytest_collection_modifyitems(items):
     """The slow tests (tests/slow_tests.txt, every parameter of one) marked `slow`: plain `pytest` leaves them out (pytest.ini). Then the
     files with the slowest tests go first, so with several workers (pytest-xdist) none is left running one of them at the end; and the
-    browser's (BROWSER) dealt out ahead of them, one at the head of each worker's share."""
+    browser's (BROWSER) dealt out ahead of them, one at the head of each worker's share: the zoom's (ZOOM_TIMED) first, so they run
+    together at the start, before any of the weather's pages (theirs drawing every frame, some on a fast clock) are open to slow the
+    zoom's start on a busy machine."""
     for item in items:
         if item.nodeid.split("[")[0] in SLOW:
             item.add_marker(pytest.mark.slow)
     items.sort(key=lambda item: (item.path.name not in HEAVY, HEAVY.index(item.path.name) if item.path.name in HEAVY else 0))
-    deal_out(items, [item for item in items if browser_test(item)])
+    deal_out(items, sorted((item for item in items if browser_test(item)), key=lambda item: not zoom_timed(item)))
 
 
 def pytest_xdist_auto_num_workers(config):
@@ -44,6 +46,14 @@ BROWSER = "test_web_dashboard.py"   # its slow tests drive the page in Chromium:
 
 def browser_test(item) -> bool:
     return item.path.name == BROWSER and item.nodeid.split("[")[0] in SLOW
+
+
+# The browser's zoom tests: two time the zoom's 200 ms from the click or key (within 330 ms), all of them its frames
+ZOOM_TIMED = ("test_a_click_on_a_gauge_zooms_", "test_zoomed_the_last_tile_", "test_a_double_click_esc_", "test_zoomed_the_gallery_")
+
+
+def zoom_timed(item) -> bool:
+    return item.name.startswith(ZOOM_TIMED)
 
 
 _niced = False

@@ -736,9 +736,12 @@ const Sky = (() => {
   // a faint body the page shows through, a crisp glint, a darker rim below. The tracks: each wet pixel's wetness (wet, a grid of the
   // window's art px) drying over DRY s, the pixels dropping out as they dry; drawn to their own little canvas, rewritten a few times
   // a second; a pixel dried out cleared from it. The wind doesn't move them (water on the glass).
-// The shared budget shrinking (another effect on): no running bead cut short (each finishing its run; no new one till there's room),
-// beads yet to show dropped, and of those growing, the least dropped and the rest left to dry away. Faded out all the way, then on
-// again: the glass fresh. Reduced motion: the still frame as it would be some seconds in, beads and tracks.
+  // The budget: a quarter of humidity's particles goes to mist (tiny beads, staying under TINY, lingering where they formed), each
+  // counting as a third of one, so many of them bead the glass at once; the rest to the beads that grow and run, as many as ever.
+  // The shared budget shrinking (another effect on): no running bead cut short (each finishing its run; no new one till there's
+  // room), beads yet to show dropped, and of those growing, the least dropped and the rest left to dry away. Faded out all the way,
+  // then on again: the glass fresh. Reduced motion: the still frame as it would be some seconds in, beads and tracks. A bead fades in
+  // as it appears (over APPEAR s), never popping up whole.
   const WATER = ["#1A2E41", "#2C5573", "#5793BC", "#A6D7F2", "#EFFAFF"].map(rgb);
   const humidity = effect((e) => {
     const SIZES = [0.6, 1, 1.4, 1.9, 2.4, 2.9, 3.4, 3.9, 4.5];   // a bead's radius (its half-width), growing
@@ -746,10 +749,13 @@ const Sky = (() => {
     const MEANDER = 7;                 // px either side of where it began, at most
     const DRY = 30;                    // s for a track to dry
     const REDRAW = 0.2;                // s between the tracks' rewrites (each new wet pixel drawn at once)
-    const ON = 4;                      // how many times as fast on an earlier track as on dry glass
+    const ON = 4;                      // how many times as fast on an earlier track as on dry glass (a usual bead; bigger, faster)
+    const TINY = 1.4;                  // a still bead staying under this (mist) counts as a third of a particle
+    const MIST = 0.25;                 // the share of humidity's particles for mist
+    const APPEAR = 0.4;                // s for a bead to fade in as it appears
     // The beads, smallest to largest (one a size, as SIZES): plump, rounded below and heaviest there, the top a little narrower and
     // round too. Glass, lit from the top left: a white glint (4), the body barely there (2), a crescent low inside where the light
-    // comes through (3), a darker rim on the right and below (1)
+    // comes through (3), a darker rim on the right and below (1: the deep blue, a shade under the body's)
     const BEADS = [["3"], ["42", "31"], [".2.", "422", ".1."], [".22.", "2422", "3221", ".31."],
                    [".222.", "24222", "22221", "33221", ".311."],
                    [".2222.", "244222", "222222", "322221", "332211", ".3111."],
@@ -757,7 +763,7 @@ const Sky = (() => {
                    ["..2222..", ".244222.", "22442222", "22222222", "22222221", "32222221", "33222211", ".332211.", "..1111.."],
                    ["..22222..", ".2442222.", "224422222", "224222222", "222222222", "222222221", "322222221", "332222211",
                     ".3322211.", "..11111.."]];
-    const GLASS = {1: [...WATER[2], 120], 2: [...WATER[3], 34], 3: [...WATER[3], 105], 4: [...WATER[4], 240]};   // (alpha 0-255)
+    const GLASS = {1: [...WATER[1], 110], 2: [...WATER[3], 34], 3: [...WATER[3], 105], 4: [...WATER[4], 240]};   // (alpha 0-255)
     const beads = BEADS.map((rows) => mapped(rows, GLASS));
     const sizeOf = (r) => { const i = SIZES.findIndex((size) => size >= r - 0.01); return i < 0 ? SIZES.length - 1 : i; };
     const LARGEST = SIZES[SIZES.length - 1];
@@ -765,25 +771,28 @@ const Sky = (() => {
     // (for the tests: pixels dried; px run and s taken, on a track and off one; merges, how many and the latest; beads absorbed into
     // another, the latest; runs done, the latest: as Sky.state() gives them)
     const seen = {dried: 0, on: [0, 0], off: [0, 0], merges: 0, merged: [], absorbed: [], done: []};
+    const weight = (b) => b.mist ? 1 / 3 : 1;   // (mist to the end, drying away too)
+    const counted = (mist) => all.reduce((n, b) => n + (mist === undefined || b.mist === mist ? weight(b) : 0), 0);
     const volume = (a, b) => Math.min(LARGEST, Math.cbrt(a ** 3 + b ** 3));
     const height = (r) => beads[sizeOf(r)].height;
-    // A bead to condense somewhere: unseen a moment, then growing in place; to `full` (heavy, so to run, or light, so to linger).
-    // Where: anywhere (a little more toward the top); or, now and then, close beside a bead already there (to grow into it), or on a
-    // still-wet track (to run down it, fast). The glass misting over (the effect just on): some way grown already
-    const condense = (misting) => {
+    // A bead to condense somewhere: unseen a moment, then growing in place; to `full` (heavy, so to run, or light, so to linger; or
+    // mist: tiny, lingering). Where: anywhere (a little more toward the top); or, now and then, close beside a bead already there (to
+    // grow into it), or (not mist) on a still-wet track (to run down it, fast). The glass misting over (the effect just on): some way
+    // grown already
+    const condense = (misting, mist) => {
       let x = between(3, W - 4), cy = 6 + (H * 0.82 - 6) * random() ** 1.3, heavy = random() < 0.7;
       const k = random(), near = all.filter((b) => b.state === "grow" || b.state === "hold");
       if (k < 0.3 && near.length) {
         const o = near[Math.floor(random() * near.length)], a = between(0, 2 * Math.PI), far = o.r + between(2, 4.5);
         [x, cy] = [o.x + Math.cos(a) * far, o.cy + Math.sin(a) * far];
-      } else if (k < 0.75 && wetList.length) {
+      } else if (k < 0.75 && wetList.length && !mist) {
         let i = wetList[Math.floor(random() * wetList.length)];   // (one wet still, of a few picked: the wettest)
         for (let j = 0; j < 3; j++) { const o = wetList[Math.floor(random() * wetList.length)]; if (wet[o] > wet[i]) i = o; }
         [x, cy, heavy] = [i % W, Math.floor(i / W) - between(2, 6), true];   // (water gathering there: heavy soon)
       }
       x = Math.round(clamp(x, 3, W - 4)); cy = clamp(cy, 6, H * 0.82);
-      const full = heavy ? between(HEAVY, 3.2) : between(0.9, 2.1);
-      return {id: ++made, state: "rest", x, cy, wait: between(0, misting ? 1.5 : 3), r: 0, water: 0,
+      const full = mist ? between(0.8, TINY - 0.05) : heavy ? between(HEAVY, 3.2) : between(0.9, 2.1);
+      return {id: ++made, state: "rest", mist, x, cy, wait: between(0, misting ? 1.5 : 3), r: 0, water: 0,
               merged: 0, grow: between(0.2, 0.4), full, start: misting ? between(SIZES[0], full * 0.85) : SIZES[0], hold: between(4, 10)};
     };
     function clear() {   // the glass fresh: nothing beading, running or wet
@@ -793,10 +802,14 @@ const Sky = (() => {
     const reach = (r) => H * between(0.22, 0.4) * (r / 2.8) ** 1.5;   // how far a bead this big runs
     const fadeFor = (r) => 0.5 + 0.12 * r ** 3;                      // ... and how long it takes to dry away (its water)
     const lowest = (r) => H * 0.88 - height(r);                        // (never at the window's bottom)
-    const pace = (d) => {   // a run's next stretch on dry glass: how fast (bigger, faster), how far; then perhaps a pause
-      d.speed = (random() < 0.25 ? between(13, 21) : between(4, 9)) * clamp(d.r / 2.8, 0.75, 1.6);
-      d.run = between(3, 14);
+    // A run's next stretch: how fast (on dry glass bigger, faster; on a track as fast as ever, bigger faster still, a bead shrunk as it
+    // ran never slower there), how far; then perhaps a pause
+    const pace = (d) => {
+      d.base = random() < 0.25 ? between(13, 21) : between(4, 9);
+      d.size = clamp(d.r / 2.8, 0.75, 1.6);
+      d.run = d.on ? between(3, 16) : between(3, 14);
     };
+    const speedOf = (d) => d.on ? d.base * ON * Math.max(1, d.size) : d.base * d.size;
     const runs = (s) => {   // a still bead, heavy now, off down the glass from where it is (its track from below where it hung)
       const y = Math.max(1, Math.floor(s.cy - height(s.r) / 2));
       s.water = Math.max(s.water, s.r ** 3);
@@ -831,6 +844,7 @@ const Sky = (() => {
         into.loss = into.end > into.y ? 0.55 * r / (into.end - into.y) : 0;
       }
       into.r = r;
+      if (r >= TINY) into.mist = false;   // (mist no longer: a bead like the rest, counted whole)
       into.merged += 1 + from.merged;
       from.gone = true;
       seen.merges++;
@@ -880,7 +894,7 @@ const Sky = (() => {
       if (d.pause > 0) { const p = Math.min(d.pause / (d.on ? 2.5 : 1), time); d.pause -= p * (d.on ? 2.5 : 1); time -= p; seen[d.on ? "on" : "off"][1] += p; }
       // Running: a pixel down at most at a time (none skipped), each its wandering and what it meets
       while (time > 1e-6 && d.pause <= 0 && d.y < d.end && !d.gone) {
-        const v = d.speed * (d.on ? ON : 1), dy = Math.min(v * time, 1, d.run + 1e-3, d.end - d.y + 1e-3);
+        const v = speedOf(d), dy = Math.min(v * time, 1, d.run + 1e-3, d.end - d.y + 1e-3);
         time -= dy / v;
         seen[d.on ? "on" : "off"][0] += dy;
         seen[d.on ? "on" : "off"][1] += dy / v;
@@ -895,10 +909,6 @@ const Sky = (() => {
             if (Math.abs(off) > MEANDER * 0.5 && Math.sign(d.slant) === Math.sign(off)) d.slant = -d.slant;
             d.bend = Math.abs(d.slant) > 0.6 ? between(1, 2.5) : between(4, 16);
           }
-        }
-        if (d.run <= 0) {
-          pace(d);
-          if (d.on ? random() < 0.2 : random() < 0.75) d.pause = d.on ? between(0.15, 0.8) : between(0.6, 2.6);
         }
         // Whatever it touches on the way, swept up (its water added: bigger, so on faster and further)
         for (const o of all) if (o !== d && !o.gone && o.r > 0 && o.state !== "fade" && touching(d, o)) {
@@ -924,13 +934,18 @@ const Sky = (() => {
             if (o && Math.abs(o.x - d.x) >= 1) { d.slant = 0.7 * Math.sign(o.x - d.x); d.bend = Math.abs(o.x - d.x); }
           }
         }
+        d.x = clamp(d.x, Math.ceil(d.r), W - 1 - Math.ceil(d.r));   // (never part off the window's side)
+        if (d.run <= 0) {   // (the stretch's end: the next, and perhaps a pause, as it is now: on a track or off)
+          pace(d);
+          if (d.on ? random() < 0.2 : random() < 0.75) d.pause = d.on ? between(0.15, 0.8) : between(0.6, 2.6);
+        }
       }
       if (time > 1e-6) seen[d.on ? "on" : "off"][1] += time;
     }
     return {
       strength: () => 0.85,
-      need: () => W / 14,
-      count: () => all.length,
+      need: () => W / 14 / (1 - MIST),   // (the growing and running beads' W / 14, and the mist's share on top)
+      count: () => Math.ceil(counted() - 1e-9),
       want(v) { if (v > 0 && e.amount <= 0) clear(); e.level = v; },   // (on again after fading out all the way: the glass fresh)
       resize() {
         wet = new Float32Array(W * H);
@@ -944,18 +959,23 @@ const Sky = (() => {
           for (let i = 0; i < 400; i++) this.step(0.1, t, share);
         }
         const most = Math.max(2, Math.round(this.need() * share));
-        // Too many (the budget shrunk): those yet to show dropped, then the least of those growing; the rest left to dry away
-        let over = all.length - most;
-        for (const b of all) if (over > 0 && b.state === "rest") { b.gone = true; over--; }
-        for (const b of all) if (over > 0 && b.state === "grow" && b.r < 1) { b.gone = true; over--; }
-        for (const b of all) if (over > 0 && (b.state === "grow" || b.state === "hold")) { dries(b); over--; }
+        // Too many (the budget shrunk, or tiny beads grown): those yet to show dropped, then the least of those growing; the rest left to
+        // dry away
+        let over = counted() - most;
+        for (const b of all) if (over > 1e-9 && b.state === "rest") { b.gone = true; over -= weight(b); }
+        for (const b of all) if (over > 1e-9 && b.state === "grow" && b.r < 1) { b.gone = true; over -= weight(b); }
+        for (const b of all) if (over > 1e-9 && (b.state === "grow" || b.state === "hold")) { over -= weight(b); dries(b); }
         all = all.filter((b) => !b.gone);
         const misting = made === 0 || !all.length;
-        while (all.length < most && e.level > 0) all.push(condense(misting));   // (too few: more to condense)
+        // Too few: more to condense, mist and the rest each as many as fit their share
+        const rest = Math.max(1, Math.round(most * (1 - MIST)));
+        for (let n = counted(false); n + 1 <= rest + 1e-9 && e.level > 0; n++) all.push(condense(misting, false));
+        for (let n = counted(true); n + 1 / 3 <= most - rest + 1e-9 && e.level > 0; n += 1 / 3) all.push(condense(misting, true));
         for (const b of all) {
           if (b.gone) continue;
+          if (b.shown !== undefined) b.shown += dt;
           if (b.state === "rest") {
-            if ((b.wait -= dt) <= 0) { b.state = "grow"; b.r = b.start; }
+            if ((b.wait -= dt) <= 0) { b.state = "grow"; b.r = b.start; b.shown = 0; }
           } else if (b.state === "grow") {
             b.r = Math.min(b.full, b.r + b.grow * dt);
             if (b.r >= b.full) b.state = "hold";
@@ -1008,7 +1028,7 @@ const Sky = (() => {
         if (wetList.length) g.drawImage(layer, 0, 0);
         for (const b of all) {
           if (b.state === "rest") continue;
-          const sprite = beads[sizeOf(b.r)], a = b.state === "fade" ? b.left / b.fadeFor : 1;
+          const sprite = beads[sizeOf(b.r)], a = (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, (b.shown ?? APPEAR) / APPEAR);
           const left = Math.round(b.x) - (sprite.width >> 1), top = b.state === "run" || b.ran !== undefined ? Math.floor(b.y) : Math.round(b.cy - sprite.height / 2);
           g.globalAlpha = alpha * a;
           g.drawImage(sprite, left, top);

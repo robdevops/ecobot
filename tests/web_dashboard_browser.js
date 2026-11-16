@@ -958,11 +958,11 @@ const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
 // the beads at the start and at the end; where the still ones appeared (each's height as it first showed, of the window's); merges,
 // and the runs done ({merged, r, ran, fade}); every 10th frame, the most pixels drawn in the canvas's top two rows, and the still
 // beads drawn whole (r 2 or more, not drying): of the canvas's pixels in their sprites, the alpha (0-255) of those drawn, mean and
-// most
+// most; and the still beads showing and the beads running, each's mean count
 const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
   const last = new Map(), lastSites = new Map(), ended = [], first = Sky.state().frames, count = Sky.state().particles.humidity;
   let n = 0, up = 0, down = 0, wander = 0, offset = 0, samples = 0, lowest = 0, moved = 0, behind = 0, wet = 0, cut = 0, popped = 0;
-  let top = 0, inked = 0, alphas = 0, most = 0, looked = 0;
+  let top = 0, inked = 0, alphas = 0, most = 0, looked = 0, still = 0, running = 0, counts = 0;
   const wandered = new Set(), trails = new Map(), born = new Map();
   const canvas = document.querySelector("#sky canvas"), g = canvas.getContext("2d");
   const step = () => {
@@ -992,6 +992,7 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
       let k = 0;
       for (let i = 3; i < rows.length; i += 4) if (rows[i]) k++;
       top = Math.max(top, k);
+      still += h.sites.filter((s) => s.r > 0).length; running += h.runners.length; counts++;
       for (const s of h.sites) if (s.r >= 2 && s.alpha === 1 && s.drawn) {
         const [x, y, w, hh] = s.drawn, d = g.getImageData(x, y, w, hh).data;
         for (let i = 3; i < d.length; i += 4) if (d[i]) { inked++; alphas += d[i]; most = Math.max(most, d[i]); }
@@ -1004,7 +1005,8 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
               dried: h.dried, trails: trails.size, drier: [...trails.values()].filter(([x, y, w]) => h.wetAt(x, y) < w).length,
               on: h.on, off: h.off, stray: h.stray(), cut, popped, count: [count, Sky.state().particles.humidity],
               born: [...born.values()], merges: h.merges, merged: h.merged, done: h.done, largest: h.largest, top,
-              look: { beads: looked, mean: alphas / Math.max(inked, 1), most } });
+              look: { beads: looked, mean: alphas / Math.max(inked, 1), most },
+              showing: { still: still / Math.max(counts, 1), running: running / Math.max(counts, 1) } });
   };
   requestAnimationFrame(step);
 }), frames);
