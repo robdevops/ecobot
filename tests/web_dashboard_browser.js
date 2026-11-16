@@ -1,6 +1,6 @@
 // The dashboard page in Playwright's Chromium, for tests/test_web_dashboard.py.
 //   node web_dashboard_browser.js URL SHOTS SIZES: the page at each size ({name: [width, height]}): a screenshot of each (SHOTS/dashboard-
-//     NAME.png, device scale factor 2) and, on stdout, {name: {tiles, rects, columns, scroll, scrollWidth, scrollHeight, status, errors,
+//     NAME.png, device scale factor 2) and, on stdout, {name: {tiles, rects, columns, scroll, scrollWidth, scrollHeight, status, glass, errors,
 //     zoomed}}; then the first tile zoomed (Enter): its look, and a screenshot (SHOTS/dashboard-NAME-zoomed.png).
 //   node web_dashboard_browser.js URL --live: the page open at 800x600; prints {label} (the first tile's), waits for a line on stdin
 //     (the test has changed the reading), then prints {label, same_page, errors} once the tile shows it, or after 15 s.
@@ -61,6 +61,7 @@ async function sizes(browser, url, shots, wanted) {
       scrollWidth: document.documentElement.scrollWidth,
       scrollHeight: document.documentElement.scrollHeight,
       status: document.getElementById("status").textContent,
+      glass: [...document.querySelectorAll(".tile")].map((t) => [t.dataset.kind, t.querySelectorAll("svg .glass").length]),
     })), errors };
     // zoomed (Enter on the first tile): its look (box, title, text, table) and a screenshot (SHOTS/dashboard-NAME-zoomed.png)
     await page.focus(".tile");
@@ -72,6 +73,7 @@ async function sizes(browser, url, shots, wanted) {
       const table = [...t.querySelectorAll(".unit, .chip, .figure, .tablearea")].map((e) => getComputedStyle(e));
       return { zoomed: document.body.classList.contains("zoomed"), box: rect(t), title: rect(t.querySelector(".title")),
                texts: [...t.querySelectorAll("svg text")].map(rect).filter((r) => r.width),
+               glass: [...t.querySelectorAll("svg .glass")].map(rect),
                table: [...new Set(table.map((c) => `${c.visibility} ${c.opacity}`))] };
     });
     await context.close();

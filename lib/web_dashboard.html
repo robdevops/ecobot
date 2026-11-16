@@ -1556,6 +1556,19 @@ const Sky = (() => {
            `L${cx + half},${join} A${radius},${radius} 0 1 1 ${cx - half},${join} Z`;
   }
 
+  // The thermometer's glass catching the light, so it reads as rounded: a thin soft line down the tube's left side and a short curved
+  // one on the bulb's upper left, see-through white over the red (in the gauge's own pixels: scaled with the tile, grid or zoomed)
+  function glass(svg, cx, top, half, bulbY, radius) {
+    const x = cx - half * 0.55, from = top + half * 0.9, to = bulbY - Math.sqrt(radius ** 2 - half ** 2) - 6;
+    const soft = {fill: "none", stroke: "#FFFFFF", "stroke-linecap": "round", class: "glass"};
+    el("path", {d: `M${x},${from} L${x},${to}`, ...soft, "stroke-width": 4.5, "stroke-opacity": 0.28}, svg);
+    el("path", {d: `M${x + 6.5},${from + 4} L${x + 6.5},${from + (to - from) * 0.45}`, ...soft, "stroke-width": 2,
+                "stroke-opacity": 0.18}, svg);
+    const r = radius * 0.66, [x0, y0] = polar(cx, bulbY, r, 168), [x1, y1] = polar(cx, bulbY, r, 118);
+    el("path", {d: `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 0 1 ${x1.toFixed(2)},${y1.toFixed(2)}`, ...soft, "stroke-width": 4,
+                "stroke-opacity": 0.3}, svg);
+  }
+
   function thermometer(svg, tile, ink, id) {
     const top = 95, bottom = 238, cx = 285, bulb = 280, half = L.tube_half, radius = L.bulb_radius, gap = L.mercury_gap;
     scaleBar(svg, cx - half - L.bar_gap - L.bar_width, top, bottom, tile, ink);
@@ -1565,6 +1578,7 @@ const Sky = (() => {
     el("path", {d: thermometerPath(cx, top - 10 + gap, half - gap, bulb, radius - gap), fill: ink(L.fill), "clip-path": `url(#${id})`}, svg);
     el("path", {d: thermometerPath(cx, top - 10, half, bulb, radius), fill: "none", stroke: ink(L.soft), "stroke-width": lw(2.5),
                 "stroke-linejoin": "round"}, svg);
+    glass(svg, cx, top - 10, half, bulb, radius);
     const label = text(svg, cx - 50, bulb, "", 40, ink(L.soft), "end");
     label.classList.add("reading");
     return (v) => {   // the gauge at reading v (moved in place, frame by frame)

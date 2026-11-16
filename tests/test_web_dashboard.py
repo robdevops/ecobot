@@ -405,7 +405,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         out, err = await asyncio.wait_for(live.communicate(), 60)
         assert live.returncode == 0, err.decode()
         after = json.loads(out)
-    n = len(gauge_sheet.sheet(Station().current(gauge_sheet.call(), {"fetch": False})).tiles)
+    sheet = gauge_sheet.sheet(Station().current(gauge_sheet.call(), {"fetch": False})).tiles
+    n, kinds = len(sheet), [t.kind for t in sheet]
     for name, (width, height) in SIZES.items():
         got = report[name]
         assert got["errors"] == [], (name, got["errors"])
@@ -415,6 +416,12 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert (shots / f"dashboard-{name}.png").exists() and (shots / f"dashboard-{name}-zoomed.png").exists()
         assert got["zoomed"]["zoomed"], (name, got["zoomed"])
         fills(got["zoomed"], width, height)                                       # zoomed: its title and gauge fill the window, no table
+        # the thermometers' glass catches the light (a line down the tube, a curve on the bulb); no dial or beaker has it
+        assert sorted(k for k, _ in got["glass"]) == sorted(kinds) and {"thermometer", "dial", "beaker"} <= set(kinds), got["glass"]
+        assert all(g == 3 if k == "thermometer" else g == 0 for k, g in got["glass"]), got["glass"]
+        tile, glass = got["zoomed"]["box"], got["zoomed"]["glass"]                # (the first tile, Temperature) zoomed: the glass with it
+        assert len(glass) == 3 and all(g["height"] > 0 and tile["left"] <= g["left"] and g["right"] <= tile["right"] for g in glass)
+        assert max(g["height"] for g in glass) > tile["width"] * 0.2, (glass, tile)
     for name in ("tablet-landscape", "tablet-portrait", "desktop"):            # these fit every tile without scrolling
         got = report[name]
         assert got["scroll"] == "no" and got["scrollHeight"] <= SIZES[name][1], (name, got)
