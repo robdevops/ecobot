@@ -1348,32 +1348,25 @@ const rainSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
   const begun = () => Sky.clock().frames >= 50 ? look() : __next(begun);
   begun();
 }), ms);
-// uv's beams over 400 s of the weather's time (on a page whose clock runs on fast: `pace`, below; each frame drawn 0.1 s on, Sky's
-// longest step, its weather's time 10 times that: 1 s a frame): where each beam's halo was drawn (with uv alone, the glow, then each
-// beam's halo and core), its least and greatest x (art px), how many times it turned back (from going one way to the other), how
-// often it moved (in s of the weather's time, the least between one move and the next; null if it moved once or never), and how
-// faint and bright it was
+// uv's beams over 40 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame drawn 0.1 s on, Sky's
+// longest step): where each beam's halo was drawn (with uv alone, the glow, then each beam's halo and core), its least and greatest x
+// (art px), how many times it turned back (from going one way to the other), and how faint and bright it was
 const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
-  const g = document.querySelector("#sky canvas").getContext("2d"), drawImage = g.drawImage, clearRect = g.clearRect, drawn = [], when = [];
-  Sky.timeScale(10);
-  g.clearRect = function (...args) { drawn.push([]); when.push(Sky.clock().clock); return clearRect.apply(this, args); };   // (a frame begins)
+  const g = document.querySelector("#sky canvas").getContext("2d"), drawImage = g.drawImage, clearRect = g.clearRect, drawn = [];
+  g.clearRect = function (...args) { drawn.push([]); return clearRect.apply(this, args); };   // (a frame begins)
   g.drawImage = function (...args) { if (drawn.length) drawn[drawn.length - 1].push([args[1], this.globalAlpha]); return drawImage.apply(this, args); };
   const step = () => {
     if (drawn.length < 400) return __next(step);
-    const kept = drawn.map((f, i) => [f, when[i]]).filter(([f]) => f.length === drawn[0].length), frames = kept.map(([f]) => f);
-    const beams = (frames[0].length - 1) / 2;
-    Sky.timeScale(1);
-    resolve({ frames: frames.length, span: kept[kept.length - 1][1] - kept[0][1], beams: Array.from({ length: beams }, (_, b) => {
+    const frames = drawn.filter((f) => f.length === drawn[0].length), beams = (frames[0].length - 1) / 2;
+    resolve({ frames: frames.length, beams: Array.from({ length: beams }, (_, b) => {
       const at = frames.map((f) => f[1 + 2 * b]);
-      let turns = 0, way = 0, moved = null, gap = null;
+      let turns = 0, way = 0;
       for (let i = 1; i < at.length; i++) {
         const now = Math.sign(at[i][0] - at[i - 1][0]);
         if (now && way && now !== way) turns++;
         if (now) way = now;
-        if (now && moved !== null) gap = Math.min(gap === null ? Infinity : gap, kept[i][1] - moved);
-        if (now) moved = kept[i][1];
       }
-      return { least: Math.min(...at.map((d) => d[0])), most: Math.max(...at.map((d) => d[0])), turns, gap,
+      return { least: Math.min(...at.map((d) => d[0])), most: Math.max(...at.map((d) => d[0])), turns,
                faint: Math.min(...at.map((d) => d[1])), bright: Math.max(...at.map((d) => d[1])) };
     }) });
   };
@@ -2189,7 +2182,7 @@ const WEATHER = {
   },
   async opened(browser, url, out) {
     const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
-    // uv's beams over 400 s of the weather's time, on a page of their own beside the rest: each swaying about its place
+    // uv's beams over 40 s of the page's time, on a page of their own beside the rest: each swaying about its place
     // ... then, on that page, the frost (its page's time 10 times as fast and its weather's 40 times that: 4 s a frame): just below
     // 0 °C (-0.5) as far as it goes, then melted; then -5 °C from nothing, a minute in and as far as it goes; then melting, half a
     // minute in, and gone. Each: Sky.frost() and the weather's time it took; as far as it goes, the canvas's pixels: their alphas
