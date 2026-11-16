@@ -1176,7 +1176,8 @@ const Sky = (() => {
   //   little fog left in it in thin streaks down it, nothing else (no droplet, speck or blob); on clear glass a thin, dirty wet
   //   streak (a px or two: a third of its width or less), uneven along it (thicker, thinner, broken here and there), a greyish
   //   film with grime along an edge here and there, a glint now and then, a few tiny droplets; where it paused, a slightly wider
-  //   blob, never a gap. Each fogging over again (from its ragged edges inward) or drying (its thin parts first) over its own LIFE (3 to 10 minutes; crisp for its first
+  //   blob, never a gap: a rain bead's only (one condensed out of the fog leaves nothing on clear glass, so its trails go with
+  //   the fog as it clears, never left behind as dotted streaks). Each fogging over again (from its ragged edges inward) or drying (its thin parts first) over its own LIFE (3 to 10 minutes; crisp for its first
   //   1 - CRISP). (The beads feel it as before: the glass under them evenly wiped, see feltOf.)
   //   Reaching the window's bottom edge, it runs off it: gone.
   // The humidity falling below 90 % (the effect off): the fog clearing as from a demister, the middle first and the edges last over
@@ -1380,7 +1381,7 @@ const Sky = (() => {
     //   trail; a px wider or narrower at most), the fog coming back first right at them; a little fog left unwiped in thin streaks
     //   down it (a px wide, 4-10 rows long, now and then in a column of the bead's, faint at their ends): a clean wiped streak, no
     //   droplet, speck or blob in it, wherever the bead paused.
-    //   On clear glass: a thin streak (a third of its width or less: a px or two) down its middle, wandering a little within it; its
+    //   On clear glass (a rain bead's only; a condensed one's shows nothing there): a thin streak (a third of its width or less: a px or two) down its middle, wandering a little within it; its
     //   thickness rising and falling along it (thicker, thinner, now and then broken for a px or three: no regular pattern), so the
     //   thin parts dry first; mostly a greyish film, grime here and there along its right edge, a glint now and then, a few tiny
     //   droplets left on it. Where it paused: a little wider there (a blob, a droplet), never a gap.
@@ -1424,6 +1425,7 @@ const Sky = (() => {
           p = h < 0.045 ? GLINT : x > at && (cov < 1 || x >= at + wide / 2 - 0.5) && h < 0.4 ? GRIME : FILM;
         }
         if (x === drop) { p = hash(x, y, id + 9) < 0.35 ? SPARK : DROP; k = 255; }
+        if (b.kind === "fog") p = 0;   // (a condensed bead's: nothing on clear glass, gone with the fog under it as it clears)
         const edge = Math.min(x - a, c - x), e = edge < 0 ? 1 : edge === 0 ? 0.75 + 0.24 * h : edge === 1 ? 0.1 + 0.15 * h : 0.1 * h;
         // (residue: a streak a px wide down a column inside the trail, 4-10 rows, started where the column's noise is high; faint
         // at its ends; started inside it, never at the ragged edge, and run on whole: never a lone speck)
@@ -1877,12 +1879,13 @@ const Sky = (() => {
                        }
                        return [...found].sort().map((c) => c.split(",").map(Number));
                      },
-                     // (what's on the glass: trail pixels listed, its canvas's pixels with anything on them, the beads, the fog)
+                     // (what's on the glass: trail pixels listed, its canvas's pixels with anything on them, those showing a trail's
+                     // look on clear glass (film, grime, glint, droplet, spark: looks), the beads, the fog)
                      marks: () => {
-                       let ink = 0, wet = 0;
+                       let ink = 0, wet = 0, looks = 0;
                        if (layer) { const d = layer.getContext("2d").getImageData(0, 0, W, H).data; for (let i = 3; i < d.length; i += 4) if (d[i]) ink++; }
-                       if (listed) for (let i = 0; i < W * H; i++) wet += listed[i];
-                       return {trails: trails.length, listed: wet, ink, beads: all.length, cover, amount: e.amount};
+                       if (listed) for (let i = 0; i < W * H; i++) { wet += listed[i]; looks += key[i] > FOG.length; }
+                       return {trails: trails.length, listed: wet, ink, looks, beads: all.length, cover, amount: e.amount};
                      },
                      stray: () => {   // (pixels left wiped, or wet, on the fog's canvas where no trail is any more)
                        if (!layer) return 0;

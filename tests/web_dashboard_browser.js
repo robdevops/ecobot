@@ -1549,11 +1549,13 @@ const snapped = (page) => page.evaluate(() => {
 // humidity off (the humidity below 90 %), every frame after till the fog has cleared and no bead is left (at most `frames`):
 // the fog's mean thickness in the window's middle and at its edges as it clears (the first frame each is gone, and the edges' then);
 // the slow beads (under 1 px/s) showing at the start; each slow one as it went (gone at a radius of 1 or more, not faded: popped;
-// else: where it was, its distance from the middle, 0 there to 1 at the edges, and the frame); the frames taken and what was left
+// else: where it was, its distance from the middle, 0 there to 1 at the edges, and the frame); the frames taken and what was left;
+// every 10th frame while it clears, the most pixels showing a trail's look on clear glass (looks: the condensed beads' trails none);
+// and the glass as the fog had just cleared (cleared: its marks, the trails still listed) and at the end (end)
 const humidityClears = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
   document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { wind: 1 } }));
   const last = new Map(), gone = [], start = Sky.state().humidity.beads.filter((b) => b.v < 1).length, [W, H] = Sky.state().size;
-  let n = 0, popped = 0, middleGone = null, edgeGone = null, edgeThen = null, shrank = 0;
+  let n = 0, popped = 0, middleGone = null, edgeGone = null, edgeThen = null, shrank = 0, looks = 0, cleared = null;
   const step = () => {
     const h = Sky.state().humidity, fog = h.fog(), beads = new Map(h.beads.map((b) => [b.id, b])), absorbed = new Set(h.absorbed), left = new Set(h.left);
     for (const [id, b] of last) if (!beads.has(id) && !absorbed.has(id) && !left.has(id)) {
@@ -1565,10 +1567,12 @@ const humidityClears = (page, frames) => page.evaluate((frames) => new Promise((
     for (const [id, b] of beads) last.set(id, b);
     if (middleGone === null && fog.middle < 0.005) { middleGone = n; edgeThen = fog.edge; }
     if (edgeGone === null && fog.edge < 0.005) edgeGone = n;
+    if (n % 10 === 0 && fog.cover > 0) looks = Math.max(looks, h.marks().looks);
+    if (!cleared && fog.cover === 0) cleared = h.marks();
     n++;
     if (n < frames && (fog.cover > 0 || beads.size)) return __next(step);
     resolve({ start, middleGone, edgeGone, edgeThen, gone, popped, shrank, frames: n, left: { cover: fog.cover, thickness: fog.thickness,
-              beads: beads.size }, effects: Sky.state().effects });
+              beads: beads.size }, effects: Sky.state().effects, looks, cleared, end: h.marks() });
   };
   __next(step);
 }), frames);

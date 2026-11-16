@@ -1545,6 +1545,11 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert clears["middleGone"] < clears["edgeGone"] and clears["edgeThen"] > 0.3, clears
     assert clears["left"] == {"cover": 0, "thickness": 0, "beads": 0} and clears["effects"] == ["wind"], clears
     assert clears["popped"] == 0 and clears["shrank"] > clears["start"], clears
+    # (the condensed beads' trails going with the fog as it clears: none of them ever showing a clear-glass streak's look (film,
+    # grime, glint, droplet) while it clears, and once it has cleared nothing of them on the glass, many still listed (fresh still))
+    assert clears["looks"] == 0, clears
+    assert clears["cleared"]["trails"] > 200 and clears["cleared"]["ink"] == 0 and clears["cleared"]["looks"] == 0, clears["cleared"]
+    assert clears["end"]["ink"] == 0 and clears["end"]["looks"] == 0, clears["end"]
     middle = [g["frame"] for g in clears["gone"] if g["far"] < 0.4]
     edges = [g["frame"] for g in clears["gone"] if g["far"] > 0.7]
     assert middle and edges and sum(middle) / len(middle) < sum(edges) / len(edges), clears["gone"]
