@@ -22,7 +22,7 @@
     (EcobotServer.publish_changes: nothing is fetched for it), so the page fetches the data again and moves its gauges in place. A
     comment every HEARTBEAT_SECONDS keeps a proxy from closing it.
 
-The page's weather drawn behind the gauges (its canvas, "stop animations", the test links) is there for every viewer unless
+The page's weather drawn behind the gauges (its canvas, "stop animation", the test links) is there for every viewer unless
 MCP_DASHBOARD_ANIMATIONS is off: then the page is served with data-animations="off" on its <html> (ANIMATIONS), and draws none of it.
 
 No token is asked for (it is the weather and air readings only) and the Host isn't checked: a browser opens it by the machine's name. The MCP

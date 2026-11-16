@@ -25,7 +25,7 @@
 //     and a long press do nothing, a tap back from another tile); prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --weather PART: the page at 1024x768, its data altered on the way, a part of the weather behind the
 //     tiles (WEATHER): each reading at, and just short of, the mark that calls up its effect; the canvas behind the tiles and the tiles'
-//     red frames; "stop animations"; the temporary test links; every effect at once (?fx=all: the frame time, the light, the particles);
+//     red frames; "stop animation"; the temporary test links; every effect at once (?fx=all: the frame time, the light, the particles);
 //     ?fx= as the page opens, a phone, reduced motion; prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --fill CASES: for each case {name: [width, height, hidden titles]}, the page with those hidden;
 //     prints {name: {rects, columns, scroll}}.
@@ -847,13 +847,16 @@ const weatherSeen = (page) => page.evaluate(() => {
            framed: [...document.querySelectorAll("#grid .tile.alert .title")].map((t) => t.textContent),
            link: link ? link.textContent : null };
 });
-// The bottom corners: "stop animations" (its words, its box), the test row's and its "clear"'s boxes (null without them), the strip's;
-// whether the link is clear of the strip, and on the screen
+// The bottom corners: "stop animation" (its words, its box), the test row's and its last link's boxes (null without them), the strip's;
+// the row's links' words, whether its "test:" shows, whether all of it fits unscrolled, the room left right of the link; whether the
+// link is clear of the strip, and on the screen
 const cornerSeen = (page) => page.evaluate(() => {
   const box = (e) => e ? e.getBoundingClientRect().toJSON() : null, link = document.querySelector("#motion .animations");
-  const clear = [...document.querySelectorAll("#fxtest button")].find((b) => b.textContent === "clear");
+  const row = document.getElementById("fxtest"), buttons = row ? [...row.querySelectorAll("button")] : [];
   const m = box(document.getElementById("motion")), s = box(document.getElementById("status"));
-  return { link: link ? link.textContent : null, motion: m, row: box(document.getElementById("fxtest")), clear: box(clear), strip: s,
+  return { link: link ? link.textContent : null, motion: m, row: box(row), last: box(buttons.at(-1)), strip: s,
+           buttons: buttons.map((b) => b.textContent), tag: row ? row.querySelector(".tag").checkVisibility() : null,
+           fits: row ? row.scrollWidth <= row.clientWidth && row.scrollLeft === 0 : null, spare: innerWidth - m.right,
            window: [innerWidth, innerHeight], apart: m.right <= s.left || s.right <= m.left || m.bottom <= s.top || s.bottom <= m.top,
            onScreen: m.left >= 0 && m.right <= innerWidth && m.bottom <= innerHeight };
 });
@@ -1161,7 +1164,7 @@ async function animationsOff(browser, url, out) {
 
 // The weather in parts, each its own page (and process: the tests run them side by side): "marks" (nothing called for, each effect at
 // its mark and just short of it, smog's bands, rain's strength, the ice's depth), "several" (several at once, the canvas, the tiles see-
-// through, their look, zoomed), "stop" ("stop animations", a reload, "start animations", the reset), "links" (the temporary test links;
+// through, their look, zoomed), "stop" ("stop animation", a reload, "start animation", the reset), "links" (the temporary test links;
 // and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn),
 // "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
 // and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, humidity's beads running down the
@@ -1273,11 +1276,16 @@ const WEATHER = {
     await calm(page, 5000);   // (the gauges' rise)
     await reads({ "UV index": 11 });
     await calm(page, 5000);   // (the gauge's move: frames of its own)
-    // "stop animations": nothing drawn, no loop, the frames stay; kept; "reset preferences" starts them again
+    // "stop animation" (a test link's effect on too): nothing drawn, no loop, the test link's effect ended, the frames stay; kept;
+    // "reset preferences" starts them again
+    await page.locator("#fxtest button[data-fx='wind']").click();
+    out.simulating = await weatherSeen(page);
     await page.locator("#motion .animations").click();
     await page.waitForTimeout(200);
     out.stopped = { ...await weatherSeen(page), frames: await framesIn(page, 600), ink: await canvasInk(page),
-                    stored: JSON.parse(await page.evaluate((key) => localStorage.getItem(key), KEY)).animations };
+                    stored: JSON.parse(await page.evaluate((key) => localStorage.getItem(key), KEY)).animations,
+                    url: await page.evaluate(() => location.search),
+                    pressed: await page.evaluate(() => document.querySelectorAll("#fxtest button.on").length) };
     await page.reload({ waitUntil: "load" });
     await page.waitForFunction(() => document.querySelectorAll(".tile.alert").length > 0);
     await calm(page, 5000);   // (the gauges' rise)
@@ -1293,7 +1301,7 @@ const WEATHER = {
     await page.getByText("reset preferences").click();
     await page.waitForTimeout(100);
     out.reset = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
-    // from the keyboard: Enter on the link stops them, the focus staying on it (now "start animations")
+    // from the keyboard: Enter on the link stops them, the focus staying on it (now "start animation")
     await page.focus("#motion .animations");
     await page.keyboard.press("Enter");
     out.keyboard = { ...await weatherSeen(page), focused: await page.evaluate(() => document.activeElement.textContent) };
@@ -1302,7 +1310,17 @@ const WEATHER = {
   },
   async links(browser, url, out) {
     const off = animationsOff(browser, url, out.off = {});   // (beside the rest)
-    // the temporary test links: each turns its effect and frame on (the gauges keep their readings), "clear" ends them; the URL follows
+    // phones (360x740, 390x844), every effect on (their links' longest): the row without "test:", all of it and "stop animation" in
+    // sight, unscrolled (beside the rest, as the off page)
+    const phones = Promise.all([[360, 740], [390, 844]].map(async ([width, height]) => {
+      const p = await weatherPage(browser, url, { query: "?fx=all", context: { viewport: { width, height }, hasTouch: true, isMobile: true } });
+      const seen = { ...await cornerSeen(p.page), labels: await p.page.evaluate(() => [...document.querySelectorAll("#fxtest button")]
+        .map((b) => b.getAttribute("aria-label"))), errors: p.errors };
+      await p.context.close();
+      return seen;
+    }));
+    // the temporary test links: each turns its effect and frame on (the gauges keep their readings), "stop animation" ends them (and
+    // stops the animations); the URL follows
     const { context, page, errors } = await weatherPage(browser, url);
     await calm(page, 5000);   // (the gauges' rise)
     const fx = (name) => page.locator("#fxtest button", { hasText: new RegExp(`^${name}`) }).first().click();
@@ -1332,14 +1350,17 @@ const WEATHER = {
       out.links.humiditySteps.push({ level: (await weatherSeen(page)).levels.humidity, url: await page.evaluate(() => location.search),
                                      label: await page.evaluate(() => document.querySelector("#fxtest button[data-fx='humidity']").textContent) });
     }
-    await fx("clear");
-    await page.waitForTimeout(100);
-    out.links.cleared = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
+    await page.locator("#motion .animations").click();
+    await page.waitForFunction(() => !document.querySelector("#motion .animations"));
+    out.links.cleared = { ...await weatherSeen(page), url: await page.evaluate(() => location.search),
+                          pressed: await page.evaluate(() => document.querySelectorAll("#fxtest button.on").length),
+                          stored: JSON.parse(await page.evaluate((key) => localStorage.getItem(key), KEY)).animations };
     // every effect at once: ?fx=all (no link of its own)
     await page.goto(url + "?fx=all", { waitUntil: "load" });
     await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent));
     out.links.all = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
     await off;
+    [out.phone360, out.phone390] = await phones;
     out.errors = [...errors, ...out.off.errors];
     await context.close();
   },
@@ -1445,7 +1466,7 @@ const WEATHER = {
       await p.context.close();
       return seen;
     }));
-    // without the temporary test links (the page as it will be), at 1024x768 and on a phone with a tile hidden: "stop animations" at
+    // without the temporary test links (the page as it will be), at 1024x768 and on a phone with a tile hidden: "stop animation" at
     // the bottom left on its own
     const bare = Promise.all([{}, { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true }].map(async (context) => {
       const p = await weatherPage(browser, url, { bare: true, context,
@@ -1477,7 +1498,7 @@ const WEATHER = {
       await alone.context.close();
     }));
     // a phone, a tile hidden, an effect on (the wind, its leaves looping there too): the strip (reset preferences · last reading) at
-    // the bottom right, the time last; the test row and "stop animations" not over it (beside the rest)
+    // the bottom right, the time last; the test row and "stop animation" not over it (beside the rest)
     const phoned = (async () => {
       const phone = await weatherPage(browser, url, { query: "?fx=wind", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
         init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
