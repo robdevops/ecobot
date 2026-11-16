@@ -5,6 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("TZ", "Australia/Melbourne")
+import time  # noqa: E402
+time.tzset()   # (in this process too, not only in the workers it starts: `-n0`'s hour-named archive is the hour the workers name)
 from tests import clocks   # noqa: E402  (ECOBOT_CLOCK: the whole suite at another time; before anything of lib/ is imported)
 CLOCK = clocks.install()
 

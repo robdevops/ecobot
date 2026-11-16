@@ -361,14 +361,21 @@ async def test_a_moment_is_the_reading_at_that_time_each_day(world):
 
 
 async def test_a_night_across_midnight_belongs_to_the_day_it_ends_on_and_today_counts_once_it_is_over(world):
-    out = await ask(world, hours="night", period="this week", sort_by="temp_min", order="asc", limit=20)
-    over_now = over(parse_stretch("night"), ago(0), TZ, datetime.now(TZ).timestamp())
-    days = [datetime.strptime(r["date"], "%a %d %b %Y").date() for r in out["days"]]
-    assert out["days_checked"] == 7 and (ago(0) in days) == over_now and (ago(7) in days) == (not over_now)
-    assert ("cut" in out["period"]) == (not over_now)
-    d = days[0]
-    night = range(local_epoch(datetime.combine(d - timedelta(days=1), time(22)), TZ), local_epoch(datetime.combine(d, time(6)), TZ), 300)
-    assert out["days"][0]["temp_min"] == pytest.approx(min(temp(t) for t in night), abs=0.06)
+    """At 5:30am last night isn't over: the week is the 7 whole days to yesterday. At 6:30am it is: the week ends today. (Each at a fixed
+    time of day, yesterday's, that the archive holds every reading of: at the real clock, just after 6am, the hour's archive may not yet
+    hold the night's last minutes.)"""
+    for hour, over_now in ((5, False), (6, True)):
+        when = yesterday_at(hour, 30, TZ)
+        assert over(parse_stretch("night"), when.date(), TZ, when.timestamp()) == over_now
+        out = await ask(dataclasses.replace(world, clock=when.timestamp), hours="night", period="this week", sort_by="temp_min",
+                        order="asc", limit=20)
+        days = [datetime.strptime(r["date"], "%a %d %b %Y").date() for r in out["days"]]
+        today = when.date()
+        assert out["days_checked"] == 7 and (today in days) == over_now and (today - timedelta(days=7) in days) == (not over_now), hour
+        assert ("cut" in out["period"]) == (not over_now), hour
+        d = days[0]
+        night = range(local_epoch(datetime.combine(d - timedelta(days=1), time(22)), TZ), local_epoch(datetime.combine(d, time(6)), TZ), 300)
+        assert out["days"][0]["temp_min"] == pytest.approx(min(temp(t) for t in night), abs=0.06), hour
 
 
 async def test_a_whole_day_stretch_gives_the_day_rows_figures_and_leaves_out_days_held_only_as_daily_records(world):
