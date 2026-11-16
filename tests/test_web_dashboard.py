@@ -787,7 +787,7 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
     assert got["nothing"] == {"effects": [], "levels": {k: 0 for k in got["nothing"]["levels"]}, "running": False, "framed": [],
                               "link": None, "frames": 0, "ink": 0}
     # each effect at its mark and not just short of it (rain above 0 mm/h, the AQI's Moderate band from 51, UV 11, 90 %, wind above
-    # 50 km/h, 40 °C, below 0 °C, not at it), its tile framed in red, the strip's link with it
+    # 15 km/h, 40 °C, below 0 °C, not at it), its tile framed in red, the strip's link with it
     for name, mark in got["marks"].items():
         effect = "ice" if name == "iceAtZero" else name
         assert mark["below"] | {"levels": None} == {"effects": [], "levels": None, "running": mark["below"]["running"], "framed": [],

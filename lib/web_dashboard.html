@@ -1748,7 +1748,7 @@ const Sky = (() => {
   // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animations" ----------
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
   // stronger to 8 mm/h), smog from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
-  // humidity, wind above 50 km/h (the reading now, not the gust), heat at 40 °C, ice below 0 °C (how far below). A tile
+  // humidity, wind above 15 km/h (the reading now, not the gust), heat at 40 °C, ice below 0 °C (how far below). A tile
   // with no reading now calls for nothing.
   const CALLED_BY = {rain: "Rain", smog: "US AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
                      ice: "Temperature"};
@@ -1766,7 +1766,7 @@ const Sky = (() => {
     return {rain: rate > 0 ? 0.3 + 0.7 * Math.min(1, rate / 8) : 0,
             smog: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),
             uv: uvi !== null && uvi >= 11 ? 1 : 0, humidity: humidity !== null && humidity >= 90 ? 1 : 0,
-            wind: wind !== null && wind > 50 ? 1 : 0, heat: temperature !== null && temperature >= 40 ? 1 : 0,
+            wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 40 ? 1 : 0,
             ice: temperature !== null && temperature < 0 ? -temperature : 0};
   }
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: the strip's link shows)
