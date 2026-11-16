@@ -733,10 +733,10 @@ async function fillMode(browser, url, cases) {
 async function weatherPage(browser, url, options = {}) {
   const state = { readings: {} };
   const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, deviceScaleFactor: 1, ...(options.context || {}) });
-  await context.addInitScript(() => {   // (every frame the page asks for, counted; and every fetch's data read)
+  await context.addInitScript((pace) => {   // (every frame the page asks for, counted; and every fetch's data read)
     window.__frames = 0;
     const ask = window.requestAnimationFrame.bind(window);
-    window.requestAnimationFrame = (f) => { window.__frames++; return ask(f); };
+    window.requestAnimationFrame = (f) => { window.__frames++; return ask(pace === 1 ? f : (ts) => f(ts * pace)); };   // (its time `pace` times as fast)
     window.__fetched = 0;
     const get = window.fetch.bind(window);
     window.fetch = async (...args) => {
@@ -744,7 +744,7 @@ async function weatherPage(browser, url, options = {}) {
       response.json = async () => { const data = await json(); window.__fetched++; return data; };   // (counted before the page renders it)
       return response;
     };
-  });
+  }, options.pace || 1);
   if (options.init) await context.addInitScript(options.init.fn, options.init.arg);
   await context.route(/\/dashboard\/data$/, async (route) => {
     const response = await route.fetch(), data = await response.json();
@@ -810,6 +810,24 @@ const windSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
   };
   requestAnimationFrame(step);
 }), ms);
+// uv's beams over 40 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame drawn 0.1 s on, Sky's
+// longest step): where each beam's halo was drawn (with uv alone, the glow, then each beam's halo and core), its least and greatest x
+// (art px), and how faint and bright it was
+const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
+  const g = document.querySelector("#sky canvas").getContext("2d"), drawImage = g.drawImage, clearRect = g.clearRect, drawn = [];
+  g.clearRect = function (...args) { drawn.push([]); return clearRect.apply(this, args); };   // (a frame begins)
+  g.drawImage = function (...args) { if (drawn.length) drawn[drawn.length - 1].push([args[1], this.globalAlpha]); return drawImage.apply(this, args); };
+  const step = () => {
+    if (drawn.length < 400) return requestAnimationFrame(step);
+    const frames = drawn.filter((f) => f.length === drawn[0].length), beams = (frames[0].length - 1) / 2;
+    resolve({ frames: frames.length, beams: Array.from({ length: beams }, (_, b) => {
+      const at = frames.map((f) => f[1 + 2 * b]);
+      return { least: Math.min(...at.map((d) => d[0])), most: Math.max(...at.map((d) => d[0])),
+               faint: Math.min(...at.map((d) => d[1])), bright: Math.max(...at.map((d) => d[1])) };
+    }) });
+  };
+  requestAnimationFrame(step);
+}));
 const framesIn = async (page, ms) => {   // the frames the page asked for in this long
   const before = await page.evaluate(() => window.__frames);
   await page.waitForTimeout(ms);
@@ -820,7 +838,7 @@ const framesIn = async (page, ms) => {   // the frames the page asked for in thi
 // its mark and just short of it, smog's bands, rain's strength, the ice's depth), "several" (several at once, the canvas, the tiles see-
 // through, their look, zoomed), "stop" ("stop animations", a reload, "start animations", the reset), "links" (the temporary test links),
 // "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
-// and the wind alone, a phone's strip, reduced motion)
+// and the wind alone, uv's beams over 40 s, a phone's strip, reduced motion)
 const WEATHER = {
   async marks(browser, url, out) {
     const { context, page, errors, reads } = await weatherPage(browser, url);
@@ -1003,6 +1021,13 @@ const WEATHER = {
   },
   async opened(browser, url, out) {
     const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
+    // uv's beams over 40 s of the page's time, on a page of their own beside the rest: each swaying about its place
+    const swaying = (async () => {
+      const uv = await weatherPage(browser, url, { query: "?fx=uv", pace: 10 });
+      const seen = { ...await uvSeen(uv.page), errors: uv.errors };
+      await uv.context.close();
+      return seen;
+    })();
     // ?fx= when the page opens
     for (const [name, query] of [["param", "?fx=smog3,wind,ice"], ["paramAll", "?fx=all"], ["paramRain", "?fx=rain2"],
                                 ["paramOld", "?fx=leaves,radiation,drips"]]) {
@@ -1039,6 +1064,7 @@ const WEATHER = {
     out.still = { ...await weatherSeen(still.page), frames: await framesIn(still.page, 800), ink: await canvasInk(still.page),
                   stateFrames: await still.page.evaluate(() => Sky.state().frames), errors: still.errors };
     await still.context.close();
+    out.uv = await swaying;
     out.errors = [];
   },
 };
