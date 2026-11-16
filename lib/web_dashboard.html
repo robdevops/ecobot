@@ -1278,7 +1278,7 @@ const Sky = (() => {
     const parts = [];
     if (resettable()) parts.push(link("reset preferences", reset, "reset"));
     if (calling()) parts.push(link(animated() ? "stop animations" : "start animations", toggleAnimations, "animations"));
-    const time = lost ? "reconnecting…" : asOf ? `updated ${asOf.slice(11, 16)}` : "";
+    const time = lost ? "reconnecting…" : asOf ? `last reading ${asOf.slice(11, 16)}` : "";
     if (time) parts.push(time);
     statusLine.replaceChildren(...parts.flatMap((p, i) => i ? [" · ", p] : [p]));
   }

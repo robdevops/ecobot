@@ -380,7 +380,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         got = report[name]
         assert got["errors"] == [], (name, got["errors"])
         assert got["tiles"] == n and got["scrollWidth"] <= width, (name, got)
-        assert got["status"] == "stop animations · updated 18:42", (name, got)   # (the US AQI's 56, Moderate: smog behind the tiles)
+        assert got["status"] == "stop animations · last reading 18:42", (name, got)   # (the US AQI's 56, Moderate: smog behind the tiles)
         assert all(r["right"] <= width + 0.5 and r["left"] >= -0.5 for r in got["rects"]), (name, got)
         assert (shots / f"dashboard-{name}.png").exists() and (shots / f"dashboard-{name}-zoomed.png").exists()
         assert got["zoomed"]["zoomed"], (name, got["zoomed"])
@@ -505,13 +505,13 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
                            "table": {"same": True, "dragging": False, "selected": "85"},
                            "reading": {"same": True, "dragging": False, "selected": "70"}}
     # the ×, then the remove zone, hide; the reset link shows beside the time
-    assert got["closed"] == {"titles": [t for t in reordered if t != "Rain"], "status": "reset preferences · stop animations · updated 18:42"}
+    assert got["closed"] == {"titles": [t for t in reordered if t != "Rain"], "status": "reset preferences · stop animations · last reading 18:42"}
     assert got["removing"]["over"] and got["removing"]["zone"] == "none"
     shown = [t for t in reordered if t not in ("Rain", "Wind")]
     assert got["removed"] == {"titles": shown, "stored": {"order": reordered, "hidden": ["Rain", "Wind"]}}
-    assert got["reloaded"] == {"titles": shown, "status": "reset preferences · stop animations · updated 18:42"}
+    assert got["reloaded"] == {"titles": shown, "status": "reset preferences · stop animations · last reading 18:42"}
     # reset: every tile, in the default order, nothing kept, no link
-    assert got["reset"] == {"titles": default, "status": "stop animations · updated 18:42", "stored": None}
+    assert got["reset"] == {"titles": default, "status": "stop animations · last reading 18:42", "stored": None}
     # unreadable preferences: the defaults; a tile new to the saved order (Rain) in its usual place, after Atmospheric pressure; an
     # absent tile's place and a later stage's keys kept
     assert got["corrupt"] == default
@@ -551,7 +551,7 @@ async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swi
     assert got["dropped"]["titles"] == reordered and not got["dropped"]["zone"] and got["dropped"]["clicks"] == 1
     # held and let go in place: the grip and × stay, and a tap on the × hides it
     assert got["armed"]["armed"] == ["Humidity"] and got["armed"]["close"] == "1"
-    assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "reset preferences · stop animations · updated 18:42"}
+    assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "reset preferences · stop animations · last reading 18:42"}
     # held at the bottom edge: the page scrolls to its end, never past it, and stays there once let go
     edge = got["edge"]
     assert edge["seen"][-1] == pytest.approx(edge["end"], abs=1) and max(edge["seen"]) <= edge["end"] + 1, edge
@@ -884,7 +884,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     # the strip at the bottom right: its links, then the time at the far right; on a phone with both its links, the test row
     # beside it or above it, never over it
     phone = got["phone"]
-    assert phone["strip"] == "reset preferences · stop animations · updated 18:42" and phone["right"], phone
+    assert phone["strip"] == "reset preferences · stop animations · last reading 18:42" and phone["right"], phone
     assert phone["apart"] and phone["onScreen"], phone
     # reduced motion: no loop, one still, faint frame (the ice as it would be), the frames and the link as ever
     still = got["still"]

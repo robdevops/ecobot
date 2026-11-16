@@ -39,7 +39,7 @@ async function open(browser, url, width, height, options = {}) {
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(url, { waitUntil: "load" });
-  await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /updated/.test(document.getElementById("status").textContent),
+  await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent),
                              null, { timeout: 15000 });
   return { context, page, errors };
 }
@@ -758,7 +758,7 @@ async function weatherPage(browser, url, options = {}) {
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(url + (options.query || ""), { waitUntil: "load" });
-  await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /updated/.test(document.getElementById("status").textContent));
+  await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent));
   // The readings now these (fetched again: the page fetches when it's shown again)
   const reads = async (readings) => {
     state.readings = readings;
@@ -947,7 +947,7 @@ const WEATHER = {
     out.links.cleared = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
     // every effect at once: ?fx=all (no link of its own)
     await page.goto(url + "?fx=all", { waitUntil: "load" });
-    await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /updated/.test(document.getElementById("status").textContent));
+    await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent));
     out.links.all = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
     out.errors = errors;
     await context.close();
@@ -995,7 +995,7 @@ const WEATHER = {
       out.particles[name] = { [name]: p[name], budget: p.budget };
       await alone.context.close();
     }
-    // a phone, a tile hidden, an effect on: the strip (reset preferences · stop animations · updated) at the bottom right, the time last;
+    // a phone, a tile hidden, an effect on: the strip (reset preferences · stop animations · last reading) at the bottom right, the time last;
     // the test row not over it
     const phone = await weatherPage(browser, url, { query: "?fx=rain", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
       init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
