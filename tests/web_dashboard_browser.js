@@ -1527,18 +1527,19 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
   };
   __next(step);
 }), frames);
-// Tiny beads put on the glass in the fog, a clear spot (no bead within 6 px): two close (2 px across and 1 down: not touching,
-// within the snap) and, 20 px on, two further apart (5 px across); then 6 frames: each placed one as it is (gone, or {x, y, r, vol,
+// Tiny beads put on the glass in the fog, a clear spot (no bead within 6 px): two close (1.6 px across and 1 down: not touching,
+// their edges under a px apart, within the snap) and, 20 px on, two just beyond it (2.5 px across: their edges about 1.4 px apart);
+// then 6 frames: each placed one as it is (gone, or {x, y, r, vol,
 // tiny}), and every bead then within 3 px of the close two's
 const snapped = (page) => page.evaluate(() => {
   const h0 = Sky.state().humidity, [W, H] = [h0.width, h0.height];
   let spot = null;
   for (let y = Math.round(H * 0.3); y < H * 0.7 && !spot; y += 3) for (let x = 20; x < W - 40 && !spot; x += 3) {
     if (h0.glassAt(x, y) !== "fog" || h0.glassAt(x + 25, y) !== "fog") continue;
-    if (h0.beads.every((b) => Math.hypot(b.x - x - 1, b.cy - y) > 6 && Math.hypot(b.x - x - 22, b.cy - y) > 7)) spot = [x, y];
+    if (h0.beads.every((b) => Math.hypot(b.x - x - 1, b.cy - y) > 6 && Math.hypot(b.x - x - 21, b.cy - y) > 6)) spot = [x, y];
   }
   if (!spot) return { spot };
-  const [x, y] = spot, placed = h0.place([{ x, y }, { x: x + 2, y: y + 1 }, { x: x + 20, y }, { x: x + 25, y }]);
+  const [x, y] = spot, placed = h0.place([{ x, y }, { x: x + 1.6, y: y + 1 }, { x: x + 20, y }, { x: x + 22.5, y }]);
   const at = Sky.state().humidity.beads.filter((b) => placed.includes(b.id)).map((b) => ({ x: b.x, y: b.y, r: b.r, vol: b.vol }));
   Sky.advance(6);
   const h = Sky.state().humidity, byId = new Map(h.beads.map((b) => [b.id, b]));
@@ -2370,7 +2371,7 @@ const WEATHER = {
         seen.restarted = await restarted(p.page, { humidity: 1 });
         // (and the physics the beads run by: a bead's mean speed on each glass, by size; its size after running 20 px in 5 s there)
         seen.physics = await p.page.evaluate(() => {
-          const { speed, after, gone, run } = Sky.state().humidity.physics, sizes = [0.6, 1, 1.4, 2, 2.8, 4, 6, 10];
+          const { speed, after, gone, run } = Sky.state().humidity.physics, sizes = [0.6, 1, 1.1, 1.4, 2, 2.8, 4, 6, 10];
           return { sizes, gone, run, speed: Object.fromEntries(["dry", "trail", "fog"].map((g) => [g, sizes.map((r) => speed(r, g))])),
                    after: Object.fromEntries(["dry", "trail", "fog"].map((g) => [g, sizes.map((r) => after(r, g, 20, 5))])) };
         });
@@ -2388,7 +2389,9 @@ const WEATHER = {
       const seen = await rainBeads(p.page, 100, 250, 0, 1);
       await p.page.evaluate(() => Sky.timeScale(1));
       let looks;
-      ({ eased: seen.eased, after: seen.after, looks } = await rainBeads(p.page, 0, 0, 300, 6, "heavy"));
+      // (the rain eased: watched till the last bead has gone, up to 1100 frames (11 minutes of its weather's time): one shrunk on
+      // dry glass under the run size and sitting on a wet trail keeps its size till that trail dries, 3 to 10 minutes)
+      ({ eased: seen.eased, after: seen.after, looks } = await rainBeads(p.page, 0, 0, 1100, 6, "heavy"));
       seen.looks.push(...looks);   // (the trails' looks, those running on too)
       // the rain easing, still on (light): its streaks drying on their own time, there still 6 s (of its weather's time) after
       // (the heavy rain's streaks: a minute old at most, none dried yet)
