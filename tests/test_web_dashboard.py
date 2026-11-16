@@ -12,6 +12,7 @@ ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
 import base64
+import functools
 import html
 import io
 import json
@@ -333,15 +334,26 @@ SIZES = {"phone-portrait": (390, 844), "phone-landscape": (844, 390), "tablet-la
          "desktop": (1920, 1080)}
 
 
+@functools.cache
 def browser_there() -> bool:
     if not shutil.which("node"):
         return False
     return subprocess.run(["node", "-e", "require('playwright')"], capture_output=True, timeout=60).returncode == 0
 
 
-async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overflow_and_no_console_error(server, station, tmp_path):
-    if not browser_there():   # (asked here, by the one worker that runs it, not by every worker as it collects the tests)
+@pytest.fixture
+def chromium():
+    """Skips the test without node and Playwright's Chromium: asked as a test runs, once in a worker (not as every worker collects the
+    tests: a node each, a third of a second)."""
+    if not browser_there():
         pytest.skip("needs node with Playwright's Chromium")
+
+
+needs_browser = pytest.mark.usefixtures("chromium")
+
+
+@needs_browser
+async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overflow_and_no_console_error(server, station, tmp_path):
     shots = Path(os.getenv("ECOBOT_SCREENSHOTS") or tmp_path)
     shots.mkdir(parents=True, exist_ok=True)
     port = free_port()
@@ -385,7 +397,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     assert after["same_tile"] and "21.5 °C" in after["shown"], after                 # the gauge moved in place to the new reading
 
 
-@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+@needs_browser
 @pytest.mark.parametrize("comes", [True, False])
 async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_coming_brightens_it_and_moves_it_up_in_place(server, station,
                                                                                                                      comes):
@@ -476,7 +488,7 @@ def moved(titles, title, after):
     return out
 
 
-@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+@needs_browser
 async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_kept_across_reloads_and_reset(server, station):
     got = await run_page(server, "--arrange")
     default = titles_of(station)
@@ -524,7 +536,7 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     assert got["hoverFrames"] == ["rgba(0, 0, 0, 0)", "rgb(38, 46, 52)", "rgba(0, 0, 0, 0)"], got["hoverFrames"]
 
 
-@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+@needs_browser
 async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swipe_is_left_alone(server, station):
     got = await run_page(server, "--touch")
     default = titles_of(station)
@@ -546,7 +558,7 @@ async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swi
     assert edge["after"] <= edge["end"] + 1, edge
 
 
-@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+@needs_browser
 async def test_fewer_tiles_grow_evenly_to_fill_the_window_and_never_shrink_below_the_full_dashboards_size(server, station):
     every = titles_of(station)
     but = lambda *keep: [t for t in every if t not in keep]
@@ -606,11 +618,11 @@ def fills(zl, width, height):
         assert box["left"] - 1 <= r["left"] and r["right"] <= box["right"] + 1 and box["top"] - 1 <= r["top"] and r["bottom"] <= box["bottom"] + 1, (r, zl)
 
 
-@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
-async def test_a_click_on_a_gauge_zooms_its_tile_and_the_gallery_pages_by_keys_drags_and_swipes_stopping_at_both_ends(server, station):
+@needs_browser
+async def test_a_click_on_a_gauge_zooms_its_tile_to_fill_the_window_the_tile_beside_it_live_and_the_keys_page(server, station):
     port = free_port()
     async with Serving(http_app(server, tokens=(TOKEN,)), port):
-        page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", "--zoom", stdin=subprocess.PIPE,
+        page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", "--zoom", "in", stdin=subprocess.PIPE,
                                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         before = json.loads(await asyncio.wait_for(page.stdout.readline(), 60))
         station.reads("outdoor", "temperature", "21.5")                         # Temperature: beside the tile shown, off the screen
@@ -653,6 +665,20 @@ async def test_a_click_on_a_gauge_zooms_its_tile_and_the_gallery_pages_by_keys_d
     assert [keys[k]["shown"] for k in ("space", "right", "backspace")] == default[1:3] + default[1:2], keys
     assert all(k["zoomed"] for k in keys.values() if isinstance(k, dict)) and keys["url"]   # (Backspace: still this page)
     assert keys["prevented"] == [["ArrowLeft", True], ["ArrowLeft", True], [" ", True], ["ArrowRight", True], ["Backspace", True]], keys
+
+
+async def zoomed(server, station, part: str) -> tuple[dict, list[str], dict]:
+    """A part of the zoom at 1024x768 (its own page in its own browser: the parts run side by side): its report, no error; the tiles'
+    titles; a tile's rect zoomed."""
+    got = await run_page(server, "--zoom", part)
+    default = titles_of(station)
+    assert got["errors"] == [] and got["initial"] == default, got["errors"]
+    return got, default, zoomed_rect(1024, 768)
+
+
+@needs_browser
+async def test_zoomed_the_gallery_pages_by_mouse_drags_and_a_trackpads_swipes_springing_back_at_the_first(server, station):
+    got, default, full = await zoomed(server, station, "pager")
     # mouse drags on the gauge: followed directly; let go past halfway, the next; a short slow one back; a quick short flick on
     drag = got["drag"]
     assert drag["start"]["shown"] == default[1]
@@ -666,6 +692,11 @@ async def test_a_click_on_a_gauge_zooms_its_tile_and_the_gallery_pages_by_keys_d
     wheel = got["wheel"]
     assert [wheel[k]["shown"] for k in ("far", "short", "back")] == [default[1], default[1], default[0]], wheel
     assert wheel["prevented"] and all(wheel["prevented"]), wheel
+
+
+@needs_browser
+async def test_zoomed_the_last_tile_stops_a_key_a_swipe_and_a_drag_its_text_is_selectable_and_a_click_goes_back(server, station):
+    got, default, full = await zoomed(server, station, "last")
     # the last: → past it nudges and stays, as do a swipe and a drag on
     last = got["last"]
     assert last["reached"]["shown"] == default[-1] and last["pastLast"]["shown"] == default[-1] and last["pastLast"]["extreme"] >= 20, last
@@ -684,6 +715,11 @@ async def test_a_click_on_a_gauge_zooms_its_tile_and_the_gallery_pages_by_keys_d
     assert zoom_out["last"]["width"] == pytest.approx(got["gridRect"]["width"], abs=0.5)
     tables = zoom_out["tables"]                                                   # (its table back: hidden as it shrinks, then fading in)
     assert tables[0] == 0 and tables[-1] == 1 and all(a <= b for a, b in zip(tables, tables[1:])) and got["outTable"] == ["visible 1"], (tables, got["outTable"])
+
+
+@needs_browser
+async def test_a_double_click_esc_the_bounce_cut_short_the_keyboard_and_esc_mid_zoom_and_one_tile_no_zoom(server, station):
+    got, default, full = await zoomed(server, station, "out")
     # Esc: back too, the order as it was
     assert got["esc"]["before"]["zoomed"] and got["esc"]["before"]["shown"] == "Wind" and not got["esc"]["after"]["zoomed"]
     assert got["esc"]["titles"] == default
@@ -714,7 +750,7 @@ async def test_a_click_on_a_gauge_zooms_its_tile_and_the_gallery_pages_by_keys_d
     assert got["single"] == {"cursor": "auto", "zoomed": False}
 
 
-@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+@needs_browser
 async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_tap_goes_back_where_the_page_was(server, station):
     got = await run_page(server, "--zoom-touch")
     default = titles_of(station)
@@ -737,10 +773,16 @@ EFFECTS = {"rain": "Rain", "smog": "US AQI", "uv": "UV index", "humidity": "Humi
            "ice": "Temperature"}
 
 
-@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
-async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_tile_in_red_and_can_be_stopped(server, station):
-    got = await run_page(server, "--weather", timeout=180)
+async def weather(server, part: str) -> dict:
+    """One part of the weather behind the tiles, its own page in its own browser (the parts run side by side): its report, no error."""
+    got = await run_page(server, "--weather", part)
     assert got["errors"] == [], got["errors"]
+    return got
+
+
+@needs_browser
+async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_and_frames_its_tile_in_red(server, station):
+    got = await weather(server, "marks")
     # nothing called for (the US AQI Good): no effect, no frame, no link, no loop, nothing drawn
     assert got["nothing"] == {"effects": [], "levels": {k: 0 for k in got["nothing"]["levels"]}, "running": False, "framed": [],
                               "link": None, "frames": 0, "ink": 0}
@@ -755,6 +797,11 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
     assert got["smogBands"] == [2, 3, 4, 5, 5]                                   # thicker with each band: USG to Hazardous
     assert got["rainStrength"][0] < 0.4 and got["rainStrength"][1:] == [1, 1]    # light at 0.5 mm/h, heavy from 8
     assert got["iceDepth"] == [0.5, 5]                                           # further in the colder
+
+
+@needs_browser
+async def test_several_effects_share_one_canvas_behind_the_see_through_tiles_zoomed_too(server, station):
+    got = await weather(server, "several")
     # several at once: one canvas, one loop, at most 30 frames drawn a second
     several = got["several"]
     assert several["effects"] == ["smog", "uv", "rain", "wind", "humidity", "ice"] and several["canvases"] == 1, several
@@ -771,14 +818,24 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
                            "dragFrames": {"lifted": "rgb(90, 102, 112)", "doomed": "rgb(229, 72, 77)", "after": "rgba(0, 0, 0, 0)"}}
     assert got["zoomed"] == {"zoomed": True, "title": "UV index", "background": "rgba(0, 0, 0, 0)", "grid": "rgba(0, 0, 0, 0)",
                              "alert": True, "running": True}
+
+
+@needs_browser
+async def test_the_weather_can_be_stopped_kept_stopped_across_a_reload_and_started_again_or_reset(server, station):
+    got = await weather(server, "stop")
     # "stop animations": nothing drawn, no loop, the frame stays, kept across a reload; "start animations" and the reset put them back
     assert got["stopped"] | {"levels": None} == {"effects": ["uv"], "levels": None, "running": False, "framed": ["UV index"],
                                                  "link": "start animations", "frames": 0, "ink": 0, "stored": False}, got["stopped"]
     assert got["reloaded"]["link"] == "start animations" and got["reloaded"]["frames"] == 0 and not got["reloaded"]["running"]
     for step in ("restarted", "reset"):
         assert got[step]["link"] == "stop animations" and got[step]["running"] and got[step]["frames"] > 10, (step, got[step])
+
+
+@needs_browser
+async def test_the_temporary_test_links_turn_each_effect_on_and_clear_them_the_url_following(server, station):
+    got = await weather(server, "links")
     # the temporary test links: each its effect and frame (the gauges keep their readings), the URL following; smog steps through its
-    # bands, rain light then heavy; ice melts back; "clear" ends them all; no "all" link, but ?fx=all, and ?fx= when the page opens
+    # bands, rain light then heavy; ice melts back; "clear" ends them all; no "all" link, but ?fx=all
     links = got["links"]
     assert links["buttons"] == ["rain", "smog", "uv", "humidity", "wind", "heat", "ice", "clear"], links["buttons"]
     on = []
@@ -792,31 +849,44 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_frames_its_ti
     assert melting["grown"] > 2 and 0 < melting["reach"] < melting["grown"] and "ice" not in melting["effects"] and melting["running"], melting
     assert links["cleared"] | {"levels": None, "running": None} == {"effects": [], "levels": None, "running": None, "framed": [],
                                                                      "link": None, "url": ""}
-    every = ["smog", "heat", "uv", "rain", "wind", "humidity", "ice"]
-    assert links["all"]["effects"] == every and links["all"]["url"] == "?fx=rain2,smog3,uv,humidity,wind,heat,ice"
+    assert links["all"]["effects"] == EVERY and links["all"]["url"] == "?fx=rain2,smog3,uv,humidity,wind,heat,ice"
+    assert links["role"] == "group" and links["pressed"] == {"rain": "false", "smog": "false", "uv": "true", "humidity": "true",
+                                                             "wind": "true", "heat": "true", "ice": "false"}, links["pressed"]
+
+
+EVERY = ["smog", "heat", "uv", "rain", "wind", "humidity", "ice"]
+
+
+@needs_browser
+async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alone_and_within_the_particle_budget(server, station):
+    got = await weather(server, "all")
+    assert got["cost"] < 8, got["cost"]
+    # several at once no brighter than one strong one: every effect on (the ice grown all the way in), against Hazardous smog alone
+    assert 0 < got["light"]["all"] <= got["light"]["smog5"], got["light"]
+    together = got["particles"]["all"]
+    assert together["uv"] == 0 and together["wind"] > 0 and together["rain"] > 0, together
+    assert sum(v for k, v in together.items() if k != "budget") <= together["budget"] + 3, together   # (each rounded)
+
+
+@needs_browser
+async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_reduced_motion(server, station):
+    got = await weather(server, "opened")
+    # ?fx= when the page opens
     assert got["param"]["levels"] == {"smog": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "ice": 5}
     assert sorted(got["param"]["framed"]) == ["Temperature", "US AQI", "Wind"] and got["param"]["errors"] == []
     # (the effects' earlier names, in links saved before, still work: as wind, uv, humidity)
     assert got["paramOld"]["effects"] == ["uv", "wind", "humidity"] and got["paramOld"]["errors"] == [], got["paramOld"]
-    assert links["role"] == "group" and links["pressed"] == {"rain": "false", "smog": "false", "uv": "true", "humidity": "true",
-                                                             "wind": "true", "heat": "true", "ice": "false"}, links["pressed"]
-    # the particles: uv's beams none (no motes); the wind's leaves alone, and every effect's together, within the shared budget
+    assert got["paramAll"]["effects"] == EVERY and got["paramRain"]["levels"]["rain"] == 1
+    # the particles: uv's beams none (no motes); the wind's leaves alone within the shared budget
     assert got["particles"]["uv"] == {"uv": 0, "budget": got["particles"]["uv"]["budget"]}, got["particles"]
     wind = got["particles"]["wind"]
     assert 0 < wind["wind"] <= wind["budget"], wind
-    together = got["particles"]["all"]
-    assert together["uv"] == 0 and together["wind"] > 0 and together["rain"] > 0, together
-    assert sum(v for k, v in together.items() if k != "budget") <= together["budget"] + 3, together   # (each rounded)
     # the strip at the bottom right: its links, then the time at the far right; on a phone with both its links, the test row
     # beside it or above it, never over it
     phone = got["phone"]
     assert phone["strip"] == "reset preferences · stop animations · updated 18:42" and phone["right"], phone
     assert phone["apart"] and phone["onScreen"], phone
-    assert got["paramAll"]["effects"] == every and got["paramRain"]["levels"]["rain"] == 1
     # reduced motion: no loop, one still, faint frame (the ice as it would be), the frames and the link as ever
     still = got["still"]
     assert still["effects"] == ["uv", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still
     assert still["ink"] > 0 and sorted(still["framed"]) == ["Temperature", "UV index"] and still["link"] == "stop animations", still
-    assert got["cost"] < 8, got["cost"]
-    # several at once no brighter than one strong one: every effect on, against Hazardous smog alone
-    assert 0 < got["light"]["all"] <= got["light"]["smog5"], got["light"]

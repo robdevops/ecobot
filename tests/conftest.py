@@ -24,11 +24,61 @@ SLOW = {line.strip() for line in (Path(__file__).parent / "slow_tests.txt").read
 @pytest.hookimpl(tryfirst=True)   # (before -m deselects by the marks)
 def pytest_collection_modifyitems(items):
     """The slow tests (tests/slow_tests.txt, every parameter of one) marked `slow`: plain `pytest` leaves them out (pytest.ini). Then the
-    files with the slowest tests go first, so with several workers (pytest-xdist) none is left running one of them at the end."""
+    files with the slowest tests go first, so with several workers (pytest-xdist) none is left running one of them at the end; and the
+    browser's (BROWSER) dealt out ahead of them, one at the head of each worker's share."""
     for item in items:
         if item.nodeid.split("[")[0] in SLOW:
             item.add_marker(pytest.mark.slow)
     items.sort(key=lambda item: (item.path.name not in HEAVY, HEAVY.index(item.path.name) if item.path.name in HEAVY else 0))
+    deal_out(items, [item for item in items if browser_test(item)])
+
+
+def pytest_xdist_auto_num_workers(config):
+    """`-n auto` (pytest.ini): half as many workers again as there are CPUs. The browser's tests mostly wait on the page (its
+    animations, a long press, a swipe's end), so a worker in one leaves its CPU mostly free for the extra workers' tests."""
+    return max(2, (os.cpu_count() or 1) * 3 // 2)
+
+
+BROWSER = "test_web_dashboard.py"   # its slow tests drive the page in Chromium: seconds each, mostly waiting on the page
+
+
+def browser_test(item) -> bool:
+    return item.path.name == BROWSER and item.nodeid.split("[")[0] in SLOW
+
+
+_niced = False
+
+
+def pytest_runtest_setup(item):
+    """With several workers, a worker done with its browser tests (dealt out first) runs the rest at a lower priority (nice 10, for
+    good: a process can't raise its own again), so the pages still being driven, whose tests time their animations frame by frame,
+    get a CPU when they ask while the others keep every CPU busy. The run takes as long; only who waits changes."""
+    global _niced
+    if not _niced and not browser_test(item) and os.environ.get("PYTEST_XDIST_WORKER") and hasattr(os, "nice"):
+        os.nice(10)
+        _niced = True
+
+
+def deal_out(items: list, first: list) -> None:
+    """`first` dealt out across the workers (as many as there are CPUs), one at the head of each worker's share of the run in turn, the
+    rest after them: so they start together, each on its own worker, rather than queue on one. (pytest-xdist's worksteal gives each worker a run of the list
+    as it starts, the first len // workers to the first and so on, and a worker with nothing left takes from the end of another's.)"""
+    workers = int(os.environ.get("PYTEST_XDIST_WORKER_COUNT", "0"))   # (set in each worker; all of them collect the same order)
+    if workers < 2 or not first:
+        return
+    taken = set(map(id, first))
+    rest = [item for item in items if id(item) not in taken]
+    shares, left = [], len(items)
+    for w in range(workers):   # (each share's length, as worksteal cuts them)
+        shares.append(left // (workers - w))
+        left -= shares[-1]
+    browsers = min(workers, os.cpu_count() or 1)   # (no more pages driven at once than there are CPUs: their timings stay true)
+    heads = [first[w::browsers] for w in range(browsers)] + [[]] * (workers - browsers)
+    out = []
+    for size, head in zip(shares, heads):
+        out += head + rest[:size - len(head)]
+        rest = rest[size - len(head):]
+    items[:] = out + rest
 
 
 @pytest.fixture(autouse=True)

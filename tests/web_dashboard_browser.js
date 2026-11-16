@@ -14,16 +14,17 @@
 //   node web_dashboard_browser.js URL --touch: the page at 390x844 with touch (CDP touch events): a long press picks a tile up (buzz,
 //     grip and ×, remove zone) and moves it; a short tap is a click; a swipe scrolls; held at the bottom edge it scrolls to the page's
 //     end only; prints {step: what was seen}.
-//   node web_dashboard_browser.js URL --zoom: the page at 1024x768 with a mouse and keys: the zoom cursors, a click zooming a tile and
-//     back, Esc; zoomed, prints {label} (Temperature's, beside the tile shown), waits for a line on stdin (the test has changed its
-//     reading), then pages with the keys, mouse drags and wheel deltaX, past both ends, and drags across the text; prints {step: what
-//     was seen}; with a single tile, no zoom.
+//   node web_dashboard_browser.js URL --zoom PART: the page at 1024x768 with a mouse and keys, a part of the zoom (zoomMode): "in" (the
+//     zoom cursors, a click zooming a tile; zoomed, prints {label} (Temperature's, beside the tile shown), waits for a line on stdin (the
+//     test has changed its reading), then pages with the keys past the first), "pager" (mouse drags and wheel deltaX), "last" (past the
+//     last, drags across the text, a click back), "out" (a double-click, Esc, the bounce cut short, the keyboard, Esc mid-zoom, a single
+//     tile: no zoom); prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --zoom-touch: the page at 390x844 with touch: a tap zooms, swipes (slow, a flick, on the text)
 //     page, a vertical swipe and a long press do nothing, a tap goes back where the page was scrolled; prints {step: what was seen}.
-//   node web_dashboard_browser.js URL --weather: the page at 1024x768, its data altered on the way (each reading at, and just short of, the
-//     mark that calls up its effect behind the tiles), the canvas behind the tiles, the tiles' red frames, "stop animations", reduced
-//     motion, no loop with nothing called for, the temporary test links and ?fx=, the frame time with every effect on; prints {step: what
-//     was seen}.
+//   node web_dashboard_browser.js URL --weather PART: the page at 1024x768, its data altered on the way, a part of the weather behind the
+//     tiles (WEATHER): each reading at, and just short of, the mark that calls up its effect; the canvas behind the tiles and the tiles'
+//     red frames; "stop animations"; the temporary test links; every effect at once (?fx=all: the frame time, the light, the particles);
+//     ?fx= as the page opens, a phone, reduced motion; prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --fill CASES: for each case {name: [width, height, hidden titles]}, the page with those hidden;
 //     prints {name: {rects, columns, scroll}}.
 "use strict";
@@ -45,10 +46,10 @@ async function open(browser, url, width, height, options = {}) {
 
 async function sizes(browser, url, shots, wanted) {
   const report = {};
-  for (const [name, [width, height]] of Object.entries(wanted)) {
+  await Promise.all(Object.entries(wanted).map(async ([name, [width, height]]) => {   // (side by side, a page each)
     const { context, page, errors } = await open(browser, url, width, height);
     await page.evaluate(() => document.fonts.ready);
-    await page.waitForTimeout(1200);   // (the gauges' rise from their floor when the page opens, RISE_MS)
+    await calm(page, 5000);   // (the gauges' rise from their floor when the page opens, RISE_MS)
     await page.screenshot({ path: `${shots}/dashboard-${name}.png`, fullPage: true });
     report[name] = { ...await page.evaluate(() => ({
       tiles: document.querySelectorAll(".tile").length,
@@ -62,7 +63,7 @@ async function sizes(browser, url, shots, wanted) {
     // zoomed (Enter on the first tile): its look (box, title, text, table) and a screenshot (SHOTS/dashboard-NAME-zoomed.png)
     await page.focus(".tile");
     await page.keyboard.press("Enter");
-    await page.waitForTimeout(400);
+    await calm(page, 400);
     await page.screenshot({ path: `${shots}/dashboard-${name}-zoomed.png` });
     report[name].zoomed = await page.evaluate(() => {
       const t = document.querySelector("#grid .tile"), rect = (e) => e.getBoundingClientRect().toJSON();
@@ -72,8 +73,8 @@ async function sizes(browser, url, shots, wanted) {
                table: [...new Set(table.map((c) => `${c.visibility} ${c.opacity}`))] };
     });
     await context.close();
-  }
-  process.stdout.write(JSON.stringify(report));
+  }));
+  process.stdout.write(JSON.stringify(Object.fromEntries(Object.keys(wanted).map((name) => [name, report[name]]))));
 }
 
 async function live(browser, url) {
@@ -130,7 +131,22 @@ async function arrive(browser, url, title) {
 const KEY = "ecobot.dashboard.v1";
 const titles = (page) => page.evaluate(() => [...document.querySelectorAll("#grid .tile .title")].map((t) => t.textContent));
 const tileOf = (page, title) => page.locator(".tile", { has: page.locator(".title", { hasText: new RegExp(`^${title}$`) }) });
-const settle = (page) => page.waitForTimeout(350);   // (the reflow's easing, 220 ms)
+// The page at rest, rather than a fixed wait: nothing in its document changed (a gauge's needle, a tile's transform, a class) for 50 ms
+// and no animation or transition running (an endless one aside); at most `cap` ms: the fixed wait it stands for where that was a margin,
+// longer for the gauges' rise and moves (which the frames counted after them must not include, however slow the machine is just then).
+// (Not for what a timer starts later, a long press or a swipe's end: a wait for that.)
+const calm = (page, cap = 450) => page.evaluate((cap) => new Promise((resolve) => {
+  const start = performance.now();
+  let changed = start;
+  const seen = new MutationObserver(() => { changed = performance.now(); });
+  seen.observe(document.documentElement, { subtree: true, attributes: true, childList: true, characterData: true });
+  const moving = () => document.getAnimations().some((a) => a.playState === "running" && a.effect.getComputedTiming().endTime !== Infinity);
+  const check = (now) => {
+    if (moving()) changed = Math.max(changed, now);
+    if (performance.now() - changed >= 50 || now - start >= cap) { seen.disconnect(); resolve(); } else requestAnimationFrame(check);
+  };
+  requestAnimationFrame(check);
+}), cap);
 
 async function at(page, title, fx, fy) {   // a point of a tile, as fractions of it
   const r = await tileOf(page, title).boundingBox();
@@ -144,10 +160,10 @@ async function mouseDrag(page, [x0, y0], [x1, y1], during) {
   await page.mouse.move(x0, y0);
   await page.mouse.down();
   for (let i = 1; i <= 12; i++) await page.mouse.move(x0 + (x1 - x0) * i / 12, y0 + (y1 - y0) * i / 12);
-  await page.waitForTimeout(300);
+  await calm(page);   // (the others made room)
   const seen = during ? await during() : null;
   await page.mouse.up();
-  await settle(page);
+  await calm(page);
   return seen;
 }
 const selection = (page) => page.evaluate(() => { const s = String(window.getSelection()); window.getSelection().removeAllRanges(); return s; });
@@ -162,7 +178,7 @@ const midDrag = (page) => page.evaluate(() => ({
 async function arrangeMode(browser, url) {
   const out = {};
   const { context, page, errors } = await open(browser, url, 1024, 768);
-  await page.waitForTimeout(1200);
+  await calm(page, 5000);   // (the gauges' rise)
   out.initial = await titles(page);
   // the look: the tile's own background clear, its foreground opaque
   out.look = await page.evaluate(() => {
@@ -174,7 +190,7 @@ async function arrangeMode(browser, url) {
   });
   // mouseover: the grip and the × show on the tile under the mouse only
   await page.mouse.move(...await at(page, "Humidity", 0.5, 0.4));
-  await page.waitForTimeout(300);
+  await calm(page);
   // mouseover: the frame too, on the tile under the mouse only (unseen otherwise)
   out.hoverFrames = await page.evaluate(() => [...document.querySelectorAll(".tile")].slice(0, 3).map((t) => getComputedStyle(t, "::before").borderTopColor));
   out.hover = await page.evaluate(() => [...document.querySelectorAll(".tile")].slice(0, 3).map((t) => ({
@@ -195,9 +211,9 @@ async function arrangeMode(browser, url) {
   }
   // the ×: Rain hidden, the reset link shown
   await page.mouse.move(...await at(page, "Rain", 0.5, 0.4));
-  await page.waitForTimeout(250);
+  await calm(page);
   await tileOf(page, "Rain").locator(".close").click();
-  await settle(page);
+  await calm(page);
   out.closed = { titles: await titles(page), status: await statusText(page) };
   // dropped on the remove zone: Wind hidden
   out.removing = await mouseDrag(page, await at(page, "Wind", 0.5, 0.3), [500, 20], () => midDrag(page));
@@ -205,11 +221,11 @@ async function arrangeMode(browser, url) {
   // reloaded: the same order and hidden tiles
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
-  await page.waitForTimeout(300);
+  await calm(page, 300);
   out.reloaded = { titles: await titles(page), status: await statusText(page) };
   // reset: every tile back in the default order, the link gone, nothing kept
   await page.getByText("reset preferences").click();
-  await settle(page);
+  await calm(page);
   out.reset = { titles: await titles(page), status: await statusText(page), stored: await stored(page) };
   // preferences corrupt: the defaults; a tile new to the saved order: in its usual place (after the tile before it by default)
   await page.evaluate((key) => localStorage.setItem(key, "{not json"), KEY);
@@ -230,20 +246,20 @@ async function arrangeMode(browser, url) {
   await page.mouse.up();
   await page.waitForTimeout(150);
   await page.mouse.click(...await at(page, "Wind", 0.5, 0.3));
-  await settle(page);
+  await calm(page);
   out.clickAfterDrop = await page.evaluate(() => window.__clicks);
   out.zoomedAfterDrop = await page.evaluate(() => document.body.classList.contains("zoomed"));   // (that click zoomed Wind: back)
   await page.keyboard.press("Escape");
-  await settle(page);
+  await calm(page);
   out.keptOthers = JSON.parse(await stored(page));
   // the × pressed from the keyboard: the focus goes on to the next tile's ×; with the last tile hidden, to the reset link
-  await settle(page);
+  await calm(page);
   await page.keyboard.press("Shift");   // (the keyboard in use: the first tile's × focused as by the keyboard)
   await page.evaluate(() => document.querySelector(".close").focus());
   const focused = () => page.evaluate(() => document.activeElement.getAttribute("aria-label") || document.activeElement.textContent);
   out.keyboardHide = [await focused()];
   await page.keyboard.press("Enter");
-  await settle(page);
+  await calm(page);
   out.keyboardHide.push(await focused());
   const allBut = out.initial.filter((t) => t !== "Rain");
   await page.evaluate(([key, hidden]) => localStorage.setItem(key, JSON.stringify({ order: [], hidden })), [KEY, allBut]);
@@ -254,7 +270,7 @@ async function arrangeMode(browser, url) {
   await page.keyboard.press("Tab");
   out.keyboardHide.push(await focused());
   await page.keyboard.press("Enter");
-  await settle(page);
+  await calm(page);
   out.keyboardHide.push(await focused());
   out.errors = errors;
   await context.close();
@@ -262,12 +278,12 @@ async function arrangeMode(browser, url) {
   const blocked = await open(browser, url, 1024, 768, { init: { fn: () => {
     Object.defineProperty(window, "localStorage", { get() { throw new DOMException("blocked", "SecurityError"); } });
   } } });
-  await blocked.page.waitForTimeout(300);
+  await calm(blocked.page, 300);
   await mouseDrag(blocked.page, await at(blocked.page, "Temperature", 0.85, 0.3), await at(blocked.page, "Humidity", 0.5, 0.4));
   await blocked.page.mouse.move(...await at(blocked.page, "Rain", 0.5, 0.4));
-  await blocked.page.waitForTimeout(250);
+  await calm(blocked.page);
   await tileOf(blocked.page, "Rain").locator(".close").click();
-  await settle(blocked.page);
+  await calm(blocked.page);
   out.blocked = { titles: await titles(blocked.page), errors: blocked.errors };
   await blocked.context.close();
   process.stdout.write(JSON.stringify(out));
@@ -293,7 +309,7 @@ async function touchMode(browser, url) {
     armed: [...document.querySelectorAll(".tile.armed")].map((t) => t.querySelector(".title").textContent),
     close: (() => { const c = document.querySelector(".tile.armed .close"); return c ? getComputedStyle(c).opacity : null; })(),
   }));
-  await page.waitForTimeout(1200);
+  await calm(page, 5000);   // (the gauges' rise)
   out.initial = await titles(page);
   // a short tap: a click, nothing picked up
   const t0 = await at(page, "Temperature", 0.85, 0.3);
@@ -303,7 +319,7 @@ async function touchMode(browser, url) {
   await page.waitForTimeout(600);
   out.tap = { ...await state(), titles: await titles(page), zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")) };
   await page.keyboard.press("Escape");   // (the tap zoomed the tile: back)
-  await page.waitForTimeout(400);
+  await calm(page, 400);
   // a swipe up before the long press: the page scrolls, nothing picked up
   const s0 = await at(page, "Humidity", 0.5, 0.3);
   await touch("touchStart", [s0]);
@@ -319,23 +335,23 @@ async function touchMode(browser, url) {
   await page.waitForTimeout(700);
   out.held = await state();
   for (let i = 1; i <= 12; i++) { await touch("touchMove", [[p0[0] + (p1[0] - p0[0]) * i / 12, p0[1] + (p1[1] - p0[1]) * i / 12]]); await page.waitForTimeout(16); }
-  await page.waitForTimeout(300);
+  await calm(page, 300);   // (the others made room)
   out.moving = { ...await state(), during: await midDrag(page) };
   await touch("touchEnd", []);
-  await settle(page);
+  await calm(page);
   out.dropped = { ...await state(), titles: await titles(page) };
   // a long press let go in place: its grip and × stay; a tap on the × hides it
   const h0 = await at(page, "Humidity", 0.85, 0.3);
   await touch("touchStart", [h0]);
   await page.waitForTimeout(700);
   await touch("touchEnd", []);
-  await page.waitForTimeout(300);
+  await calm(page, 300);
   out.armed = await state();
   const c = await centreOf(page, tileOf(page, "Humidity").locator(".close"));
   await touch("touchStart", [c]);
   await page.waitForTimeout(50);
   await touch("touchEnd", []);
-  await settle(page);
+  await calm(page);
   out.closed = { titles: await titles(page), status: await statusText(page) };
   // held near the bottom edge: the page scrolls to its end and no further (the lifted tile mustn't stretch it without end)
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -348,7 +364,7 @@ async function touchMode(browser, url) {
   const seen = [];
   for (let i = 0; i < 12; i++) { await page.waitForTimeout(250); seen.push(await page.evaluate(() => window.scrollY)); }
   await touch("touchEnd", []);
-  await settle(page);
+  await calm(page);
   out.edge = { end, seen, after: await page.evaluate(() => window.scrollY) };
   out.errors = errors;
   await context.close();
@@ -404,7 +420,7 @@ function motion(rec, key) {
            extreme: key[0] === "x" ? Math.max(...after.map((x) => Math.abs(x.x - last.x))) : null };
 }
 async function zoomClick(page, title, point) {   // a click, the tile's rect recorded through the zoom
-  const recording = page.evaluate((title) => window.__record(title, 500), title);
+  const recording = page.evaluate((title) => window.__record(title, 700), title);   // (to the table's fade back in, after the zoom out)
   await page.waitForTimeout(50);
   await page.mouse.click(...point);
   const rec = await recording;
@@ -428,184 +444,201 @@ async function pagerDrag(page, [x0, y], dx, { steps = 12, pause = 300 } = {}) { 
   const during = await page.evaluate(() => window.__track());
   await page.waitForTimeout(pause);
   await page.mouse.up();
-  await page.waitForTimeout(450);
+  await calm(page);
   return { during: Math.round(during), ...await page.evaluate(() => window.__state()) };
 }
+// a trackpad's swipe over (no wheel event for WHEEL_IDLE_MS, then the strip settling), at rest
+const swiped = async (page) => { await page.waitForTimeout(160); await calm(page); };
 const cursorAt = (page, [x, y]) => page.evaluate(([x, y]) => getComputedStyle(document.elementFromPoint(x, y)).cursor, [x, y]);
 
-async function zoomMode(browser, url) {
+// The zoom in four parts, each its own page (and process: the tests run them side by side): "in" (the cursors, a click zooming a
+// tile, the live reading beside it, the keys), "pager" (zoomed: mouse drags, a trackpad's swipes), "last" (zoomed: the last tile, a
+// drag across the text, a click back out), "out" (a double-click, Esc, the bounce cut short, the keyboard, Esc mid-way through a
+// zoom-in, a single tile)
+async function zoomMode(browser, url, part) {
   const out = {};
   const { context, page, errors } = await open(browser, url, 1024, 768, { init: { fn: ZOOM_HELPERS } });
-  await page.waitForTimeout(1200);
+  await calm(page, 5000);   // (the gauges' rise)
   out.initial = await titles(page);
   out.gridRect = (await tileOf(page, "Humidity").boundingBox());
-  const textPoint = async (title, selector) => centreOf(page, tileOf(page, title).locator(selector).first());
-  out.cursor = { gauge: await cursorAt(page, await at(page, "Humidity", 0.85, 0.3)), title: await cursorAt(page, await textPoint("Humidity", ".title")),
-                 figure: await cursorAt(page, await textPoint("Humidity", ".figure")), reading: await cursorAt(page, await textPoint("Humidity", "svg text.reading")) };
-  // a click on Humidity's gauge: zoomed, in 200 ms, to fill the window
-  out.zoomIn = await zoomClick(page, "Humidity", await at(page, "Humidity", 0.85, 0.3));
-  out.zoomedCursor = { gauge: await cursorAt(page, await at(page, "Humidity", 0.85, 0.3)), margin: await cursorAt(page, [20, 384]),
-                       title: await cursorAt(page, await textPoint("Humidity", ".title")) };
-  out.grip = await page.evaluate(() => getComputedStyle(window.__tile("Humidity").querySelector(".close")).display);
-  out.zoomedLook = await page.evaluate(() => window.__look("Humidity"));                // (its title and gauge filling the window, no table)
-  out.neighbourTable = await page.evaluate(() => window.__look("Temperature").table);   // (the gallery's others: no table either)
-  // live: a new reading for Temperature, the tile beside it off the screen, reaches it in place
-  await page.evaluate(() => { window.__mark = window.__tile("Temperature"); });
-  process.stdout.write(JSON.stringify({ label: await page.evaluate(() => window.__mark.getAttribute("aria-label")) }) + "\n");
-  await new Promise((resolve) => readline.createInterface({ input: process.stdin }).once("line", resolve));
-  try { await page.waitForFunction(() => /21\.5/.test(window.__mark.getAttribute("aria-label")), null, { timeout: 15000 }); } catch (e) { /* (reported) */ }
-  await page.waitForTimeout(1000);   // (the gauge's move, MOVE_MS)
-  out.live = { label: await page.evaluate(() => window.__mark.getAttribute("aria-label")), sameTile: await page.evaluate(() => window.__mark === window.__tile("Temperature")),
-               ...await page.evaluate(() => window.__state()) };
-  // the keys: ← to Temperature (now showing the new reading), ← again: the first, a bounce; Space, →, Backspace
-  out.keys = {};
-  out.keys.left = await keyStep(page, "ArrowLeft");
-  out.keys.leftReading = await page.evaluate(() => window.__mark.querySelector("svg text.reading").textContent);
-  out.keys.pastFirst = await keyStep(page, "ArrowLeft");
-  out.keys.space = await keyStep(page, " ");
-  out.keys.right = await keyStep(page, "ArrowRight");
-  out.keys.backspace = await keyStep(page, "Backspace");
-  out.keys.url = page.url() === url;
-  out.keys.prevented = await page.evaluate(() => window.__keys);
-  // a mouse drag on the gauge: followed as it goes; let go past halfway: the next; a short slow one: back; a short quick one: the next
-  const gauge = () => at(page, "Humidity", 0.85, 0.3);
-  const g = await page.evaluate(() => window.__state());
-  out.drag = { start: g };
-  out.drag.far = await pagerDrag(page, [900, 300], -600);
-  out.drag.short = await pagerDrag(page, [800, 300], -100);
-  out.drag.flick = await pagerDrag(page, [800, 300], -120, { steps: 3, pause: 0 });
-  out.drag.back = await pagerDrag(page, [200, 300], 600);
-  // the first tile, dragged on rightwards: it gives less and less, then springs back
-  await page.keyboard.press("ArrowLeft"); await page.keyboard.press("ArrowLeft");
-  await page.waitForTimeout(500);
-  out.drag.pastFirst = await pagerDrag(page, [300, 300], 300);
-  // a trackpad's two-finger swipe: wheel deltaX, kept from the browser
-  await page.mouse.move(800, 300);
-  out.wheel = {};
-  for (let i = 0; i < 8; i++) { await page.mouse.wheel(50, 0); await page.waitForTimeout(16); }
-  await page.waitForTimeout(500);
-  out.wheel.far = await page.evaluate(() => window.__state());
-  for (let i = 0; i < 6; i++) { await page.mouse.wheel(10, 0); await page.waitForTimeout(60); }   // (slowly: no flick)
-  await page.waitForTimeout(500);
-  out.wheel.short = await page.evaluate(() => window.__state());
-  for (let i = 0; i < 8; i++) { await page.mouse.wheel(-50, 0); await page.waitForTimeout(16); }
-  await page.waitForTimeout(500);
-  out.wheel.back = await page.evaluate(() => window.__state());
-  out.wheel.prevented = await page.evaluate(() => window.__wheels);
-  // the last tile: → past it bounces, as does a swipe on
-  const n = (await titles(page)).length;
-  for (let i = 0; i < n; i++) { await page.keyboard.press("ArrowRight"); await page.waitForTimeout(30); }
-  await page.waitForTimeout(500);
-  out.last = { reached: await page.evaluate(() => window.__state()), pastLast: await keyStep(page, "ArrowRight") };
-  for (let i = 0; i < 8; i++) { await page.mouse.wheel(50, 0); await page.waitForTimeout(16); }
-  await page.waitForTimeout(500);
-  out.last.wheeled = await page.evaluate(() => window.__state());
-  out.last.dragged = await pagerDrag(page, [800, 300], -400);
-  // a drag on the text selects it: no paging, still zoomed
-  const shown = out.last.reached.shown;
-  out.text = {};
-  for (const [name, selector] of [["title", ".title"], ["reading", "svg text.reading"]]) {
-    const r = await tileOf(page, shown).locator(selector).first().boundingBox(), y = r.y + r.height / 2;
-    await mouseDrag(page, [r.x + 2, y], [r.x + r.width - 1, y + 1]);
-    out.text[name] = { selected: await selection(page), ...await page.evaluate(() => window.__state()) };
-  }
-  // a click without moving on the gauge: back to the dashboard, in 200 ms, the tile in its place
-  out.zoomOut = await zoomClick(page, shown, await at(page, shown, 0.85, 0.3));
-  out.outRect = await tileOf(page, shown).boundingBox();
-  out.outTable = await page.evaluate((shown) => window.__look(shown).table, shown);   // (its table back)
-  // a double-click (its clicks 300 ms apart, slower than the zoom): zoomed, not zoomed and straight back out
-  const wind = await at(page, "Wind", 0.85, 0.3);
-  await page.mouse.move(...wind);
-  await page.mouse.down(); await page.mouse.up();
-  await page.waitForTimeout(300);
-  await page.mouse.down({ clickCount: 2 }); await page.mouse.up({ clickCount: 2 });
-  await page.waitForTimeout(400);
-  // Esc: back too
-  out.esc = { before: await page.evaluate(() => window.__state()) };
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(400);
-  out.esc.after = await page.evaluate(() => window.__state());
-  out.esc.titles = await titles(page);
-  // a click on the gauge doesn't take the focus: no × once the pointer has gone
-  await page.mouse.move(1020, 4);
-  await page.waitForTimeout(300);
-  out.esc.close = await page.evaluate(() => ({ focused: document.activeElement === window.__tile("Wind"),
-                                              opacity: getComputedStyle(window.__tile("Wind").querySelector(".close")).opacity }));
-  // the bounce at the last tile, cut short by Esc: the dashboard back in its place at once; or by a key: that step slides
-  const n2 = (await titles(page)).length;
-  await page.mouse.click(...await at(page, "Wind", 0.85, 0.3));
-  await page.waitForTimeout(400);
-  for (let i = 0; i < n2; i++) { await page.keyboard.press("ArrowRight"); await page.waitForTimeout(30); }
-  await page.waitForTimeout(500);
-  await page.keyboard.press("ArrowRight");   // (past the last: the bounce)
-  await page.waitForTimeout(30);
-  const cut = page.evaluate(() => window.__record(null, 300));
-  await page.keyboard.press("ArrowLeft");
-  const rec = await cut;
-  const near100 = rec.frames.filter((f) => f.t >= rec.at + 90 && f.t <= rec.at + 130).map((f) => Math.round(f.x));
-  await page.waitForTimeout(300);
-  out.bounceCut = { step: { mid: near100, ...await page.evaluate(() => window.__state()) } };
-  await page.keyboard.press("ArrowRight"); await page.waitForTimeout(400);
-  await page.keyboard.press("ArrowRight");   // (the bounce again)
-  await page.waitForTimeout(30);
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(60);
-  out.bounceCut.esc = await page.evaluate(() => ({ grid: getComputedStyle(document.getElementById("grid")).transform,
-                                                   firstLeft: Math.round(document.querySelector("#grid .tile").getBoundingClientRect().left),
-                                                   zoomed: document.body.classList.contains("zoomed") }));
-  await page.waitForTimeout(400);
-  // the keyboard: every tile takes the focus; Enter on one zooms it, the focus going along as it pages, the others out of reach; Esc
-  // back, the focus on the tile shown last; Space zooms too
-  const focusState = () => page.evaluate(() => ({ ...window.__state(), focus: document.activeElement.classList.contains("tile") ? document.activeElement.querySelector(".title").textContent : document.activeElement.tagName,
-                                                   reachable: [...document.querySelectorAll("#grid .tile")].filter((t) => !t.inert).map((t) => t.querySelector(".title").textContent) }));
-  out.keyboard = { tabbable: await page.evaluate(() => [...document.querySelectorAll("#grid .tile")].every((t) => t.tabIndex === 0)) };
-  await page.evaluate(() => window.__tile("Temperature").focus());
-  await page.waitForTimeout(200);
-  out.keyboard.focusedClose = await page.evaluate(() => getComputedStyle(window.__tile("Temperature").querySelector(".close")).opacity);
-  await page.keyboard.press("Enter");
-  await page.waitForTimeout(400);
-  out.keyboard.enter = await focusState();
-  await page.keyboard.press("ArrowRight");
-  await page.waitForTimeout(400);
-  out.keyboard.right = await focusState();
-  await page.keyboard.press("Tab");
-  out.keyboard.tab = await focusState();
-  await page.evaluate(() => window.__tile("Humidity").focus());
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(400);
-  out.keyboard.esc = await focusState();
-  await page.keyboard.press(" ");
-  await page.waitForTimeout(400);
-  out.keyboard.space = await focusState();
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(400);
-  // Esc 100 ms into a zoom-in: back from where the tile is drawn (no jump to the full size), its table hidden until it's in its grid place
-  // (never drawn large); the others keep their tables as they fade out, gone only once they're in the gallery
-  await page.waitForTimeout(300);
-  {
-    const recording = page.evaluate(() => window.__record("Humidity", 700));
-    await page.waitForTimeout(50);
+  if (part === "in") {
+    const textPoint = async (title, selector) => centreOf(page, tileOf(page, title).locator(selector).first());
+    out.cursor = { gauge: await cursorAt(page, await at(page, "Humidity", 0.85, 0.3)), title: await cursorAt(page, await textPoint("Humidity", ".title")),
+                   figure: await cursorAt(page, await textPoint("Humidity", ".figure")), reading: await cursorAt(page, await textPoint("Humidity", "svg text.reading")) };
+    // a click on Humidity's gauge: zoomed, in 200 ms, to fill the window
+    out.zoomIn = await zoomClick(page, "Humidity", await at(page, "Humidity", 0.85, 0.3));
+    out.zoomedCursor = { gauge: await cursorAt(page, await at(page, "Humidity", 0.85, 0.3)), margin: await cursorAt(page, [20, 384]),
+                         title: await cursorAt(page, await textPoint("Humidity", ".title")) };
+    out.grip = await page.evaluate(() => getComputedStyle(window.__tile("Humidity").querySelector(".close")).display);
+    out.zoomedLook = await page.evaluate(() => window.__look("Humidity"));                // (its title and gauge filling the window, no table)
+    out.neighbourTable = await page.evaluate(() => window.__look("Temperature").table);   // (the gallery's others: no table either)
+    // live: a new reading for Temperature, the tile beside it off the screen, reaches it in place
+    await page.evaluate(() => { window.__mark = window.__tile("Temperature"); });
+    process.stdout.write(JSON.stringify({ label: await page.evaluate(() => window.__mark.getAttribute("aria-label")) }) + "\n");
+    await new Promise((resolve) => readline.createInterface({ input: process.stdin }).once("line", resolve));
+    try { await page.waitForFunction(() => /21\.5/.test(window.__mark.getAttribute("aria-label")), null, { timeout: 15000 }); } catch (e) { /* (reported) */ }
+    await calm(page, 1000);   // (the gauge's move, MOVE_MS)
+    out.live = { label: await page.evaluate(() => window.__mark.getAttribute("aria-label")), sameTile: await page.evaluate(() => window.__mark === window.__tile("Temperature")),
+                 ...await page.evaluate(() => window.__state()) };
+    // the keys: ← to Temperature (now showing the new reading), ← again: the first, a bounce; Space, →, Backspace
+    out.keys = {};
+    out.keys.left = await keyStep(page, "ArrowLeft");
+    out.keys.leftReading = await page.evaluate(() => window.__mark.querySelector("svg text.reading").textContent);
+    out.keys.pastFirst = await keyStep(page, "ArrowLeft");
+    out.keys.space = await keyStep(page, " ");
+    out.keys.right = await keyStep(page, "ArrowRight");
+    out.keys.backspace = await keyStep(page, "Backspace");
+    out.keys.url = page.url() === url;
+    out.keys.prevented = await page.evaluate(() => window.__keys);
+  } else if (part === "pager") {
+    // zoomed on Humidity, by a click on its gauge
     await page.mouse.click(...await at(page, "Humidity", 0.85, 0.3));
-    await page.waitForTimeout(30);
-    const others = await page.evaluate(() => window.__look("Temperature").table);
-    await page.waitForTimeout(70);
-    await page.keyboard.press("Escape");
-    const { frames: f, at: esc } = await recording, last = f[f.length - 1], after = f.filter((x) => x.t >= esc);
-    out.escMid = { others, last, zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")),
-                   atEsc: f.filter((x) => x.t < esc).pop().width, peakAfter: Math.max(...after.map((x) => x.width)),
-                   tableWhileLarge: Math.max(...after.filter((x) => x.width > last.width + 1).map((x) => x.table)), tableEnd: last.table };
+    await calm(page);
+    // a mouse drag on the gauge: followed as it goes; let go past halfway: the next; a short slow one: back; a short quick one: the next
+    const gauge = () => at(page, "Humidity", 0.85, 0.3);
+    const g = await page.evaluate(() => window.__state());
+    out.drag = { start: g };
+    out.drag.far = await pagerDrag(page, [900, 300], -600);
+    out.drag.short = await pagerDrag(page, [800, 300], -100);
+    out.drag.flick = await pagerDrag(page, [800, 300], -120, { steps: 3, pause: 0 });
+    out.drag.back = await pagerDrag(page, [200, 300], 600);
+    // the first tile, dragged on rightwards: it gives less and less, then springs back
+    await page.keyboard.press("ArrowLeft"); await page.keyboard.press("ArrowLeft");
+    await calm(page, 500);
+    out.drag.pastFirst = await pagerDrag(page, [300, 300], 300);
+    // a trackpad's two-finger swipe: wheel deltaX, kept from the browser
+    await page.mouse.move(800, 300);
+    out.wheel = {};
+    for (let i = 0; i < 8; i++) { await page.mouse.wheel(50, 0); await page.waitForTimeout(16); }
+    await swiped(page);
+    out.wheel.far = await page.evaluate(() => window.__state());
+    for (let i = 0; i < 6; i++) { await page.mouse.wheel(10, 0); await page.waitForTimeout(60); }   // (slowly: no flick)
+    await swiped(page);
+    out.wheel.short = await page.evaluate(() => window.__state());
+    for (let i = 0; i < 8; i++) { await page.mouse.wheel(-50, 0); await page.waitForTimeout(16); }
+    await swiped(page);
+    out.wheel.back = await page.evaluate(() => window.__state());
+    out.wheel.prevented = await page.evaluate(() => window.__wheels);
+  } else if (part === "last") {
+    // zoomed on Humidity, by a click on its gauge
+    await page.mouse.click(...await at(page, "Humidity", 0.85, 0.3));
+    await calm(page);
+    // the last tile: → past it bounces, as does a swipe on
+    const n = (await titles(page)).length;
+    for (let i = 1; i < n; i++) { await page.keyboard.press("ArrowRight"); await page.waitForTimeout(30); }   // (from the second: once past the last)
+    await calm(page, 500);
+    out.last = { reached: await page.evaluate(() => window.__state()), pastLast: await keyStep(page, "ArrowRight") };
+    for (let i = 0; i < 8; i++) { await page.mouse.wheel(50, 0); await page.waitForTimeout(16); }
+    await swiped(page);
+    out.last.wheeled = await page.evaluate(() => window.__state());
+    out.last.dragged = await pagerDrag(page, [800, 300], -400);
+    // a drag on the text selects it: no paging, still zoomed
+    const shown = out.last.reached.shown;
+    out.text = {};
+    for (const [name, selector] of [["title", ".title"], ["reading", "svg text.reading"]]) {
+      const r = await tileOf(page, shown).locator(selector).first().boundingBox(), y = r.y + r.height / 2;
+      await mouseDrag(page, [r.x + 2, y], [r.x + r.width - 1, y + 1]);
+      out.text[name] = { selected: await selection(page), ...await page.evaluate(() => window.__state()) };
+    }
+    // a click without moving on the gauge: back to the dashboard, in 200 ms, the tile in its place
+    out.zoomOut = await zoomClick(page, shown, await at(page, shown, 0.85, 0.3));
+    out.outRect = await tileOf(page, shown).boundingBox();
+    out.outTable = await page.evaluate((shown) => window.__look(shown).table, shown);   // (its table back)
+  } else {
+    // a double-click (its clicks 300 ms apart, slower than the zoom): zoomed, not zoomed and straight back out
+    const wind = await at(page, "Wind", 0.85, 0.3);
+    await page.mouse.move(...wind);
+    await page.mouse.down(); await page.mouse.up();
     await page.waitForTimeout(300);
+    await page.mouse.down({ clickCount: 2 }); await page.mouse.up({ clickCount: 2 });
+    await calm(page);
+    // Esc: back too
+    out.esc = { before: await page.evaluate(() => window.__state()) };
+    await page.keyboard.press("Escape");
+    await calm(page);
+    out.esc.after = await page.evaluate(() => window.__state());
+    out.esc.titles = await titles(page);
+    // a click on the gauge doesn't take the focus: no × once the pointer has gone
+    await page.mouse.move(1020, 4);
+    await calm(page);
+    out.esc.close = await page.evaluate(() => ({ focused: document.activeElement === window.__tile("Wind"),
+                                                opacity: getComputedStyle(window.__tile("Wind").querySelector(".close")).opacity }));
+    // the bounce at the last tile, cut short by Esc: the dashboard back in its place at once; or by a key: that step slides
+    const n2 = (await titles(page)).length;
+    await page.mouse.click(...await at(page, "Wind", 0.85, 0.3));
+    await calm(page);
+    for (let i = 0; i < n2; i++) { await page.keyboard.press("ArrowRight"); await page.waitForTimeout(30); }
+    await calm(page);
+    await page.keyboard.press("ArrowRight");   // (past the last: the bounce)
+    await page.waitForTimeout(30);
+    const cut = page.evaluate(() => window.__record(null, 300));
+    await page.keyboard.press("ArrowLeft");
+    const rec = await cut;
+    const near100 = rec.frames.filter((f) => f.t >= rec.at + 90 && f.t <= rec.at + 130).map((f) => Math.round(f.x));
+    await calm(page);
+    out.bounceCut = { step: { mid: near100, ...await page.evaluate(() => window.__state()) } };
+    await page.keyboard.press("ArrowRight"); await calm(page);
+    await page.keyboard.press("ArrowRight");   // (the bounce again)
+    await page.waitForTimeout(30);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(60);
+    out.bounceCut.esc = await page.evaluate(() => ({ grid: getComputedStyle(document.getElementById("grid")).transform,
+                                                     firstLeft: Math.round(document.querySelector("#grid .tile").getBoundingClientRect().left),
+                                                     zoomed: document.body.classList.contains("zoomed") }));
+    await calm(page);
+    // the keyboard: every tile takes the focus; Enter on one zooms it, the focus going along as it pages, the others out of reach; Esc
+    // back, the focus on the tile shown last; Space zooms too
+    const focusState = () => page.evaluate(() => ({ ...window.__state(), focus: document.activeElement.classList.contains("tile") ? document.activeElement.querySelector(".title").textContent : document.activeElement.tagName,
+                                                     reachable: [...document.querySelectorAll("#grid .tile")].filter((t) => !t.inert).map((t) => t.querySelector(".title").textContent) }));
+    out.keyboard = { tabbable: await page.evaluate(() => [...document.querySelectorAll("#grid .tile")].every((t) => t.tabIndex === 0)) };
+    await page.evaluate(() => window.__tile("Temperature").focus());
+    await calm(page);
+    out.keyboard.focusedClose = await page.evaluate(() => getComputedStyle(window.__tile("Temperature").querySelector(".close")).opacity);
+    await page.keyboard.press("Enter");
+    await calm(page);
+    out.keyboard.enter = await focusState();
+    await page.keyboard.press("ArrowRight");
+    await calm(page);
+    out.keyboard.right = await focusState();
+    await page.keyboard.press("Tab");
+    out.keyboard.tab = await focusState();
+    await page.evaluate(() => window.__tile("Humidity").focus());
+    await page.keyboard.press("Escape");
+    await calm(page);
+    out.keyboard.esc = await focusState();
+    await page.keyboard.press(" ");
+    await calm(page);
+    out.keyboard.space = await focusState();
+    await page.keyboard.press("Escape");
+    await calm(page);
+    // Esc 100 ms into a zoom-in: back from where the tile is drawn (no jump to the full size), its table hidden until it's in its grid place
+    // (never drawn large); the others keep their tables as they fade out, gone only once they're in the gallery
+    await calm(page);
+    {
+      const recording = page.evaluate(() => window.__record("Humidity", 700));
+      await page.waitForTimeout(50);
+      await page.mouse.click(...await at(page, "Humidity", 0.85, 0.3));
+      await page.waitForTimeout(30);
+      const others = await page.evaluate(() => window.__look("Temperature").table);
+      await page.waitForTimeout(70);
+      await page.keyboard.press("Escape");
+      const { frames: f, at: esc } = await recording, last = f[f.length - 1], after = f.filter((x) => x.t >= esc);
+      out.escMid = { others, last, zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")),
+                     atEsc: f.filter((x) => x.t < esc).pop().width, peakAfter: Math.max(...after.map((x) => x.width)),
+                     tableWhileLarge: Math.max(...after.filter((x) => x.width > last.width + 1).map((x) => x.table)), tableEnd: last.table };
+      await calm(page);
+    }
+    // one tile only: no zoom cursor, a click zooms nothing
+    await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: [...document.querySelectorAll(".tile .title")].map((t) => t.textContent).filter((t) => t !== "Rain") })), KEY);
+    await page.reload({ waitUntil: "load" });
+    await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
+    await calm(page, 300);
+    const one = await at(page, "Rain", 0.85, 0.3);
+    out.single = { cursor: await cursorAt(page, one) };
+    await page.mouse.click(...one);
+    await calm(page);
+    out.single.zoomed = await page.evaluate(() => document.body.classList.contains("zoomed"));
   }
-  // one tile only: no zoom cursor, a click zooms nothing
-  await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: [...document.querySelectorAll(".tile .title")].map((t) => t.textContent).filter((t) => t !== "Rain") })), KEY);
-  await page.reload({ waitUntil: "load" });
-  await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
-  await page.waitForTimeout(300);
-  const one = await at(page, "Rain", 0.85, 0.3);
-  out.single = { cursor: await cursorAt(page, one) };
-  await page.mouse.click(...one);
-  await page.waitForTimeout(400);
-  out.single.zoomed = await page.evaluate(() => document.body.classList.contains("zoomed"));
   out.errors = errors;
   await context.close();
   process.stdout.write(JSON.stringify(out) + "\n");
@@ -621,16 +654,21 @@ async function zoomTouchMode(browser, url) {
   await page.evaluate(ZOOM_HELPERS);
   const cdp = await context.newCDPSession(page);
   const touch = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y]) => ({ x, y })) });
-  const tap = async ([x, y]) => { await touch("touchStart", [[x, y]]); await page.waitForTimeout(60); await touch("touchEnd", []); await page.waitForTimeout(450); };
+  const tap = async ([x, y]) => {   // (then its click, and the zoom it starts or ends at rest)
+    const before = await page.evaluate(() => window.__at);
+    await touch("touchStart", [[x, y]]); await page.waitForTimeout(60); await touch("touchEnd", []);
+    await page.waitForFunction((before) => window.__at !== before, before, { timeout: 450 }).catch(() => {});
+    await calm(page, 450);
+  };
   const swipe = async ([x, y], dx, { steps = 10, pause = 250, dy = 0 } = {}) => {
     await touch("touchStart", [[x, y]]);
     for (let i = 1; i <= steps; i++) { await touch("touchMove", [[x + dx * i / steps, y + dy * i / steps]]); if (pause) await page.waitForTimeout(16); }
     await page.waitForTimeout(pause);
     await touch("touchEnd", []);
-    await page.waitForTimeout(500);
+    await calm(page, 500);
     return page.evaluate(() => window.__state());
   };
-  await page.waitForTimeout(1200);
+  await calm(page, 5000);   // (the gauges' rise)
   out.initial = await titles(page);
   // scrolled down a row or two: the tile at the top left tapped
   const scrolled = await page.evaluate(() => { const t = document.querySelectorAll("#grid .tile")[4]; scrollTo(0, t.getBoundingClientRect().top + scrollY - 8); return scrollY; });
@@ -656,7 +694,7 @@ async function zoomTouchMode(browser, url) {
   await touch("touchStart", [[200, 300]]);
   await page.waitForTimeout(700);
   await touch("touchEnd", []);
-  await page.waitForTimeout(300);
+  await calm(page, 300);
   out.held = { ...await page.evaluate(() => window.__state()), buzz: await page.evaluate(() => window.__buzz),
                zone: await page.evaluate(() => document.getElementById("remove").classList.contains("on")) };
   await swipe([90, 300], 250);
@@ -695,10 +733,17 @@ async function fillMode(browser, url, cases) {
 async function weatherPage(browser, url, options = {}) {
   const state = { readings: {} };
   const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, deviceScaleFactor: 1, ...(options.context || {}) });
-  await context.addInitScript(() => {   // (every frame the page asks for, counted)
+  await context.addInitScript(() => {   // (every frame the page asks for, counted; and every fetch's data read)
     window.__frames = 0;
     const ask = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = (f) => { window.__frames++; return ask(f); };
+    window.__fetched = 0;
+    const get = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const response = await get(...args), json = response.json.bind(response);
+      response.json = async () => { const data = await json(); window.__fetched++; return data; };   // (counted before the page renders it)
+      return response;
+    };
   });
   if (options.init) await context.addInitScript(options.init.fn, options.init.arg);
   await context.route(/\/dashboard\/data$/, async (route) => {
@@ -717,10 +762,8 @@ async function weatherPage(browser, url, options = {}) {
   // The readings now these (fetched again: the page fetches when it's shown again)
   const reads = async (readings) => {
     state.readings = readings;
-    const was = await page.evaluate(() => JSON.stringify(Sky.state().levels) + document.querySelectorAll(".tile.alert").length);
-    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await page.waitForTimeout(250);
-    return was;
+    const fetched = await page.evaluate(() => { const n = window.__fetched; document.dispatchEvent(new Event("visibilitychange")); return n; });
+    await page.waitForFunction((n) => window.__fetched > n, fetched);   // (fetched and drawn)
   };
   return { context, page, errors, reads };
 }
@@ -748,189 +791,235 @@ const framesIn = async (page, ms) => {   // the frames the page asked for in thi
   return (await page.evaluate(() => window.__frames)) - before;
 };
 
-async function weatherMode(browser, url) {
+// The weather in parts, each its own page (and process: the tests run them side by side): "marks" (nothing called for, each effect at
+// its mark and just short of it, smog's bands, rain's strength, the ice's depth), "several" (several at once, the canvas, the tiles see-
+// through, their look, zoomed), "stop" ("stop animations", a reload, "start animations", the reset), "links" (the temporary test links),
+// "all" (?fx=all: its frame time, its brightness against Hazardous smog alone, its particles), "opened" (?fx= when the page opens, uv
+// and the wind alone, a phone's strip, reduced motion)
+const WEATHER = {
+  async marks(browser, url, out) {
+    const { context, page, errors, reads } = await weatherPage(browser, url);
+    await calm(page, 5000);   // (the gauges' rise)
+    out.nothing = { ...await weatherSeen(page), frames: await framesIn(page, 800), ink: await canvasInk(page) };
+    // each mark: just short of it, then at it
+    const marks = { rain: [{ rain_rate: 0 }, { rain_rate: 0.1 }], smog: [{ "US AQI": 50 }, { "US AQI": 51 }],
+                    uv: [{ "UV index": 10.9 }, { "UV index": 11 }], humidity: [{ Humidity: 94.9 }, { Humidity: 95 }],
+                    wind: [{ Wind: 50 }, { Wind: 50.1 }], heat: [{ Temperature: 39.9 }, { Temperature: 40 }],
+                    ice: [{ Temperature: 0.1 }, { Temperature: -0.1 }], iceAtZero: [{ Temperature: 0 }, { Temperature: -0.1 }] };
+    out.marks = {};
+    for (const [name, [below, at]] of Object.entries(marks)) {
+      await reads(below);
+      const short = await weatherSeen(page);
+      await reads(at);
+      out.marks[name] = { below: short, at: await weatherSeen(page) };
+    }
+    out.smogBands = [];
+    for (const aqi of [101, 151, 201, 301, 500]) { await reads({ "US AQI": aqi }); out.smogBands.push((await weatherSeen(page)).levels.smog); }
+    out.rainStrength = [];
+    for (const rate of [0.5, 8, 20]) { await reads({ rain_rate: rate }); out.rainStrength.push((await weatherSeen(page)).levels.rain); }
+    out.iceDepth = [];
+    for (const t of [-0.5, -5]) { await reads({ Temperature: t }); out.iceDepth.push((await weatherSeen(page)).levels.ice); }
+    out.errors = errors;
+    await context.close();
+  },
+  async several(browser, url, out) {
+    const { context, page, errors, reads } = await weatherPage(browser, url);
+    await calm(page, 5000);   // (the gauges' rise)
+    // several at once: one canvas, one loop (at most 30 frames a second)
+    await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160 });
+    await calm(page, 5000);   // (the gauges' move to their new readings, MOVE_MS: frames of their own)
+    const drawnBefore = await page.evaluate(() => Sky.state().frames);
+    out.several = { ...await weatherSeen(page), canvases: await page.evaluate(() => document.querySelectorAll("canvas").length),
+                    frames: await framesIn(page, 1000), ink: await canvasInk(page) };
+    out.several.drawn = (await page.evaluate(() => Sky.state().frames)) - drawnBefore;
+    // the canvas: the window's size, fixed, first in the page, behind the tiles (which come after it), clicks through it. (Behind: its
+    // pointer-events on for a moment, so hit-testing sees it, a tile's middle is still the tile's)
+    out.canvas = await page.evaluate(() => {
+      const sky = document.getElementById("sky"), c = sky.querySelector("canvas"), r = sky.getBoundingClientRect(), cr = c.getBoundingClientRect();
+      const st = getComputedStyle(sky);
+      return { rect: [r.left, r.top, r.width, r.height], canvas: [cr.width >= innerWidth, cr.height >= innerHeight],
+               position: st.position, z: st.zIndex, events: st.pointerEvents, first: document.body.firstElementChild === sky,
+               pixelated: getComputedStyle(c).imageRendering,
+               under: (() => {
+                 const r = [...document.querySelectorAll("#grid .tile")][3].getBoundingClientRect();
+                 sky.style.pointerEvents = "auto";
+                 const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                 sky.style.pointerEvents = "";
+                 return hit !== null && hit.closest(".tile") !== null;
+               })() };
+    });
+    // the tiles see-through: a tile's blank margin shows what's drawn behind it (smog, Hazardous, over the bottom row)
+    await reads({ "US AQI": 500 });
+    await page.waitForTimeout(1800);
+    const margin = async () => {
+      const r = await tileOf(page, "PM10").boundingBox();
+      return page.screenshot({ clip: { x: r.x + r.width * 0.04, y: r.y + r.height * 0.45, width: r.width * 0.12, height: r.height * 0.15 } });
+    };
+    const smoggy = await margin();
+    await reads({});
+    await page.waitForFunction(() => !Sky.state().running);   // (faded out: the loop ended)
+    await calm(page);
+    const clear1 = await margin(), clear2 = await margin();
+    out.through = { differs: !smoggy.equals(clear1), still: clear1.equals(clear2) };
+    out.look = await page.evaluate(() => {
+      const tile = document.querySelector(".tile"), before = getComputedStyle(tile, "::before");
+      return { background: getComputedStyle(tile).backgroundColor, opacity: getComputedStyle(tile).opacity,
+               title: getComputedStyle(tile.querySelector(".title")).color, frame: before.borderTopColor };
+    });
+    await reads({ "UV index": 11 });
+    out.look.alertFrame = await page.evaluate(() => getComputedStyle(document.querySelector(".tile.alert"), "::before").borderTopColor);
+    out.look.dragFrames = await page.evaluate(() => {   // a framed tile dragged: lifted, then over the remove zone, its frame as any other's
+      const tile = document.querySelector(".tile.alert"), frame = () => getComputedStyle(tile, "::before").borderTopColor;
+      tile.classList.add("lifted");
+      const lifted = frame();
+      tile.classList.add("doomed");
+      const doomed = frame();
+      tile.classList.remove("lifted", "doomed");
+      return { lifted, doomed, after: frame() };
+    });
+    // zoomed: the tile still see-through, its frame still red, the effect still behind it
+    const [zx, zy] = await at(page, "UV index", 0.85, 0.3);
+    await page.mouse.click(zx, zy);
+    await calm(page);
+    out.zoomed = await page.evaluate(() => {
+      const shown = [...document.querySelectorAll("#grid .tile")].find((t) => !t.inert);
+      return { zoomed: document.body.classList.contains("zoomed"), title: shown.querySelector(".title").textContent,
+               background: getComputedStyle(shown).backgroundColor, grid: getComputedStyle(document.getElementById("grid")).backgroundColor,
+               alert: shown.classList.contains("alert"), running: Sky.state().running };
+    });
+    out.errors = errors;
+    await context.close();
+  },
+  async stop(browser, url, out) {
+    const { context, page, errors, reads } = await weatherPage(browser, url);
+    await calm(page, 5000);   // (the gauges' rise)
+    await reads({ "UV index": 11 });
+    await calm(page, 5000);   // (the gauge's move: frames of its own)
+    // "stop animations": nothing drawn, no loop, the frames stay; kept; "reset preferences" starts them again
+    await page.locator("#status .animations").click();
+    await page.waitForTimeout(200);
+    out.stopped = { ...await weatherSeen(page), frames: await framesIn(page, 600), ink: await canvasInk(page),
+                    stored: JSON.parse(await page.evaluate((key) => localStorage.getItem(key), KEY)).animations };
+    await page.reload({ waitUntil: "load" });
+    await page.waitForFunction(() => document.querySelectorAll(".tile.alert").length > 0);
+    await calm(page, 5000);   // (the gauges' rise)
+    out.reloaded = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
+    await page.locator("#status .animations").click();
+    await page.waitForTimeout(100);
+    out.restarted = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
+    await page.locator("#status .animations").click();   // (stopped again: reset puts them back)
+    await page.mouse.move(...await at(page, "Rain", 0.5, 0.4));
+    await calm(page);
+    await tileOf(page, "Rain").locator(".close").click();
+    await calm(page);
+    await page.getByText("reset preferences").click();
+    await page.waitForTimeout(100);
+    out.reset = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
+    out.errors = errors;
+    await context.close();
+  },
+  async links(browser, url, out) {
+    // the temporary test links: each turns its effect and frame on (the gauges keep their readings), "clear" ends them; the URL follows
+    const { context, page, errors } = await weatherPage(browser, url);
+    await calm(page, 5000);   // (the gauges' rise)
+    const fx = (name) => page.locator("#fxtest button", { hasText: new RegExp(`^${name}`) }).first().click();
+    const label = () => page.evaluate(() => document.querySelector(".tile[data-id='UV index']").getAttribute("aria-label"));
+    out.links = { buttons: await page.evaluate(() => [...document.querySelectorAll("#fxtest button")].map((b) => b.textContent)) };
+    for (const name of ["uv", "humidity", "wind", "heat", "ice"]) {
+      await fx(name);
+      out.links[name] = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
+    }
+    out.links.label = await label();
+    out.links.smog = [];
+    for (let i = 0; i < 6; i++) { await fx("smog"); out.links.smog.push((await weatherSeen(page)).levels.smog); }
+    out.links.rain = [];
+    for (let i = 0; i < 3; i++) { await fx("rain"); out.links.rain.push((await weatherSeen(page)).levels.rain); }
+    await page.waitForFunction(() => Sky.state().iceReach > 2.5);   // (the ice grown in a little)
+    const grown = await page.evaluate(() => Sky.state().iceReach);
+    await fx("ice");   // (off: it melts back, the loop running on until it's gone)
+    await page.waitForTimeout(300);
+    out.links.melting = { grown, reach: await page.evaluate(() => Sky.state().iceReach), ...await weatherSeen(page) };
+    out.links.pressed = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#fxtest button[data-fx]")]
+      .map((b) => [b.dataset.fx, b.getAttribute("aria-pressed")])));
+    out.links.role = await page.evaluate(() => document.getElementById("fxtest").getAttribute("role"));
+    await fx("clear");
+    await page.waitForTimeout(100);
+    out.links.cleared = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
+    // every effect at once: ?fx=all (no link of its own)
+    await page.goto(url + "?fx=all", { waitUntil: "load" });
+    await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /updated/.test(document.getElementById("status").textContent));
+    out.links.all = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
+    out.errors = errors;
+    await context.close();
+  },
+  async all(browser, url, out) {
+    const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
+    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=all" });
+    await page.waitForTimeout(3000);
+    out.cost = await page.evaluate(() => Sky.state().cost);   // (ms of script a frame, with every effect on)
+    // the strongest single effect (Hazardous smog), as bright as "all" may be: faded in while the ice grows on
+    const strongest = (async () => {
+      const smog = await weatherPage(browser, url, { query: "?fx=smog5" });
+      await smog.page.waitForTimeout(2500);   // (faded in)
+      const light = await canvasLight(smog.page);
+      await smog.context.close();
+      return light;
+    })();
+    await page.waitForFunction(() => {   // (the ice grown all the way in: its reach the same for half a second)
+      const r = Sky.state().iceReach, now = performance.now();
+      if (window.__reach !== r) { window.__reach = r; window.__reachSince = now; }
+      return r > 0 && now - window.__reachSince >= 500;
+    }, null, { timeout: 15000 });
+    out.light = { all: await canvasLight(page) };
+    out.particles = { all: await particles(page) };
+    out.light.smog5 = await strongest;
+    out.errors = errors;
+    await context.close();
+  },
+  async opened(browser, url, out) {
+    const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
+    // ?fx= when the page opens
+    for (const [name, query] of [["param", "?fx=smog3,wind,ice"], ["paramAll", "?fx=all"], ["paramRain", "?fx=rain2"],
+                                ["paramOld", "?fx=leaves,radiation,drips"]]) {
+      const opened = await weatherPage(browser, url, { query });
+      await opened.page.waitForTimeout(200);
+      out[name] = { ...await weatherSeen(opened.page), errors: opened.errors };
+      await opened.context.close();
+    }
+    // uv alone: its beams, no particles; the wind alone: its leaves within the budget
+    out.particles = {};
+    for (const name of ["uv", "wind"]) {
+      const alone = await weatherPage(browser, url, { query: `?fx=${name}` });
+      await alone.page.waitForTimeout(1500);
+      const p = await particles(alone.page);
+      out.particles[name] = { [name]: p[name], budget: p.budget };
+      await alone.context.close();
+    }
+    // a phone, a tile hidden, an effect on: the strip (reset preferences · stop animations · updated) at the bottom right, the time last;
+    // the test row not over it
+    const phone = await weatherPage(browser, url, { query: "?fx=rain", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
+      init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
+    await phone.page.waitForTimeout(300);
+    out.phone = await phone.page.evaluate(() => {
+      const a = document.getElementById("fxtest").getBoundingClientRect(), b = document.getElementById("status").getBoundingClientRect();
+      return { strip: document.getElementById("status").textContent, right: Math.abs(b.right - innerWidth) < 1 && Math.abs(b.bottom - innerHeight) < 1,
+               apart: a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top, onScreen: a.left >= 0 && a.bottom <= innerHeight };
+    });
+    await phone.context.close();
+    // reduced motion: no loop, one still, faint frame; the frames as ever
+    const still = await weatherPage(browser, url, { context: { reducedMotion: "reduce" } });
+    await still.reads({ "UV index": 11, Temperature: -4 });
+    await still.page.waitForTimeout(500);
+    out.still = { ...await weatherSeen(still.page), frames: await framesIn(still.page, 800), ink: await canvasInk(still.page),
+                  stateFrames: await still.page.evaluate(() => Sky.state().frames), errors: still.errors };
+    await still.context.close();
+    out.errors = [];
+  },
+};
+
+async function weatherMode(browser, url, part) {
   const out = {};
-  const { context, page, errors, reads } = await weatherPage(browser, url);
-  await page.waitForTimeout(1300);   // (the gauges' rise)
-  out.nothing = { ...await weatherSeen(page), frames: await framesIn(page, 800), ink: await canvasInk(page) };
-  // each mark: just short of it, then at it
-  const marks = { rain: [{ rain_rate: 0 }, { rain_rate: 0.1 }], smog: [{ "US AQI": 50 }, { "US AQI": 51 }],
-                  uv: [{ "UV index": 10.9 }, { "UV index": 11 }], humidity: [{ Humidity: 94.9 }, { Humidity: 95 }],
-                  wind: [{ Wind: 50 }, { Wind: 50.1 }], heat: [{ Temperature: 39.9 }, { Temperature: 40 }],
-                  ice: [{ Temperature: 0.1 }, { Temperature: -0.1 }], iceAtZero: [{ Temperature: 0 }, { Temperature: -0.1 }] };
-  out.marks = {};
-  for (const [name, [below, at]] of Object.entries(marks)) {
-    await reads(below);
-    const short = await weatherSeen(page);
-    await reads(at);
-    out.marks[name] = { below: short, at: await weatherSeen(page) };
-  }
-  out.smogBands = [];
-  for (const aqi of [101, 151, 201, 301, 500]) { await reads({ "US AQI": aqi }); out.smogBands.push((await weatherSeen(page)).levels.smog); }
-  out.rainStrength = [];
-  for (const rate of [0.5, 8, 20]) { await reads({ rain_rate: rate }); out.rainStrength.push((await weatherSeen(page)).levels.rain); }
-  out.iceDepth = [];
-  for (const t of [-0.5, -5]) { await reads({ Temperature: t }); out.iceDepth.push((await weatherSeen(page)).levels.ice); }
-  // several at once: one canvas, one loop (at most 30 frames a second)
-  await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160 });
-  await page.waitForTimeout(1200);   // (the gauges' move to their new readings, MOVE_MS: frames of their own)
-  const drawnBefore = await page.evaluate(() => Sky.state().frames);
-  out.several = { ...await weatherSeen(page), canvases: await page.evaluate(() => document.querySelectorAll("canvas").length),
-                  frames: await framesIn(page, 1000), ink: await canvasInk(page) };
-  out.several.drawn = (await page.evaluate(() => Sky.state().frames)) - drawnBefore;
-  // the canvas: the window's size, fixed, first in the page, behind the tiles (which come after it), clicks through it. (Behind: its
-  // pointer-events on for a moment, so hit-testing sees it, a tile's middle is still the tile's)
-  out.canvas = await page.evaluate(() => {
-    const sky = document.getElementById("sky"), c = sky.querySelector("canvas"), r = sky.getBoundingClientRect(), cr = c.getBoundingClientRect();
-    const st = getComputedStyle(sky);
-    return { rect: [r.left, r.top, r.width, r.height], canvas: [cr.width >= innerWidth, cr.height >= innerHeight],
-             position: st.position, z: st.zIndex, events: st.pointerEvents, first: document.body.firstElementChild === sky,
-             pixelated: getComputedStyle(c).imageRendering,
-             under: (() => {
-               const r = [...document.querySelectorAll("#grid .tile")][3].getBoundingClientRect();
-               sky.style.pointerEvents = "auto";
-               const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-               sky.style.pointerEvents = "";
-               return hit !== null && hit.closest(".tile") !== null;
-             })() };
-  });
-  // the tiles see-through: a tile's blank margin shows what's drawn behind it (smog, Hazardous, over the bottom row)
-  await reads({ "US AQI": 500 });
-  await page.waitForTimeout(1800);
-  const margin = async () => {
-    const r = await tileOf(page, "PM10").boundingBox();
-    return page.screenshot({ clip: { x: r.x + r.width * 0.04, y: r.y + r.height * 0.45, width: r.width * 0.12, height: r.height * 0.15 } });
-  };
-  const smoggy = await margin();
-  await reads({});
-  await page.waitForTimeout(1800);   // (faded out)
-  const clear1 = await margin(), clear2 = await margin();
-  out.through = { differs: !smoggy.equals(clear1), still: clear1.equals(clear2) };
-  out.look = await page.evaluate(() => {
-    const tile = document.querySelector(".tile"), before = getComputedStyle(tile, "::before");
-    return { background: getComputedStyle(tile).backgroundColor, opacity: getComputedStyle(tile).opacity,
-             title: getComputedStyle(tile.querySelector(".title")).color, frame: before.borderTopColor };
-  });
-  await reads({ "UV index": 11 });
-  out.look.alertFrame = await page.evaluate(() => getComputedStyle(document.querySelector(".tile.alert"), "::before").borderTopColor);
-  out.look.dragFrames = await page.evaluate(() => {   // a framed tile dragged: lifted, then over the remove zone, its frame as any other's
-    const tile = document.querySelector(".tile.alert"), frame = () => getComputedStyle(tile, "::before").borderTopColor;
-    tile.classList.add("lifted");
-    const lifted = frame();
-    tile.classList.add("doomed");
-    const doomed = frame();
-    tile.classList.remove("lifted", "doomed");
-    return { lifted, doomed, after: frame() };
-  });
-  // zoomed: the tile still see-through, its frame still red, the effect still behind it
-  const [zx, zy] = await at(page, "UV index", 0.85, 0.3);
-  await page.mouse.click(zx, zy);
-  await page.waitForTimeout(400);
-  out.zoomed = await page.evaluate(() => {
-    const shown = [...document.querySelectorAll("#grid .tile")].find((t) => !t.inert);
-    return { zoomed: document.body.classList.contains("zoomed"), title: shown.querySelector(".title").textContent,
-             background: getComputedStyle(shown).backgroundColor, grid: getComputedStyle(document.getElementById("grid")).backgroundColor,
-             alert: shown.classList.contains("alert"), running: Sky.state().running };
-  });
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(300);
-  // "stop animations": nothing drawn, no loop, the frames stay; kept; "reset preferences" starts them again
-  await page.locator("#status .animations").click();
-  await page.waitForTimeout(200);
-  out.stopped = { ...await weatherSeen(page), frames: await framesIn(page, 600), ink: await canvasInk(page),
-                  stored: JSON.parse(await page.evaluate((key) => localStorage.getItem(key), KEY)).animations };
-  await page.reload({ waitUntil: "load" });
-  await page.waitForFunction(() => document.querySelectorAll(".tile.alert").length > 0);
-  await page.waitForTimeout(1300);   // (the gauges' rise)
-  out.reloaded = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
-  await page.locator("#status .animations").click();
-  await page.waitForTimeout(300);
-  out.restarted = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
-  await page.locator("#status .animations").click();   // (stopped again: reset puts them back)
-  await page.mouse.move(...await at(page, "Rain", 0.5, 0.4));
-  await page.waitForTimeout(250);
-  await tileOf(page, "Rain").locator(".close").click();
-  await page.waitForTimeout(300);
-  await page.getByText("reset preferences").click();
-  await page.waitForTimeout(400);
-  out.reset = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
-  // the temporary test links: each turns its effect and frame on (the gauges keep their readings), "clear" ends them; the URL follows
-  await reads({});
-  await page.waitForTimeout(1700);
-  const fx = (name) => page.locator("#fxtest button", { hasText: new RegExp(`^${name}`) }).first().click();
-  const label = () => page.evaluate(() => document.querySelector(".tile[data-id='UV index']").getAttribute("aria-label"));
-  out.links = { buttons: await page.evaluate(() => [...document.querySelectorAll("#fxtest button")].map((b) => b.textContent)) };
-  for (const name of ["uv", "humidity", "wind", "heat", "ice"]) {
-    await fx(name);
-    out.links[name] = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
-  }
-  out.links.label = await label();
-  out.links.smog = [];
-  for (let i = 0; i < 6; i++) { await fx("smog"); out.links.smog.push((await weatherSeen(page)).levels.smog); }
-  out.links.rain = [];
-  for (let i = 0; i < 3; i++) { await fx("rain"); out.links.rain.push((await weatherSeen(page)).levels.rain); }
-  await page.waitForTimeout(2500);   // (the ice grown in a little)
-  const grown = await page.evaluate(() => Sky.state().iceReach);
-  await fx("ice");   // (off: it melts back, the loop running on until it's gone)
-  await page.waitForTimeout(300);
-  out.links.melting = { grown, reach: await page.evaluate(() => Sky.state().iceReach), ...await weatherSeen(page) };
-  out.links.pressed = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#fxtest button[data-fx]")]
-    .map((b) => [b.dataset.fx, b.getAttribute("aria-pressed")])));
-  out.links.role = await page.evaluate(() => document.getElementById("fxtest").getAttribute("role"));
-  await fx("clear");
-  await page.waitForTimeout(100);
-  out.links.cleared = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
-  // every effect at once: ?fx=all (no link of its own)
-  await page.goto(url + "?fx=all", { waitUntil: "load" });
-  await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /updated/.test(document.getElementById("status").textContent));
-  out.links.all = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
-  await page.waitForTimeout(3000);
-  out.cost = await page.evaluate(() => Sky.state().cost);   // (ms of script a frame, with every effect on)
-  await page.waitForTimeout(5000);   // (the ice grown all the way in)
-  out.light = { all: await canvasLight(page) };
-  const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
-  out.particles = { all: await particles(page) };
-  out.errors = errors;
-  await context.close();
-  // ?fx= when the page opens
-  for (const [name, query] of [["param", "?fx=smog3,wind,ice"], ["paramAll", "?fx=all"], ["paramRain", "?fx=rain2"],
-                              ["paramOld", "?fx=leaves,radiation,drips"]]) {
-    const opened = await weatherPage(browser, url, { query });
-    await opened.page.waitForTimeout(200);
-    out[name] = { ...await weatherSeen(opened.page), errors: opened.errors };
-    await opened.context.close();
-  }
-  // the strongest single effect (Hazardous smog), as bright as "all" may be
-  const strongest = await weatherPage(browser, url, { query: "?fx=smog5" });
-  await strongest.page.waitForTimeout(2500);   // (faded in)
-  out.light.smog5 = await canvasLight(strongest.page);
-  await strongest.context.close();
-  // uv alone: its beams, no particles; the wind alone: its leaves within the budget
-  for (const name of ["uv", "wind"]) {
-    const alone = await weatherPage(browser, url, { query: `?fx=${name}` });
-    await alone.page.waitForTimeout(1500);
-    const p = await particles(alone.page);
-    out.particles[name] = { [name]: p[name], budget: p.budget };
-    await alone.context.close();
-  }
-  // a phone, a tile hidden, an effect on: the strip (reset preferences · stop animations · updated) at the bottom right, the time last;
-  // the test row not over it
-  const phone = await weatherPage(browser, url, { query: "?fx=rain", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
-    init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
-  await phone.page.waitForTimeout(300);
-  out.phone = await phone.page.evaluate(() => {
-    const a = document.getElementById("fxtest").getBoundingClientRect(), b = document.getElementById("status").getBoundingClientRect();
-    return { strip: document.getElementById("status").textContent, right: Math.abs(b.right - innerWidth) < 1 && Math.abs(b.bottom - innerHeight) < 1,
-             apart: a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top, onScreen: a.left >= 0 && a.bottom <= innerHeight };
-  });
-  await phone.context.close();
-  // reduced motion: no loop, one still, faint frame; the frames as ever
-  const still = await weatherPage(browser, url, { context: { reducedMotion: "reduce" } });
-  await still.reads({ "UV index": 11, Temperature: -4 });
-  await still.page.waitForTimeout(500);
-  out.still = { ...await weatherSeen(still.page), frames: await framesIn(still.page, 800), ink: await canvasInk(still.page),
-                stateFrames: await still.page.evaluate(() => Sky.state().frames), errors: still.errors };
-  await still.context.close();
+  await WEATHER[part](browser, url, out);
   process.stdout.write(JSON.stringify(out));
 }
 
@@ -943,9 +1032,9 @@ async function weatherMode(browser, url) {
     else if (second === "--arrange") await arrangeMode(browser, url);
     else if (second === "--touch") await touchMode(browser, url);
     else if (second === "--fill") await fillMode(browser, url, JSON.parse(third));
-    else if (second === "--zoom") await zoomMode(browser, url);
+    else if (second === "--zoom") await zoomMode(browser, url, third);
     else if (second === "--zoom-touch") await zoomTouchMode(browser, url);
-    else if (second === "--weather") await weatherMode(browser, url);
+    else if (second === "--weather") await weatherMode(browser, url, third);
     else await sizes(browser, url, second, JSON.parse(third));
   } finally {
     await browser.close();

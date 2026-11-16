@@ -10,7 +10,8 @@ python -m pytest -m ""                 # every test, the slow ones too (as CI ru
 python -m pytest -m slow               # the slow ones alone
 python scripts/eval_prompts.py         # the saved questions: the reasoning effort (made in code) and the tools' expectations, no key needed
 ```
-Plain `pytest` takes about 19 s on four cores; everything (`-m ""`) about 45 s. The slow tests, 0.5 s or more each run alone (the browser
+Plain `pytest` takes about 19 s on four cores; everything (`-m ""`) about 53 s, and must stay under a minute: the browser tests are split
+into parts that run side by side, and wait on the page (`calm` in `tests/web_dashboard_browser.js`) rather than for fixed times. The slow tests, 0.5 s or more each run alone (the browser
 tests of the web page, the service evals over every tool, the tests that start servers, the archive's own), are listed in
 `tests/slow_tests.txt` and marked `slow` by `tests/conftest.py`; `python scripts/slow_tests.py` measures every test again and rewrites the
 list (about two and a half minutes). The slowest fixture, the fake station's 18-month archive (`archived_cache` in `tests/conftest.py`),
