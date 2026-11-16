@@ -14,7 +14,8 @@
 //   node web_dashboard_browser.js URL --arrange PART: the page at 1024x768 with a mouse, a part of the arranging (arrangeMode):
 //     "dragged" (dragging to reorder, the drag's text zones, the grip and the × on mouseover, the tiles' see-through look), "hidden"
 //     (the ×, the remove zone, the reset link, the preferences across a reload), "prefs" (the preferences corrupt or from elsewhere (a
-//     tile new to them), a click soon after a drop, the focus after the × pressed from the keyboard; beside it, storage blocked); prints
+//     tile new to them), a click soon after a drop, the focus after the × pressed from the keyboard; beside it, storage blocked),
+//     "stale" (the strip's reading time with a device's reading over an hour old, arrangedStale); prints
 //     {step: what was seen}.
 //   node web_dashboard_browser.js URL --touch PART: the page at 390x844 with touch (CDP touch events), a part (touchMode): "taps" (a
 //     short tap is a click; a swipe scrolls), "edge" (held at the bottom edge it scrolls to the page's end only), "held" (a long press
@@ -300,11 +301,12 @@ const midDrag = (page) => page.evaluate(() => ({
 
 // In three parts (each its own page: the tests run them side by side): "dragged" (dragged, and drags on the text), "hidden" (dragged,
 // then hidden, reloaded and reset) and "prefs" (preferences unreadable or from elsewhere, a click soon after a drop and the × from the
-// keyboard; then storage blocked, on a page of its own beside it).
+// keyboard; then storage blocked, on a page of its own beside it), and "stale" (the strip with a device's reading over an hour old).
 async function arrangeMode(browser, url, part) {
   const out = {}, errors = [];
   if (part === "dragged") await arranged(browser, url, out, errors);
   else if (part === "hidden") await arrangedHidden(browser, url, out, errors);
+  else if (part === "stale") await arrangedStale(browser, url, out, errors);
   else await Promise.all([arrangedFromPrefs(browser, url, out, errors), arrangedBlocked(browser, url, out)]);
   out.errors = errors;
   return out;
@@ -419,6 +421,54 @@ async function arrangedFromPrefs(browser, url, out, allErrors) {
   await page.keyboard.press("Enter");
   await calm(page);
   out.keyboardHide.push(await focused());
+  allErrors.push(...errors);
+  await context.close();
+}
+// The strip's reading time as the devices' readings age: the data's `devices` replaced on the way in by readings this old (ms; null: none
+// held; a device left out: not configured), fetched again (as the page does when it is shown again); each step's {text, grey (the
+// greyed-out parts), sent (the devices as sent)}. Last, a device turning stale with no new data: {before, after, ms (till it did)}.
+const STALE_STEPS = { fresh: { station: 0, air: 60e3 }, airStale: { station: 0, air: 2 * 3600e3 }, recovered: { station: 0, air: 0 },
+                      stationStale: { station: 3 * 3600e3, air: 30e3 }, bothStale: { station: 3 * 3600e3, air: 2 * 3600e3 },
+                      noReading: { station: null, air: 0 }, only: { station: 2 * 3600e3 }, onlyFresh: { station: 0 } };
+async function arrangedStale(browser, url, out, allErrors) {
+  const { context, page, errors } = await open(browser, url, 1024, 768, { init: { fn: () => {
+    window.__fetched = 0;
+    const get = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const response = await get(...args);
+      if (/\/dashboard\/data$/.test(String(args[0]))) {
+        const json = response.json.bind(response);
+        response.json = async () => {
+          const data = await json();
+          if (window.__ages) data.devices = window.__sent = Object.fromEntries(Object.entries(window.__ages).map(([d, age]) =>
+            [d, age === null ? null : new Date(Date.now() - age).toISOString()]));
+          window.__fetched++;
+          return data;
+        };
+      }
+      return response;
+    };
+  } } });
+  const strip = () => page.evaluate(() => ({ text: document.getElementById("status").textContent, sent: window.__sent || null,
+                                             grey: [...document.querySelectorAll("#status .stale")].map((e) => e.textContent) }));
+  const send = async (ages) => {
+    const n = await page.evaluate((ages) => { window.__ages = ages; document.dispatchEvent(new Event("visibilitychange")); return window.__fetched; }, ages);
+    await page.waitForFunction((n) => window.__fetched > n, n);
+    return strip();
+  };
+  out.stale = { real: await strip() };
+  for (const [name, ages] of Object.entries(STALE_STEPS)) {
+    out.stale[name] = await send(ages);
+    if (name === "airStale") out.stale.colours = await page.evaluate(() => [getComputedStyle(document.getElementById("status")).color,
+                                                                            getComputedStyle(document.querySelector("#status .stale")).color]);
+  }
+  // the station's reading turning an hour old 1.5 s from now, the air sensor's already stale: no new data, the strip greys out by itself
+  const turning = { before: await send({ station: 3600e3 - 1500, air: 2 * 3600e3 }) };
+  const t0 = Date.now();
+  await page.waitForFunction(() => [...document.querySelectorAll("#status .stale")].some((e) => /^last reading/.test(e.textContent)), null, { timeout: 6000 });
+  turning.ms = Date.now() - t0;
+  turning.after = await strip();
+  out.stale.turning = turning;
   allErrors.push(...errors);
   await context.close();
 }

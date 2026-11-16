@@ -14,7 +14,9 @@
     for it. Only link previews fetch og:image: a browser opening the page fetches nothing from elsewhere;
   - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, answered
     from what is held (fetch off: a request never asks the station; the keep-warm keeps the live reading), as the Status picture's, each
-    tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`), the look, and the station's rain rate now
+    tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`: the newer of the two devices'), each
+    device's own (`devices`: {"station", "air"}: its reading's time, ISO in the station's zone, null with none held; a device not
+    configured is not there), for the strip's stalled device greyed out, the look, and the station's rain rate now
     (`rain_rate`, mm/h: its rain gauge's, or its piezo gauge's where that's the one reporting, which no tile shows; null with
     neither), for the page's rain behind the tiles; the past hour's highest of the dials with a thin red hand (`hour_highs`, by
     title: Wind's gust, Rain rate's, Solar radiation's, UV index's: hour_highs()), and the gust now (`gust`, km/h: over 99, a new
@@ -36,6 +38,7 @@ import html
 import json
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 
 from starlette.requests import Request
@@ -45,6 +48,7 @@ from starlette.routing import Route
 from . import gauge_sheet
 from .airgradient.dashboard import AIR_GAUGES
 from .airgradient.metrics import value_of
+from .service.common import iso
 from .ecowitt.dashboard import GAUGES, GUST, live_value
 from .ecowitt.reads import highest_on
 from .gauge_look import look, tile_json
@@ -123,13 +127,13 @@ class WebDashboard:
 
     # ---------- the data ----------
     async def data(self) -> dict:
-        """{as_of, tiles, look, rain_rate, gust, hour_highs}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
+        """{as_of, devices, tiles, look, rain_rate, gust, hour_highs}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
         (fetch off): an open request on the LAN never asks the station (the keep-warm keeps the live reading, and the events come from it)."""
         tool = self.server.service.get("current")
         result = json.loads(await tool.call(gauge_sheet.call(), {"fetch": False})) if tool else {"error": "no current"}
         sheet = gauge_sheet.sheet(result)
         live = self._kept_live()
-        out = {"as_of": result.get("as_of"), "tiles": [tile_json(t) for t in sheet.tiles] if sheet else [], "look": look(),
+        out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": [tile_json(t) for t in sheet.tiles] if sheet else [], "look": look(),
                "rain_rate": rain_rate_of(result, live), "gust": now_of(result, live, GUST),
                "hour_highs": await self.hour_highs(result, live, [t.title for t in sheet.tiles] if sheet else [])}
         if sheet is None:
@@ -167,6 +171,32 @@ class WebDashboard:
         except (AttributeError, TypeError, ValueError):
             return True
         return not at or at >= time.time() - HOUR_SECONDS
+
+    def device_times(self) -> dict[str, str | None]:
+        """{"station", "air"}: the time of each configured device's reading as it is held (the station's: its newest reading's own time
+        in the kept live reading, else when that was kept; the air sensor's: its latest row's timestamp, else when that was fetched), ISO
+        in the station's zone; None for one holding none. A device not configured has no entry."""
+        ctx, out = self.server.ctx, {}
+        if ctx.eco is not None:
+            kept = getattr(ctx.eco, "_live", None)
+            at = 0
+            for fields in (kept[1] if kept else {}).values():
+                for obj in (fields.values() if isinstance(fields, dict) else ()):
+                    try:
+                        at = max(at, int(obj.get("time") or 0) if isinstance(obj, dict) else 0)
+                    except (TypeError, ValueError):
+                        pass
+            out["station"] = iso(at or kept[0], ctx.zone) if kept else None
+        if ctx.air is not None:
+            held = getattr(ctx.air, "_current", None)
+            at = None
+            if held:
+                try:
+                    at = datetime.fromisoformat(str(held[0]["timestamp"]).replace("Z", "+00:00")).timestamp()
+                except (KeyError, TypeError, ValueError):
+                    at = held[1]
+            out["air"] = iso(at, ctx.zone) if at else None
+        return out
 
     def _kept_live(self) -> dict | None:
         kept = getattr(self.server.ctx.eco, "_live", None)

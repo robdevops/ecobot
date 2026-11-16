@@ -4,7 +4,7 @@ server's own change detection), no token and any Host for it while /mcp still as
 and a shutdown that doesn't wait on an open stream. Then the page in a browser (Playwright's Chromium, through node, skipped without
 it) at a phone's, a tablet's and a desktop's sizes: every tile on the screen where the size allows, nothing wider than the window, no
 console error; the tiles rearranged (dragged with a mouse and with a touch's long press, hidden by the × and the remove zone, kept
-across reloads, reset), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds; a tile zoomed to
+across reloads, reset), the strip's reading time with a device's reading over an hour old (greyed out), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds; a tile zoomed to
 fill the window and the gallery through the others (keys, mouse drags, a trackpad's swipe, touch swipes, both ends, the text still
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
 one canvas behind the tiles, "stop animation", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place
@@ -28,7 +28,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace as NS
 
 import httpx
@@ -66,10 +66,11 @@ class Station:
         self.latest, self.air_values = _air(self.today)
         self.eco = NS(_live=(time.time(), self.live), storage=None, tz=TZ)
         self.air = NS(_current=None)
+        self.air_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())   # (its latest's time: now, fresh; air_from moves it)
         self._keep_air()
 
     def _keep_air(self):
-        row = {"timestamp": "2026-10-27T07:42:00Z", **{RAW[k]: e["value"] for k, e in self.latest.items()}}
+        row = {"timestamp": self.air_at, **{RAW[k]: e["value"] for k, e in self.latest.items()}}
         self.air._current = (row, time.time())
 
     def current(self, args, meta):
@@ -80,6 +81,11 @@ class Station:
         self.live = json.loads(json.dumps(self.live))
         self.live.setdefault(group, {}).setdefault(field, {})["value"] = value
         self.eco._live = (time.time(), self.live)
+
+    def air_from(self, at: float):
+        """The air sensor's latest was taken at this epoch."""
+        self.air_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
+        self._keep_air()
 
     def held(self, highs: dict):
         """The station's file holds these highest of the past hour ({(group, field): value}, highest_on's), as the dashboard reads it."""
@@ -285,6 +291,37 @@ def test_the_icon_is_the_pages_own_sun_at_512_px():
     assert big.mode == "RGBA" and big.getpixel((0, 0))[3] == 0 and big.getpixel((256, 256))[3] == 255   # the sun on a clear ground
     assert "data:" not in PAGE.read_text()                                 # the page carries no icon of its own: it links this one
     assert ICON_URL.endswith("/main/" + ICON.relative_to(Path(__file__).resolve().parent.parent).as_posix())   # og:image: this file on GitHub
+
+
+async def test_the_data_carries_each_devices_own_reading_time_and_none_for_a_device_not_configured(server, station):
+    """Beside as_of (the newer of the two), each device's own reading time, for the strip's stalled device: the station's newest reading's
+    own time in its kept live reading (else when that was kept), the air sensor's latest's; fresh, one stale (each), both, recovered."""
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    local = lambda at: datetime.fromtimestamp(int(at), TZ).isoformat()
+    now = time.time()
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):
+        data = lambda: get(f"{base}/dashboard/data")
+        station.eco._live = (now, station.live)                        # both fresh (the station's reading with no time of its own)
+        station.air_from(now - 60)
+        assert (await data()).json()["devices"] == {"station": local(now), "air": local(now - 60)}
+        station.air_from(now - 5400)                                   # the air sensor stalled
+        assert (await data()).json()["devices"] == {"station": local(now), "air": local(now - 5400)}
+        stamped = json.loads(json.dumps(station.live))                 # the station stalled: its readings' own times, the newest
+        stamped["outdoor"]["temperature"]["time"], stamped["wind"]["wind_speed"]["time"] = str(int(now - 7300)), str(int(now - 7200))
+        station.eco._live = (now, stamped)
+        station.air_from(now - 30)
+        assert (await data()).json()["devices"] == {"station": local(now - 7200), "air": local(now - 30)}
+        station.air_from(now - 9000)                                   # both stalled
+        assert (await data()).json()["devices"] == {"station": local(now - 7200), "air": local(now - 9000)}
+        station.eco._live = (now, station.live)                        # both reporting again
+        station.air_from(now)
+        assert (await data()).json()["devices"] == {"station": local(now), "air": local(now)}
+        station.eco._live, station.air._current = None, None           # nothing held
+        assert (await data()).json()["devices"] == {"station": None, "air": None}
+        server.ctx.air = None                                          # no air sensor configured: never named
+        station.eco._live = (now, station.live)
+        assert (await data()).json()["devices"] == {"station": local(now)}
 
 
 async def test_the_data_says_so_when_the_station_gives_nothing(server):
@@ -693,7 +730,7 @@ def moved(titles, title, after):
 
 @needs_browser
 async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_kept_across_reloads_and_reset(server, station):
-    got = await run_page(server, "--arrange", weather=False, parts=("dragged", "hidden", "prefs"))
+    got = await run_page(server, "--arrange", weather=False, parts=("dragged", "hidden", "prefs", "stale"))
     default = titles_of(station)
     assert got["errors"] == [] and got["initial"] == default, got["errors"]
     # mouseover: the grip and the × on the tile under the mouse only
@@ -738,6 +775,26 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     # the frame unseen until the mouse is over its tile, then on that tile only
     assert look_["frame"] == "rgba(0, 0, 0, 0)", look_
     assert got["hoverFrames"] == ["rgba(0, 0, 0, 0)", "rgb(38, 46, 52)", "rgba(0, 0, 0, 0)"], got["hoverFrames"]
+    # the strip's reading time with a device's reading over an hour old ("stale", its data's devices altered on the way): both fresh,
+    # as ever; one stale, its name and own time first, greyed out, then the fresh one's; both stale (or the only device), all greyed out
+    stale = got["stale"]
+    hm = lambda step, device: stale[step]["sent"][device][11:16]
+    assert stale["real"] == {"text": "last reading 18:42", "grey": [], "sent": None}, stale["real"]   # (the fixture's devices: fresh)
+    for step in ("fresh", "recovered", "onlyFresh"):
+        assert (stale[step]["text"], stale[step]["grey"]) == ("last reading 18:42", []), (step, stale[step])
+    for step, old, new, name in (("airStale", "air", "station", "air sensor"), ("stationStale", "station", "air", "weather station")):
+        assert stale[step]["text"] == f"{name} {hm(step, old)} · last reading {hm(step, new)}", (step, stale[step])
+        assert stale[step]["grey"] == [f"{name} {hm(step, old)}"] and hm(step, old) != hm(step, new), (step, stale[step])
+    assert stale["noReading"]["text"] == f"weather station no reading · last reading {hm('noReading', 'air')}", stale["noReading"]
+    assert stale["noReading"]["grey"] == ["weather station no reading"], stale["noReading"]
+    for step in ("bothStale", "only"):                                        # (only: no air sensor configured, never named)
+        assert (stale[step]["text"], stale[step]["grey"]) == ("last reading 18:42", ["last reading 18:42"]), (step, stale[step])
+    assert stale["colours"][0] != stale["colours"][1], stale["colours"]       # greyed: not the strip's own colour
+    # the station's reading turning an hour old with no new data: the strip greys out by itself, then
+    turning = stale["turning"]
+    assert turning["before"]["text"] == f"air sensor {turning['before']['sent']['air'][11:16]} · last reading {turning['before']['sent']['station'][11:16]}"
+    assert turning["after"]["grey"] == ["last reading 18:42"] and turning["after"]["text"] == "last reading 18:42", turning
+    assert 800 < turning["ms"] < 5000, turning
 
 
 @needs_browser

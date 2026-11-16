@@ -91,6 +91,8 @@
   .tile { scroll-snap-align: start; }
   html.scroll:has(body.dragging) { scroll-snap-type: none; }   /* (a drag's own scrolling stops where it stops) */
   #status.lost { color: #F4A93B; }
+  /* A device whose reading is over an hour old (showStatus): its name and time, or with none fresh the whole time, greyed out */
+  #status .stale { color: #737B82; }
   #message { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; text-align: center;
     font-size: 20px; color: var(--soft); }
   body.unavailable #message { display: flex; }
@@ -3062,7 +3064,7 @@ const Sky = (() => {
   // every viewer (Sky never started, no link)
   const ALLOWED = document.documentElement.dataset.animations !== "off";
   const removeZone = document.getElementById("remove");
-  let L = null, tiles = [], asOf = null, lost = false, opening = true, unavailable = "";
+  let L = null, tiles = [], asOf = null, devices = {}, lost = false, opening = true, unavailable = "";
   const drawn = new Map();             // each tile drawn, by its id, to be moved in place (shown or hidden)
 
   // ---------- geometry (lib/gauges.py) ----------
@@ -3530,12 +3532,32 @@ const Sky = (() => {
     a.addEventListener("click", action);
     return a;
   }
+  // The time: "last reading HH:MM" (as_of, the newer of the devices' readings). A device's reading more than STALE_MS old while
+  // another's is fresh: its name and own time first, greyed out, then the fresh one's ("air sensor 08:12 · last reading 10:42"),
+  // till it reports again; none fresh (or the only device's stale): the whole time greyed out. Shown again as each turns stale, data
+  // or not (a stalled device sends nothing). A device not configured isn't in `devices`, so never named.
+  const STALE_MS = 3600e3, DEVICES = {station: "weather station", air: "air sensor"};
+  let staleTimer = 0;
+  function stale(at, now) { return !at || !(now - Date.parse(at) <= STALE_MS); }
+  function readingTime() {
+    clearTimeout(staleTimer);
+    if (lost) return "reconnecting…";
+    const now = Date.now(), all = Object.entries(devices).filter(([d]) => d in DEVICES);
+    const old = all.filter(([, at]) => stale(at, now)), fresh = all.filter(([, at]) => !stale(at, now));
+    const turns = Math.min(...fresh.map(([, at]) => Date.parse(at) + STALE_MS - now));
+    if (turns < Infinity) staleTimer = setTimeout(showStatus, Math.max(0, turns) + 50);
+    const grey = (text) => Object.assign(document.createElement("span"), {className: "stale", textContent: text});
+    if (!old.length) return asOf ? `last reading ${asOf.slice(11, 16)}` : "";
+    if (!fresh.length) return asOf ? grey(`last reading ${asOf.slice(11, 16)}`) : "";
+    const newest = fresh.map(([, at]) => at).sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+    return [...old.map(([d, at]) => grey(`${DEVICES[d]} ${at ? at.slice(11, 16) : "no reading"}`)), `last reading ${newest.slice(11, 16)}`];
+  }
   function showStatus() {
     statusLine.classList.toggle("lost", lost);
     const parts = [];
     if (resettable()) parts.push(link("reset preferences", reset, "reset"));
-    const time = lost ? "reconnecting…" : asOf ? `last reading ${asOf.slice(11, 16)}` : "";
-    if (time) parts.push(time);
+    const time = readingTime();
+    parts.push(...[time].flat().filter(Boolean));
     statusLine.replaceChildren(...parts.flatMap((p, i) => i ? [" · ", p] : [p]));
     motion.replaceChildren(...animated() && calling() ? [link("stop animation", stopAnimations, "animations", STOP_TITLE)] : []);
     placeCorner();
@@ -3559,6 +3581,7 @@ const Sky = (() => {
     const hours = data.hour_highs || {};   // (the dials with a red hand: their past hour's highest, null with none)
     for (const t of tiles) if (t.title in hours) t.hour = hours[t.title];
     asOf = data.as_of && data.as_of.time ? data.as_of.time : null;
+    devices = data.devices || {};
     unavailable = data.unavailable || "";
     const present = new Set(tiles.map(idOf));
     for (const id of [...drawn.keys()]) if (!present.has(id)) drawn.delete(id);
