@@ -1500,8 +1500,6 @@ const WEATHER = {
     for (const rate of [0.5, 8, 20]) { await reads({ rain_rate: rate }); out.rainStrength.push((await weatherSeen(page)).levels.rain); }
     out.humidityStrength = [];
     for (const rh of [91, 95, 100]) { await reads({ Humidity: rh }); out.humidityStrength.push((await weatherSeen(page)).levels.humidity); }
-    out.windStrength = [];
-    for (const kmh of [16, 32.5, 50, 80]) { await reads({ Wind: kmh }); out.windStrength.push((await weatherSeen(page)).levels.wind); }
     out.iceDepth = [];
     for (const t of [-0.5, -5]) { await reads({ Temperature: t }); out.iceDepth.push((await weatherSeen(page)).levels.ice); }
     out.errors = errors;
@@ -1712,12 +1710,8 @@ const WEATHER = {
     await context.close();
   },
   // A flash flood: the station's rain rate over 30 mm/h (not at 30): the water rising steadily to a quarter of the window's height,
-  // the rain ending at it in ripples and splashes, without the wind no chop; its waves alone (one push: travelling both ways,
-  // reflecting off a side). Then the wind strong (55 km/h): its surface choppy all across, its waves running right to left, more
-  // in the gust bands, higher at the sides; the wind light (16 km/h): calming slowly; draining at 30, the chop the
-  // wind's (staying). Then no rain, no wind and a flood (as a test link's): still; a drizzle on it: away from the drops, calm; and
-  // a light wind (at its mark) on that: a light chop.
-  // Beside it, every other effect on
+  // its surface choppy all across and higher at the sides, the rain ending at it in ripples and splashes; its waves alone (one
+  // push: travelling both ways, reflecting off a side); draining at 30, its chop calming slowly. Beside it, every other effect on
   // and the test link's rain3 (rain light, heavy, flood, off): the frame time and the particles with the flood full; then on a fast
   // clock, leaves landing on it, floating, sinking and resting on the bottom; the drips joining it (each as it did), and where the
   // surface is down in a trough, what's drawn just under its level against what's just above; its first frog 30 s after the water
@@ -1876,48 +1870,9 @@ const WEATHER = {
     await page.evaluate(() => Sky.timeScale(4));
     await reads({ rain_rate: 30.1 });
     out.over = await weatherSeen(page);
-    // (the surface against its level, frame by frame: `n` frames of it, each [px up from its level, ...]; with them the wind's gust
-    // bands in each column, the flood's chop, its sloshes so far and since the first, and its hits since the first)
-    const looking = (n) => page.evaluate((n) => new Promise((resolve) => {
-      const looks = [], bands = [], first = Sky.state().flood;
-      const step = () => {
-        const f = Sky.state().flood;
-        looks.push(f.surface.map((y) => (f.height - f.depth) - y));
-        bands.push(f.bands);
-        if (looks.length < n) return requestAnimationFrame(step);
-        resolve({ looks, bands, chop: f.chop, blow: f.blow, sloshes: f.sloshes, sloshed: f.sloshes - first.sloshes, hits: f.hits - first.hits, landed: f.landed,
-                  since: f.since });
-      };
-      requestAnimationFrame(step);
-    }), n);
-    const mean = (a) => a.reduce((s, v) => s + v, 0) / Math.max(a.length, 1);
-    // (how choppy: the surface's rms in the middle third and at the very edges; in each third, against its own mean over 9 px about
-    // each column (so the longer sloshes passing don't count); its crests a frame; that local chop where the wind's gust bands are
-    // strong (over 0.4) and where they lull (under -0.4), 24 px or more from the sides; which way the waves went: the shift (-6 to 6
-    // px, + rightward) best matching each frame's local chop to the one 6 frames on (0.2 s), how many leftward, how many rightward)
-    const choppy = ({ looks, bands }) => {
-      const W = looks[0].length, rms = (xs) => Math.sqrt(mean(looks.flatMap((l) => xs.map((x) => l[x] ** 2))));
-      const local = (l, x) => l[x] - mean(l.slice(x - 4, x + 5)), third = Math.floor(W / 3);
-      const gusts = { strong: [], lull: [] }, shifts = [];
-      const fine = looks.map((l) => l.map((v, x) => (x < 4 || x > W - 5 ? 0 : local(l, x))));   // (the chop alone, the sloshes aside)
-      looks.forEach((l, i) => {
-        for (let x = 24; x < W - 24; x++) {
-          if (bands[i][x] > 0.4) gusts.strong.push(local(l, x) ** 2); else if (bands[i][x] < -0.4) gusts.lull.push(local(l, x) ** 2);
-        }
-        if (i + 6 < looks.length) {
-          const next = fine[i + 6], err = (d) => mean(Array.from({ length: W - 40 }, (_, j) => (next[j + 20 + d] - fine[i][j + 20]) ** 2));
-          shifts.push([-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6].reduce((best, d) => (err(d) < err(best) ? d : best), 0));
-        }
-      });
-      return { width: W, middle: rms(Array.from({ length: third }, (_, i) => i + third)), edges: rms([0, 1, 2, W - 3, W - 2, W - 1]),
-               thirds: [0, 1, 2].map((k) => Math.sqrt(mean(looks.flatMap((l) => Array.from({ length: third - 8 }, (_, i) => local(l, i + 4 + k * third) ** 2))))),
-               crests: mean(looks.map((l) => l.filter((v, x) => x > 0 && x < W - 1 && v > l[x - 1] && v >= l[x + 1]).length)),
-               strong: Math.sqrt(mean(gusts.strong)), lull: Math.sqrt(mean(gusts.lull)),
-               left: shifts.filter((d) => d < 0).length, right: shifts.filter((d) => d > 0).length };
-    };
     out.rising = await page.evaluate(() => new Promise((resolve) => {
-      const rise = [], splashes = [];
-      let under = 0, hits = null, frames = 0;
+      const rise = [], looks = [], splashes = [];
+      let under = 0, hits = null;
       const mean = (a) => a.reduce((s, v) => s + v, 0) / Math.max(a.length, 1);
       const step = () => {
         const s = Sky.state(), f = s.flood;
@@ -1925,36 +1880,30 @@ const WEATHER = {
         if (f.depth < f.full) { if (!rise.length || s.clock > rise.at(-1)[0]) rise.push([s.clock, f.depth]); return requestAnimationFrame(step); }
         if (hits === null) hits = f.hits;
         splashes.push(f.splashes);
-        if (++frames < 90) return requestAnimationFrame(step);
+        if (looks.length < 90) { looks.push(f.surface.map((y) => y - (f.height - f.depth))); return requestAnimationFrame(step); }
         // the rise: its speed (art px/s of the weather's time) frame to frame, while it rose (not its first frame or its last)
         const speeds = rise.slice(1).map(([c, d], i) => (d - rise[i][1]) / (c - rise[i][0])).slice(1, -1);
+        const W = looks[0].length, rms = (xs) => Math.sqrt(mean(looks.flatMap((l) => xs.map((x) => l[x] ** 2))));
+        const middle = Array.from({ length: Math.floor(W / 3) }, (_, i) => i + Math.floor(W / 3));
         // (the waves alone: a still surface 200 px wide pushed down 4 px at 60, each 0.1 s for 3 s: its troughs' places at 1 s and
         // 3 s, and its deepest then)
         const alone = f.waves(200, 60, 4, 3, 0.1), troughs = (h) => h.flatMap((v, x) => (x > 0 && x < h.length - 1 && v < -0.15 &&
           v <= h[x - 1] && v <= h[x + 1] ? [x] : []));
-        resolve({ full: f.full, height: f.height, width: f.width, speeds, test: f.test, nextFrog: f.nextFrog, frog: f.frog, under,
-                  hits: f.hits - hits, splashes: Math.max(...splashes), chop: f.chop, sloshes: f.sloshes,
+        resolve({ full: f.full, height: f.height, width: W, speeds, test: f.test, nextFrog: f.nextFrog, frog: f.frog, under, hits: f.hits - hits,
+                  splashes: Math.max(...splashes), chop: f.chop,
+                  crests: mean(looks.map((l) => l.filter((v, x) => x > 0 && x < W - 1 && v < l[x - 1] && v <= l[x + 1]).length)),
+                  middle: rms(middle), edges: rms([0, 1, 2, W - 3, W - 2, W - 1]),
+                  // (the chop in each third of the width: the surface against its own mean over 9 px about each column, so the
+                  // longer sloshes passing don't count)
+                  thirds: [0, 1, 2].map((k) => Math.sqrt(mean(looks.flatMap((l) => Array.from({ length: Math.floor(W / 3) - 8 }, (_, i) => {
+                    const x = i + 4 + k * Math.floor(W / 3);
+                    return (l[x] - mean(l.slice(x - 4, x + 5))) ** 2;
+                  }))))),
                   waves: { speed: f.wave, at1: troughs(alone[10]), at3: troughs(alone[30]), deepest3: Math.min(...alone[30]) } });
       };
       requestAnimationFrame(step);
     }));
-    // the wind strong: once its chop is up (the weather's time 20 times as fast), 60 frames of it (at its own pace: how far its
-    // waves go a frame)
-    await page.evaluate(() => Sky.timeScale(20));
-    await reads({ rain_rate: 30.1, Wind: 55 });
-    await page.waitForFunction(() => Sky.state().flood.chop > 0.9);
-    await page.evaluate(() => Sky.timeScale(1));
-    const rough = await looking(60);
-    out.rough = { ...choppy(rough), chop: rough.chop, blow: rough.blow, sloshes: rough.sloshes, effects: (await weatherSeen(page)).effects };
-    // ... light: calming, 10 s on (the weather's time 20 times as fast)
-    await page.evaluate(() => Sky.timeScale(20));
-    const calming = await page.evaluate(() => Sky.state().clock);
-    await reads({ rain_rate: 30.1, Wind: 16 });
-    await page.waitForFunction((c) => Sky.state().clock >= c + 10, calming);
-    out.calming = await page.evaluate((c) => ({ chop: Sky.state().flood.chop, blow: Sky.state().flood.blow, after: Sky.state().clock - c }), calming);
-    out.calming.sloshes = await page.evaluate(() => Sky.state().flood.sloshes);
-    await page.evaluate(() => Sky.timeScale(4));
-    await reads({ rain_rate: 30, Wind: 16 });
+    await reads({ rain_rate: 30 });
     out.draining = await page.evaluate(() => new Promise((resolve) => {
       const f0 = Sky.state().flood, c0 = Sky.state().clock, effects = Sky.state().effects;
       let half = null;
@@ -1967,48 +1916,6 @@ const WEATHER = {
       requestAnimationFrame(step);
     }));
     out.drained = await weatherSeen(page);
-    // no rain, no wind (gone all the way: the weather's time 20 times as fast till then), and a flood (as a test link's): still;
-    // then a drizzle on it (rain 0.1): 45 frames, 2 s in (4 times as fast)
-    await page.evaluate(() => Sky.timeScale(20));
-    await reads({});
-    await page.waitForFunction(() => !Sky.state().running);
-    await page.evaluate(() => Sky.timeScale(4));
-    await page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { flood: 1 } })));
-    await page.waitForFunction(() => Sky.state().flood.depth >= Sky.state().flood.full);
-    const still = await looking(15);
-    out.still = { most: Math.max(...still.looks.flat().map(Math.abs)), chop: still.chop, sloshes: still.sloshed, hits: still.hits,
-                  effects: (await weatherSeen(page)).effects };
-    await page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { flood: 1, rain: 0.1 } })));
-    const wet = await page.evaluate(() => Sky.state().clock);
-    await page.waitForFunction((c) => Sky.state().clock >= c + 2, wet);
-    // (its height all across; away from the drops: each column 12 px or more from where any landed in the 0.3 s before (further
-    // than a ripple goes in that time): its height, and its local chop as choppy() has it)
-    const drops = await page.evaluate(() => new Promise((resolve) => {
-      const looks = [], hits = Sky.state().flood.hits, sloshes = Sky.state().flood.sloshes;
-      let away = [], local = [], all = [];
-      const mean = (a) => a.reduce((s, v) => s + v, 0) / Math.max(a.length, 1);
-      const step = () => {
-        const f = Sky.state().flood, l = f.surface.map((y) => (f.height - f.depth) - y), near = f.landed.filter(([, t]) => t > f.since - 0.3);
-        for (let x = 4; x < l.length - 4; x++) {
-          all.push(l[x] ** 2);
-          if (near.some(([at]) => Math.abs(at - x) < 12)) continue;
-          away.push(l[x] ** 2); local.push((l[x] - mean(l.slice(x - 4, x + 5))) ** 2);
-        }
-        looks.push(l);
-        if (looks.length < 45) return requestAnimationFrame(step);
-        resolve({ hits: f.hits - hits, chop: f.chop, sloshes: f.sloshes - sloshes, columns: away.length, all: Math.sqrt(mean(all)), away: Math.sqrt(mean(away)),
-                  local: Math.sqrt(mean(local)), most: Math.sqrt(Math.max(...away)), effects: Sky.state().effects });
-      };
-      requestAnimationFrame(step);
-    }));
-    out.drops = drops;
-    // ... and a light wind (as a test link's at its mark: 0.2), once its chop is up (20 times as fast): 45 frames of it (4 times)
-    await page.evaluate(() => Sky.timeScale(20));
-    await page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { flood: 1, rain: 0.1, wind: 0.2 } })));
-    await page.waitForFunction(() => Sky.state().flood.chop > 0.18);
-    await page.evaluate(() => Sky.timeScale(4));
-    const light = await looking(45);
-    out.light = { ...choppy(light), chop: light.chop, blow: light.blow, effects: (await weatherSeen(page)).effects };
     out.errors = errors;
     await context.close();
     out.linked = await linked;

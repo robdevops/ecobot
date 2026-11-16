@@ -1024,7 +1024,6 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
     assert got["rainStrength"][0] < 0.4 and got["rainStrength"][1:] == [1, 1]    # light at 0.5 mm/h, heavy from 8
     assert got["humidityStrength"] == pytest.approx([0.1, 0.5, 1])              # heavier from 90 % to 100 %
     assert got["iceDepth"] == [0.5, 5]                                           # further in the colder
-    assert got["windStrength"] == pytest.approx([0.2 + 0.8 / 35, 0.6, 1, 1])    # harder from 15 km/h to 50 (a flood's chop rougher)
 
 
 @needs_browser
@@ -1521,24 +1520,13 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     speeds = rising["speeds"]
     assert len(speeds) >= 20 and max(speeds) - min(speeds) < 0.05 * max(speeds), speeds
     assert 3 <= rising["full"] / speeds[0] <= 5, speeds[0]
-    # without the wind no chop, no slosh: only the rain bothering it; the rain ending at it (none drawn below it), every drop a ripple
-    # there, the near ones a splash
-    assert rising["chop"] == 0 and rising["sloshes"] == 0, rising
-    assert rising["under"] == 0 and rising["hits"] > 200 and rising["splashes"] > 3, rising
-    # in a strong wind (55 km/h) its surface choppy all across (many crests, about one every 8 px; each third of the width as choppy),
-    # its waves running right to left with the wind (mostly), more in the gust bands than in their lulls, higher at the sides (waves
-    # piling up and slapping there)
-    rough = got["rough"]
-    assert rough["effects"] == ["rain", "wind", "flood"] and rough["blow"] == 1 and rough["chop"] > 0.9, rough
-    assert rough["crests"] > rough["width"] / 20 and rough["middle"] > 0.8, rough
-    assert min(rough["thirds"]) > max(0.15, 0.5 * max(rough["thirds"])), rough["thirds"]
-    assert rough["left"] > 3 * rough["right"] and rough["left"] > 27, rough   # (of 54)
-    assert rough["strong"] > 1.4 * rough["lull"], rough
-    assert rough["edges"] > 1.25 * rough["middle"], rough
-    # ... sloshing now and then; the wind light (16 km/h): calming slowly (still much of the chop 10 s on)
-    calming = got["calming"]
-    assert calming["sloshes"] >= 2, calming   # (none before the wind: see above)
-    assert calming["blow"] == pytest.approx(0.2 + 0.8 / 35) and calming["chop"] > 0.6 and calming["after"] >= 10, calming
+    # its surface choppy all across (many crests, about one every 8 px; each third of the width as choppy), higher at the sides
+    # (waves piling up and slapping there: about 1.6 times the middle's), the chop up while it pours; the rain ending at it (none
+    # drawn below it), every drop a ripple there, the near ones a splash
+    assert rising["crests"] > rising["width"] / 20 and rising["middle"] > 0.8, rising
+    assert min(rising["thirds"]) > max(0.15, 0.5 * max(rising["thirds"])), rising["thirds"]   # (about 0.3 to 0.5 px each)
+    assert rising["edges"] > 1.25 * rising["middle"], rising
+    assert rising["chop"] > 0.8 and rising["under"] == 0 and rising["hits"] > 200 and rising["splashes"] > 3, rising
     # (no frog for a real flood's first 30 s; after that only now and then, at random)
     assert not rising["test"] and rising["nextFrog"] >= 30 and rising["frog"] is None, rising
     # its waves (a damped wave equation): one push travelling both ways at their speed, reflecting off a side, dying away slowly
@@ -1547,23 +1535,10 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     assert there(waves["at1"], 60 - waves["speed"]) and there(waves["at1"], 60 + waves["speed"]), waves
     assert there(waves["at3"], 3 * waves["speed"] - 60) and there(waves["at3"], 60 + 3 * waves["speed"]), waves   # (back from the left)
     assert -1.5 < waves["deepest3"] < -0.25, waves
-    # the rate 30 again: draining in about 6 s, its chop the wind's, not the rain's (the same half way down); then gone, the rain on
+    # the rate 30 again: draining in about 6 s, the chop calming slowly (still much of it half way down); then gone, the rain on
     draining = got["draining"]
-    assert 5 <= draining["took"] <= 7 and draining["surface"] == 0 and got["drained"]["effects"] == ["rain", "wind"], (draining, got["drained"])
-    assert draining["half"]["chop"] > 0.9 * draining["chop0"] > 0, draining
-    # no rain, no wind, a flood (a test link's): perfectly still; a drizzle on it (rain 0.1): away from where its drops land, calm
-    # (well under a pixel, a small part of a strong wind's chop), no chop, no slosh
-    still, drops = got["still"], got["drops"]
-    assert still["effects"] == ["flood"] and still["most"] == 0 and still["chop"] == still["sloshes"] == still["hits"] == 0, still
-    assert drops["effects"] == ["rain", "flood"] and drops["hits"] > 20 and drops["chop"] == drops["sloshes"] == 0, drops
-    assert drops["columns"] > 1000 and drops["away"] < min(0.25, 0.2 * rough["middle"]), (drops, rough)
-    assert drops["local"] < 0.25 * sum(rough["thirds"]) / 3, (drops, rough)
-    # ... and a light wind on that (at its mark: a test link's 0.2): a light chop all across, far less than a strong wind's, more
-    # than the drizzle's alone
-    light = got["light"]
-    assert light["effects"] == ["rain", "wind", "flood"] and light["blow"] == 0.2 and 0.18 < light["chop"] <= 0.2, light
-    assert light["middle"] < 0.6 * rough["middle"] and sum(light["thirds"]) < 0.7 * sum(rough["thirds"]), (light, rough)
-    assert min(light["thirds"]) > max(0.05, 1.3 * drops["local"]), (light, drops)
+    assert 5 <= draining["took"] <= 7 and draining["surface"] == 0 and got["drained"]["effects"] == ["rain"], (draining, got["drained"])
+    assert draining["half"]["chop"] > 0.7 * draining["chop0"], draining
     # the test link (every other effect on): rain light, heavy, then heavy with a flash flood (rain3; the test's own flood level, 2),
     # then off (the wind turned off before it): draining
     linked = got["linked"]

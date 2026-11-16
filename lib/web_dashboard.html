@@ -138,8 +138,8 @@
 // strength together, so several at once are no busier or brighter than one strong one. Nothing runs while no effect is on or fading
 // out; the tab hidden, it waits; with reduced motion, one still, faint frame and no loop.
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), haze: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
-//   100 %), wind: 0.2-1 (how hard: 0.2 just over 15 km/h, 1 from 50), uv, heat: 0 or 1, ice: how far below 0 °C it is (0:
-//   none), flood: 0 or 1 (2: the test link's, its first frog sooner)}; animate false (the page's "stop animation", or
+//   100 %), uv, wind, heat: 0 or 1, ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
+//   sooner)}; animate false (the page's "stop animation", or
 //   MCP_DASHBOARD_ANIMATIONS off): nothing drawn (and anything blown across gone).
 //   Sky.fling(kind): something big blown across far behind (a gust over 99 km/h): "cow", "barn" or "chicken", else one at random;
 //   its kind, or null (nothing drawn: stopped, reduced motion, the tab hidden). The gust effect is on while one is crossing.
@@ -629,7 +629,7 @@ const Sky = (() => {
     }))));
     const WISP = ["#2E363D", "#45515B", "#5F6E7A"].map((c) => `rgb(${rgb(c)})`);
     let flying = [], eddies = [], wisps = [], gust = 0, nextGust = 0, travelled = 0, calm = 1, swept = 0, riding = 0;
-    let splashes = [], hits = 0, pushed = 0, kicked = 0, born = 0, lastT = 0, owed = 0, hard = 1;
+    let splashes = [], hits = 0, pushed = 0, kicked = 0, born = 0, lastT = 0, owed = 0;
     const KNOCK = 60;                  // a heavy drop's push on a near leaf (px/s, along its fall); farther leaves less (parallax)
     // A splash on a leaf, frame by frame: a bead where the drop struck, then two droplets thrown up off it, falling away ([dx, dy, shade])
     const SPLASH = [[[0, 0, 4], [0, -1, 3]], [[-1, -1, 3], [1, -2, 4], [0, 0, 2]], [[-2, -2, 2], [2, -2, 3]], [[-2, -1, 1], [3, -1, 2]]]
@@ -733,11 +733,6 @@ const Sky = (() => {
       steady: (k) => e.amount * k * calm * STEADY * (1 + gust),
       // How hard it blows now, for the haze's drift: 0 without the wind, 1 at its steady pace, more in a gust
       breeze: () => e.amount * calm * (1 + gust),
-      // For a flood's chop: how hard it blows (0 without the wind, 0.2 just over its mark to 1 in a strong wind; fading in and out
-      // with it), its gusts now (0, more just after one), and its gust bands on screen at x (-1 a lull to 1 a band's heart)
-      blow: () => e.amount * (e.level > 0 ? Math.min(1, e.level) : hard),   // (going: as hard as it last was)
-      gusts: () => (e.amount > 0 ? gust : 0),
-      bandAt: (x) => bandAt(W - x - swept),
       ride: (v) => { riding = v; },   // (this frame, the gust bands carried along at v px/s: the rain's)
       // (on screen: the leaves' mean speed across, px/s, negative leftward; how many go rightward, against the wind, in a loop)
       // (and the rain's hits on them so far, and their mean push, px/s, and the mean change it made in a hit leaf's own velocity, px/s;
@@ -802,7 +797,6 @@ const Sky = (() => {
       },
       step(dt, t, share) {
         calm = clamp(W / 360, CALM, 1);
-        if (e.level > 0) hard = Math.min(1, e.level);
         lastT = t;
         owed = Math.round(this.need() * share);
         const n = Math.max(0, owed - flood.count());   // (those in a flood its share too)
@@ -1354,12 +1348,6 @@ const Sky = (() => {
       strength,                                                         // ... drawn as bright all the same, see draw())
       need: () => (e.level > 0 ? PER_PX * W * (0.2 + 0.8 * e.level) : all.length) + (heavy() ? RAIN_MOST : 0),
       count: () => all.length,
-      // A flood's waves moved (its step calls this once they have): every bead its surface has risen over now joins it (drowned())
-      drown() {
-        if (!all.length) return;
-        for (const b of all) if (!b.gone) drowned(b);
-        all = all.filter((b) => !b.gone);
-      },
       want(v) {   // (on again after gone all the way: the glass fresh; reduced motion, off: gone at once)
         if ((v > 0 && !present() && e.amount <= 0) || (STILL && v <= 0)) clear();
         e.level = v;
@@ -1542,14 +1530,9 @@ const Sky = (() => {
   // empty), draining back down (DRAIN s) once it's 30 or less. A translucent blue-green body, darker toward the bottom (dithered), a
   // bright surface line with a faint lighter band under it, no caps or foam; a fainter line just below, slightly out of step: the
   // tank's far side. The surface: a height a pixel column under a damped wave equation (WAVE px/s), its waves travelling, reflecting
-  // off the window's sides, piling up and slapping higher there; stirred by every raindrop landing in it (hit(): a ripple spreading
-  // both ways, and a tiny splash) and a drip running into it, calming between them. In the wind (the wind effect on), its top
-  // drifting leftward with it (those ripples too: DRIFT), and on top of that the whole surface choppy all the time, like an
-  // unsettled aquarium: a low chop of travelling waves all across (CHOP: several lengths, the longer faster, mostly right to left
-  // with the wind, a few back the other way), reflecting off the window's sides (higher there), stronger in its gusts and its gust
-  // bands (the leaves' and the rain's), now and then a bigger slosh from one side; light just over the wind's mark, rough in a
-  // strong wind (wind.blow()); building in a few s, calming slowly (CALMS) once the wind drops. Rain, the drips (humidity.drown())
-  // and the wind's wisps end at it, none ever drawn below; every one of
+  // off the window's sides, piling up and slapping higher there; stirred all across by every raindrop landing in it (hit(): a ripple
+  // spreading both ways, and a tiny splash), a drip running into it, a restless chop while it pours, now and then a bigger slosh from
+  // one side; calming slowly as the rain eases. Rain, the drips and the wind's wisps end at it, none ever drawn below; every one of
   // the wind's leaves its surface reaches (its waves as they are, wherever a leaf meets them) sticks there, floats, then sinks and
   // rests on the bottom, the flood's own from then on: there while it lasts, the wind gone or not, gone as it drains away; the haze
   // and the heat's shimmer are drawn above it (above(): the haze down to its surface, the heat from as low as its troughs go). Rarely (about every FROG_EVERY s on
@@ -1567,12 +1550,7 @@ const Sky = (() => {
     const DAMP = 0.1;                  // 1/s: how fast its waves die away (slowly) ...
     const SMOOTH = 2;                  // ... and the shortest ripples faster (px²/s): choppy, not jagged
     const MOST = 6;                    // px: the surface at most this far above or below its level
-    const CALMS = 25;                  // s for the chop to calm once the wind drops (to build up: 3)
-    // The wind's chop: each wave [its length px, its speed px/s, its height (of ROUGH), +1 leftward with the wind or -1 back]
-    const CHOP = [[11, 13, 0.35, 1], [17, 17, 0.5, 1], [29, 23, 0.7, 1], [47, 29, 0.6, 1], [83, 38, 0.45, 1], [23, 19, 0.3, -1], [61, 31, 0.3, -1]];
-    const ROUGH = 1.8;                 // px: its height in a strong wind (light, just over its mark: about a third of that)
-    const BOUNCE = 0.6, REACH = 40;    // its waves off the window's sides: this much of them, dying away this far (px) back out
-    const DRIFT = 14;                  // px/s: in a strong wind, the water's top carried leftward this fast (the ripples with it)
+    const CALMS = 25;                  // s for the chop to calm once the rain eases (to build up: 3)
     const SLOSH = [4, 10];             // s between the bigger sloshes
     const FROG_FIRST = 30, FROG_EVERY = 180, FROG_SPEED = [7, 10];   // s, s, px/s
     const TOP = 2 * MOST + 2;          // rows drawn above its full level (its crests, higher up the sides)
@@ -1591,9 +1569,8 @@ const Sky = (() => {
                     [[-2, -1, FAR], [3, -1, FAR]]]
       .map((dots) => painted(7, 4, (x, y) => { const d = dots.find(([dx, dy]) => dx + 3 === x && dy + 3 === y); return d && d[2]; }));
     let h = null, v = null, a = null, far = null, slap = null, depth = 0, full = 0, rows = 0, layer = null, img = null, px = null, body = null;
-    let tot = null, phase = CHOP.map((_, k) => 2.3 * k), gusty = 0;   // (tot: the surface, the waves and the chop together)
     let chop = 0, nextSlosh = 0, since = 0, test = false, nextFrog = Infinity, frog = null, frogs = 0, splashes = [];
-    let hits = 0, sloshes = 0, drops = 0, landed = [];   // (landed: the latest hits, [x, since], for the tests)
+    let hits = 0, sloshes = 0, drops = 0;
     // The leaves in it (the wind's, once they touch it: wind.wade()): its own from then on, the wind on or not. Each floats on the
     // surface ("float"), bobbing with the waves, drifting a little (more in the wind); after FLOATS s it sinks slowly ("sink"),
     // rocking side to side, to the bottom, and rests there ("rest"), on those already resting there too. They pile up there; only
@@ -1607,7 +1584,7 @@ const Sky = (() => {
     const surfaceAt = (x) => {   // the surface's height at x on screen (art px, a float: its row there, rounded, as drawn)
       if (depth <= 0) return Infinity;
       const i = clamp(Math.round(x), 0, W - 1);
-      return H - depth - tot[i] * slap[i] * calm();
+      return H - depth - h[i] * slap[i] * calm();
     };
     const expo = (mean) => -mean * Math.log(1 - random());
     const floats = (l) => surfaceAt(l.sx) - Math.floor(l.flat[2].height / 2) + 1;   // (a leaf's middle, lying on the surface)
@@ -1656,10 +1633,9 @@ const Sky = (() => {
       leaves.length = kept;
     }
     // The waves dt s on: a damped wave equation, the window's sides reflecting (in a few steps a frame, each short enough to be
-    // stable; at most 40: enough for the tests' time run 20 times as fast, faster still they lag), its level kept, and never past
-    // MOST either way
+    // stable; at most 12, so with the tests' time run on fast they lag), its level kept, and never past MOST either way
     function waves(h, v, a, dt) {
-      const w = h.length, n = Math.min(40, Math.ceil(dt * WAVE / 0.7)), ds = Math.min(dt / Math.max(n, 1), 0.7 / WAVE), c2 = WAVE * WAVE;
+      const w = h.length, n = Math.min(12, Math.ceil(dt * WAVE / 0.7)), ds = Math.min(dt / Math.max(n, 1), 0.7 / WAVE), c2 = WAVE * WAVE;
       for (let s = 0; s < n; s++) {
         for (let i = 0; i < w; i++) {
           const l = i > 0 ? i - 1 : 0, r = i < w - 1 ? i + 1 : w - 1;
@@ -1673,34 +1649,6 @@ const Sky = (() => {
           if (h[i] > MOST) { h[i] = MOST; v[i] = Math.min(v[i], 0); } else if (h[i] < -MOST) { h[i] = -MOST; v[i] = Math.max(v[i], 0); }
         }
       }
-    }
-    // The surface now (tot): the waves, and in the wind its chop on them, each of CHOP's waves travelling along (faster in a gust),
-    // its height wandering a little, and off each side of the window its reflection, dying away back out; all of it higher in a
-    // gust and in a gust band (the wind's own, there now), and never past MOST either way (rounded off: no flat tops)
-    function chopped(dt, t) {
-      if (chop < 0.005) { tot.set(h); return; }
-      const scale = ROUGH * Math.pow(chop, 0.7) * (1 + 0.5 * gusty), last = W - 1;
-      for (let k = 0; k < CHOP.length; k++) phase[k] += (2 * Math.PI / CHOP[k][0]) * CHOP[k][1] * (1 + 0.25 * gusty) * dt;
-      for (let x = 0; x < W; x++) tot[x] = 0;
-      for (let k = 0; k < CHOP.length; k++) {
-        const [length, , height, way] = CHOP[k], q = 2 * Math.PI / length, p = phase[k];
-        const amp = height * (0.75 + 0.25 * Math.sin(t * (0.13 + 0.05 * k) + 2 * k));
-        // (m: how far from the side it runs to; sin(q m + p) running to it, its reflection off it sin(-q m + p))
-        for (let x = 0; x < W; x++) {
-          const m = way > 0 ? x : last - x, back = m < 4 * REACH ? BOUNCE * Math.exp(-m / REACH) * Math.sin(-q * m + p) : 0;
-          tot[x] += amp * (Math.sin(q * m + p) + back);
-        }
-      }
-      for (let x = 0; x < W; x++) {
-        const c = tot[x] * scale * (1 + 0.6 * wind.bandAt(x)) + h[x];
-        tot[x] = MOST * Math.tanh(c / MOST);
-      }
-    }
-    // The wind's drift: `by` px leftward, between columns as it falls (the upwind side carrying on its own as it was)
-    function drifted(q, tmp, by) {
-      const last = W - 1, k = by % 1, n = Math.floor(by);
-      for (let i = 0; i < W; i++) tmp[i] = q[Math.min(last, i + n)] * (1 - k) + q[Math.min(last, i + n + 1)] * k;
-      q.set(tmp);
     }
     function poke(x, by, width, into = h) {   // the water at x raised (by px: up, + ; down, -), or pushed (into v: px/s), spread
       const lo = Math.max(0, Math.round(x - 2 * width)), hi = Math.min(W - 1, Math.round(x + 2 * width));   // ... `width` px either side
@@ -1757,18 +1705,16 @@ const Sky = (() => {
         if (depth <= 0 || !h) return false;
         poke(clamp(x, 0, W - 1), -power, 1.3);
         hits++;
-        landed.push([Math.round(x), since]);
-        if (landed.length > 60) landed.shift();
         if (splash && splashes.length < 30) splashes.push({x: Math.round(x), age: 0});
         return true;
       },
       fade(dt) { e.amount = depth > 0 || e.level > 0 ? 1 : 0; },
       alive: () => e.level > 0 || depth > 0,
-      forget() { depth = 0; if (h) { h.fill(0); v.fill(0); far.fill(0); tot.fill(0); } frog = null; splashes = []; chop = 0; gusty = 0; leaves = []; },
+      forget() { depth = 0; if (h) { h.fill(0); v.fill(0); far.fill(0); } frog = null; splashes = []; chop = 0; leaves = []; },
       resize() {
         full = Math.max(8, Math.round(H * SPAN));
         rows = full + TOP;
-        h = new Float32Array(W); v = new Float32Array(W); a = new Float32Array(W); far = new Float32Array(W); tot = new Float32Array(W);
+        h = new Float32Array(W); v = new Float32Array(W); a = new Float32Array(W); far = new Float32Array(W);
         slap = Float32Array.from({length: W}, (_, x) => 1 + 0.8 * Math.exp(-Math.min(x, W - 1 - x) / 3));   // (running up the sides)
         depth = Math.min(depth, full);
         layer = canvasOf(W, rows);
@@ -1796,33 +1742,30 @@ const Sky = (() => {
         since += dt;
         const target = e.level > 0 ? full : 0;
         depth = STILL ? target : depth + clamp(target - depth, -dt * full / DRAIN, dt * full / RISE);
-        const blow = STILL ? 0 : wind.blow();
-        chop += (blow - chop) * (1 - Math.exp(-dt / (blow > chop ? 3 : CALMS)));
-        gusty += (Math.min(1.5, wind.gusts()) - gusty) * (1 - Math.exp(-dt / 0.3));
-        if (depth <= 0) { h.fill(0); v.fill(0); far.fill(0); tot.fill(0); frog = null; splashes = []; chop = 0; leaves = []; landed = []; return; }
+        const pouring = e.level > 0 ? 1 : 0;
+        chop += (pouring - chop) * (1 - Math.exp(-dt / (pouring > chop ? 3 : CALMS)));
+        if (depth <= 0) { h.fill(0); v.fill(0); far.fill(0); frog = null; splashes = []; chop = 0; leaves = []; return; }
         if (STILL && !drops) {   // (reduced motion: a still surface some seconds in, gently uneven)
           drops = 1;
           for (let x = 0; x < W; x++) h[x] = 1.6 * Math.sin(x * 0.09) + 0.9 * Math.sin(x * 0.23 + 1) + (x < 12 || x > W - 13 ? 1.5 : 0);
-          tot.set(h);
           far.set(h);
         }
-        // in the wind, now and then a bigger slosh from one side
+        // the chop: pokes all across while it pours, and now and then a bigger slosh from one side
+        const pokes = chop * 30 * dt * W / 300;
+        for (let n = Math.floor(pokes) + (random() < pokes % 1 ? 1 : 0); n > 0; n--) poke(between(0, W - 1), between(-1.6, 1.6), between(2, 5));
         if ((nextSlosh -= dt) <= 0) {
           nextSlosh = between(...SLOSH);
-          if (chop > 0.15) {
+          if (chop > 0.2) {
             const left = random() < 0.5;
-            poke(left ? 0 : W - 1, between(30, 55) * Math.pow(chop, 1.5) * (random() < 0.5 ? 1 : -1), W * between(0.05, 0.1), v);
+            poke(left ? 0 : W - 1, between(50, 90) * chop * (random() < 0.5 ? 1 : -1), W * between(0.05, 0.1), v);
             sloshes++;
           }
         }
         waves(h, v, a, dt);
-        if (chop > 0.005) { drifted(h, a, DRIFT * chop * dt); drifted(v, a, DRIFT * chop * dt); }
-        chopped(dt, t);
         const lag = 1 - Math.exp(-dt / 0.5);   // (the far side: the near one's waves, half a second behind)
-        for (let i = 0; i < W; i++) far[i] += (tot[i] - far[i]) * lag;
+        for (let i = 0; i < W; i++) far[i] += (h[i] - far[i]) * lag;
         soaking(dt, t);
         wind.wade(t);   // (the wind's leaves its surface reaches, as it is now: its own)
-        humidity.drown();   // (and the beads on the glass it has risen over: joining it)
         crowded(share);
         for (const s of splashes) s.age += dt;
         splashes = splashes.filter((s) => s.age < 0.2);
@@ -1847,12 +1790,12 @@ const Sky = (() => {
         const top = H - rows, k = calm();
         px.fill(0);
         for (let x = 0; x < W; x++) {
-          const y = Math.round(H - depth - tot[x] * slap[x] * k) - top;
+          const y = Math.round(H - depth - h[x] * slap[x] * k) - top;
           if (y >= rows) continue;
           const f = Math.round(H - depth + 3 - far[x] * slap[x] * k * 0.7) - top;
           for (let r = Math.max(0, y), i = r * W + x; r < rows; r++, i += W) px[i] = body[(rows - 1 - r) * W + x];
           if (y < 0) continue;
-          const crest = tot[x] > 2.5 && tot[x] >= tot[Math.max(0, x - 1)] && tot[x] >= tot[Math.min(W - 1, x + 1)];   // (a crest catching the light)
+          const crest = h[x] > 2.5 && h[x] >= h[Math.max(0, x - 1)] && h[x] >= h[Math.min(W - 1, x + 1)];   // (a crest catching the light)
           px[y * W + x] = pack(crest ? LIT : SURFACE, crest ? 230 : 205);
           if (y + 1 < rows) px[(y + 1) * W + x] = pack(BAND, 150);
           if (y + 2 < rows && ((x + y) & 1)) px[(y + 2) * W + x] = pack(BAND, 95);
@@ -1877,13 +1820,10 @@ const Sky = (() => {
       },
       // (for the tests: its depth now and full, art px; the surface's row in each column; how long since it began rising, s; the
       // next frog due, s after that; the frog crossing now {x, y} or null, and how many so far; ripples from what's landed in it,
-      // sloshes, the chop now (0-1: the wind's, as it builds and calms; blow: what the wind calls for now), its gusts now (smoothed),
-      // the wind's gust bands in each column (-1 to 1), the latest hits ([x, since]), the splashes showing)
+      // sloshes, the chop now (0-1), the splashes showing)
       // ... and the waves alone, as they run: a still surface `width` px wide pushed down `by` px at x, then each `every` s for `s`
       // s, its heights: [[h, ...], ...])
       probe: () => ({depth, full, height: H, width: W, since, nextFrog, test, frogs, chop, hits, sloshes, splashes: splashes.length,
-                     blow: wind.blow(), gusts: gusty, landed: landed.slice(),
-                     bands: depth > 0 && chop > 0 ? Array.from({length: W}, (_, x) => wind.bandAt(x)) : [],
                      wave: WAVE, damp: DAMP,
                      waves: (width, x, by, s, every) => {
                        const h = new Float32Array(width), v = new Float32Array(width), a = new Float32Array(width), out = [];
@@ -3604,7 +3544,7 @@ const Sky = (() => {
   // (And with each new live gust reading over 99 km/h, something big blown across once: gusting(), below.)
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
   // stronger to 8 mm/h), haze from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
-  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust; harder to 50 km/h: 0.2 just over 15, 1 from 50), heat at 35 °C, ice below 0 °C (how far below), a flash flood
+  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust), heat at 35 °C, ice below 0 °C (how far below), a flash flood
   // over 30 mm/h (the rain's too). A tile
   // with no reading now calls for nothing.
   const CALLED_BY = {rain: "Rain", haze: "US AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
@@ -3624,7 +3564,7 @@ const Sky = (() => {
             haze: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),
             uv: uvi !== null && uvi >= 11 ? 1 : 0,
             humidity: humidity !== null && humidity >= 90 ? Math.max(0.05, Math.min(1, (humidity - 90) / 10)) : 0,
-            wind: wind !== null && wind > 15 ? 0.2 + 0.8 * Math.min(1, (wind - 15) / 35) : 0, heat: temperature !== null && temperature >= 35 ? 1 : 0,
+            wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 1 : 0,
             ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: rate > 30 ? 1 : 0};
   }
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop animation" shows)
