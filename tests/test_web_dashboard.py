@@ -380,7 +380,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         got = report[name]
         assert got["errors"] == [], (name, got["errors"])
         assert got["tiles"] == n and got["scrollWidth"] <= width, (name, got)
-        assert got["status"] == "stop animations · last reading 18:42", (name, got)   # (the US AQI's 56, Moderate: smog behind the tiles)
+        assert got["status"] == "last reading 18:42", (name, got)   # (the US AQI's 56, Moderate: smog behind the tiles)
         assert all(r["right"] <= width + 0.5 and r["left"] >= -0.5 for r in got["rects"]), (name, got)
         assert (shots / f"dashboard-{name}.png").exists() and (shots / f"dashboard-{name}-zoomed.png").exists()
         assert got["zoomed"]["zoomed"], (name, got["zoomed"])
@@ -505,13 +505,13 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
                            "table": {"same": True, "dragging": False, "selected": "85"},
                            "reading": {"same": True, "dragging": False, "selected": "70"}}
     # the ×, then the remove zone, hide; the reset link shows beside the time
-    assert got["closed"] == {"titles": [t for t in reordered if t != "Rain"], "status": "reset preferences · stop animations · last reading 18:42"}
+    assert got["closed"] == {"titles": [t for t in reordered if t != "Rain"], "status": "reset preferences · last reading 18:42"}
     assert got["removing"]["over"] and got["removing"]["zone"] == "none"
     shown = [t for t in reordered if t not in ("Rain", "Wind")]
     assert got["removed"] == {"titles": shown, "stored": {"order": reordered, "hidden": ["Rain", "Wind"]}}
-    assert got["reloaded"] == {"titles": shown, "status": "reset preferences · stop animations · last reading 18:42"}
+    assert got["reloaded"] == {"titles": shown, "status": "reset preferences · last reading 18:42"}
     # reset: every tile, in the default order, nothing kept, no link
-    assert got["reset"] == {"titles": default, "status": "stop animations · last reading 18:42", "stored": None}
+    assert got["reset"] == {"titles": default, "status": "last reading 18:42", "stored": None}
     # unreadable preferences: the defaults; a tile new to the saved order (Rain) in its usual place, after Atmospheric pressure; an
     # absent tile's place and a later stage's keys kept
     assert got["corrupt"] == default
@@ -551,7 +551,7 @@ async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swi
     assert got["dropped"]["titles"] == reordered and not got["dropped"]["zone"] and got["dropped"]["clicks"] == 1
     # held and let go in place: the grip and × stay, and a tap on the × hides it
     assert got["armed"]["armed"] == ["Humidity"] and got["armed"]["close"] == "1"
-    assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "reset preferences · stop animations · last reading 18:42"}
+    assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "reset preferences · last reading 18:42"}
     # held at the bottom edge: the page scrolls to its end, never past it, and stays there once let go
     edge = got["edge"]
     assert edge["seen"][-1] == pytest.approx(edge["end"], abs=1) and max(edge["seen"]) <= edge["end"] + 1, edge
@@ -806,7 +806,7 @@ async def test_several_effects_share_one_canvas_behind_the_see_through_tiles_zoo
     several = got["several"]
     assert several["effects"] == ["smog", "uv", "rain", "wind", "humidity", "ice"] and several["canvases"] == 1, several
     assert sorted(several["framed"]) == sorted({EFFECTS[k] for k in several["effects"]}) and several["ink"] > 0, several
-    assert 20 <= several["drawn"] <= 32 and several["frames"] <= 64, several    # (one request a display frame, every other one drawn)
+    assert 20 <= several["drawn"] <= 32 and several["frames"] <= 64, several    # (a second's: one request a display frame, every other one drawn)
     # the canvas: filling the window, fixed, first, behind the tiles, never in the pointer's way, its pixels crisp
     assert got["canvas"] == {"rect": [0, 0, 1024, 768], "canvas": [True, True], "position": "fixed", "z": "0", "events": "none",
                              "first": True, "pixelated": "pixelated", "under": True}
@@ -829,6 +829,8 @@ async def test_the_weather_can_be_stopped_kept_stopped_across_a_reload_and_start
     assert got["reloaded"]["link"] == "start animations" and got["reloaded"]["frames"] == 0 and not got["reloaded"]["running"]
     for step in ("restarted", "reset"):
         assert got[step]["link"] == "stop animations" and got[step]["running"] and got[step]["frames"] > 10, (step, got[step])
+    # from the keyboard: Enter on it stops them, the focus kept on the link
+    assert got["keyboard"]["link"] == got["keyboard"]["focused"] == "start animations" and not got["keyboard"]["running"], got["keyboard"]
 
 
 @needs_browser
@@ -844,6 +846,11 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_clear_them_the_u
         assert set(links[name]["effects"]) == set(on) and EFFECTS[name] in links[name]["framed"], (name, links[name])
         assert links[name]["url"] == "?fx=" + ",".join(on)
     assert links["label"] == "UV index 0.0"                                        # (the stand-in's reading, not the simulated one)
+    # "stop animations" at the bottom left, just right of the row's "clear", beside the strip (at the window's bottom), clear of it
+    corner = links["corner"]
+    assert corner["link"] == "stop animations" and corner["apart"] and corner["onScreen"], corner
+    just_right_of_clear(corner)
+    assert corner["row"]["left"] == 0 and corner["motion"]["bottom"] == corner["window"][1] == corner["strip"]["bottom"], corner
     assert links["smog"] == [1, 2, 3, 4, 5, 0] and links["rain"] == [0.35, 1, 0]
     melting = links["melting"]
     assert melting["grown"] > 2 and 0 < melting["reach"] < melting["grown"] and "ice" not in melting["effects"] and melting["running"], melting
@@ -855,6 +862,14 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_clear_them_the_u
 
 
 EVERY = ["smog", "heat", "uv", "rain", "wind", "humidity", "ice"]
+
+
+def just_right_of_clear(corner):
+    """ "stop animations" right after the test row, on its line, a few pixels right of its "clear" (the row's end, in sight)."""
+    motion, row, clear = corner["motion"], corner["row"], corner["clear"]
+    assert motion["left"] == pytest.approx(row["right"], abs=0.5) and -1 <= motion["left"] - clear["right"] <= 10, corner
+    assert row["left"] <= clear["left"] and clear["right"] <= row["right"] + 1, corner   # (-1, +1: the row scrolled to a whole px)
+    assert motion["bottom"] == pytest.approx(row["bottom"], abs=0.5) and motion["top"] == pytest.approx(row["top"], abs=0.5), corner
 
 
 @needs_browser
@@ -893,8 +908,17 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     # the strip at the bottom right: its links, then the time at the far right; on a phone with both its links, the test row
     # beside it or above it, never over it
     phone = got["phone"]
-    assert phone["strip"] == "reset preferences · stop animations · last reading 18:42" and phone["right"], phone
+    assert phone["strip"] == "reset preferences · last reading 18:42" and phone["right"], phone
     assert phone["apart"] and phone["onScreen"], phone
+    # "stop animations" at the bottom left, just right of the test row's "clear" (with the row above the strip on a phone, both clear
+    # of it); without the test row (the page as it will be), at the bottom left on its own, at 1024x768 and on a phone
+    corner = got["phoneCorner"]
+    assert corner["link"] == "stop animations" and corner["apart"] and corner["onScreen"], corner
+    just_right_of_clear(corner)
+    assert corner["motion"]["bottom"] == pytest.approx(corner["strip"]["top"], abs=0.5), corner                  # (above the strip)
+    for bare in (got["bare"], got["barePhone"]):
+        assert bare["errors"] == [] and bare["row"] is None and bare["link"] == "stop animations", bare
+        assert bare["motion"]["left"] == 0 and bare["motion"]["bottom"] == bare["window"][1] and bare["apart"] and bare["onScreen"], bare
     # reduced motion: no loop, one still, faint frame (the ice as it would be), the frames and the link as ever
     still = got["still"]
     assert still["effects"] == ["uv", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still

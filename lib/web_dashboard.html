@@ -13,7 +13,7 @@
      remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server.
      A click or tap on a gauge zooms its tile (title and gauge, no table) to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
      Behind everything, the weather as pixel art on one canvas (Sky): rain, smog, uv, humidity, wind, heat and ice, each while the
-     readings call for it, its tile framed in red; "stop animations" in the strip stops them. -->
+     readings call for it, its tile framed in red; "stop animations" at the bottom left stops them. -->
 <style>
   :root { --bg: #14191D; --ink: #E8EAED; --soft: #B8BDC2; }
   * { box-sizing: border-box; }
@@ -73,9 +73,15 @@
   #sky canvas { position: absolute; left: 0; top: 0; image-rendering: crisp-edges; image-rendering: pixelated; }
   #status { position: fixed; right: 0; bottom: 0; height: var(--status, 18px); padding: 0 10px; font-size: 12px;
     line-height: var(--status, 18px); color: var(--soft); background: rgba(20, 25, 29, 0.85); border-top-left-radius: 6px; z-index: 1; }
-  #status .link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
+  #status .link, #motion .link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
     text-decoration-color: #5A6670; text-underline-offset: 2px; }
-  #status .link:hover, #status .link:focus-visible { color: var(--ink); }
+  #status .link:hover, #status .link:focus-visible, #motion .link:hover, #motion .link:focus-visible { color: var(--ink); }
+  /* The bottom left corner: "stop animations" (while an effect is called for), as the strip; beside the strip, or just above it where
+     there's too little room beside it (placeCorner()). Whatever else comes before it in the corner sits to its left. */
+  #corner { position: fixed; left: 0; bottom: 0; z-index: 1; display: flex; height: var(--status, 18px); max-width: 100vw; }
+  #motion { flex: none; padding: 0 10px; font-size: 12px; line-height: var(--status, 18px); white-space: nowrap; color: var(--soft);
+    background: rgba(20, 25, 29, 0.85); border-top-right-radius: 6px; }
+  #motion:empty { display: none; }
   html.scroll { scroll-snap-type: y proximity; scroll-padding-top: var(--pad, 8px); }
   .tile { scroll-snap-align: start; }
   html.scroll:has(body.dragging) { scroll-snap-type: none; }   /* (a drag's own scrolling stops where it stops) */
@@ -116,6 +122,7 @@
 <main id="grid" aria-live="polite"></main>
 <div id="message"></div>
 <div id="remove" aria-hidden="true">× remove</div>
+<div id="corner"><div id="motion"></div></div>
 <div id="status">loading…</div>
 <script>
 "use strict";
@@ -913,6 +920,7 @@ const Sky = (() => {
   const WHEEL_IDLE_MS = 140;           // ... a trackpad's sideways swipe (wheel deltaX) is over when no wheel event came for this long
   const EASE = "cubic-bezier(0.25, 0.8, 0.3, 1)";   // (quick, then gently to rest)
   const grid = document.getElementById("grid"), statusLine = document.getElementById("status"), message = document.getElementById("message");
+  const corner = document.getElementById("corner"), motion = document.getElementById("motion");
   const removeZone = document.getElementById("remove");
   let L = null, tiles = [], asOf = null, lost = false, opening = true, unavailable = "";
   const drawn = new Map();             // each tile drawn, by its id, to be moved in place (shown or hidden)
@@ -1276,7 +1284,8 @@ const Sky = (() => {
   }
 
   // ---------- the data ----------
-  // The bottom strip, at the bottom right: its links (only while they do something), then the time of the reading at the far right
+  // The bottom strip, at the bottom right: its link (only while it does something), then the time of the reading at the far right; and
+  // at the bottom left, "stop animations" while an effect is called for
   function link(words, action, name) {
     const a = document.createElement("button");
     Object.assign(a, {type: "button", className: `link ${name}`, textContent: words});
@@ -1287,11 +1296,23 @@ const Sky = (() => {
     statusLine.classList.toggle("lost", lost);
     const parts = [];
     if (resettable()) parts.push(link("reset preferences", reset, "reset"));
-    if (calling()) parts.push(link(animated() ? "stop animations" : "start animations", toggleAnimations, "animations"));
     const time = lost ? "reconnecting…" : asOf ? `last reading ${asOf.slice(11, 16)}` : "";
     if (time) parts.push(time);
     statusLine.replaceChildren(...parts.flatMap((p, i) => i ? [" · ", p] : [p]));
+    motion.replaceChildren(...calling() ? [link(animated() ? "stop animations" : "start animations", toggleAnimations, "animations")] : []);
+    placeCorner();
   }
+  // The bottom left corner beside the strip, in the room it leaves; where that's too little for the corner at its narrowest (a phone),
+  // just above the strip instead, across the window
+  function placeCorner() {
+    corner.style.width = "min-content";
+    const need = corner.offsetWidth, room = window.innerWidth - statusLine.offsetWidth - 8;
+    corner.style.width = "";
+    corner.style.bottom = need > room ? `${statusLine.offsetHeight}px` : "0";
+    corner.style.maxWidth = need > room ? "100vw" : `${room}px`;
+  }
+  window.addEventListener("resize", placeCorner);
+  new ResizeObserver(placeCorner).observe(statusLine);   // (the strip's text, its font, its height)
 
   function render(data) {
     L = data.look;
@@ -1755,7 +1776,7 @@ const Sky = (() => {
     }, WHEEL_IDLE_MS);
   }
 
-  // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animations" ----------
+  // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animations" (bottom left) ----------
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
   // stronger to 8 mm/h), smog from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
   // humidity, wind above 15 km/h (the reading now, not the gust), heat at 35 °C, ice below 0 °C (how far below). A tile
@@ -1779,10 +1800,10 @@ const Sky = (() => {
             wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 1 : 0,
             ice: temperature !== null && temperature < 0 ? -temperature : 0};
   }
-  const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: the strip's link shows)
+  const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop animations" shows)
   const animated = () => prefs.animations !== false;
 
-  // The effects called for, the readings' and the test links' together, to Sky and to the tiles' frames; the strip's link as it changes
+  // The effects called for, the readings' and the test links' together, to Sky and to the tiles' frames; "stop animations" as it changes
   function weather() {
     const was = calling();
     conditions = Object.fromEntries(Object.keys(CALLED_BY).map((k) => [k, Math.max(real[k] || 0, simulated[k] || 0)]));
@@ -1800,7 +1821,7 @@ const Sky = (() => {
     save();
     weather();
     showStatus();
-    if (focused) statusLine.querySelector(".animations").focus();
+    if (focused) motion.querySelector(".animations").focus();
   }
 
   // The temporary test links (the block near the page's end) simulate conditions: {effect: level}, as conditionsOf's. Only the effects
@@ -1834,14 +1855,15 @@ const Sky = (() => {
   listen();
 })();
 </script>
-<!-- TEMPORARY: effect test links. A "test:" row at the bottom left, one link per effect, simulating its condition (the effect and its
+<!-- TEMPORARY: effect test links. A "test:" row at the bottom left (in the corner, before "stop animations"), one link per effect, simulating its condition (the effect and its
      tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
      ?fx=smog3,wind,ice, ?fx=all (rain light, rain2 heavy, smog1-smog5, uv, humidity, wind, heat, ice; ?fx=all every one, no link of its own). To remove: delete
      from here to "END TEMPORARY" (this style, the row and its script). The page's own listener for "ecobot-fx" then simply hears nothing. -->
 <style>
-  #fxtest { position: fixed; left: 0; bottom: 0; z-index: 1; height: 18px; max-width: calc(100vw - 230px);   /* (set to fit, below) */ overflow-x: auto; overflow-y: hidden;
-    padding: 0 8px; font-size: 11px; line-height: 18px; white-space: nowrap; scrollbar-width: none; color: var(--soft);
+  #fxtest { flex: 0 1 auto; min-width: 140px; overflow-x: auto; overflow-y: hidden;   /* (the corner's width set to fit by the page) */
+    padding: 0 8px; font-size: 11px; line-height: var(--status, 18px); white-space: nowrap; scrollbar-width: none; color: var(--soft);
     background: rgba(20, 25, 29, 0.85); border-top-right-radius: 6px; opacity: 0.55; transition: opacity 0.15s ease; }
+  #fxtest:not(:has(+ #motion:empty)) { padding-right: 0; border-top-right-radius: 0; }   /* ("stop animations" right after it) */
   #fxtest:hover, #fxtest:focus-within { opacity: 1; }
   #fxtest::-webkit-scrollbar { display: none; }
   #fxtest button { font: inherit; color: inherit; background: none; border: 0; padding: 0 0 0 6px; cursor: pointer; }
@@ -1858,6 +1880,9 @@ const Sky = (() => {
   const ALL = {rain: 1, smog: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5};   // (?fx=all)
   const OLD = {leaves: "wind", radiation: "uv", drips: "humidity"};   // (their earlier names, in links saved before)
   const row = document.getElementById("fxtest");
+  document.getElementById("motion").before(row);   // (into the page's bottom left corner, just left of "stop animations")
+  // Too narrow for all of it (a phone, "stop animations" beside it): scrolled to its end, its "clear" just left of that link
+  new ResizeObserver(() => { row.scrollLeft = row.scrollWidth; }).observe(row);
   let on = {};   // {effect: its step's index}
   const name = (k) => k === "rain" ? ["rain", "rain2"][on[k]] : k === "smog" ? `smog${on[k] + 1}` : k;   // (in the URL)
   const label = (k) => k in on ? (k === "rain" ? ["rain: light", "rain: heavy"][on[k]] : k === "smog" ? `smog ${on[k] + 1}` : k) : k;
@@ -1899,19 +1924,9 @@ const Sky = (() => {
     apply();
   });
   button("clear", null, () => { on = {}; apply(); });
-  // Beside the strip, in the room it leaves; where that's too little (a phone, the strip with its links), just above it instead
-  const strip = document.getElementById("status");
-  function fit() {
-    const room = window.innerWidth - strip.offsetWidth - 8;
-    const above = room < 140;
-    row.style.bottom = above ? `${strip.offsetHeight}px` : "0";
-    row.style.maxWidth = above ? "100vw" : `${room}px`;
-  }
-  new ResizeObserver(fit).observe(strip);
-  window.addEventListener("resize", fit);
   read(new URLSearchParams(location.search).get("fx"));
   apply();
-  fit();
+  window.dispatchEvent(new Event("resize"));   // (the page places its corner again, the row in it)
 })();
 </script>
 <!-- END TEMPORARY: effect test links -->

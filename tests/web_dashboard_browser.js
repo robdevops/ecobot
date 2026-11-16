@@ -746,6 +746,10 @@ async function weatherPage(browser, url, options = {}) {
     };
   }, options.pace || 1);
   if (options.init) await context.addInitScript(options.init.fn, options.init.arg);
+  if (options.bare) await context.route((u) => u.pathname.endsWith("/dashboard"), async (route) => {   // (the page as it will be:
+    const response = await route.fetch(), page = await response.text();                                // no temporary test links)
+    await route.fulfill({ response, body: page.replace(/<!-- TEMPORARY:[\s\S]*<!-- END TEMPORARY: effect test links -->/, "") });
+  });
   await context.route(/\/dashboard\/data$/, async (route) => {
     const response = await route.fetch(), data = await response.json();
     const readings = { "US AQI": 40, ...state.readings };
@@ -768,10 +772,20 @@ async function weatherPage(browser, url, options = {}) {
   return { context, page, errors, reads };
 }
 const weatherSeen = (page) => page.evaluate(() => {
-  const s = Sky.state(), link = document.querySelector("#status .animations");
+  const s = Sky.state(), link = document.querySelector("#motion .animations");
   return { effects: s.effects, levels: s.levels, running: s.running,
            framed: [...document.querySelectorAll("#grid .tile.alert .title")].map((t) => t.textContent),
            link: link ? link.textContent : null };
+});
+// The bottom corners: "stop animations" (its words, its box), the test row's and its "clear"'s boxes (null without them), the strip's;
+// whether the link is clear of the strip, and on the screen
+const cornerSeen = (page) => page.evaluate(() => {
+  const box = (e) => e ? e.getBoundingClientRect().toJSON() : null, link = document.querySelector("#motion .animations");
+  const clear = [...document.querySelectorAll("#fxtest button")].find((b) => b.textContent === "clear");
+  const m = box(document.getElementById("motion")), s = box(document.getElementById("status"));
+  return { link: link ? link.textContent : null, motion: m, row: box(document.getElementById("fxtest")), clear: box(clear), strip: s,
+           window: [innerWidth, innerHeight], apart: m.right <= s.left || s.right <= m.left || m.bottom <= s.top || s.bottom <= m.top,
+           onScreen: m.left >= 0 && m.right <= innerWidth && m.bottom <= innerHeight };
 });
 const canvasInk = (page) => page.evaluate(() => {   // how many of the canvas's pixels have anything drawn
   const c = document.querySelector("#sky canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
@@ -871,10 +885,16 @@ const WEATHER = {
     // several at once: one canvas, one loop (at most 30 frames a second)
     await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160 });
     await calm(page, 5000);   // (the gauges' move to their new readings, MOVE_MS: frames of their own)
-    const drawnBefore = await page.evaluate(() => Sky.state().frames);
+    // (the frames asked for and drawn in a second, counted in the page: by its own clock, so no round trip's delay counts)
+    const rate = await page.evaluate(() => new Promise((resolve) => {
+      const asked = window.__frames, drawn = Sky.state().frames, start = performance.now();
+      setTimeout(() => {
+        const per = 1000 / (performance.now() - start);
+        resolve({ frames: (window.__frames - asked) * per, drawn: (Sky.state().frames - drawn) * per });
+      }, 1000);
+    }));
     out.several = { ...await weatherSeen(page), canvases: await page.evaluate(() => document.querySelectorAll("canvas").length),
-                    frames: await framesIn(page, 1000), ink: await canvasInk(page) };
-    out.several.drawn = (await page.evaluate(() => Sky.state().frames)) - drawnBefore;
+                    ...rate, ink: await canvasInk(page) };
     // the canvas: the window's size, fixed, first in the page, behind the tiles (which come after it), clicks through it. (Behind: its
     // pointer-events on for a moment, so hit-testing sees it, a tile's middle is still the tile's)
     out.canvas = await page.evaluate(() => {
@@ -939,7 +959,7 @@ const WEATHER = {
     await reads({ "UV index": 11 });
     await calm(page, 5000);   // (the gauge's move: frames of its own)
     // "stop animations": nothing drawn, no loop, the frames stay; kept; "reset preferences" starts them again
-    await page.locator("#status .animations").click();
+    await page.locator("#motion .animations").click();
     await page.waitForTimeout(200);
     out.stopped = { ...await weatherSeen(page), frames: await framesIn(page, 600), ink: await canvasInk(page),
                     stored: JSON.parse(await page.evaluate((key) => localStorage.getItem(key), KEY)).animations };
@@ -947,10 +967,10 @@ const WEATHER = {
     await page.waitForFunction(() => document.querySelectorAll(".tile.alert").length > 0);
     await calm(page, 5000);   // (the gauges' rise)
     out.reloaded = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
-    await page.locator("#status .animations").click();
+    await page.locator("#motion .animations").click();
     await page.waitForTimeout(100);
     out.restarted = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
-    await page.locator("#status .animations").click();   // (stopped again: reset puts them back)
+    await page.locator("#motion .animations").click();   // (stopped again: reset puts them back)
     await page.mouse.move(...await at(page, "Rain", 0.5, 0.4));
     await calm(page);
     await tileOf(page, "Rain").locator(".close").click();
@@ -958,6 +978,10 @@ const WEATHER = {
     await page.getByText("reset preferences").click();
     await page.waitForTimeout(100);
     out.reset = { ...await weatherSeen(page), frames: await framesIn(page, 500) };
+    // from the keyboard: Enter on the link stops them, the focus staying on it (now "start animations")
+    await page.focus("#motion .animations");
+    await page.keyboard.press("Enter");
+    out.keyboard = { ...await weatherSeen(page), focused: await page.evaluate(() => document.activeElement.textContent) };
     out.errors = errors;
     await context.close();
   },
@@ -973,6 +997,7 @@ const WEATHER = {
       out.links[name] = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
     }
     out.links.label = await label();
+    out.links.corner = await cornerSeen(page);
     out.links.smog = [];
     for (let i = 0; i < 6; i++) { await fx("smog"); out.links.smog.push((await weatherSeen(page)).levels.smog); }
     out.links.rain = [];
@@ -1028,6 +1053,16 @@ const WEATHER = {
       await uv.context.close();
       return seen;
     })();
+    // without the temporary test links (the page as it will be), at 1024x768 and on a phone with a tile hidden: "stop animations" at
+    // the bottom left on its own
+    const bare = Promise.all([{}, { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true }].map(async (context) => {
+      const p = await weatherPage(browser, url, { bare: true, context,
+        init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
+      await p.reads({ "UV index": 11 });
+      const seen = { ...await cornerSeen(p.page), errors: p.errors };
+      await p.context.close();
+      return seen;
+    }));
     // ?fx= when the page opens
     for (const [name, query] of [["param", "?fx=smog3,wind,ice"], ["paramAll", "?fx=all"], ["paramRain", "?fx=rain2"],
                                 ["paramOld", "?fx=leaves,radiation,drips"]]) {
@@ -1036,21 +1071,23 @@ const WEATHER = {
       out[name] = { ...await weatherSeen(opened.page), errors: opened.errors };
       await opened.context.close();
     }
-    // uv alone: its beams, no particles; the wind alone: its leaves within the budget, blowing right to left (and looping)
+    // uv alone: its beams, no particles; the wind alone: its leaves within the budget, blowing right to left (and looping), watched
+    // for 3 s beside the rest
     out.particles = {};
-    for (const name of ["uv", "wind"]) {
+    await Promise.all(["uv", "wind"].map(async (name) => {
       const alone = await weatherPage(browser, url, { query: `?fx=${name}` });
-      if (name === "wind") out.wind = await windSeen(alone.page, 1500);
+      if (name === "wind") out.wind = await windSeen(alone.page, 3000);
       else await alone.page.waitForTimeout(1500);
       const p = await particles(alone.page);
       out.particles[name] = { [name]: p[name], budget: p.budget };
       await alone.context.close();
-    }
-    // a phone, a tile hidden, an effect on (the wind, its leaves looping there too): the strip (reset preferences · stop animations ·
-    // last reading) at the bottom right, the time last; the test row not over it
+    }));
+    // a phone, a tile hidden, an effect on (the wind, its leaves looping there too): the strip (reset preferences · last reading) at
+    // the bottom right, the time last; the test row and "stop animations" not over it
     const phone = await weatherPage(browser, url, { query: "?fx=wind", context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
       init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
-    out.phoneWind = await windSeen(phone.page, 1500);
+    out.phoneWind = await windSeen(phone.page, 2500);
+    out.phoneCorner = await cornerSeen(phone.page);
     out.phone = await phone.page.evaluate(() => {
       const a = document.getElementById("fxtest").getBoundingClientRect(), b = document.getElementById("status").getBoundingClientRect();
       return { strip: document.getElementById("status").textContent, right: Math.abs(b.right - innerWidth) < 1 && Math.abs(b.bottom - innerHeight) < 1,
@@ -1065,6 +1102,7 @@ const WEATHER = {
                   stateFrames: await still.page.evaluate(() => Sky.state().frames), errors: still.errors };
     await still.context.close();
     out.uv = await swaying;
+    [out.bare, out.barePhone] = await bare;
     out.errors = [];
   },
 };
