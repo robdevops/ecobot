@@ -448,6 +448,15 @@ def chromium():
 needs_browser = pytest.mark.usefixtures("chromium")
 
 
+def one_end_to_read(compass: dict):
+    """The compass's needle (compassLook's): its head a bold arrow in the needles' colour, its tail a short, thin, dim stub of another
+    colour; never two ends alike."""
+    head, tail = compass["ends"]
+    needle = "rgb({}, {}, {})".format(*(int(look()["needle"][i:i + 2], 16) for i in (1, 3, 5)))
+    assert head["colour"] == needle and tail["colour"] != needle and head["opacity"] == 1 and tail["opacity"] <= 0.6, compass
+    assert head["area"] > 6 * tail["area"] and head["length"] > 2.5 * tail["length"], compass
+
+
 @needs_browser
 async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overflow_and_no_console_error(server, station, tmp_path):
     shots = Path(os.getenv("ECOBOT_SCREENSHOTS") or tmp_path)
@@ -487,12 +496,16 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert (shots / f"dashboard-{name}.png").exists() and (shots / f"dashboard-{name}-zoomed.png").exists()
         assert got["zoomed"]["zoomed"], (name, got["zoomed"])
         fills(got["zoomed"], width, height)                                       # zoomed: its title and gauge fill the window, no table
-        # the thermometers' glass catches the light (a line down the tube, a curve on the bulb); no dial or beaker has it
+        # the thermometers' glass catches the light: one straight line down the tube (no curve on the bulb, no second line); no dial
+        # or beaker has it
         assert sorted(k for k, _ in got["glass"]) == sorted(kinds) and {"thermometer", "dial", "beaker"} <= set(kinds), got["glass"]
-        assert all(g == 3 if k == "thermometer" else g == 0 for k, g in got["glass"]), got["glass"]
+        assert all(len(g) == (1 if k == "thermometer" else 0) for k, g in got["glass"]), got["glass"]
+        for _, (d,) in (g for g in got["glass"] if g[0] == "thermometer"):
+            m = re.fullmatch(r"M([\d.]+),([\d.]+) L([\d.]+),([\d.]+)", d)                  # (a straight line, upright: one segment)
+            assert m and m[1] == m[3] and float(m[4]) - float(m[2]) > 100, d
         tile, glass = got["zoomed"]["box"], got["zoomed"]["glass"]                # (the first tile, Temperature) zoomed: the glass with it
-        assert len(glass) == 3 and all(g["height"] > 0 and tile["left"] <= g["left"] and g["right"] <= tile["right"] for g in glass)
-        assert max(g["height"] for g in glass) > tile["width"] * 0.2, (glass, tile)
+        assert len(glass) == 1 and all(g["height"] > 0 and tile["left"] <= g["left"] and g["right"] <= tile["right"] for g in glass)
+        assert glass[0]["height"] > tile["width"] * 0.2 and glass[0]["width"] < glass[0]["height"] * 0.06, (glass, tile)
         # the wind's direction, a compass: N, E, S, W and the points between named, its needle's head turned to where the wind comes
         # from (99°, east), its reading "99° E" (the service's compass point); no table, the same size as its neighbours
         c, rects = got["compass"], got["rects"]
@@ -501,6 +514,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert any(near(c["box"], r, 0.5) for r in rects) and len({(round(r["width"]), round(r["height"])) for r in rects}) == 1, c
         ring, head = c["ring"], c["head"]
         assert (head["left"] + head["right"]) / 2 > (ring["left"] + ring["right"]) / 2 + ring["width"] * 0.1 and abs((head["top"] + head["bottom"]) / 2 - (ring["top"] + ring["bottom"]) / 2) < ring["height"] * 0.1, c
+        # ... the end to read unmistakable: the head a bold arrow in the needles' colour, the tail a short, thin, dim stub of another
+        one_end_to_read(c)
         assert all(c["box"]["left"] <= r["left"] and r["right"] <= c["box"]["right"] and r["bottom"] <= c["box"]["top"] + c["box"]["width"] * TABLE_TOP / look()["cell"][0]
                    for r in c["texts"]), c                                         # (all of it above where a table would start)
         # zoomed: the compass and its reading fill the zoomed place, as any tile's title and gauge
@@ -509,6 +524,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         for r in [z["title"], z["ring"], *z["texts"]]:
             assert z["box"]["left"] - 1 <= r["left"] and r["right"] <= z["box"]["right"] + 1 and z["box"]["top"] - 1 <= r["top"] and r["bottom"] <= z["box"]["bottom"] + 1, (r, z)
         assert z["ring"]["width"] > z["box"]["width"] * 0.45, z
+        one_end_to_read(z)                                                        # (zoomed too)
         assert (shots / f"dashboard-{name}-compass.png").exists()
         # the dials with a thin red hand at the past hour's highest (Wind's gust, Rain rate's, Solar radiation's, UV's), over the dial
         # and the needle, under the hub; none on any other tile; the Wind's table: its highest speed, and its highest gust beside it
@@ -1445,8 +1461,17 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     assert linked["gaps"] and set(linked["gaps"]) <= {0, 1}, sorted(set(linked["gaps"]))
     assert linked["resting"] and all(-4 <= r <= 0 for r in linked["resting"]), sorted(set(linked["resting"]))
     assert 0 < linked["most"] <= 0.42 and linked["over"] <= 3, linked
-    # ... the drips: joining it as they reach it, none below it
+    # ... the drips: joining it as they reach it, none below it; each running on down to the waves' own height where it is (its
+    # sprite's bottom at the surface there, ripples and all, or under a crest risen over it), never joining it short of that, its
+    # trail all the way down with it, wet to the water
     assert linked["joined"] >= 1 and linked["under"] == 0, linked
+    joins = linked["joins"]
+    assert joins and all(j["bottom"] >= j["surface"] for j in joins), joins
+    assert all(j["trail"] == j["bottom"] and j["wet"] > 0 for j in joins if j["trail"] is not None) and any(j["trail"] for j in joins), joins
+    # ... and nothing on the glass cut off in a straight line at its level: where a trough dips 3 px or more under it, the rows just
+    # under the level as drawn on as those just above (the smog, the heat, the rain's spray, the fog, all down to the wavy surface)
+    cut = linked["cut"]
+    assert cut["n"] >= 100 and cut["at"] >= 0.8 * cut["above"], cut
     drained = linked["drained"]
     assert 5 <= drained["took"] <= 7 and drained["wet"] == 0 and drained["frog"] is None, drained
     assert drained["effects"] == ["smog", "heat", "uv", "wind", "humidity", "ice"], drained

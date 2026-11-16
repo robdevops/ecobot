@@ -1,6 +1,7 @@
 // The dashboard page in Playwright's Chromium, for tests/test_web_dashboard.py.
 //   node web_dashboard_browser.js URL SHOTS SIZES: the page at each size ({name: [width, height]}): a screenshot of each (SHOTS/dashboard-
-//     NAME.png, device scale factor 2) and, on stdout, {name: {tiles, rects, columns, scroll, scrollWidth, scrollHeight, status, glass, errors,
+//     NAME.png, device scale factor 2) and, on stdout, {name: {tiles, rects, columns, scroll, scrollWidth, scrollHeight, status, glass (each
+//     tile's [kind, its glass highlights' paths]), errors,
 //     zoomed, compass, compassZoomed}}; then the first tile zoomed (Enter): its look, and a screenshot (SHOTS/dashboard-NAME-zoomed.png);
 //     then the compass (the wind's direction) zoomed: its look (compassLook), and a screenshot (SHOTS/dashboard-NAME-compass.png).
 //   node web_dashboard_browser.js URL --live: the page open at 800x600; prints {label} (the first tile's), waits for a line on stdin
@@ -65,7 +66,7 @@ async function sizes(browser, url, shots, wanted) {
       scrollWidth: document.documentElement.scrollWidth,
       scrollHeight: document.documentElement.scrollHeight,
       status: document.getElementById("status").textContent,
-      glass: [...document.querySelectorAll(".tile")].map((t) => [t.dataset.kind, t.querySelectorAll("svg .glass").length]),
+      glass: [...document.querySelectorAll(".tile")].map((t) => [t.dataset.kind, [...t.querySelectorAll("svg .glass")].map((e) => e.getAttribute("d"))]),
     })), errors };
     await handsSettled(page);
     report[name].hands = await handsLook(page);   // the dials' thin red hands: the past hour's highest
@@ -118,14 +119,21 @@ const handsSettled = (page) => page.waitForFunction(() => {
   return still;
 }, null, { timeout: 5000, polling: 150 }).catch(() => { /* reported as it is */ });
 
-// The compass tile's look: its label, reading, needle's turn, the points named, any table, and where its parts are (the window's px)
+// The compass tile's look: its label, reading, needle's turn, the points named, any table, where its parts are (the window's px) and
+// its needle's head and tail
 const compassLook = (page) => page.evaluate(() => {
   const t = document.querySelector('.tile[data-kind="compass"]'), rect = (e) => e.getBoundingClientRect().toJSON();
   return { label: t.getAttribute("aria-label"), reading: t.querySelector("svg text.reading").textContent, faded: t.classList.contains("faded"),
            turn: t.querySelector(".needle").getAttribute("transform"), points: [...t.querySelectorAll("svg text.point")].map((e) => e.textContent),
            table: t.querySelectorAll(".unit, .chip, .figure, .tablearea").length, zoomed: document.body.classList.contains("zoomed"),
            shown: !t.inert, box: rect(t), title: rect(t.querySelector(".title")), texts: [...t.querySelectorAll("svg text")].map(rect),
-           ring: rect(t.querySelector("svg circle")), head: rect(t.querySelector(".needle .head")) };
+           ring: rect(t.querySelector("svg circle")), head: rect(t.querySelector(".needle .head")),
+           // (its needle's two ends: the head's and the tail's colour, how opaque, their size (the drawn box's area, the window's px²))
+           ends: [".head", ".tail"].map((k) => {
+             const e = t.querySelector(`.needle ${k}`), c = getComputedStyle(e), r = rect(e);
+             return { colour: k === ".head" ? c.fill : c.stroke, opacity: Number(k === ".head" ? c.fillOpacity : c.strokeOpacity) * Number(c.opacity),
+                      area: r.width * r.height, length: Math.hypot(r.width, r.height) };
+           }) };
 });
 
 // The compass at rest: its needle turned all the way to the reading its label gives (north with none), rather than a fixed wait
@@ -1519,8 +1527,9 @@ const WEATHER = {
   // its surface choppy all across and higher at the sides, the rain ending at it in ripples and splashes; its waves alone (one
   // push: travelling both ways, reflecting off a side); draining at 30, its chop calming slowly. Beside it, every other effect on
   // and the test link's rain3 (rain light, heavy, flood, off): the frame time and the particles with the flood full; then on a fast
-  // clock, leaves landing on it, floating, sinking and resting on the bottom; the drips joining it; its first frog 30 s after the
-  // water starts rising, drifting right to left on the waves; off, draining.
+  // clock, leaves landing on it, floating, sinking and resting on the bottom; the drips joining it (each as it did), and where the
+  // surface is down in a trough, what's drawn just under its level against what's just above; its first frog 30 s after the water
+  // starts rising, drifting right to left on the waves; off, draining.
   async flood(browser, url, out) {
     const linked = (async () => {
       const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=smog3,uv,humidity2,wind,heat,ice" });
@@ -1543,7 +1552,7 @@ const WEATHER = {
       // every frame, until the first frog has crossed (or 100 s of the page's time): the frog, the leaves in the water, the drips
       Object.assign(seen, await page.evaluate(() => new Promise((resolve) => {
         const r = { before: null, first: null, track: [], leaves: { float: 0, sink: 0, rest: 0 }, gaps: [], resting: [], wet: 0, most: 0,
-                    over: 0, under: 0, joined: 0, frogs: 0, fullAt: null };
+                    over: 0, under: 0, joined: 0, joins: [], frogs: 0, fullAt: null };
         const step = () => {
           const s = Sky.state(), f = s.flood, w = s.wind;
           if (f.depth >= f.full && r.fullAt === null) r.fullAt = f.since;
@@ -1565,12 +1574,29 @@ const WEATHER = {
             r.under = Math.max(r.under, s.humidity.beads.filter((b) => b.bottom > f.surface[Math.round(Math.min(Math.max(b.x, 0), f.width - 1))] + 3).length);
           }
           r.joined = s.humidity.joined;
+          r.joins = s.humidity.joins;
           r.frogs = f.frogs;
           if ((r.first && !f.frog) || f.since > 100) { r.gaps = r.gaps.slice(-400); r.resting = r.resting.slice(-400); return resolve(r); }
           requestAnimationFrame(step);
         };
         requestAnimationFrame(step);
       })));
+      // (still full: where the surface is down in a trough, 3 px or more below its level, the canvas's alpha in the two rows just
+      // under the level beside two rows a little above it, those columns all summed, frame by frame till 400 of them; last, as reading
+      // the canvas back can slow its drawing)
+      seen.cut = await page.evaluate(() => new Promise((resolve) => {
+        const g = document.querySelector("#sky canvas").getContext("2d"), cut = { n: 0, above: 0, at: 0 };
+        let frames = 0;
+        const step = () => {
+          const f = Sky.state().flood, level = f.height - f.depth, d = g.getImageData(0, level - 4, f.width, 6).data;
+          const alpha = (row, x) => d[(row * f.width + x) * 4 + 3];
+          for (let x = 0; x < f.width; x++) if (Math.round(f.surface[x]) >= level + 3) {
+            cut.n++; cut.above += alpha(0, x) + alpha(1, x); cut.at += alpha(4, x) + alpha(5, x);
+          }
+          if (cut.n >= 400 || ++frames >= 150) resolve(cut); else requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      }));
       // off: draining, the leaves in it fading out with it (the weather's time four times as fast)
       await page.evaluate(() => Sky.timeScale(4));
       await click();

@@ -119,8 +119,16 @@ def _dial(c: Canvas, tile: Tile, ox: float, oy: float, ink):
     c.circle(cx, cy, 25, BG, outline=ink(SOFT), width=_lw(3))
 
 
+def _arrow(cx: float, cy: float, reach: float, bearing: float) -> list[tuple[float, float]]:
+    """The compass's arrow from (cx, cy) toward `bearing` (degrees clockwise from north), its tip `reach` out: a broad barbed head on a
+    shaft down to the hub (as the web page's arrow())."""
+    a = math.radians(bearing)
+    shape = [(0, reach), (17, reach - 30), (5.5, reach - 23), (5.5, 0), (-5.5, 0), (-5.5, reach - 23), (-17, reach - 30)]
+    return [(cx + x * math.cos(a) + y * math.sin(a), cy + x * math.sin(a) - y * math.cos(a)) for x, y in shape]
+
+
 def _compass(c: Canvas, tile: Tile, ox: float, oy: float, ink):
-    """The wind's direction: a compass rose's ring with its ticks and N, E, S and W, the needle's head where the wind comes from
+    """The wind's direction: a compass rose's ring with its ticks and N, E, S and W, the needle an arrow pointing where the wind comes from
     (degrees clockwise from north), the reading under it ("99° E"). As the web page draws it (web_dashboard.html compass())."""
     cx, cy, r = ox + COMPASS[0], oy + COMPASS[1], COMPASS[2]
     outer, inner = r - 8, r - 8 - BAND_WIDTH
@@ -135,9 +143,8 @@ def _compass(c: Canvas, tile: Tile, ox: float, oy: float, ink):
         _text(c, x, y, name, 13 if i % 2 else 20, ink(SOFT if i % 2 else INK), weight="normal" if i % 2 else "bold")
     value = shown(tile) % 360
     a, reach = 90 - value, inner - 8
-    tip, tail, left, right = (_polar(cx, cy, reach, a), _polar(cx, cy, -reach, a), _polar(cx, cy, 9, a + 90), _polar(cx, cy, 9, a - 90))
-    c.polygon([tail, left, right], _blend(ink(SOFT), 0.55, BG))
-    c.polygon([tip, left, right], ink(NEEDLE))
+    c.line([(cx, cy), _polar(cx, cy, -reach * 0.3, a)], _blend(ink(SOFT), 0.5, BG), _lw(2))   # (a short, thin, dim tail)
+    c.polygon(_arrow(cx, cy, reach, value), ink(NEEDLE))   # (the arrow: where the wind comes from)
     c.circle(cx, cy, 11, BG, outline=ink(SOFT), width=_lw(2.5))
     words = f"{value:.0f}° {tile.band}" if tile.value is not None and tile.band else "–" if tile.value is None else f"{value:.0f}°"
     _text(c, cx, oy + COMPASS_LABEL_Y, words, 40, ink(INK))
