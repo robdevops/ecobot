@@ -1335,6 +1335,12 @@ async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alon
     assert got["cost"] < 8 and got["flying"] == 1, (got["cost"], got["flying"])   # (something blown across too: ?fx=all,gust)
     # ... the ice grown all the way in too, its frost across much of the glass: as cheap
     assert got["costFrosted"]["cost"] < 8 and got["costFrosted"]["crystals"] > 0.15, got["costFrosted"]
+    # ... after minutes of the weather's time (over 200 s, the humidity's trails and beads built up: tens of thousands of trail
+    # pixels): no dearer than at the start (its cost not growing with them: about 1.2 ms against 2; it grew to over twice that at
+    # full screen); and with its time 20 times as fast, the trails' sweep capped (a slice of them a frame, never all), still cheap
+    late, fast = got["costFrosted"], got["costFast"]
+    assert late["clock"] > 200 and late["trails"] > 15000 and late["beads"] > 100 and late["cost"] < 1.5 * got["cost"], (got["cost"], late)
+    assert fast["trails"] > 15000 and 0 < fast["swept"] <= fast["most"] == 2500 and fast["cost"] < 8, fast
     # several at once no brighter than one strong one: every effect on (the ice grown all the way in), against Hazardous haze alone
     assert 0 < got["light"]["all"] <= got["light"]["haze5"], got["light"]
     # the haze (the particulates), each band alone: soft clouds over the whole window, more of it under them with each band (at

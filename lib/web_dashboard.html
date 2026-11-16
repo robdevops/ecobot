@@ -170,7 +170,8 @@
 //   glass: {dry, trail, fog: each {px, s: run and taken there by beads of r 1.8-3.2, band: what they'd have run on fog (each at its
 //   size then), gained, lost: water, moves: steps, all, norm:
 //   px run by any, and what they'd have run on fog in that time}}, sizes: [px, s] on fog by size (under bands[0], ..., the last and
-//   over), bands, physics: {speed(r, glass): px/s, after(r, glass, px, s, fog): its radius after (0: gone), gone}, hasten(k): the
+//   over), bands, swept: the trail pixels the latest frame's sweep looked at again (sweepMost at most), physics: {speed(r, glass):
+//   px/s, after(r, glass, px, s, fog): its radius after (0: gone), gone}, hasten(k): the
 //   trails' time k times as fast (test-only), clock(): the trails', wetAt(x, y): how fresh a trail is there (1 just left, 0 none),
 //   lifeAt(x, y): its life, glassAt(x, y): "dry", "trail" or "fog", fogAt(x, y): [its fog as shown, its fog not wiped] (0-1),
 //   shownAt(x, y): what the fog's canvas shows there [r, g, b, alpha], trailOf(id): a bead's trail as it looks now, its latest rows
@@ -1221,7 +1222,10 @@ const Sky = (() => {
     const FORM = 6;                    // s for the fog to form
     const CLEAR = 10;                  // s for the fog to clear (the humidity below 90 %)
     const THICKEN = 4;                 // s for the fog to go from none to its thickest (or back): a new level, eased to
-    const REDRAW = 0.2;                // s for the trails' sweep (each trail pixel looked at again, as it fogs over or dries)
+    const REDRAW = 1;                  // s of the trails' own time for their sweep (each trail pixel looked at again, as it fogs over
+                                       // ... or dries: a shade takes 10 s or more to change) ...
+    const SWEEP_MOST = 2500;           // ... this many trail pixels a frame at most (their time not hastened): the sweep's cost
+                                       // ... capped however many trails there are, or however fast the weather's time
     const REPAINT = 0.1;               // s between the fog's repaints while it forms, clears or thickens
     const APPEAR = 0.4;                // s for a condensed bead to fade in as it appears
     const HEAVY_RAIN = 0.75;           // rain this strong or more (about 5 mm/h): heavy, a drop sticking to the glass now and then ...
@@ -1269,7 +1273,7 @@ const Sky = (() => {
       return grown.get(w);
     };
     const DOTS = [mapped(["3"], {3: [...WATER[3], 200]}), mapped(["4"], {4: [...WATER[4], 230]})];   // (a splash's droplets)
-    let all = [], splashes = [], made = 0, seeded = false, mist = 0, cap = 0, grid = new Map(), movers = [];
+    let all = [], splashes = [], made = 0, seeded = false, mist = 0, cap = 0, grid = new Map(), movers = [], fastest = 0, widest = 0, across = null;
     // (the tiny beads still on the glass, shown in full: drawn once on their own canvas, dots, kept till they go: dotted, each's px)
     let dots = null;
     const dotted = new Map();
@@ -1282,7 +1286,7 @@ const Sky = (() => {
     // wipe()): on clear glass, its part in the thin streak (part: none, film, grime, glint, a droplet or a droplet's spark) and how
     // thick the streak is there (thick, 0-255: the thin parts dry first); through fog, how near its ragged edge (rim, 0-255: the fog
     // coming back there first) and the fog left unwiped there (smear: 0 none, 128 faint, 255 a little more: a residue streak's)
-    let till = null, life = null, listed = null, ghost = null, part = null, thick = null, rim = null, smear = null, trails = [], sweep = 0, clock = 0, hasten = 1;
+    let till = null, life = null, listed = null, ghost = null, part = null, thick = null, rim = null, smear = null, trails = [], sweep = 0, clock = 0, hasten = 1, swept = 0;
     let dirty = null, painting = 0, level = 0, fresh = 0, quiet = false;
     // (for the tests, as Sky.state() gives them)
     const seen = {merges: 0, merged: [], absorbed: [], left: [], ranOff: 0, shrunk: 0, faded: 0, largest: 0, born: [], first: null,
@@ -1441,9 +1445,11 @@ const Sky = (() => {
       }
       if (b.rows) { b.rows.push([y, a, c, left, w]); if (b.rows.length > 80) b.rows.shift(); }
     };
-    function age(dt) {   // the trails' clock on; a slice of them looked at again (all every REDRAW s): gone ones off the list
+    function age(dt) {   // the trails' clock on; a slice of them looked at again (all every REDRAW s of it, SWEEP_MOST a frame at
+                         // most): gone ones off the list
       clock += dt * hasten;
-      let todo = Math.min(trails.length, Math.ceil(trails.length * dt / REDRAW));
+      let todo = Math.min(trails.length, Math.ceil(trails.length * dt * hasten / REDRAW), hasten > 1 ? Infinity : SWEEP_MOST);
+      swept = todo;
       while (todo-- > 0 && trails.length) {
         if (sweep >= trails.length) sweep = 0;
         const i = trails[sweep];
@@ -1545,11 +1551,15 @@ const Sky = (() => {
     function snaps() {
       grid.clear();
       movers = [];
+      fastest = SNAP_V[1];   // (px/s: the most any of them may move this frame, running or pulled in; the largest's radius)
+      widest = 0;
       for (const b of all) if (b.state === "on" || b.state === "snap") {
-        if (!b.still) { movers.push(b); continue; }
+        if (!b.still) { movers.push(b); fastest = Math.max(fastest, speedFor(b.r, FOGGY) * 2.2); widest = Math.max(widest, b.r); continue; }
         const k = cell(b.x, centre(b));
         if (grid.has(k)) grid.get(k).push(b); else grid.set(k, [b]);
       }
+      // (the running ones in order across the window: [x, which], looked up by x as each runs)
+      across = movers.map((b, k) => [b.x, k]).sort((p, q) => p[0] - q[0]);
       if (!grid.size) return;
       const close = (a, b) => Math.hypot(a.x - b.x, centre(a) - centre(b)) <= a.r + b.r + SNAP;
       const higher = (a, b) => centre(a) < centre(b) - 1e-6 || (Math.abs(centre(a) - centre(b)) <= 1e-6 && (a.vol < b.vol || (a.vol === b.vol && a.id > b.id)));
@@ -1600,6 +1610,16 @@ const Sky = (() => {
     // wandering, what it meets, its trail
     function move(b, dt) {
       let time = dt;
+      // (the other running beads it may touch this frame: those near enough, however far either runs or wanders in it; the rest
+      // can't, so aren't looked at: its cost not growing with how many run elsewhere)
+      const far = fastest * dt + 12, reach = widest + b.r + 2 * far, ks = [];
+      let lo = 0, hi = across.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (across[m][0] < b.x - reach) lo = m + 1; else hi = m; }
+      for (let j = lo; j < across.length && across[j][0] <= b.x + reach; j++) {
+        const o = movers[across[j][1]];
+        if (o !== b && Math.abs(o.x - b.x) <= o.r + b.r + 2 * far && Math.abs(o.y - b.y) <= 2 * (o.r + b.r) + 2 * far) ks.push(across[j][1]);
+      }
+      const others = ks.sort((p, q) => p - q).map((k) => movers[k]);   // (in their order on the glass, as ever)
       while (time > 1e-6 && !b.gone) {
         const cx = Math.round(b.x), below = Math.floor(b.y) + heightOf(b.r), g = glassAt(cx, below);
         const f = g === FOGGY ? feltOf(at(cx, below)) : 0;
@@ -1630,7 +1650,7 @@ const Sky = (() => {
         if (b.vol <= GONE) { b.gone = true; seen.shrunk++; return; }   // (shrunk to nothing)
         // Whatever it touches, merged: into the one with more water (the tiny ones looked up in their grid); paused, it's left to
         // those that run into it (only growing a little the while)
-        if (ran) for (const o of movers) if (o !== b && !o.gone && o.state === "on" && touching(b, o)) {
+        if (ran) for (const o of others) if (!o.gone && o.state === "on" && touching(b, o)) {
           if (o.vol > b.vol) { merge(o, b); return; }
           merge(b, o);
         }
@@ -1819,7 +1839,8 @@ const Sky = (() => {
         if ((cover !== drawn[0] || dense !== drawn[1]) && (painting >= REPAINT || STILL || cover === 0) && !quiet) { painting = 0; paint(); }
         else flush();
       },
-      probe: () => ({height: H, width: W, meander: MEANDER, crisp: CRISP, life: LIFE, trails: trails.length, dried: seen.dried,
+      // (swept: the trail pixels the latest frame's sweep looked at again, SWEEP_MOST at most)
+      probe: () => ({height: H, width: W, meander: MEANDER, crisp: CRISP, life: LIFE, trails: trails.length, dried: seen.dried, swept, sweepMost: SWEEP_MOST,
                      merges: seen.merges, merged: seen.merged.slice(), absorbed: seen.absorbed.slice(), left: seen.left.slice(),
                      ranOff: seen.ranOff, shrunk: seen.shrunk, faded: seen.faded, largest: seen.largest, born: seen.born.slice(),
                      first: seen.first, landed: seen.landed, rainMost: seen.rainMost, splashes: seen.splashes.slice(), joined: seen.joined,

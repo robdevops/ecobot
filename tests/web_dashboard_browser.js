@@ -1998,12 +1998,17 @@ const WEATHER = {
       return light;
     })();
     // (the ice grown all the way in, over some minutes: the weather's time 100 times as fast meanwhile; then as ever, the cost again
-    // 45 frames on, the frost across the glass)
+    // 45 frames on, the frost across the glass, the humidity's trails and beads built up over those minutes)
     await page.evaluate(() => Sky.timeScale(100));
     await driveUntil(page, () => { const f = Sky.frost(true); return f && f.target > 0 && f.extent === f.target; });
     await page.evaluate(() => Sky.timeScale(1));
     await drive(page, 45);
-    out.costFrosted = { cost: await frameCost(page, 60), crystals: await page.evaluate(() => Sky.frost().crystals) };
+    out.costFrosted = { cost: await frameCost(page, 60), ...await page.evaluate(() => ({ crystals: Sky.frost().crystals, clock: Sky.state().clock,
+                                                                                          trails: Sky.state().humidity.trails, beads: Sky.state().humidity.beads.length })) };
+    // (and with its time 20 times as fast, many trails and beads on the glass by now: the humidity's sweep of its trails capped)
+    await page.evaluate(() => Sky.timeScale(20));
+    out.costFast = { cost: await frameCost(page, 60), ...await page.evaluate(() => { const h = Sky.state().humidity; return { trails: h.trails, swept: h.swept, most: h.sweepMost, beads: h.beads.length }; }) };
+    await page.evaluate(() => Sky.timeScale(1));
     out.light = { all: await canvasLight(page) };
     out.particles = { all: await particles(page) };
     out.light.haze5 = await strongest;
