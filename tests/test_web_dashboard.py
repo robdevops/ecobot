@@ -1196,8 +1196,8 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     assert got["errors"] == [] and got["initial"] == default, got["errors"]
     # mouseover: the grip and the × on the tile under the mouse only
     assert got["hover"] == [{"grip": "0", "close": "0"}, {"grip": "1", "close": "1"}, {"grip": "0", "close": "0"}]
-    # the grip: 15 by 25 px (dots 5 px apart: three across, five down), in the tile's top left corner
-    assert got["grip"] == {"width": 15, "height": 25, "left": 8, "top": 6, "dots": "5px 5px"}, got["grip"]
+    # the grip: 15 by 20 px (dots 5 px apart: three across, four down), in the tile's top left corner
+    assert got["grip"] == {"width": 15, "height": 20, "left": 8, "top": 6, "dots": "5px 5px"}, got["grip"]
     # dragged from its gauge: the others make room as it goes (transforms), the remove zone shows; the order kept
     assert got["during"] == {"zone": "none", "over": False, "dragging": True, "moved": ["Humidity", "Atmospheric pressure"]}
     reordered = moved(default, "Temperature", "Atmospheric pressure")
