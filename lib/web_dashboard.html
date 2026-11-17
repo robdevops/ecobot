@@ -1309,6 +1309,7 @@ const Sky = (() => {
     const GONE = 0.03;                 // a bead's water this little: gone (r about 0.3)
     const BORN = [0.5, 0.6];           // a bead condensing: its radius, tiny (a px: two of them together small, r 0.63 or more)
     const TINY = 0.61;                 // a condensed bead this small or less: tiny, never running (see snaps())
+    const DROPLET = BORN[0] + 0.05;    // a splash's droplet left on the glass: its radius (tiny)
     const RUN_R = 1.4;                 // a bead runs only this big or bigger (about sixteen tiny ones' water); smaller, it stays put
                                        // ... (growing, keeping or shrinking as its glass has it, snapping as tiny ones do)
     const SNAP = 1;                    // px between two beads' edges or less (a pixel's gap), one of them tiny: they snap together
@@ -1390,12 +1391,15 @@ const Sky = (() => {
         return "2";
       }).join(""));
     }
+    const LARGEST = SIZES[SIZES.length - 1] + 0.01;
+    const sizeOf = (r) => { let k = 0; while (k < SIZES.length - 1 && SIZES[k] < r - 0.01) k++; return k; };   // (its size in SIZES, up to LARGEST)
     const sprite = (r) => {
-      if (r <= SIZES[SIZES.length - 1] + 0.01) return beads[Math.max(0, SIZES.findIndex((size) => size >= r - 0.01))];
+      if (r <= LARGEST) return beads[sizeOf(r)];
       const w = Math.ceil(2 * r - 0.01);
       if (!grown.has(w)) grown.set(w, mapped(rowsFor(w), GLASS));
       return grown.get(w);
     };
+    const popped = (r) => (r <= LARGEST ? beads[Math.min(SIZES.length - 1, sizeOf(r) + 1)] : sprite(r + 0.5));   // (its pop: a size bigger)
     // A bead elongated along its path, s (0-1) of the most (STRETCH): a body row (below its glint, above its lower crescent) repeated,
     // a column just right of its middle taken out (never its glint or rim), keeping its water; the same plump rounded lower edge, no
     // point. Quantized to whole rows and columns, each kept (a few levels a size)
@@ -1406,7 +1410,7 @@ const Sky = (() => {
       if (rows <= 0) return base;
       const cols = Math.min(w - 3, Math.round(w - w * h / (h + rows))), key = `${w}x${h}+${rows}-${cols}`;
       if (!stretched.has(key)) {
-        let art = r <= SIZES[SIZES.length - 1] + 0.01 ? BEADS[beads.indexOf(base)] : rowsFor(w);
+        let art = r <= LARGEST ? BEADS[beads.indexOf(base)] : rowsFor(w);
         for (let c = 0; c < cols; c++) {
           const n = art[0].length, at = (n >> 1) + (n & 1);
           art = art.map((row) => row.slice(0, at) + row.slice(at + 1));
@@ -1443,26 +1447,30 @@ const Sky = (() => {
     // (the tiny beads still on the glass, shown in full: drawn once on their own canvas, dots, kept till they go: dotted, each's px)
     let dots = null;
     const dotted = new Map();
-    // The fog: each pixel's thickness at most (base: even, a little thicker at the edges), when it forms and clears (ring: 0 the
-    // middle, 1 the edges; it forms there first and clears there last); how far it has formed (cover, 0-1) and how thick (dense,
-    // 0-1); its canvas and image, as painted last (at drawn: [cover, dense]; key: what each pixel shows there, see look())
-    let base = null, ring = null, cover = 0, dense = 0, drawn = [0, 0], layer = null, img = null, key = null;
+    // The fog: each pixel's thickness at most (base: even, a little thicker at the edges), when it forms and clears (starts: the
+    // cover it starts forming at there, 0 at the edges to 0.65 in the middle: formed there first, cleared there last), its
+    // dither (dith); how far it has formed (cover, 0-1) and how thick (dense, 0-1); its canvas and image, as painted last (at
+    // drawn: [cover, dense]; key: what each pixel shows there, see look()). (order: the pixels by their start, from[k] the first
+    // in bin k of BINS (binOf): those a clearing front passes looked up)
+    let base = null, starts = null, dith = null, order = null, from = null, cover = 0, dense = 0, drawn = [0, 0], layer = null, img = null, key = null;
     // The trails: each pixel's, on the trails' own clock (`clock`, its pace `hasten` for the tests): when it's gone (till) and how long
     // it lasts all told (life), so how fresh it is now (wetOf, 1 just left, 0 gone); on the list or not. How it looks (as left: see
     // wipe()): on clear glass, its part in the thin streak (part: none, film, grime, glint, a droplet or a droplet's spark) and how
     // thick the streak is there (thick, 0-255: the thin parts dry first); through fog, how near its ragged edge (rim, 0-255: the fog
     // coming back there first) and the fog left unwiped there (smear: 0 none, 128 faint, 255 a little more: a residue streak's)
     let till = null, life = null, listed = null, ghost = null, part = null, thick = null, rim = null, smear = null, trails = [], sweep = 0, clock = 0, hasten = 1, swept = 0;
-    let dirty = null, painting = 0, level = 0, fresh = 0, quiet = false;
+    let dirty = null, painting = 0, fresh = 0, quiet = false;
     // (for the tests, as Sky.state() gives them)
     const seen = {merges: 0, merged: [], absorbed: [], left: [], ranOff: 0, shrunk: 0, faded: 0, largest: 0, born: [], first: null,
                   dried: 0, landed: 0, rainMost: 0, snaps: 0, splashes: [], joined: 0, joins: [], restarts: 0, stretches: 0,
                   glass: [0, 1, 2].map(() => ({px: 0, s: 0, band: 0, gained: 0, lost: 0, moves: 0, all: 0, norm: 0, pace: 0})),   // (px, s, band: r 1.8-3.2)
                   sizes: [0, 1, 2, 3, 4].map(() => [0, 0])};                                     // (on fog: px and s, by size)
     const BANDS = [1, 1.6, 2.4, 3.2];
+    const log = (list, v, most) => { list.push(v); if (list.length > most) list.shift(); };   // (the latest `most` kept)
     const heightOf = (r) => sprite(r).height;
     const thickness = (v) => 0.5 + 0.5 * v;   // the fog at a level (90 %: 0, 100 %: 1), at most
-    const front = (i, c) => clamp((c - (1 - ring[i]) * 0.65) / 0.35, 0, 1);   // how far the fog has formed at a pixel (c: cover)
+    const front = (i, c) => clamp((c - starts[i]) / 0.35, 0, 1);   // how far the fog has formed at a pixel (c: cover)
+    const BINS = 512, binOf = (v) => clamp(Math.floor(v / 0.65 * BINS), 0, BINS - 1);
     const wetOf = (i) => (listed[i] ? Math.max(0, (till[i] - clock) / life[i]) : 0);   // how fresh a trail is there
     // How far the fog has come back over a trail's pixel (0 wiped clear, 1 as if never wiped): clear while it's fresh (CRISP), then
     // back gradually; at its ragged edges sooner (from the start right at them), so it closes in from the edges unevenly
@@ -1480,7 +1488,7 @@ const Sky = (() => {
       return f >= FOG_AT ? FOGGY : DRY;
     };
     function grain() {   // the fog's pattern for the window's size: a fairly even haze, gently varied, a little denser at the edges
-      base = new Float32Array(W * H); ring = new Float32Array(W * H);
+      base = new Float32Array(W * H); starts = new Float64Array(W * H); dith = new Float32Array(W * H);
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
         const u = x / Math.max(1, W - 1), v = y / Math.max(1, H - 1), su = Math.min(u, 1 - u), i = y * W + x;
         const side = Math.max(0, 1 - su / 0.2), low = Math.max(0, 1 - (1 - v) / 0.22), high = 0.55 * Math.max(0, 1 - v / 0.1);
@@ -1490,10 +1498,18 @@ const Sky = (() => {
         let b = 0.36 + 0.26 * edge + (soft - 0.5) * 0.15 + (fine - 0.5) * 0.06;
         if (y < 2) b = 0; else if (y < 6) b *= (y - 1) / 5;   // (none along the top edge)
         base[i] = clamp(b, 0, 1);
-        ring[i] = clamp(0.5 * Math.max(Math.abs(2 * u - 1), Math.abs(2 * v - 1)) + 0.5 * edge + (noise(x / 9, y / 9, 1 << 20, 23) - 0.5) * 0.3, 0, 1);
+        const ring = Math.fround(clamp(0.5 * Math.max(Math.abs(2 * u - 1), Math.abs(2 * v - 1)) + 0.5 * edge + (noise(x / 9, y / 9, 1 << 20, 23) - 0.5) * 0.3, 0, 1));
+        starts[i] = (1 - ring) * 0.65;   // (ring: 0 the middle, 1 the edges)
+        dith[i] = dither(x, y);
       }
+      from = new Uint32Array(BINS + 1); order = new Uint32Array(W * H);
+      for (let i = 0; i < W * H; i++) from[binOf(starts[i]) + 1]++;
+      for (let k = 0; k < BINS; k++) from[k + 1] += from[k];
+      const next = from.slice(0, BINS);
+      for (let i = 0; i < W * H; i++) order[next[binOf(starts[i])]++] = i;
     }
     const LIFT = Float32Array.from({length: 257}, (_, j) => (j / 256) ** 0.8);   // (a thin haze still seen: t ** 0.8, looked up)
+    const fogShade = (t, i) => Math.min(FOG.length - 1, Math.floor(LIFT[(t * 256) | 0] * FOG.length + dith[i] - 1));   // (shadeOf, its dither kept)
     // A trail's looks, each in WET shades (faint to fresh), [colour, alpha at the faintest, at the freshest]: on clear glass a thin wet
     // film, greyish; grime, darker, along its edge here and there; a glint now and then; a tiny droplet left on it, now and then
     // its spark (none in a trail through the fog)
@@ -1507,11 +1523,11 @@ const Sky = (() => {
     // shade, the next in the streak's middle where the fog's thick), never a droplet or a speck. On clear glass
     // (no fog to wipe): its thin streak, each pixel there while the trail is fresher than the streak there is thin (the thin parts and
     // its ends going first), fainter as it dries
-    function look(i, x, y) {
-      const t = base[i] > 0 ? fogOf(i, drawn[0], drawn[1], true) : 0;
-      const p = listed[i] ? part[i] : 0, wet = p ? wetOf(i) : 0, full = listed[i] && base[i] > 0 ? fogOf(i, drawn[0], drawn[1], false) : 0;
+    function look(i) {
+      const full = base[i] > 0 ? fogOf(i, drawn[0], drawn[1], false) : 0, t = listed[i] ? full * refog(i) : full;   // (wiped; not)
+      const p = listed[i] ? part[i] : 0, wet = p ? wetOf(i) : 0;
       if (p >= DROP && wet > 0 && full < FOG_AT && t <= 0.6 * full) return showing(p, clamp(Math.ceil(wet * WET), 1, WET));   // (clear glass only)
-      if (t > 0) { const s = shadeOf(LIFT[(t * 256) | 0], x, y, FOG.length); if (s >= 0) return 1 + s; }
+      if (t > 0) { const s = fogShade(t, i); if (s >= 0) return 1 + s; }
       if (!listed[i]) return 0;
       if (full >= FOG_AT) return smear[i] ? 1 + (smear[i] === 255 && full > 0.4 ? 1 : 0) : 0;   // (a streak of residue, or wiped clean)
       const q = wet * (1 - Math.min(1, full / 0.1)), s = thick[i] / 255;   // (clear glass: no fog wiped)
@@ -1519,7 +1535,7 @@ const Sky = (() => {
       return showing(p, Math.min(WET, Math.max(1, Math.ceil(q * (0.45 + 0.55 * s) * 1.2 * WET))));
     }
     function put(i, x = i % W, y = (i / W) | 0) {   // a pixel of the fog's image, as it is now (as painted last: drawn)
-      const k = look(i, x, y);
+      const k = look(i);
       if (k === key[i]) return;
       key[i] = k;
       const c = SHOWS[k], d = img.data, j = i * 4;
@@ -1531,9 +1547,11 @@ const Sky = (() => {
       if (dirty && !quiet) layer.getContext("2d").putImageData(img, 0, 0, dirty[0], dirty[1], dirty[2] - dirty[0] + 1, dirty[3] - dirty[1] + 1);
       if (!quiet) dirty = null;
     }
-    function paint() {   // the fog painted whole, as it is now
+    function paint() {   // the fog painted as it is now: whole; or clearing (as thick, less formed), the pixels its front has passed since
+      const was = drawn[0], clearing = dense === drawn[1] && cover < was;
       drawn = [cover, dense];
-      for (let y = 0, i = 0; y < H; y++) for (let x = 0; x < W; x++, i++) put(i, x, y);
+      if (clearing) for (let j = from[binOf(cover - 0.36)]; j < from[binOf(was + 0.01) + 1]; j++) put(order[j]);   // (front 0 to 1 over 0.35)
+      else for (let y = 0, i = 0; y < H; y++) for (let x = 0; x < W; x++, i++) put(i, x, y);
       flush();
     }
     // A trail left at (x, y): fresh (v: 1, or a little less at its sides, gone sooner), lasting `span` s all told; its looks (p: its
@@ -1569,30 +1587,32 @@ const Sky = (() => {
       const rest = b.rested || 0;
       b.rested = 0;
       const blob = rest > 0.35 ? 0.9 : 0;
-      const sway = (noise(y / 11, id * 3 + 1, 1 << 20, 64) - 0.5) * Math.max(0, w - 3) * 0.55, at = mid + sway;
+      const sway = (noise(y / 11, id * 3 + 1, 1 << 20, 64) - 0.5) * Math.max(0, w - 3) * 0.55, sx = mid + sway;   // (the streak's middle)
       let wide = broken && !blob ? 0 : clamp(Math.min(1.35, Math.max(0.8, w * 0.2)) * (0.25 + 1.4 * n) * (0.75 + 0.5 * hash(y, id, 68)), 0.5, 2.2) + blob;
+      const x0 = Math.min(a, left), x1 = Math.max(c, left + w - 1);   // (its own width, as the beads feel it; its ragged edge)
+      const covered = (wd, x) => Math.max(clamp(wd / 2 + 0.5 - Math.abs(x - sx), 0, 1), wd > 0 && x === Math.round(sx) ? 0.45 : 0);   // (by the streak)
       // (never one width for long, where the noise lingers: after a run of 5-9 rows alike, a row a px thinner, or if it's a px, thicker)
-      const across = (wd) => {   // (its px across at this width: those covered enough to show, as below)
+      const pxAt = (wd) => {   // (its px across at this width: those covered enough to show, as below)
         let k = 0;
-        for (let x = Math.min(a, left); x <= Math.max(c, left + w - 1); x++) k += Math.max(clamp(wd / 2 + 0.5 - Math.abs(x - at), 0, 1), wd > 0 && x === Math.round(at) ? 0.45 : 0) >= 0.4;
+        for (let x = x0; x <= x1; x++) k += covered(wd, x) >= 0.4;
         return k;
       };
       if (wide > 0 && !blob) {
-        const k = across(wide);
+        const k = pxAt(wide);
         if (k === b.streakW && ++b.streakRun >= 5 + Math.floor(hash(y, id, 69) * 5)) {
-          for (const wd of k > 1 ? [wide - 1, wide - 0.6, 0.5] : [wide + 0.6, wide + 1, 1.6, 2]) if (wd > 0 && across(wd) !== k) { wide = wd; break; }
+          for (const wd of k > 1 ? [wide - 1, wide - 0.6, 0.5] : [wide + 0.6, wide + 1, 1.6, 2]) if (wd > 0 && pxAt(wd) !== k) { wide = wd; break; }
         }
-        const now = across(wide);
+        const now = pxAt(wide);
         if (now !== b.streakW) { b.streakW = now; b.streakRun = 0; }
       } else { b.streakW = 0; b.streakRun = 0; }
-      const drop = hash(y, id, 65) < (blob ? 0.7 : 0.05) ? Math.round(at + (hash(y, id, 66) - 0.5) * Math.max(1, w * 0.45)) : null;
+      const drop = hash(y, id, 65) < (blob ? 0.7 : 0.05) ? Math.round(sx + (hash(y, id, 66) - 0.5) * Math.max(1, w * 0.45)) : null;
       const res = b.res || (b.res = []);   // (through the fog: each of its columns' residue streak, see below)
-      for (let x = Math.min(a, left); x <= Math.max(c, left + w - 1); x++) {   // (its own width, as the beads feel it; its ragged edge)
-        const cov = Math.max(clamp(wide / 2 + 0.5 - Math.abs(x - at), 0, 1), wide > 0 && x === Math.round(at) ? 0.45 : 0), h = hash(x, y, id);
+      for (let x = x0; x <= x1; x++) {
+        const cov = covered(wide, x), h = hash(x, y, id);
         let p = 0, k = 0;
         if (cov >= 0.4) {
           k = Math.round(255 * clamp(cov * (0.5 + 0.5 * n) + 0.25 * blob, 0.05, 1));
-          p = h < 0.045 ? GLINT : x > at && (cov < 1 || x >= at + wide / 2 - 0.5) && h < 0.4 ? GRIME : FILM;
+          p = h < 0.045 ? GLINT : x > sx && (cov < 1 || x >= sx + wide / 2 - 0.5) && h < 0.4 ? GRIME : FILM;
         }
         if (x === drop) { p = hash(x, y, id + 9) < 0.35 ? SPARK : DROP; k = 255; }
         if (b.kind === "fog") p = 0;   // (a condensed bead's: nothing on clear glass, gone with the fog under it as it clears)
@@ -1609,7 +1629,7 @@ const Sky = (() => {
         if (r[0] > 0) { m = r[0] === r[1] || r[0] === 1 ? 128 : 255; r[0]--; }
         lay(x, y, 1 - 0.1 * Math.abs(x - mid) / Math.max(1, w / 2), b.life, p, k, Math.round(255 * e), m, x < left || x >= left + w ? 1 : 0);
       }
-      if (b.rows) { b.rows.push([y, a, c, left, w, blob > 0]); if (b.rows.length > 80) b.rows.shift(); }
+      if (b.rows) log(b.rows, [y, a, c, left, w, blob > 0], 80);
     };
     function age(dt) {   // the trails' clock on; a slice of them looked at again (all every REDRAW s of it, SWEEP_MOST a frame at
                          // most): gone ones off the list
@@ -1639,9 +1659,11 @@ const Sky = (() => {
       change(b, g, f, px, s);
       if (b.vol > was) o.gained += b.vol - was; else o.lost += was - b.vol;
       o.moves++;
-      if (px > 0 && r >= 1.8 && r <= 3.2) { o.px += px; o.s += s; o.band += s * speedFor(r, FOGGY); }   // (band: px it'd have run on fog)
-      if (px > 0) { o.all += px; o.norm += s * speedFor(r, FOGGY); o.pace += s * speedFor(r, g); }   // (any size: px run, against what it'd have run on fog, and there)
-      if (px > 0 && g === FOGGY) { const band = seen.sizes[BANDS.filter((x) => r >= x).length]; band[0] += px; band[1] += s; }
+      if (!(px > 0)) return;
+      const fog = speedFor(r, FOGGY);
+      if (r >= 1.8 && r <= 3.2) { o.px += px; o.s += s; o.band += s * fog; }   // (band: px it'd have run on fog)
+      o.all += px; o.norm += s * fog; o.pace += s * speedFor(r, g);   // (any size: px run, against what it'd have run on fog, and there)
+      if (g === FOGGY) { let k = 0; while (k < BANDS.length && r >= BANDS[k]) k++; seen.sizes[k][0] += px; seen.sizes[k][1] += s; }
     }
     // A bead to condense somewhere: unseen till the fog has formed and shows there (and a moment more), then tiny. Where: anywhere in
     // the fog (a little more toward the top, more often where it's thick; not in a trail wiped through it), or now and then close
@@ -1659,7 +1681,7 @@ const Sky = (() => {
         if (condensing() < 0.15 + base[i]) break;
       }
       return numbered({id: ++made, kind: "fog", state: "rest", x: Math.round(clamp(x, 3, W - 4)), y: clamp(y, 6, H * 0.82), r: condensing.between(...BORN),
-              vol: 0, k: condensing() < 0.15 ? condensing.between(3, 5) : condensing.between(0.3, 1.5), wait: condensing.between(0, 0.5), merged: 0, life: condensing.between(...LIFE),
+              vol: 0, k: condensing() < 0.15 ? condensing.between(3, 5) : condensing.between(0.3, 1.5), wait: condensing.between(0, 0.5), life: condensing.between(...LIFE),
               still: true});
     };
     const pace = (b) => {   // a run's next stretch: how fast (of its speed), how far
@@ -1674,18 +1696,16 @@ const Sky = (() => {
                         laid: Math.floor(b.y) + (heightOf(b.r) >> 1), shown: 0});
       pace(b);
     }
+    const settled = (b) => { shows(b); b.shown = APPEAR; all.push(b); return b; };   // (shown at once)
     function land(most) {   // heavy rain: a drop sticking to the glass, a large bead at once, with a splash
       const landed = ++counts.rain, drop = streamOf(`humidity:drop:${landed}`), splash = streamOf(`humidity:splash:${landed}`);   // (this landing's own)
       const r = drop.between(...RAIN_R), x = Math.round(drop.between(Math.ceil(r) + 2, W - 3 - Math.ceil(r))), y = drop.between(6, H * 0.7);
-      const b = numbered({id: ++made, kind: "rain", x, y, r, merged: 0, life: drop.between(...LIFE)}, landed);
-      shows(b);
-      b.shown = APPEAR;   // (there at once)
+      const b = settled(numbered({id: ++made, kind: "rain", x, y, r, life: drop.between(...LIFE)}, landed));
       // (the harder the rain, the harder it hits (hard: 0 at HEAVY_RAIN, 1 at the heaviest): squashed flatter, more droplets thrown
       // faster and further, more of them left)
       const hard = clamp((rain.level - HEAVY_RAIN) / (1 - HEAVY_RAIN), 0, 1), more = (k, [lo, hi]) => lo + Math.floor(k * (hi - lo + 1) * (0.6 + 0.4 * hard));
       const squash = splash.between(...SQUASH) * (0.8 + 0.2 * hard);
       if (!STILL) Object.assign(b, {impact: 0, squash, fresh: true});   // (squashed, from its first frame; reduced or low motion: never)
-      all.push(b);
       // (its droplets: round it (evenly, a little jitter), each its speed; lopsided: bunched toward a direction of its own (lean, at
       // aim), faster that way, slower the other; some spray streaks)
       const cy = y + heightOf(r) / 2, n = more(splash(), THROWN), aim = splash.between(0, 2 * Math.PI), lean = splash.between(...LEAN);
@@ -1708,15 +1728,14 @@ const Sky = (() => {
         const px = Math.round(x + Math.cos(d.a) * far), py = Math.round(cy + Math.sin(d.a) * far * 0.8);
         if (px < 1 || px > W - 2 || py < 1 || py > H - 2) { off++; continue; }
         if (used() + (kept + 1) * TINY_COST > most) { cut++; continue; }
-        if (py + heightOf(BORN[0] + 0.05) >= flood.surface(px) - 1) { off++; continue; }   // (none left in a flood: thrown into its water)
+        if (py + heightOf(DROPLET) >= flood.surface(px) - 1) { off++; continue; }   // (none left in a flood: thrown into its water)
         Object.assign(d, {stay: far, px, py});
         kept++;
       }
       splashes.push({x, y: cy, r, age: 0, dots, landed, own: splash});
       seen.landed++;
-      seen.splashes.push({id: b.id, r, dots: n, stay: kept, meant: stay, cut, off, room, squash, aim, lean,
-                          thrown: dots.map((d) => [d.a, d.v, d.streak ? 1 : 0, d.stay ? 1 : 0])});
-      if (seen.splashes.length > 50) seen.splashes.shift();
+      log(seen.splashes, {id: b.id, r, dots: n, stay: kept, meant: stay, cut, off, room, squash, aim, lean,
+                          thrown: dots.map((d) => [d.a, d.v, d.streak ? 1 : 0, d.stay ? 1 : 0])}, 50);
     }
     // A rain bead just landed: how far squashed (0 round; above, wider and shorter; below, taller and narrower), held at its most a
     // frame or two, then wobbling back to round, less and less
@@ -1745,17 +1764,14 @@ const Sky = (() => {
       into.r = Math.cbrt(into.vol);
       into.x = clamp(Math.round(into.x + (from.x - into.x) * k), into.x0 - MEANDER, into.x0 + MEANDER);
       into.y = Math.max(into.y, into.y + (from.y - into.y) * k);
-      into.merged += 1 + from.merged;
       from.gone = true;
       into.still = into.still && into.r <= TINY;   // (tiny no more: running, as its size has it)
       if (from.impact < SQUASH_S && !(into.impact < SQUASH_S)) Object.assign(into, {impact: from.impact, squash: from.squash, fresh: from.fresh});   // (a drop
                                                                                                   // landing on a bead: that one struck, squashed)
       seen.merges++;
       seen.largest = Math.max(seen.largest, into.r);
-      seen.merged.push({vol: was, into: into.vol, r: radii, intoR: into.r});
-      if (seen.merged.length > 100) seen.merged.shift();
-      seen.absorbed.push(from.id);
-      if (seen.absorbed.length > 300) seen.absorbed.shift();
+      log(seen.merged, {vol: was, into: into.vol, r: radii, intoR: into.r}, 100);
+      log(seen.absorbed, from.id, 300);
     }
     // Tiny beads snapping together: two beads close (their edges SNAP px apart or less), one of them tiny (or both), neither running
     // on its own (a bead under 1 px/s, as tiny ones are): the higher one (the same height: the smaller) pulled into the lower one,
@@ -1917,7 +1933,7 @@ const Sky = (() => {
           }
         }
         b.x = clamp(b.x, Math.ceil(b.r), W - 1 - Math.ceil(b.r));   // (never part off the window's side)
-        if (top >= H) { b.gone = true; seen.ranOff++; seen.left.push(b.id); if (seen.left.length > 300) seen.left.shift(); return; }   // (run off its bottom edge)
+        if (top >= H) { b.gone = true; seen.ranOff++; log(seen.left, b.id, 300); return; }   // (run off its bottom edge)
         if (drowned(b)) return;
       }
       stretching(b, dt, b.v > 0);
@@ -1932,8 +1948,7 @@ const Sky = (() => {
       if (b.state === "on") for (let y = Math.max(b.laid, 0); y < Math.min(bottom, H); y++) wipe(b, y);
       seen.joined++;
       const last = b.state === "on" && b.rows.length ? b.rows[b.rows.length - 1][0] : null, end = last === null ? -1 : at(Math.round(b.x), last);
-      seen.joins.push({x: b.x, bottom, surface, level: flood.waterline(), trail: last === null ? null : last + 1, wet: end < 0 ? 0 : wetOf(end)});
-      if (seen.joins.length > 100) seen.joins.shift();
+      log(seen.joins, {x: b.x, bottom, surface, level: flood.waterline(), trail: last === null ? null : last + 1, wet: end < 0 ? 0 : wetOf(end)}, 100);
       flood.hit(b.x, 0.4 + 0.2 * b.r, true);
       return true;
     }
@@ -1957,7 +1972,7 @@ const Sky = (() => {
         const i = y * W + x, t = fogOf(i, cover, dense, true), u = x / W, v = y / H;
         const add = (k, by = t) => { sums[k][0] += by; sums[k][1]++; };
         add("thickness");
-        const k = t > 0 ? shadeOf(LIFT[(t * 256) | 0], x, y, FOG.length) : -1;
+        const k = t > 0 ? fogShade(t, i) : -1;
         add("opacity", k < 0 ? 0 : FOG_ALPHA[k] / 255);
         if (Math.abs(u - 0.5) < 0.2 && Math.abs(v - 0.5) < 0.2) add("middle");
         if (Math.min(u, 1 - u) < 0.1 || v > 0.9) add("edge");
@@ -2008,7 +2023,6 @@ const Sky = (() => {
           quiet = false;
           paint();
         }
-        if (e.level > 0) level = e.level;
         // The fog forming (or clearing), thickening or thinning to its level
         cover = STILL ? (e.level > 0 ? 1 : 0) : clamp(cover + (e.level > 0 ? dt / FORM : -dt / CLEAR), 0, 1);
         const target = e.level > 0 ? thickness(e.level) : dense;
@@ -2031,7 +2045,8 @@ const Sky = (() => {
         // More condensing (in the fog, each as it shows: tiny), a few a second, accumulating up to the most (leaving heavy rain its
         // room); there, now and then the most isolated tiny one (or, alike, the oldest) drying away quietly for another; heavy rain,
         // now and then, a drop
-        const rainy = all.filter((b) => b.kind === "rain").length, tiny = all.filter((b) => b.still).length;
+        let rainy = 0, tiny = 0;
+        for (const b of all) { rainy += b.kind === "rain"; tiny += !!b.still; }
         cap = Math.max(0, Math.floor((Math.min(most - room, most - rainy) - (all.length - tiny - rainy)) / TINY_COST));
         if (e.level > 0) {
           mist += MISTING * W * (0.95 + 0.4 * e.level) * dt;   // (the more humid, the more tiny ones: light 0.95 times MISTING, heavy 1.35)
@@ -2042,8 +2057,9 @@ const Sky = (() => {
             if (old) { dries(old); all.push(condense()); }
           }
         } else mist = 0;
-        if (heavy() && rainy < RAIN_MOST && used() + 1 <= most && landing() < LANDING * dt) land(most);
-        seen.rainMost = Math.max(seen.rainMost, all.filter((b) => b.kind === "rain").length);
+        const lands = heavy() && rainy < RAIN_MOST && used() + 1 <= most && landing() < LANDING * dt;
+        if (lands) land(most);
+        seen.rainMost = Math.max(seen.rainMost, rainy + lands);
         snaps();
         for (const b of all) {
           if (b.gone || drowned(b)) continue;
@@ -2057,8 +2073,7 @@ const Sky = (() => {
               const fog = fogOf(i, cover, dense, true);
               if (fog < FOG_AT || glassAt(b.x, b.y + heightOf(b.r) / 2) !== FOGGY) { b.gone = true; continue; }   // (fog only)
               shows(b);
-              seen.born.push({id: b.id, kind: "fog", r: b.r, fog, y: (b.y + heightOf(b.r) / 2) / H});
-              if (seen.born.length > 300) seen.born.shift();
+              log(seen.born, {id: b.id, kind: "fog", r: b.r, fog, y: (b.y + heightOf(b.r) / 2) / H}, 300);
               if (!seen.first) seen.first = {after: fresh, cover, fog: fogOf(i, cover, dense, false), formed: fogNow()};
             }
           } else if (b.state === "on") {
@@ -2077,11 +2092,8 @@ const Sky = (() => {
         for (const s of splashes) s.age += dt;
         for (const s of splashes) if (s.age >= SPLASH_S) for (const [j, d] of s.dots.entries()) if (d.stay) {   // (its droplets left
                                                                                                                  // behind: tiny beads now)
-          const r = BORN[0] + 0.05, b = numbered({id: ++made, kind: "splash", x: d.px, y: d.py, r, k: 1, merged: 0, life: s.own.between(...LIFE),
-                                                  still: true, drying: s.own.between(...DRYING), thrown: [d.px - s.x, d.py - s.y]}, s.landed * 32 + j);
-          shows(b);
-          b.shown = APPEAR;
-          all.push(b);
+          settled(numbered({id: ++made, kind: "splash", x: d.px, y: d.py, r: DROPLET, k: 1, life: s.own.between(...LIFE), still: true,
+                            drying: s.own.between(...DRYING), thrown: [d.px - s.x, d.py - s.y]}, s.landed * 32 + j));
         }
         splashes = splashes.filter((s) => s.age < SPLASH_S);
         age(dt);
@@ -2114,12 +2126,9 @@ const Sky = (() => {
                      // r}: their ids)
                      tiny: TINY, snap: SNAP, snaps: seen.snaps, cap,
                      place: (list) => list.map(({x, y, r = 0.55}) => {
-                       const b = numbered({id: ++made, kind: "fog", x, y: y - heightOf(r) / 2, r, k: 1, merged: 0, still: true}, undefined, "placed");
+                       const b = numbered({id: ++made, kind: "fog", x, y: y - heightOf(r) / 2, r, k: 1, still: true}, undefined, "placed");
                        b.life = own(b, "life").between(...LIFE);
-                       shows(b);
-                       b.shown = APPEAR;
-                       all.push(b);
-                       return b.id;
+                       return settled(b).id;
                      }),
                      clock: () => clock,
                      wetAt: (x, y) => (listed && x >= 0 && x < W && y >= 0 && y < H ? wetOf(y * W + x) : 0),
@@ -2165,7 +2174,7 @@ const Sky = (() => {
                        const d = layer.getContext("2d").getImageData(0, 0, W, H).data;
                        let n = 0;
                        for (let i = 0; i < W * H; i++) if (!listed[i]) {
-                         const want = SHOWS[look(i, i % W, (i / W) | 0)];
+                         const want = SHOWS[look(i)];
                          if (Math.abs(d[i * 4 + 3] - want[3]) > 2) n++;
                        }
                        return n;
@@ -2205,8 +2214,9 @@ const Sky = (() => {
           if (b.state === "rest" || dotted.has(b)) continue;
           const q = b.state !== "on" ? 0 : squashOf(b), st = b.pop > 0 || b.state !== "on" || q ? 0 : stretchOf(b);   // (squashed: not
                                                                                                                       // its pop as well)
-          const pic = q ? squashed(b.r, q) : b.pop > 0 ? sprite(SIZES[Math.min(SIZES.length - 1, SIZES.findIndex((size) => size >= b.r - 0.01) + 1)]) : st > 0 ? elongated(b.r, st) : sprite(b.r), a = (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR);
-          const left = Math.round(b.x) - (pic.width >> 1), top = (b.state === "fade" ? Math.round(b.y) : Math.floor(b.y)) - (q ? Math.round((pic.height - sprite(b.r).height) / 2) : pic.height - sprite(b.r).height);   // (elongated: its lower
+          const round = sprite(b.r), pic = q ? squashed(b.r, q) : b.pop > 0 ? popped(b.r) : st > 0 ? elongated(b.r, st) : round;
+          const a = (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR);
+          const left = Math.round(b.x) - (pic.width >> 1), top = (b.state === "fade" ? Math.round(b.y) : Math.floor(b.y)) - (q ? Math.round((pic.height - round.height) / 2) : pic.height - round.height);   // (elongated: its lower
                                                                                                     // edge where it is; squashed: its middle)
           g.globalAlpha = a0 * a;
           g.drawImage(pic, left, top);
