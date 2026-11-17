@@ -1760,9 +1760,12 @@ const trailLook = (h, b) => {
 //   splashes: each heavy-rain splash's droplet left on the glass {r: its radius at most, tiny: tiny always while it was one, moved:
 //     frames it moved (not snapping), glass: the glass under it as it last sat (before fading), fogged: s on fog, aged: s shown in
 //     all, fadedAt: its age as it began drying away (null: never), thrown: [dx, dy] from where its drop struck, end: "faded" (dried away), "taken" (merged into another: snapped
-//     or swept up by a runner), "on" (still there at the end) or "other"}
+//     or swept up by a runner), "on" (still there at the end) or "other"};
+//   locks: the beads locked on another's run (lock), each {id, rows: frames it was locked in a row it could see the run under it,
+//     off: the most px its middle was from the run's middle there, dropped: it let go (not gone, not merged) with the run still
+//     under it or a few rows on (within 2 px), end: "gone" (merged or run off), "dropped", "on"}
 const beadWatch = () => {
-  const stretching = new Map(), stretches = [], splashes = new Map(), last = new Map();
+  const stretching = new Map(), stretches = [], splashes = new Map(), last = new Map(), locks = new Map();
   let small = 0, clock = null;
   return {
     step(state) {
@@ -1770,6 +1773,19 @@ const beadWatch = () => {
       clock = t;
       for (const b of h.beads) {
         now.add(b.id);
+        if (b.lock) {
+          let k = locks.get(b.id);
+          if (!k) { k = { id: b.id, rows: 0, off: 0, dropped: false, end: "on", bottom: 0 }; locks.set(b.id, k); }
+          const x = Math.round(b.x), y = b.bottom, wet = (xx, yy) => h.glassAt(xx, yy) === "trail";
+          if (y !== k.bottom && wet(x, y)) {
+            let l = x, r = x;
+            while (x - l < 6 && wet(l - 1, y)) l--;
+            while (r - x < 6 && wet(r + 1, y)) r++;
+            k.rows++;
+            if (x - l < 6 && r - x < 6) k.off = Math.max(k.off, Math.abs(b.x - (l + r) / 2));   // (a run of its own: not two joined)
+          }
+          k.bottom = y;
+        }
         let e = stretching.get(b.id);
         if (b.stretch > 0 && !b.fading) {
           if (!e) { e = { r: b.r, most: 0, rows: 0, cols: 0, low: 0, from: t, lasted: null }; stretching.set(b.id, e); stretches.push(e); }
@@ -1794,6 +1810,18 @@ const beadWatch = () => {
           d.aged = b.age;
         }
       }
+      for (const [id, b] of last) {
+        const k = locks.get(id);
+        if (!k || k.end !== "on") continue;
+        if (!now.has(id)) k.end = "gone";
+        else {
+          const c = h.beads.find((o) => o.id === id);
+          if (c.lock) continue;
+          k.end = "dropped";   // (looked at where it is now, the rows ahead of it: its own trail is behind)
+          const x = Math.round(c.x), lead = h.beads.some((o) => o.id !== id && Math.abs(o.x - x) <= c.r + o.r + 2 && o.cy - c.bottom > -1 && o.cy - c.bottom < 7);   // (a bead ahead on it: its body there)
+          for (let dy = 0; dy <= 5; dy++) for (let dx = -2; dx <= 2; dx++) if (!lead && h.glassAt(x + dx, c.bottom + dy) === "trail") k.dropped = true;
+        }
+      }
       for (const id of last.keys()) if (!now.has(id)) {
         stretching.delete(id);
         const d = splashes.get(id);
@@ -1804,7 +1832,7 @@ const beadWatch = () => {
     },
     result() {
       for (const id of last.keys()) { const d = splashes.get(id); if (d && d.end === "other") d.end = "on"; }
-      return { stretches: stretches.map(({ from, ...e }) => e), small, splashes: [...splashes.values()] };
+      return { stretches: stretches.map(({ from, ...e }) => e), small, splashes: [...splashes.values()], locks: [...locks.values()].map(({ bottom, ...k }) => k) };
     },
   };
 };

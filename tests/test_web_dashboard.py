@@ -2226,6 +2226,13 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert all(e["r"] >= 2.5 and 0 < e["most"] <= 1 and 0 <= e["rows"] <= 2 and 0 <= e["cols"] <= 1 and e["low"] == 0 for e in stretches), stretches
     assert sum(e["most"] == 1 and e["rows"] >= 1 and e["cols"] == 1 for e in stretches) >= 3, stretches   # (all the way, now and then)
     assert all(e["lasted"] is None or e["lasted"] <= 0.85 for e in stretches) and sum(e["lasted"] is not None for e in stretches) >= 3, stretches
+    # (a bead that has steered into another's run and reached it locks on: it follows the run's middle row by row, wherever it
+    # wanders, to the bottom (never off partway: none let go with the run still under or just ahead of it), till it merges, runs
+    # off the bottom, or the run ends)
+    locks = stretching["locks"]
+    assert len(locks) >= 2 and sum(k["rows"] for k in locks) >= 30, locks
+    assert all(k["off"] <= 2 for k in locks), locks
+    assert not any(k["dropped"] for k in locks), locks
     assert heavy_rain["glass"]["fog"]["moves"] == 0, heavy_rain["glass"]   # (no fog: rain alone)
     drying = [t["lasted"] for t in sticking["drying"]]
     assert len(drying) >= 2 and all(170 <= t <= 610 for t in drying), sticking["drying"]

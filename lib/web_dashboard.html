@@ -1213,7 +1213,9 @@ const Sky = (() => {
   //   would go there, however small (from RUN_R: a condensed one as quick as a rain one down a track), each
   //   stretch of a run a little quicker or slower than that, stop-start (a pause after a stretch now and then, most often on dry
   //   glass), wandering a little (a kink here, a slant there, kept a while; never more than MEANDER px from where it began); on dry
-  //   glass it steers into a trail close beside it, on a trail it follows it.
+  //   glass it steers into a trail close beside it, on a trail it follows it. Once it has locked on to another's run (steered into it
+  //   and reached it) it keeps to it all the way down, row by row on the run's middle wherever that wanders (a break of up to LOCK_GAP
+  //   rows, or the bead ahead on it, held straight across), no wandering back off, till it merges, runs off the bottom, or the run ends (then on as it was).
   //   Its size (its water: continuous, no largest): on fog it gathers the fog it passes (GATHER a px, CONDENSE a s as it sits; the
   //   fog wiped) and grows; on a trail it keeps its size; on dry glass, only there, it shrinks, leaving its water behind (LEAVE a px,
   //   EVAPORATE a s). Shrunk to nothing (GONE): gone. A run (trail) is wet glass as fog is: no bead condenses in one, none shrinks in one, and a bead on fog never dries, shrinks or disappears: it only grows (a tiny one
@@ -1252,6 +1254,7 @@ const Sky = (() => {
     const CONDENSE = 0.012;            // ... and for each s it sits on it (each bead 0.3 to 1.5 times that, a few 3 to 5 times)
     const LEAVE = 0.1;                 // water left on dry glass for each px a bead runs, for each px of its width ...
     const EVAPORATE = 0.15;            // ... and for each s it sits there, for each px of its radius
+    const LOCK_GAP = 5;                // rows ahead a bead locked on a run looks for it again past a break in it
     const GONE = 0.03;                 // a bead's water this little: gone (r about 0.3)
     const BORN = [0.5, 0.6];           // a bead condensing: its radius, tiny (a px: two of them together small, r 0.63 or more)
     const TINY = 0.61;                 // a condensed bead this small or less: tiny, never running (see snaps())
@@ -1949,7 +1952,23 @@ const Sky = (() => {
         if (trailed(b)) {
           const [x, ahead] = aheadOf(b), under = glassAt(x, ahead);
           b.on = under === TRAIL;
-          if (b.on) {
+          if (b.on && b.steer) b.lock = true;
+          let hold = false;   // (locked, the run lost under it: a break in it (a thin, broken streak) held straight across)
+          if (!b.on && b.lock && !grav.tilted) {
+            for (let k = 0; k <= LOCK_GAP && !b.on; k++) for (let dx = -2; dx <= 2; dx++) if (glassAt(x + dx, ahead + k) === TRAIL) { b.on = hold = true; break; }
+            // (or the bead that made it just below it, its body there, no trail laid there yet)
+            if (!b.on && all.find((o) => o !== b && o.state === "on" && Math.abs(o.x - x) <= b.r + o.r + 2 && centre(o) - ahead > -1 && centre(o) - ahead < LOCK_GAP + 2)) b.on = hold = true;
+          }
+          if (!b.on) b.lock = b.steer = false;   // (the run ended: on as it was)
+          if (b.on && b.lock && !grav.tilted) {   // (locked: row by row on the run's middle, wherever it wanders, till it ends)
+            if (!hold) {
+              let l = x, r = x;
+              while (x - l < 6 && glassAt(l - 1, ahead) === TRAIL) l--;
+              while (r - x < 6 && glassAt(r + 1, ahead) === TRAIL) r++;
+              b.x += clamp((l + r) / 2 - b.x, -1, 1);
+            }
+            b.x0 = b.x; b.c0 = crossB(b);   // (its bounds go with it)
+          } else if (b.on) {
             let best = wetOf(at(x, ahead)), to = 0;   // (to: a step across, to a wetter trail beside it)
             for (const dx of [-1, 1]) {
               const sx = x + dx * grav.px, sy = ahead + dx * grav.py;
@@ -1964,7 +1983,7 @@ const Sky = (() => {
             for (const dx of [1, -1, 2, -2, 3, -3]) {
               const sx = x + dx * grav.px, sy = ahead + dx * grav.py;
               if (Math.abs(crossOf(sx, sy) - b.c0) <= MEANDER && glassAt(sx, sy) === TRAIL) {
-                b.slant = 0.7 * Math.sign(dx); b.bend = Math.abs(dx);
+                b.slant = 0.7 * Math.sign(dx); b.bend = Math.abs(dx); b.steer = true;   // (steered into a run: locked on it once there)
                 break;
               }
             }
@@ -2286,7 +2305,7 @@ const Sky = (() => {
                        const near = [0, -1, 1].map((dx) => [cx + dx, top - 1]).filter(([x, y]) => x >= 0 && y >= 0 && wetOf(at(x, y)) > 0 && y < H);
                        const trail = near.find(([x, y]) => share[at(x, y)] === 255 && !ghost[at(x, y)]) || near[0];   // (wiped whole: not its soft edge)
                        return {id: b.id, kind: b.kind, x: b.x, x0: b.x0, y: b.y, y0: b.y0, cy: b.y + h / 2, r: b.r, vol: b.vol, w: sprite(b.r).width,
-                               laidW: b.laidW || null, bottom: top + h, glass: GLASSES[b.g], v: b.state === "on" ? b.v : 0, fading: b.state === "fade",
+                               laidW: b.laidW || null, bottom: top + h, lock: !!b.lock, glass: GLASSES[b.g], v: b.state === "on" ? b.v : 0, fading: b.state === "fade",
                                alpha: (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR), drawn: b.drawn || null,
                                age: b.shown, behind: top < b.y0 + 4 || !!trail, trail: trail || null, tiny: !!b.still, snapping: b.state === "snap",
                                stretch: b.state === "on" && !squashOf(b) && !gulpOf(b) ? stretchOf(b) : 0, impact: b.impact === undefined ? null : b.impact,
