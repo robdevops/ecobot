@@ -2563,3 +2563,58 @@ async def test_a_gust_over_99_kmh_blows_a_cow_a_barn_or_a_chicken_across_far_beh
     assert phone["sent"] == 1 and phone["buttons"][-1] == "gust" and not phone["tag"] and phone["fits"] and phone["onScreen"], phone
     just_right_of_the_row(phone)
     assert got["errors"] == [] and phone["errors"] == [], (got["errors"], phone["errors"])
+
+
+@needs_browser
+async def test_a_phones_gravity_turns_the_humidity_beads_downhill_by_the_screens_rotation_and_nothing_else_changes(server, station):
+    got = await weather(server, "tilt")
+    cases = got["cases"]
+    # (synthetic devicemotion readings, the spec's (what Android sends: upright, y +9.8) at screen angles 0, 90, 180 and 270: the beads'
+    # mean move while running, the window 134 by 100 px)
+    down = ["upright", "landscape", "landscapeFlipped", "upsideDown", "flat", "nearlyFlat"]
+    for name in down:   # (held so the screen's down is down, or laid flat: the dead zone: as ever, the same run as with no sensor at all)
+        c = cases[name]
+        assert not c["tilt"]["tilted"] and c["tilt"]["epoch"] == 0 and c["tilt"]["mode"] == 0 and c["tilt"]["readings"] == 1, (name, c)
+        assert (c["dx"], c["dy"], c["ranOff"]) == (got["none"]["dx"], got["none"]["dy"], got["none"]["ranOff"]), (name, c, got["none"])
+    assert cases["flat"]["tilt"]["flat"] and cases["nearlyFlat"]["tilt"]["flat"] and not cases["upright"]["tilt"]["flat"]
+    # (no sensor: straight down, no reading taken; an empty event (a desktop's) ignored)
+    none = got["none"]
+    assert none["tilt"] == {"x": 0, "y": 1, "angle": 0, "tilted": False, "mode": 0, "readings": 0, "raw": None, "flat": True, "epoch": 0}, none
+    assert none["running"] >= 20 and abs(none["dx"]) < 3 and none["dy"] > 30 and none["ranOff"] > 0, none
+    assert got["empty"] == none["tilt"], got["empty"]
+    # (leaning: sideways as well as down, by the screen's own right and down however it's turned)
+    for name, side, edge in [("rolledRight", 1, 0), ("rolledLeft", -1, 0), ("landscapeLeaning", 1, 0), ("landscapeFlippedLeaning", 1, 0),
+                             ("upsideDownLeaning", 1, 0)]:
+        c = cases[name]
+        assert c["tilt"]["tilted"] and c["tilt"]["mode"] == edge and 30 <= abs(c["tilt"]["angle"]) <= 40, (name, c)
+        assert c["running"] >= 15 and side * c["dx"] > 20 and c["dy"] > 30 and c["ranOff"] > 0, (name, c)
+    assert cases["rolledRight"]["dx"] == pytest.approx(-cases["rolledLeft"]["dx"], rel=0.3)
+    # (on a side: the beads run along the screen's row to the edge, off it; upside down on its top: up and off the top)
+    right, top = cases["onItsRight"], cases["onItsTop"]
+    assert right["tilt"]["mode"] == 2 and right["tilt"]["angle"] == pytest.approx(90) and right["dx"] > 60 and abs(right["dy"]) < 5 and right["ranOff"] > 0, right
+    assert top["tilt"]["mode"] == 1 and abs(top["tilt"]["angle"]) == pytest.approx(180) and top["dy"] < -40 and abs(top["dx"]) < 5 and top["ranOff"] > 0, top
+    # (window.orientation, the old way, when there's no screen.orientation)
+    assert got["oldWay"]["tilt"]["readings"] == 1 and not got["oldWay"]["tilt"]["tilted"], got["oldWay"]
+    # (the animations low and off: nothing listened to; "stop": ignored, straight down)
+    for mode, seen in got["ignored"].items():
+        assert seen["tilt"]["readings"] == 0 and not seen["tilt"]["tilted"] and seen["link"] == "" and not seen["running"], (mode, seen)
+    assert got["stopped"]["before"]["tilted"] and not got["stopped"]["after"]["tilted"] and got["stopped"]["after"]["raw"] is None, got["stopped"]
+    # (an iPhone: no link at first, a "tilt" link a moment later, asked from its tap, gone at once; granted: its readings (its sign the
+    # other way about: the pull to the right edge) taken; denied, or an error: not; no link where readings came, with the animations
+    # low, or on a desktop)
+    ios = got["ios"]
+    for answer, listening in [("granted", True), ("denied", False), ("error", False)]:
+        seen = ios[answer]
+        assert seen["early"]["link"] == "" and seen["was"]["link"] == "tilt" and seen["was"]["asked"] == 0, (answer, seen)
+        assert seen["now"]["link"] == "" and seen["now"]["asked"] == 1 and (seen["now"]["tilt"]["readings"] == 1) == listening, (answer, seen)
+    assert ios["granted"]["now"]["tilt"]["raw"] == [pytest.approx(6), pytest.approx(7.7), pytest.approx(0)] and ios["granted"]["now"]["tilt"]["tilted"]
+    assert ios["free"]["link"] == "" and ios["free"]["asked"] == 0 and ios["free"]["tilt"]["readings"] == 1, ios["free"]
+    assert ios["low"] == "" and ios["desktop"] == "", ios
+    # (smoothed: a sudden turn eased in over a fraction of a second, then all of the way; a hand's tremor makes no change; within 4 degrees
+    # of straight down, down; laid flat, down again; a reading that isn't numbers ignored; level(): down)
+    f = got["filter"]
+    assert 5 < f["eased"][0] < 30 and f["eased"][1] == pytest.approx(90, abs=3), f
+    assert f["still"]["epoch"] == 0, f
+    assert not f["snapped"]["tilted"] and not f["flat"]["tilted"] and f["flat"]["flat"] and f["bad"] == [False, False], f
+    assert not f["level"]["tilted"] and f["level"]["raw"] is None, f
+    assert got["errors"] == [], got["errors"]

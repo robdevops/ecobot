@@ -314,6 +314,13 @@ animates everything; `low` keeps the gauges sweeping and the tiles rearranging a
 and zooms at once; `off` draws no weather and animates nothing (the gauges jump to each new reading, zooming and rearranging happen at
 once). A browser asking for reduced motion gets `off`'s.
 
+On a phone or tablet the humidity's beads run downhill as it tilts: the page reads the motion sensor (gravity, turned for the screen's
+rotation, so the true downhill whichever way it is held), smoothed, and a phone lying flat keeps the beads running straight down;
+they run off whichever edge is lowest. Android's Chrome and Firefox give the sensor freely and it starts by itself; an iPhone's or
+iPad's Safari asks first, so a small "tilt" link appears at the bottom left (a tap asks; gone once answered). Desktop browsers have no
+sensor, so nothing changes there, and with `low` or `off` (or reduced motion) the sensor is never read. The browser needs the page
+served over HTTPS for the sensor (behind a TLS proxy, not plain `http://` on the LAN, except on localhost).
+
 It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
 Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To

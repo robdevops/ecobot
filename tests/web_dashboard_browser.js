@@ -2199,7 +2199,8 @@ async function motionSeen(browser, url, options) {
 // "all" (?fx=all: its frame time, its brightness against Hazardous haze alone, its particles), "opened" (?fx= when the page opens, uv
 // and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, humidity's beads running down the
 // glass alone and in the wind, a phone's strip), "flood" (a flash flood: its mark, its rise, its surface and waves,
-// what ends at it, the test link's rain3, its leaves and its frog, its cost), "gust" (something big blown across in a gust over 99 km/h)
+// what ends at it, the test link's rain3, its leaves and its frog, its cost), "gust" (something big blown across in a gust over 99 km/h),
+// "tilt" (a phone's gravity: the humidity's beads running downhill, by synthetic devicemotion at screen angles)
 const WEATHER = {
   async marks(browser, url, out) {
     const { context, page, errors, reads } = await weatherPage(browser, url);
@@ -3014,6 +3015,148 @@ const WEATHER = {
   // ?fx=gust as the page opens (ignored: nothing sent, the word dropped from the URL; and beside "wind"), and on a phone the row
   // (every link, "gust" too, and "stop" in sight unscrolled). A frame
   // sequence of the three crossing kept as screenshots (SHOTS, when given)
+  // tilt: a phone's gravity turning the humidity's beads' way (the page's own devicemotion listener, Sky.tilt): synthetic readings at
+  // screen angles (the spec's convention, as Android's: at rest upright, y +9.8), where the beads run (the mean of their moves while
+  // running: dx, dy; which edge, how many ran off), a phone flat (nothing changed), no reading (as ever), the animations low and off
+  // (ignored), an iPhone's link (its permission asked from a tap: granted, denied; the sign turned), and the low-pass and dead zone
+  async tilt(browser, url, out) {
+    const turned = (angle) => ({ fn: (a) => {
+      Object.defineProperty(window.screen.orientation, "angle", { configurable: true, get: () => window.__angle });
+      window.__angle = a;
+    }, arg: angle });
+    const shake = (page, x, y, z) => page.evaluate(([x, y, z]) => window.dispatchEvent(new DeviceMotionEvent("devicemotion", { accelerationIncludingGravity: { x, y, z } })), [x, y, z]);
+    // the beads' mean move while running, over a stretch of the weather's time (30 times as fast)
+    const run = async (page, frames = 400) => page.evaluate((frames) => {
+      Sky.timeScale(30);
+      const first = new Map(), last = new Map(), steps = new Map();
+      let n = 0;
+      while (n++ < frames && Sky.advance(1)) {
+        for (const b of Sky.state().humidity.beads) if (b.kind === "fog" && b.v > 0) {
+          if (!first.has(b.id)) first.set(b.id, [b.x, b.cy]);
+          last.set(b.id, [b.x, b.cy]);
+          steps.set(b.id, (steps.get(b.id) || 0) + 1);
+        }
+      }
+      const moves = [...last].filter(([id]) => steps.get(id) >= 8).map(([id, [x, y]]) => [x - first.get(id)[0], y - first.get(id)[1]]);
+      const sum = (i) => moves.reduce((t, m) => t + m[i], 0) / Math.max(moves.length, 1);
+      const h = Sky.state().humidity, t = Sky.state().tilt;
+      return { running: moves.length, dx: sum(0), dy: sum(1), ranOff: h.ranOff, tilt: t, size: Sky.state().size };
+    }, frames);
+    const opts = (angle, extra = {}) => ({ query: "?fx=humidity2", pace: 10, driven: true, context: { viewport: { width: 400, height: 300 } }, init: turned(angle), ...extra });
+    // (readings: [angle, x, y, z], the phone held so)
+    const cases = { upright: [0, 0, 9.8, 0], rolledRight: [0, -6, 7.7, 0], rolledLeft: [0, 6, 7.7, 0], onItsRight: [0, -9.8, 0, 0], onItsTop: [0, 0, -9.8, 0],
+                    landscape: [90, 9.8, 0, 0], landscapeLeaning: [90, 9, 5.7, 0], landscapeFlipped: [270, -9.8, 0, 0], landscapeFlippedLeaning: [270, -9, -5.7, 0],
+                    upsideDown: [180, 0, -9.8, 0], upsideDownLeaning: [180, 6, -7.7, 0], flat: [0, 0.6, 0.8, 9.8], nearlyFlat: [0, 1, 1.2, 9.7] };
+    out.cases = {};
+    out.errors = [];
+    await Promise.all(Object.entries(cases).map(async ([name, [angle, x, y, z]]) => {
+      const p = await weatherPage(browser, url, opts(angle));
+      await shake(p.page, x, y, z);
+      out.cases[name] = await run(p.page);
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }));
+    // no sensor reading: as ever (every bead straight down, no reading taken)
+    const none = await weatherPage(browser, url, opts(0));
+    out.none = await run(none.page);
+    out.errors.push(...none.errors);
+    // (a reading with nothing in it, as a desktop browser's one empty event: ignored)
+    await none.page.evaluate(() => window.dispatchEvent(new DeviceMotionEvent("devicemotion", {})));
+    out.empty = await none.page.evaluate(() => Sky.state().tilt);
+    await none.context.close();
+    // the window's own rotation (window.orientation, the old way) when screen.orientation says nothing
+    const old = await weatherPage(browser, url, { ...opts(0), init: { fn: () => {
+      Object.defineProperty(window.screen, "orientation", { configurable: true, value: undefined });
+      Object.defineProperty(window, "orientation", { configurable: true, value: 90 });
+    }, arg: null } });
+    await shake(old.page, 9.8, 0, 0);
+    out.oldWay = await run(old.page);
+    out.errors.push(...old.errors);
+    await old.context.close();
+    // the animations low and off: no listener, nothing taken
+    out.ignored = {};
+    for (const mode of ["low", "off"]) {
+      const p = await weatherPage(browser, url, { ...opts(0), query: "", animations: mode });
+      await shake(p.page, -9.8, 0, 0);
+      out.ignored[mode] = await p.page.evaluate(() => ({ tilt: Sky.state().tilt, link: document.getElementById("tilt").textContent, running: Sky.state().running }));
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }
+    // ... and after "stop": ignored too, straight down again; a test link after it, the readings taken again
+    const stopped = await weatherPage(browser, url, opts(0));
+    await shake(stopped.page, -9.8, 0, 0);
+    const before = await stopped.page.evaluate(() => Sky.state().tilt);
+    await stopped.page.click("#motion .animations");
+    await shake(stopped.page, -9.8, 0, 0);
+    const after = await stopped.page.evaluate(() => Sky.state().tilt);
+    out.stopped = { before, after };
+    out.errors.push(...stopped.errors);
+    await stopped.context.close();
+    // an iPhone's (a touch screen, permission asked first, nothing sent till it's granted): the link a moment after, its permission
+    // asked from the tap, gone at once; granted, denied, an error; its sign the other way about (upright: y -9.8)
+    const ios = (answer) => ({ fn: ([answer]) => {
+      Object.defineProperty(window.screen.orientation, "angle", { configurable: true, get: () => 0 });
+      const asked = window.__asked = [];
+      DeviceMotionEvent.requestPermission = () => { asked.push(1); return answer === "error" ? Promise.reject(new Error("no")) : Promise.resolve(answer); };
+    }, arg: [answer] });
+    const phone = { viewport: { width: 400, height: 300 }, hasTouch: true, isMobile: true,
+                    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" };
+    const seen = (page) => page.evaluate(() => ({ link: document.getElementById("tilt").textContent, asked: window.__asked.length, tilt: Sky.state().tilt }));
+    out.ios = {};
+    for (const answer of ["granted", "denied", "error"]) {
+      const p = await weatherPage(browser, url, { ...opts(0), context: phone, init: ios(answer) });
+      const early = await seen(p.page);   // (not yet: it may be sent without asking)
+      await p.page.waitForSelector("#tilt .link");
+      const was = await seen(p.page);
+      await p.page.click("#tilt .link");
+      await p.page.waitForFunction(() => document.getElementById("tilt").textContent === "");
+      await p.page.evaluate(() => new Promise((r) => setTimeout(r, 50)));
+      if (answer === "granted") await shake(p.page, 6, -7.7, 0);   // (as sent: the pull to the device's right edge, upright)
+      out.ios[answer] = { early, was, now: await seen(p.page) };
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }
+    // ... no link once readings came by themselves (it asks nothing, as Chrome's), nor with the animations low, nor on a desktop
+    const free = await weatherPage(browser, url, { ...opts(0), context: phone, init: ios("granted") });
+    await shake(free.page, 0, 9.8, 0);
+    await free.page.evaluate(() => new Promise((r) => setTimeout(r, 1800)));
+    out.ios.free = await seen(free.page);
+    await free.context.close();
+    const lowIos = await weatherPage(browser, url, { ...opts(0), query: "", animations: "low", context: phone, init: ios("granted") });
+    await lowIos.page.evaluate(() => new Promise((r) => setTimeout(r, 1800)));
+    out.ios.low = await lowIos.page.evaluate(() => document.getElementById("tilt").textContent);
+    await lowIos.context.close();
+    const desk = await weatherPage(browser, url, { ...opts(0), init: ios("granted") });
+    await desk.page.evaluate(() => new Promise((r) => setTimeout(r, 1800)));
+    out.ios.desktop = await desk.page.evaluate(() => document.getElementById("tilt").textContent);
+    await desk.context.close();
+    // the low-pass and the dead zone, in the weather's own terms (Sky.tilt(x, y, z, dt)): a turn eased in over time and held a
+    // moment, noise inside a few degrees (no change of epoch), 4 degrees of straight down kept straight, flat blended
+    const sky = await weatherPage(browser, url, opts(0));
+    out.filter = await sky.page.evaluate(() => {
+      const t = () => Sky.state().tilt, seen = {};
+      Sky.tilt(0, 9.8, 0);
+      seen.start = t();
+      Sky.tilt(9.8, 0, 0, 0.05);   // (a sudden 90 degree turn: a fifth of the way in 0.05 s at TAU 0.25)
+      seen.eased = [t().angle];
+      for (let i = 0; i < 30; i++) Sky.tilt(9.8, 0, 0, 0.1);
+      seen.eased.push(t().angle);
+      const epoch = t().epoch;
+      for (let i = 0; i < 100; i++) Sky.tilt(9.8 + 0.1 * Math.sin(i), 0.1 * Math.cos(i * 1.7), 0, 0.03);   // (a hand's tremor)
+      seen.still = { epoch: t().epoch - epoch, angle: t().angle };
+      for (let i = 0; i < 30; i++) Sky.tilt(0.6, 9.8, 0, 0.1);   // (3.5 degrees off straight down: down)
+      seen.snapped = t();
+      for (let i = 0; i < 30; i++) Sky.tilt(9.8, 0, 0.1, 0.1);
+      for (let i = 0; i < 30; i++) Sky.tilt(0.5, 0.5, 9.8, 0.1);   // (laid flat)
+      seen.flat = t();
+      seen.bad = [Sky.tilt(NaN, 1, 1), Sky.tilt(undefined, 1, 1)];
+      Sky.level();
+      seen.level = t();
+      return seen;
+    });
+    out.errors.push(...sky.errors);
+    await sky.context.close();
+  },
   async gust(browser, url, out) {
     const opened = (async () => {   // (beside the rest)
       const p = await weatherPage(browser, url, { query: "?fx=gust", driven: true });
