@@ -315,8 +315,11 @@ and zooms at once; `off` draws no weather and animates nothing (the gauges jump 
 once). A browser asking for reduced motion gets `off`'s.
 
 On a phone or tablet the humidity's beads run downhill as it tilts: the page reads the motion sensor (gravity, turned for the screen's
-rotation, so the true downhill whichever way it is held), smoothed, and a phone lying flat keeps the beads running straight down;
-they run off whichever edge is lowest. Android's Chrome and Firefox give the sensor freely and it starts by itself; an iPhone's or
+rotation, so the true downhill whichever way it is held), smoothed; they run off whichever edge is lowest, and the steeper the
+tilt the faster (sin of the angle off level: none under 5 degrees, rising smoothly to full speed at 40, which holds through upright, then
+easing off again from 140 degrees). Lying flat, face up or face down (under 5 degrees), the water pools instead: nothing runs, no trails
+are laid, and beads that touch (or sit a few px apart: a slight pull draws them together) keep merging into ever larger blobs, with no
+size limit. Android's Chrome and Firefox give the sensor freely and it starts by itself; an iPhone's or
 iPad's Safari asks first, so a small "tilt" link appears at the bottom left (a tap asks; gone once answered). Desktop browsers have no
 sensor, so nothing changes there, and with `low` or `off` (or reduced motion) the sensor is never read. The browser needs the page
 served over HTTPS for the sensor (behind a TLS proxy, not plain `http://` on the LAN, except on localhost).

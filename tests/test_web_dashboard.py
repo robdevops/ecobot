@@ -2601,12 +2601,29 @@ async def test_a_phones_gravity_turns_the_humidity_beads_downhill_by_the_screens
     cases = got["cases"]
     # (synthetic devicemotion readings, the spec's (what Android sends: upright, y +9.8) at screen angles 0, 90, 180 and 270: the beads'
     # mean move while running, the window 134 by 100 px)
-    down = ["upright", "landscape", "landscapeFlipped", "upsideDown", "flat", "nearlyFlat"]
-    for name in down:   # (held so the screen's down is down, or laid flat: the dead zone: as ever, the same run as with no sensor at all)
+    down = ["upright", "landscape", "landscapeFlipped", "upsideDown"]
+    for name in down:   # (held so the screen's down is down: as ever, the same run as with no sensor at all)
         c = cases[name]
         assert not c["tilt"]["tilted"] and c["tilt"]["epoch"] == 0 and c["tilt"]["mode"] == 0 and c["tilt"]["readings"] == 1, (name, c)
         assert (c["dx"], c["dy"], c["ranOff"]) == (got["none"]["dx"], got["none"]["dy"], got["none"]["ranOff"]), (name, c, got["none"])
-    assert cases["flat"]["tilt"]["flat"] and cases["nearlyFlat"]["tilt"]["flat"] and not cases["upright"]["tilt"]["flat"]
+    assert not cases["upright"]["tilt"]["flat"] and not cases["upright"]["tilt"]["pool"] and cases["upright"]["tilt"]["steep"] == 1
+    # (the steepness, sin of the screen's angle off level: pooling under 5 degrees, not at all above 7 on the way up; smoothstep to 1 at
+    # 40 degrees, the same at 60, 90 and 120, down again, symmetric about 90, to pooling again face down; the readings' size and the
+    # beads' own speed aside, the factor is the beads' speed against upright's)
+    pools = got["pools"]
+    for theta in ["0", "3", "175", "177", "180"]:   # (flat, face up or down: nothing runs, no trail, nothing off the window, merging into ever larger blobs)
+        c = pools[theta]
+        assert c["ran"] == 0 and c["off"] == 0 and c["ranOff"] == 0 and c["trailsAfter"] == 0 and c["tilt"]["flat"], (theta, c)   # (175: right at the 5 degree edge: pooled by its factor)
+        assert c["merges"] > 1000 and c["largest"] > 2 * c["early"] and c["largest"] > 4.52, (theta, c)   # (past the biggest sprite: no cap)
+        assert c["tilt"]["steep"] == 0 and not c["tilt"]["tilted"], (theta, c)
+    full = pools["90"]["factor"]
+    assert full > 0.5 and all(pools[t]["ran"] > 100 and not pools[t]["tilt"]["pool"] for t in ["10", "30", "60", "90", "120", "150"]), pools
+    ratio = {t: pools[t]["factor"] / full for t in ["10", "30", "60", "90", "120", "150"]}
+    assert ratio["10"] == pytest.approx(0.064, abs=0.04), ratio                  # (smoothstep((sin 10 - sin 5) / (sin 40 - sin 5)))
+    assert ratio["30"] == pytest.approx(0.845, abs=0.12) and ratio["10"] < ratio["30"] < 1, ratio
+    assert ratio["60"] == ratio["90"] == ratio["120"] == 1, ratio                # (full speed, the same)
+    assert ratio["150"] == pytest.approx(ratio["30"], abs=0.03) and 0 < ratio["150"] < 1, ratio   # (symmetric about 90: 150 as 30)
+    assert pools["10"]["ranOff"] < pools["60"]["ranOff"] and pools["10"]["off"] == 0 == pools["60"]["off"], pools
     # (the pure turn, by readings worked out from the physics, at every screen angle and both signs: the lowered edge is the downhill one;
     # the user's iPad landscape regressions: left tilted -> left, the top raised -> the bottom, the top lowered -> the top)
     want = {"left": (-9.8, 0), "right": (9.8, 0), "top": (0, -9.8), "bottom": (0, 9.8)}
@@ -2622,7 +2639,7 @@ async def test_a_phones_gravity_turns_the_humidity_beads_downhill_by_the_screens
     assert got["debugOff"] and "raw x 1.50 y 9.50 z 0.50" in got["debugText"] and "window.orientation" in got["debugText"], got["debugText"]
     # (no sensor: straight down, no reading taken; an empty event (a desktop's) ignored)
     none = got["none"]
-    assert none["tilt"] == {"x": 0, "y": 1, "angle": 0, "tilted": False, "mode": 0, "readings": 0, "raw": None, "flat": True, "epoch": 0}, none
+    assert none["tilt"] == {"x": 0, "y": 1, "angle": 0, "tilted": False, "mode": 0, "readings": 0, "raw": None, "flat": True, "pool": False, "steep": 1, "epoch": 0}, none
     assert none["running"] >= 20 and abs(none["dx"]) < 3 and none["dy"] > 30 and none["ranOff"] > 0, none
     assert got["empty"] == none["tilt"], got["empty"]
     # (leaning: sideways as well as down, by the screen's own right and down however it's turned)
@@ -2654,10 +2671,12 @@ async def test_a_phones_gravity_turns_the_humidity_beads_downhill_by_the_screens
     assert ios["free"]["link"] == "" and ios["free"]["asked"] == 0 and ios["free"]["tilt"]["readings"] == 1, ios["free"]
     assert ios["low"] == "" and ios["desktop"] == "", ios
     # (smoothed: a sudden turn eased in over a fraction of a second, then all of the way; a hand's tremor makes no change; within 4 degrees
-    # of straight down, down; laid flat, down again; a reading that isn't numbers ignored; level(): down)
+    # of straight down, down; laid flat, pooling (steepness 0, its direction kept; 6 degrees from flat pools, 8 runs, and 6 then runs on; a zero reading ignored); a reading that isn't numbers ignored; level(): down)
     f = got["filter"]
     assert 5 < f["eased"][0] < 30 and f["eased"][1] == pytest.approx(90, abs=3), f
     assert f["still"]["epoch"] == 0, f
-    assert not f["snapped"]["tilted"] and not f["flat"]["tilted"] and f["flat"]["flat"] and f["bad"] == [False, False], f
+    assert not f["snapped"]["tilted"] and f["flat"]["flat"] and f["flat"]["pool"] and f["flat"]["steep"] < 0.01 and f["bad"] == [False] * 3, f
+    assert f["flat"]["tilted"] and f["flat"]["angle"] == pytest.approx(f["still"]["angle"], abs=2), f   # (flat: the last direction kept, nothing runs)
+    assert f["hyst"] == [True, False, False, True], f
     assert not f["level"]["tilted"] and f["level"]["raw"] is None, f
     assert got["errors"] == [], got["errors"]

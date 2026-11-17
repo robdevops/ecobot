@@ -269,7 +269,12 @@ const Sky = (() => {
   // sensor says otherwise (tilt(), below). The humidity's beads run along it; nothing else reads it. {x, y, px, py: the unit across it
   // (to a bead's right as it runs), tilted: not straight down, mode: which edge is downhill by its dominant axis (0 bottom, 1 top, 2
   // right, 3 left), epoch: counts its changes}
-  const grav = {x: 0, y: 1, px: 1, py: -0, tilted: false, mode: 0, epoch: 0, readings: 0, raw: null, flat: true};
+  const grav = {x: 0, y: 1, px: 1, py: -0, tilted: false, mode: 0, epoch: 0, readings: 0, raw: null, flat: true, pool: false, steep: 1};
+  // Pooling: on a device whose sensor has sent readings (grav.raw), with the screen (nearly) flat, face up or down (grav.pool, or its
+  // steepness factor, grav.steep, smoothed down to nothing): no downhill, the humidity's beads stay where they are and merge. No sensor
+  // (or the animations stopped): never
+  const POOLED = 0.002;
+  const pooled = () => grav.raw !== null && (grav.pool || grav.steep < POOLED);
   const downhill = (x, y) => Math.abs(y) >= Math.abs(x) ? (y >= 0 ? 0 : 1) : (x >= 0 ? 2 : 3);
   const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
   // Dithering without a grid: a threshold 0-1 at each pixel from a 32 px tile of blue noise (made once, void and cluster: its
@@ -1274,6 +1279,7 @@ const Sky = (() => {
     const GULP_S = [0.1, 0.3];         // ... in this long, easing back to round over this long (its own clock: no draws, no random)
     const MISTING = 0.02;              // tiny beads condensing a s, for each px of the window's width (light 0.95 times this; heavy 1.35)
     const TINY_COST = 0.25;            // a tiny bead, a quarter of a particle of the budget (a px, still: cheap)
+    const TENSION = [4, 0.1];          // pooled: a bead this close (px, edge to edge) to another drifts towards it, this slowly (px/s)
     const GRID = 4;                    // px: the cells the tiny beads are looked up in (the snaps' checks)
     const QUICK = 3;                   // px/s on fog: a condensed bead slower than this dries away as the fog clears where it is
     const FOG_AT = 0.06;               // fog shown this thick or more: foggy glass
@@ -1779,7 +1785,10 @@ const Sky = (() => {
       if (into.r >= GULP_R && into.r <= LARGEST && from.r <= TINY) into.gulp = 0;   // (a big one swallowing a tiny one: it swells a moment)
       into.vol += from.vol;
       into.r = Math.cbrt(into.vol);
-      if (!grav.tilted) {
+      if (pooled()) {   // (pooled: no downhill: to where their water's middle is)
+        into.x += (from.x - into.x) * k;
+        into.y += (from.y - into.y) * k;
+      } else if (!grav.tilted) {
         into.x = clamp(Math.round(into.x + (from.x - into.x) * k), into.x0 - MEANDER, into.x0 + MEANDER);
         into.y = Math.max(into.y, into.y + (from.y - into.y) * k);
       } else {   // (never uphill of where it was, and within its bounds across)
@@ -1807,7 +1816,7 @@ const Sky = (() => {
     // quickly, then merged (as two that touch); a running bead, any tiny one beside or above it as it passes. The tiny ones looked up
     // in a grid (GRID px cells), made afresh each frame
     const cell = (x, y) => Math.floor(x / GRID) + Math.floor(y / GRID) * 4096;
-    const slow = (b) => b.still || (b.state === "on" && speedFor(b.r, b.g) < 1);
+    const slow = (b) => b.still || (b.state === "on" && (pooled() || speedFor(b.r, b.g) < 1));
     const near = (b, reach, each) => {   // (every tiny one within about `reach` px of b's centre, each in turn)
       const cy = centre(b), ys = [Math.floor((cy - reach) / GRID), Math.floor((cy + reach) / GRID)];
       for (let gy = ys[0]; gy <= ys[1]; gy++) for (let gx = Math.floor((b.x - reach) / GRID); gx <= Math.floor((b.x + reach) / GRID); gx++) {
@@ -1850,7 +1859,8 @@ const Sky = (() => {
       b.sv = Math.min(SNAP_V[1], b.sv + SNAP_V[2] * dt);
       b.pulled += dt;
       let dx = to.x - b.x, dy = centre(to) - centre(b);
-      if (grav.tilted) { const a = dx * grav.x + dy * grav.y; if (a < 0) { dx -= a * grav.x; dy -= a * grav.y; } }   // (never uphill)
+      if (pooled()) { /* (no uphill, pooled) */ }
+      else if (grav.tilted) { const a = dx * grav.x + dy * grav.y; if (a < 0) { dx -= a * grav.x; dy -= a * grav.y; } }   // (never uphill)
       else dy = Math.max(0, dy);
       const far = Math.hypot(dx, dy), go = b.sv * dt;
       if (go < far) { b.x += dx * go / far; b.y += dy * go / far; }
@@ -1894,12 +1904,15 @@ const Sky = (() => {
         if (o !== b && Math.abs(o.x - b.x) <= o.r + b.r + 2 * far && Math.abs(o.y - b.y) <= 2 * (o.r + b.r) + 2 * far) ks.push(across[j][1]);
       }
       const others = ks.sort((p, q) => p - q).map((k) => movers[k]);   // (in their order on the glass, as ever)
+      const pool = pooled();
+      if (pool) { b.pooled = true; rest(b); }   // (pooled: not running: its bounds and trail begun afresh where it is, for when it runs again)
+      else if (b.pooled) { b.pooled = false; rest(b); }
       while (time > 1e-6 && !b.gone) {
         if (b.epoch !== grav.epoch) turned(b);
         const [cx, below] = aheadOf(b), g = glassAt(cx, below);
         const f = g === FOGGY ? feltOf(at(cx, below)) : 0;
         b.g = g;
-        const sits = speedFor(b.r, g) <= 0, ran = b.pause <= 0 && !sits;   // (sits: under RUN_R, staying put the while)
+        const sits = pool || speedFor(b.r, g) <= 0, ran = b.pause <= 0 && !sits;   // (sits: under RUN_R, staying put the while)
         if (b.pause > 0 && b.r >= STEADY_R && g !== DRY) b.pause = 0;   // (big, on fog or a trail: no pausing)
         if (b.r >= STEADY_R && !sits) seen.big[GLASSES[g]][b.pause > 0 ? 1 : 0] += b.pause > 0 ? Math.min(b.pause, time) : time;   // (for the tests)
         if (sits) { b.v = 0; account(b, g, f, 0, time); time = 0; }
@@ -1910,7 +1923,7 @@ const Sky = (() => {
             if (b.r >= STRETCH_R) seen.restarts++;
             if (b.r >= STRETCH_R && own(b, "stretch")() < STRETCHES) { b.surge = 0; b.st = b.st || 0; seen.stretches++; }
           }
-          const v = speedFor(b.r, g) * b.base, dy = Math.min(v * time, 1, b.run + 1e-3), s = Math.min(time, dy / v);
+          const v = speedFor(b.r, g) * b.base * grav.steep, dy = Math.min(v * time, 1, b.run + 1e-3), s = Math.min(time, dy / v);
           time -= s;
           b.v = v;
           account(b, g, f, dy, s);
@@ -1939,12 +1952,12 @@ const Sky = (() => {
         if (b.vol <= GONE) { b.gone = true; seen.shrunk++; return; }   // (shrunk to nothing)
         // Whatever it touches, merged: into the one with more water (the tiny ones looked up in their grid); paused, it's left to
         // those that run into it (only growing a little the while)
-        if (ran) for (const o of others) if (!o.gone && o.state === "on" && touching(b, o)) {
+        if (ran || pool) for (const o of others) if (!o.gone && o.state === "on" && touching(b, o)) {
           if (o.vol > b.vol) { merge(o, b); return; }
           merge(b, o);
         }
         let into = null;
-        if (ran) near(b, b.r + 2, (o) => {
+        if (ran || pool) near(b, b.r + 2, (o) => {
           if (!touching(b, o)) return;
           if (o.vol > b.vol) { into = o; return false; }
           merge(b, o);
@@ -1953,7 +1966,7 @@ const Sky = (() => {
         // A new row reached: its trail in the rows behind it; then, under it, a trail followed, or (on dry glass) one close beside it
         // steered into, or a bead just below drawn to
         const top = Math.floor(b.y);
-        if (trailed(b)) {
+        if (!pool && trailed(b)) {
           const [x, ahead] = aheadOf(b), under = glassAt(x, ahead);
           b.on = under === TRAIL;
           if (b.on && b.steer) b.lock = true;
@@ -2003,22 +2016,53 @@ const Sky = (() => {
           }
         }
         const side = Math.ceil(b.r);   // (never part off the window's side: but one run towards it)
-        b.x = grav.x < -0.05 ? Math.min(b.x, W - 1 - side) : grav.x > 0.05 ? Math.max(b.x, side) : clamp(b.x, side, W - 1 - side);
-        if (top >= H || (grav.tilted && offEdge(b, top))) { b.gone = true; seen.ranOff++; log(seen.left, b.id, 300); return; }   // (run off its downhill edge)
+        b.x = pool ? clamp(b.x, side, W - 1 - side) : grav.x < -0.05 ? Math.min(b.x, W - 1 - side) : grav.x > 0.05 ? Math.max(b.x, side) : clamp(b.x, side, W - 1 - side);
+        if (top >= H || (!pool && grav.tilted && offEdge(b, top))) { b.gone = true; seen.ranOff++; log(seen.left, b.id, 300); return; }   // (run off its downhill edge)
         if (drowned(b)) return;
       }
       stretching(b, dt, b.v > 0 && grav.mode < 2);   // (elongating down or up its path: not when it runs sideways)
     }
     // Downhill changed (the phone tilted): a bead's bounds across its way kept from where it is now; its trail begun afresh if the edge it
     // runs for has changed (rows or columns, which way)
+    const laidAt = (b) => { b.laid = b.mode < 2 ? Math.floor(b.y) + (heightOf(b.r) >> 1) : Math.round(b.x); };
     function turned(b) {
       b.epoch = grav.epoch;
       b.x0 = b.x; b.y0 = b.y; b.c0 = crossB(b);
       if (b.mode !== grav.mode) {
         b.mode = grav.mode;
         b.ty = undefined;
-        b.laid = b.mode < 2 ? Math.floor(b.y) + (heightOf(b.r) >> 1) : Math.round(b.x);
+        laidAt(b);
         b.slant = 0;
+      }
+    }
+    function rest(b) {   // (as if just turned, wherever it is: no trail laid for the way it drifted)
+      b.epoch = grav.epoch;
+      Object.assign(b, {x0: b.x, y0: b.y, c0: crossB(b), mode: grav.mode, slant: 0});
+      b.ty = undefined;
+      laidAt(b);
+    }
+    // Pooled (the screen flat): a bead within TENSION[0] px (its edge to another's) of a bigger one, or a tiny one, drifts slowly
+    // (TENSION[1] px/s: less than the slowest a bead runs, 0.12) towards it till they touch and merge: only the neighbours the merge
+    // code looks at (the grid of tiny ones, the running ones in order across), so a pooled mass keeps growing
+    function gather(dt) {
+      if (!pooled()) return;
+      for (const b of movers) {
+        if (b.gone || b.state !== "on") continue;
+        let best = null, gap = TENSION[0];
+        const see = (o) => {
+          if (o === b || o.gone || o.state !== "on" || !(o.still || o.vol > b.vol || (o.vol === b.vol && o.id < b.id))) return;
+          const d = Math.hypot(o.x - b.x, centre(o) - centre(b)) - o.r - b.r;
+          if (d < gap) { gap = d; best = o; }
+        };
+        near(b, b.r + RUN_R + TENSION[0] + 1, see);
+        const reach = widest + b.r + TENSION[0] + 1;
+        let lo = 0, hi = across.length;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (across[m][0] < b.x - reach) lo = m + 1; else hi = m; }
+        for (let j = lo; j < across.length && across[j][0] <= b.x + reach; j++) see(movers[across[j][1]]);
+        if (!best || gap <= 0.25) continue;
+        const dx = best.x - b.x, dy = centre(best) - centre(b), d = Math.hypot(dx, dy), go = Math.min(TENSION[1] * dt, gap - 0.25) / d;
+        b.x += dx * go;
+        b.y += dy * go;
       }
     }
     // A bead's trail laid in the rows (or columns, running sideways) its back edge has passed; true if it reached a new one
@@ -2181,6 +2225,7 @@ const Sky = (() => {
         if (lands) land(most);
         seen.rainMost = Math.max(seen.rainMost, rainy + lands);
         snaps();
+        gather(dt);
         for (const b of all) {
           if (b.gone || drowned(b)) continue;
           if (b.shown !== undefined) b.shown += dt;
@@ -3428,24 +3473,30 @@ const Sky = (() => {
   // ---------- tilt: a phone's gravity, which way is downhill (grav) ----------
   // tilt(x, y, z, dt): a reading of gravity's pull in the screen's own terms (m/s²: x to the screen's right, y down it, z out of it:
   // upright, (0, 9.8, 0); the page turns the sensor's reading for the screen's rotation: see the page's own script), dt s since the
-  // last (none: at once, as the tests do). With the screen nearly level (its in-plane share of the pull under FLAT[0], sin of the
-  // tilt: about 10 degrees; fully tilted from FLAT[1]) the pull is straight down as ever, blended in between; the direction
-  // low-passed (TAU s), kept straight down within SNAP_DEG of it, and changed only by STEP_DEG or more at a time: no jitter. Ignored
-  // while nothing is drawn (the animations off, low or stopped)
-  const FLAT = [0.17, 0.3], TAU = 0.25, SNAP_DEG = 4, STEP_DEG = 1.5, DEG = 180 / Math.PI;
+  // last (none: at once, as the tests do). Its direction is the in-plane part of the pull, at every angle (low-passed (TAU s), kept
+  // straight down within SNAP_DEG of it, changed only by STEP_DEG or more at a time: no jitter). How steep it is, s = sin(theta) =
+  // in-plane / total (theta: the screen's normal off vertical: 0 lying face up, 90 upright, 180 face down; the readings' size
+  // doesn't matter, only their ratio), is a speed factor, grav.steep (0-1, smoothed, also by TAU): 0 under POOL_IN (5 degrees: the
+  // water pools: nothing runs; kept till POOL_OUT, 7 degrees, so a wobbling tablet doesn't flicker), rising smoothly (smoothstep) to 1
+  // at STEEP_FULL (40 degrees), 1 beyond; sin being symmetric about 90, it falls again from 140 degrees to 0 at 180 (face down: flat
+  // again). A reading of nothing (all zero) is ignored. Ignored while nothing is drawn (the animations off, low or stopped)
+  const POOL_IN = Math.sin(5 * Math.PI / 180), POOL_OUT = Math.sin(7 * Math.PI / 180), STEEP_FULL = Math.sin(40 * Math.PI / 180);
+  const TAU = 0.25, SNAP_DEG = 4, STEP_DEG = 1.5, DEG = 180 / Math.PI;
   const smooth = {x: 0, y: 1};
   function tilt(sx, sy, sz = 0, dt = Infinity) {
     if (!animate || ![sx, sy, sz].every(Number.isFinite)) return false;
-    const m = Math.hypot(sx, sy), total = Math.hypot(m, sz), f = total > 1e-6 ? m / total : 0;
-    const t = clamp((f - FLAT[0]) / (FLAT[1] - FLAT[0]), 0, 1), w = t * t * (3 - 2 * t);
+    const m = Math.hypot(sx, sy), total = Math.hypot(m, sz);
+    if (!(total > 1e-6)) return false;
+    const steep = Math.min(1, m / total);
     grav.readings++;
     grav.raw = [sx, sy, sz];
-    grav.flat = w === 0;
-    let tx = 0, ty = 1;
-    if (w > 0) { tx = w * sx / m; ty = 1 - w + w * sy / m; }
-    const k = dt === Infinity ? 1 : 1 - Math.exp(-Math.max(dt, 0) / TAU);
-    smooth.x += (tx - smooth.x) * k;
-    smooth.y += (ty - smooth.y) * k;
+    grav.pool = steep < (grav.pool ? POOL_OUT : POOL_IN);
+    const t = clamp((steep - POOL_IN) / (STEEP_FULL - POOL_IN), 0, 1), k = dt === Infinity ? 1 : 1 - Math.exp(-Math.max(dt, 0) / TAU);
+    grav.steep += ((grav.pool ? 0 : t * t * (3 - 2 * t)) - grav.steep) * k;
+    grav.flat = grav.pool || grav.steep < POOLED;
+    if (grav.pool) return false;   // (pooling: no downhill; the last kept)
+    smooth.x += (sx / m - smooth.x) * k;
+    smooth.y += (sy / m - smooth.y) * k;
     const n = Math.hypot(smooth.x, smooth.y);
     let ux = n < 0.05 ? 0 : smooth.x / n, uy = n < 0.05 ? 1 : smooth.y / n;
     if (Math.abs(Math.atan2(ux, uy)) * DEG < SNAP_DEG) { ux = 0; uy = 1; }
@@ -3457,6 +3508,7 @@ const Sky = (() => {
   function level() {   // straight down again (the sensor gone, the animations stopped, or the test's)
     smooth.x = 0; smooth.y = 1;
     if (grav.tilted || grav.raw) Object.assign(grav, {x: 0, y: 1, px: 1, py: -0, tilted: false, mode: 0, epoch: grav.epoch + 1, raw: null, flat: true});
+    grav.pool = false; grav.steep = 1;
   }
 
   function set(want, on) {
@@ -3497,7 +3549,7 @@ const Sky = (() => {
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
                               wind: effects.wind.probe(), rain: effects.rain.probe(), haze: effects.haze.probe(),
                               tilt: {x: grav.x, y: grav.y, angle: Math.atan2(grav.x, grav.y) * DEG, tilted: grav.tilted, mode: grav.mode,
-                                     readings: grav.readings, raw: grav.raw && grav.raw.slice(), flat: grav.flat, epoch: grav.epoch},
+                                     readings: grav.readings, raw: grav.raw && grav.raw.slice(), flat: grav.flat, pool: grav.pool, steep: grav.steep, epoch: grav.epoch},
                               humidity: effects.humidity.probe(), flood: effects.flood.probe(), heat: effects.heat.probe(),
                               gust: effects.gust.probe()})};
 })();

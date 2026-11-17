@@ -3091,7 +3091,8 @@ const WEATHER = {
   // sequence of the three crossing kept as screenshots (SHOTS, when given)
   // tilt: a phone's gravity turning the humidity's beads' way (the page's own devicemotion listener, Sky.tilt): synthetic readings at
   // screen angles (the spec's convention, as Android's: at rest upright, y +9.8), where the beads run (the mean of their moves while
-  // running: dx, dy; which edge, how many ran off), a phone flat (nothing changed), no reading (as ever), the animations low and off
+  // running: dx, dy; which edge, how many ran off), a phone flat (pooling: nothing runs, the beads merge into ever larger blobs) and the speed at angles from flat
+  // through upright to face down, no reading (as ever), the animations low and off
   // (ignored), an iPhone's link (its permission asked from a tap: granted, denied; the sign turned), and the low-pass and dead zone
   async tilt(browser, url, out) {
     const turned = (angle) => ({ fn: (a) => {
@@ -3120,7 +3121,7 @@ const WEATHER = {
     // (readings: [angle, x, y, z], the phone held so)
     const cases = { upright: [0, 0, 9.8, 0], rolledRight: [0, -6, 7.7, 0], rolledLeft: [0, 6, 7.7, 0], onItsRight: [0, -9.8, 0, 0], onItsTop: [0, 0, -9.8, 0],
                     landscape: [90, 9.8, 0, 0], landscapeLeaning: [90, 9, 5.7, 0], landscapeFlipped: [270, -9.8, 0, 0], landscapeFlippedLeaning: [270, -9, -5.7, 0],
-                    upsideDown: [180, 0, -9.8, 0], upsideDownLeaning: [180, 6, -7.7, 0], flat: [0, 0.6, 0.8, 9.8], nearlyFlat: [0, 1, 1.2, 9.7] };
+                    upsideDown: [180, 0, -9.8, 0], upsideDownLeaning: [180, 6, -7.7, 0] };
     out.cases = {};
     out.errors = [];
     await Promise.all(Object.entries(cases).map(async ([name, [angle, x, y, z]]) => {
@@ -3279,13 +3280,47 @@ const WEATHER = {
       for (let i = 0; i < 30; i++) Sky.tilt(9.8, 0, 0.1, 0.1);
       for (let i = 0; i < 30; i++) Sky.tilt(0.5, 0.5, 9.8, 0.1);   // (laid flat)
       seen.flat = t();
-      seen.bad = [Sky.tilt(NaN, 1, 1), Sky.tilt(undefined, 1, 1)];
+      // (hysteresis: from flat, 6 degrees is still pooling, 8 runs, and then 6 runs still; the readings' size aside)
+      const at = (deg) => { const r = deg * Math.PI / 180; Sky.tilt(0, 3 * Math.sin(r), 3 * Math.cos(r), Infinity); return Sky.state().tilt.pool; };
+      seen.hyst = [at(6), at(8), at(6), at(4)];
+      seen.bad = [Sky.tilt(NaN, 1, 1), Sky.tilt(undefined, 1, 1), Sky.tilt(0, 0, 0)];
       Sky.level();
       seen.level = t();
       return seen;
     });
     out.errors.push(...sky.errors);
     await sky.context.close();
+    // the screen's angle off level, theta (0 lying face up, 90 upright, 180 face down): the steepness sin(theta) is a speed factor (0 under
+    // 5 degrees: the water pools, beads stay and merge; smoothstep to 1 at 40; the same through 90 and down again to 0 at 180). The readings are
+    // (0, g sin, g cos) in any magnitude. Per angle: how fast the beads run (v against what the physics gives them: the factor), whether
+    // any ran, the merges and the largest bead (against the largest early on), and whether any left the window
+    const pools = {};
+    out.pools = pools;
+    await Promise.all([0, 3, 180, 177, 10, 30, 60, 90, 120, 150, 175].map(async (theta) => {
+      const p = await weatherPage(browser, url, opts(0));
+      pools[theta] = await p.page.evaluate((theta) => {
+        const g = theta === 3 ? 3 : 9.8, t = theta * Math.PI / 180;   // (3: a weak reading of the same angle: only the ratio counts)
+        Sky.tilt(0, g * Math.sin(t), g * Math.cos(t));
+        Sky.timeScale(30);
+        const out = { factor: 0, n: 0, ran: 0, early: 0, largest: 0, off: 0, trails: 0 };
+        const stat = () => {
+          const h = Sky.state().humidity, [W, H] = Sky.state().size;
+          for (const b of h.beads) {
+            if (b.kind !== "fog") continue;
+            if (b.v > 0) { out.ran++; if (out.n < 400) { out.factor += b.v / h.physics.speed(b.r, b.glass); out.n++; } }
+            if (b.x < 0 || b.x > W || b.y >= H) out.off++;
+            out.largest = Math.max(out.largest, b.r);
+          }
+          return h;
+        };
+        let n = 0, h0;
+        while (n++ < 600 && Sky.advance(1)) { h0 = stat(); if (n === 60) out.early = out.largest; }
+        const h = Sky.state().humidity;
+        return { ...out, factor: out.factor / Math.max(out.n, 1), merges: h.merges, ranOff: h.ranOff, beads: h.beads.length, tilt: Sky.state().tilt, trailsAfter: h.trails };
+      }, theta);
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }));
   },
   async gust(browser, url, out) {
     const opened = (async () => {   // (beside the rest)
