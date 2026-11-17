@@ -17,7 +17,7 @@ MARKS = {"Max": "▲", "Min": "▼", "Total": "+", "Gust": "»"}   # in front of
 HIGH_HAND = "#FF3B30"       # a dial's red mark at its reading's highest today (the web page's: the wind's gust a thin hand; rain rate,
                             # sun and UV a limit mark, a small triangle outside the coloured band, pointing in)
 HIGH_HAND_WIDTH = 1.4       # ... the hand: how wide (pixels)
-LIMIT_MARK = (134, 154, 8.5)   # ... the triangle: its tip's and its base's radius, its base's half-width (pixels; the band ends at 130,
+LIMIT_MARK = (118, 138, 8.5)   # ... the triangle: its tip's and its base's radius, its base's half-width (pixels; the band ends at 130,
                                # the outline at 138)
 WIND_CHIPS = {**CHIPS, "Max": GUST_CHIP, "Gust": HIGH_HAND}   # the web page's Wind table: its Max grey, its Gust its red hand's red
 FILL = "#D32F27"            # the thermometer's mercury

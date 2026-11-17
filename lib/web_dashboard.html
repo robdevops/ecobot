@@ -813,7 +813,7 @@ const Sky = (() => {
   // Stronger the hotter (its level: 0.3 at 35 °C to 1 at 43 °C): brighter, and more of them (about that share of them on, the
   // others fading out), the first few on at 35 °C spread about at random. Drawn behind the flood (nothing below its water).
   // Reduced or low motion: one still frame.
-  const EMBER = ["#2C0508", "#500913", "#8A1020", "#CE2034", "#FF7A86"].map(rgb);   // deep crimson, infrared imagery's red (no orange), faint (the UV's violet's way)
+  const EMBER = ["#3A0503", "#6E0B05", "#B8160A", "#FF2A14", "#FF7A66"].map(rgb);   // scarlet, infrared imagery's red (no orange, hardly any blue), faint (the UV's violet's way)
   const HEAT_LONGER = 1.4;             // each this much longer than a UV shaft
   const heat = effect((e) => {
     const random = streamOf("heat"), between = random.between;   // (its own randomness)
@@ -4569,7 +4569,7 @@ const Sky = (() => {
     #fxtest button { padding-left: 3px; }
   }
 </style>
-<div id="fxtest" role="group" aria-label="Effect test links"><span class="tag">test:</span></div>
+<div id="fxtest" role="group" aria-label="Effect test links"></div>
 <script>
 "use strict";
 (() => {
@@ -4581,14 +4581,8 @@ const Sky = (() => {
   const OLD = {leaves: "wind", radiation: "uv", drips: "humidity"};   // (their earlier names, in links saved before)
   const row = document.getElementById("fxtest");
   document.getElementById("motion").before(row);   // (into the page's bottom left corner, just left of "stop")
-  // Too narrow for all of it (a phone, "stop" beside it): without its "test:", so every link fits; were it still too
-  // narrow, scrolled to its end, its last link just left of "stop"
-  const tag = row.querySelector(".tag");
-  function fit() {
-    tag.hidden = PHONE.matches;
-    if (!tag.hidden) tag.hidden = row.scrollWidth > row.clientWidth;
-    row.scrollLeft = row.scrollWidth;
-  }
+  // Too narrow for all of it (a phone, "stop" beside it): scrolled to its end, its last link just left of "stop"
+  function fit() { row.scrollLeft = row.scrollWidth; }
   new ResizeObserver(fit).observe(row);
   let on = {};   // {effect: its step's index}
   const name = (k) => k === "rain" || k === "humidity" ? [k, `${k}2`, `${k}3`][on[k]] : k === "haze" ? `haze${on[k] + 1}` : k;   // (in the URL)

@@ -1290,7 +1290,7 @@ const cornerSeen = (page) => page.evaluate(() => {
   const row = document.getElementById("fxtest"), buttons = row ? [...row.querySelectorAll("button")] : [];
   const m = box(document.getElementById("motion")), s = box(document.getElementById("status"));
   return { link: link ? link.textContent : null, motion: m, row: box(row), last: box(buttons.at(-1)), strip: s,
-           buttons: buttons.map((b) => b.textContent), tag: row ? row.querySelector(".tag").checkVisibility() : null,
+           buttons: buttons.map((b) => b.textContent), tag: row ? !!row.querySelector(".tag") : null,   // (no "test:" label any more)
            fits: row ? row.scrollWidth <= row.clientWidth && row.scrollLeft === 0 : null, spare: innerWidth - m.right,
            window: [innerWidth, innerHeight], apart: m.right <= s.left || s.right <= m.left || m.bottom <= s.top || s.bottom <= m.top,
            onScreen: m.left >= 0 && m.right <= innerWidth && m.bottom <= innerHeight };

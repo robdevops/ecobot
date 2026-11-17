@@ -808,13 +808,13 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
 
 
 def limit_mark(h, name, title):
-    """A dial's limit mark at today's highest (handsLook's): a small solid triangle in the red hands' red, no hand; its tip just outside
-    the coloured band (RING_OUTER), its base a little outside the outline, the tip pointing in at the centre; small (about 4 % of the
+    """A dial's limit mark at today's highest (handsLook's): a small solid triangle in the red hands' red, no hand; its base flush with
+    the dial's outer edge (the outline), its tip reaching into the coloured band, pointing in at the centre; small (about 4 % of the
     tile's width); clear of the title's text and of every tick number."""
     m = h["limit"]
     assert h["kind"] == "limit" and h["colour"] is None and m["fill"] == look()["high_hand"], (name, title, h)
-    tip, *base = m["radii"]
-    assert look()["ring_outer"] < tip < m["ring"] < min(base) <= m["ring"] + 20 and m["inward"], (name, title, m)
+    tip, *base = m["radii"]   # (the base flush with the dial's outer edge, the tip reaching into the coloured band)
+    assert tip < look()["ring_outer"] < min(base) and abs(min(base) - m["ring"]) <= 1 and m["inward"], (name, title, m)
     assert 12 <= m["size"]["width"] <= 24 and 12 <= m["size"]["height"] <= 24, (name, title, m)
     assert 0.02 < m["drawnWidth"] / m["tileWidth"] < 0.06, (name, title, m)
     assert m["clearOfTitle"] and m["clearOfTicks"], (name, title, m)
@@ -1444,11 +1444,11 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
         assert links[name]["url"] == "?fx=" + ",".join(on)
     assert links["label"] == "UV index 0.0"                                        # (the stand-in's reading, not the simulated one)
     # "stop" at the bottom left, just right of the row's last link, beside the strip (at the window's bottom), clear of it;
-    # the row with its "test:", all of it in sight
+    # the row (no "test:" label any more), all of it in sight
     corner = links["corner"]
     assert corner["link"] == "stop" and corner["apart"] and corner["onScreen"], corner
     just_right_of_the_row(corner)
-    assert corner["tag"] and corner["fits"], corner
+    assert not corner["tag"] and corner["fits"], corner
     assert corner["row"]["left"] == 0 and corner["motion"]["bottom"] == corner["window"][1] == corner["strip"]["bottom"], corner
     assert links["haze"] == [1, 2, 3, 4, 5, 0]
     assert links["rain"] == [[0.35, 0], [1, 0], [1, 2], [0, 0]]   # (light, heavy, heavy with a flash flood (the test's own), off)
