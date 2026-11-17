@@ -1288,7 +1288,7 @@ const shown = () => {
 
 async function rotateMode(browser, url) {
   const out = {};
-  const devices = { pixel7: [412, 839], ipadAir: [820, 1180] };
+  const devices = { pixel7: [412, 839], ipadAir: [820, 1180], ipadPro13: [1032, 1376] };
   const sized = (name, landscape) => { const [w, h] = devices[name]; return landscape ? { width: h, height: w } : { width: w, height: h }; };
   const settle = async (page) => { await page.evaluate(() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))); await page.waitForTimeout(400); };
   for (const name of Object.keys(devices)) {
@@ -1311,7 +1311,21 @@ async function rotateMode(browser, url) {
       steps.push({ orientation, now: await page.evaluate(shown) });
     }
     errors.push(...more);
-    out[name] = { fresh, steps, errors };
+    // Turned into landscape with the size reported late: the events come while the page still reads the portrait size (and the page
+    // has been shifted sideways, as a browser can), the real size arriving only some time after
+    const stale = {};
+    await page.setViewportSize(sized(name, false)); await settle(page);
+    await page.evaluate(() => { window.dispatchEvent(new Event("orientationchange")); window.dispatchEvent(new Event("resize")); });
+    await page.waitForTimeout(150);
+    await page.setViewportSize(sized(name, true));
+    await page.evaluate(() => { document.body.style.overflowX = "scroll"; window.scrollTo(40, 0); document.body.style.overflowX = ""; });
+    await page.waitForTimeout(1200);
+    stale.landscape = await page.evaluate(shown);
+    stale.sideways = await page.evaluate(() => window.scrollX);
+    // a grid wider than the screen starts at its left edge (never overflows to the unreachable left)
+    stale.wide = await page.evaluate(() => { const g = document.getElementById("grid"); g.style.gridTemplateColumns = "repeat(4, 600px)";
+      return g.firstElementChild.getBoundingClientRect().left; });
+    out[name] = { fresh, steps, errors, stale };
     await context.close();
   }
   process.stdout.write(JSON.stringify(out));

@@ -29,7 +29,7 @@
     font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "DejaVu Sans", Arial, sans-serif;
     -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body { overflow-x: hidden; overflow-y: auto; }
-  #grid { display: grid; justify-content: center; align-content: center; padding: var(--pad, 8px);
+  #grid { display: grid; justify-content: safe center; max-width: 100%; align-content: center; padding: var(--pad, 8px);
     padding-bottom: calc(var(--pad, 8px) + var(--status, 18px)); min-height: 100%; }   /* (room under the tiles for the status line) */
   /* A tile: its own background clear (whatever is behind the page shows through it), its foreground opaque; a thin opaque frame
      (::before, inset, so neighbours don't share a line), seen only picked up, focused or red (not on mouseover). Its gauge can be dragged (user-select none), its
@@ -131,7 +131,7 @@
      through them; the page itself doesn't scroll meanwhile, and a
      sideways swipe never reaches the browser (no back/forward). The grip and × aren't needed here: hidden. */
   html.zoomed, html.zoomed body { overflow: hidden; overscroll-behavior-x: contain; }
-  body.zoomed #grid { position: fixed; inset: 0 auto 0 0; width: calc(var(--n) * var(--pitch)); display: block; padding: 0; min-height: 0;
+  body.zoomed #grid { max-width: none; position: fixed; inset: 0 auto 0 0; width: calc(var(--n) * var(--pitch)); display: block; padding: 0; min-height: 0;
     touch-action: pinch-zoom;
     -webkit-user-select: none; user-select: none; }
   body.zoomed .tile { position: absolute; top: var(--zy); left: calc(var(--zx) + var(--i) * var(--pitch)); width: var(--zw); height: var(--zh); }
@@ -4848,15 +4848,40 @@ const Sky = (() => {
     };
   }
 
+  // Re-measured on every signal that a rotation (or a browser's late report of it) can give, at the next frame and again at
+  // 100/300/800 ms, and each 150 ms until the size has read the same twice running (iOS Safari can report the new size late or
+  // only through one of these). After each, a page the browser has shifted sideways (scrollX, the visual viewport's offsetLeft) goes back to 0.
   let resizing = 0;
-  let settling = 0;
-  const relayout = () => {   // (at the next frame, and once more 300 ms on: a browser (Firefox) can report a rotation's size late)
-    cancelAnimationFrame(resizing); resizing = requestAnimationFrame(layout);
-    clearTimeout(settling); settling = setTimeout(() => { cancelAnimationFrame(resizing); layout(); placeCorner(); }, 300);
+  let timers = [];
+  let lastSize = "";
+  const sizeNow = () => { const v = window.visualViewport; return [screenRoom().w, screenRoom().h, window.innerWidth, v ? Math.round(v.width) : 0].join("x"); };
+  const recentre = () => {
+    const v = window.visualViewport;
+    if (v && v.scale > 1.01) return;   // (pinched in on purpose: left as it is)
+    if (window.scrollX || (v && v.offsetLeft)) window.scrollTo(0, window.scrollY);
+    if (document.documentElement.scrollLeft) document.documentElement.scrollLeft = 0;
+    if (document.body.scrollLeft) document.body.scrollLeft = 0;
   };
-  window.addEventListener("resize", relayout);
-  window.addEventListener("orientationchange", relayout);
-  if (window.visualViewport) window.visualViewport.addEventListener("resize", relayout);
+  const remeasure = () => { layout(); placeCorner(); recentre(); };
+  const relayout = () => {
+    cancelAnimationFrame(resizing); resizing = requestAnimationFrame(remeasure);
+    timers.forEach(clearTimeout);
+    timers = [100, 300, 800].map((ms) => setTimeout(remeasure, ms));
+    let steady = 0, tries = 0;
+    const watch = () => {   // (until the size has read the same twice, at most about 2 s)
+      const now = sizeNow();
+      steady = now === lastSize ? steady + 1 : 0; lastSize = now;
+      remeasure();
+      if (steady < 2 && ++tries < 14) timers.push(setTimeout(watch, 150));
+    };
+    timers.push(setTimeout(watch, 150));
+  };
+  for (const name of ["resize", "orientationchange", "pageshow"]) window.addEventListener(name, relayout);
+  if (window.visualViewport) for (const name of ["resize", "scroll"]) window.visualViewport.addEventListener(name, () => {
+    if (sizeNow() !== lastSize) relayout(); else recentre();   // (a scroll of it alone: only put back)
+  });
+  if (window.screen && screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener("change", relayout);
+  if (window.matchMedia) window.matchMedia("(orientation: landscape)").addEventListener("change", relayout);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
   setInterval(refresh, REFETCH_MS);
   refresh();

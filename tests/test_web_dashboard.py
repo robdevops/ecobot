@@ -1326,6 +1326,11 @@ async def test_a_phone_or_tablet_turned_and_turned_back_lays_the_page_out_exactl
             assert now["fit"] == {**now["fit"], "scrollWidth": now["fit"]["clientWidth"], "innerWidth": now["fit"]["clientWidth"], "scale": 1,
                                   "scrollX": 0, "inside": True, "skyCovers": True}, (device, orientation, now["fit"])
             assert now["snapshot"] == report["fresh"][orientation]["snapshot"], (device, orientation)
+        late = report["stale"]   # (the real size arriving late, the page shifted sideways meanwhile: laid out as a fresh load, put back)
+        assert late["landscape"]["fit"] == {**late["landscape"]["fit"], "scrollWidth": late["landscape"]["fit"]["clientWidth"], "scale": 1,
+                                            "scrollX": 0, "inside": True, "skyCovers": True}, (device, late["landscape"]["fit"])
+        assert late["landscape"]["snapshot"] == report["fresh"]["landscape"]["snapshot"] and late["sideways"] == 0, (device, late)
+        assert late["wide"] >= 0, (device, late["wide"])
         for orientation, fresh in report["fresh"].items():   # (a fresh load fits too)
             assert fresh["fit"]["scrollWidth"] == fresh["fit"]["clientWidth"] and fresh["fit"]["inside"] and fresh["fit"]["skyCovers"], (device, orientation)
 
