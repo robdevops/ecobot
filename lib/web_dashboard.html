@@ -3464,15 +3464,15 @@ const Sky = (() => {
   const DIAL = [240, 203, 138];   // a dial's centre and its ring's radius (the compass's too: the same size, lined up)
   const HUB = 13;                 // a dial's hub, its needle's pivot: its radius (its outline as thin, lw(1.5)); the needle's tail under it
   // The pressure's way over the past hour (tile.tendency: {change, way}, the server's: its newest reading less the one nearest an hour
-  // before; null with none about an hour old): a fine instrument-style arrow right against the reading under the dial, its head's back
-  // touching the last digit's ink (no gap; the reading stays centred), vertically centred on its digits: a thin straight shaft with a
+  // before; null with none about an hour old): a fine instrument-style arrow just after the reading under the dial, its head's back
+  // 2 px from the last digit's ink (ARROW.gap; the reading stays centred), vertically centred on its digits: a thin straight shaft with a
   // small, narrow, sharp open head (a slim chevron), no outline. Rising: pointing up, in L.rising (the needle's blue); falling:
   // pointing down, in L.falling (the red hands' red). None when steady (under 0.3 hPa either way), with no tendency or no reading.
   // A wide reading (inHg's "29.92") reaches the dial's grey ring, as the reading itself does: the arrow is simply drawn over it. No
   // motion: it is only put in place as the reading changes. The reading's width and its digits' ink are measured on a canvas (no
   // layout asked of the page), once for each text.
   // ARROW: the gap after the number's ink (px), the head's half-width and length (px), the arrow's height (of the digits'), the stroke's width
-  const ARROW = {gap: 0, head: 3.5, back: 7, tall: 0.8, width: lw(1.2)};
+  const ARROW = {gap: 2, head: 3.5, back: 7, tall: 0.8, width: lw(1.2)};
   const digits = new Map();   // ({size/text: [its ink's right edge from its centre, its digits' ink centre below the em box's middle, their height]})
   let measuring = null;
   function measure(words, size) {

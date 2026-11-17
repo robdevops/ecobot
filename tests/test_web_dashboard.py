@@ -924,8 +924,8 @@ def arrow_drawn(p: dict, way: str | None, name: str):
     """The pressure's arrow after its reading (dialsLook's), its way over the past hour: none (`way` None: hidden), or a fine,
     instrument-style arrow: one thin straight shaft and a small, narrow, sharp open head (two short strokes from its tip, back and
     out to either side: a slim chevron, narrower than 45 degrees), no fill, no outline; up and blue (the needle's) when rising, down
-    and red (the red hands') when falling, none when steady (`way` None), about the digits' height; right against the reading (its
-    head's back at the last digit's ink, no gap), vertically centred on its digits' ink; clear of the hub, the unit, the tick numbers,
+    and red (the red hands') when falling, none when steady (`way` None), about the digits' height; just after the reading (its
+    head's back 2 px from the last digit's ink), vertically centred on its digits' ink; clear of the hub, the unit, the tick numbers,
     the title and the table (and, in hPa, inside the dial's outline; inHg's wider reading reaches the ring and the arrow is drawn over it)."""
     a = p["arrow"]
     if way is None:
@@ -946,7 +946,7 @@ def arrow_drawn(p: dict, way: str | None, name: str):
     tall = ink_bottom - ink_top                                                  # (the digits' height: about 38 px at 50 px)
     assert (y1 < y0) == (way == "up") and 0.7 * tall <= abs(y1 - y0) <= tall, (name, a["d"], tall)
     bx0, by0, bx1, by1 = a["box"]
-    assert -0.5 <= bx0 - a["inkRight"] <= 1, (name, a["box"], a["inkRight"])     # against the last digit's ink: no gap (1 px at most)
+    assert bx0 - a["inkRight"] == pytest.approx(2, abs=0.5), (name, a["box"], a["inkRight"])     # a 2 px gap after the last digit's ink
     assert (by0 + by1) / 2 == pytest.approx((ink_top + ink_bottom) / 2, abs=1), (name, a["box"], a["ink"])   # centred on its digits
     pad = a["width"] / 2
     clear = lambda b: b[2] < bx0 - pad or b[0] > bx1 + pad or b[3] < by0 - pad or b[1] > by1 + pad
