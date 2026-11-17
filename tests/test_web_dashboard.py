@@ -1875,33 +1875,54 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert flood["depth"] == flood["full"] > 0 and flood["frog"] is None and not flood["running"] and flood["frames"] == 0, flood
     # ... and a gust (the page's, the test link's, asked for by name): nothing blown across, no loop
     assert still["gust"] == {"fling": None, "sent": 0, "running": False, "frames": 0}, still["gust"]
-    # ... and the heat's: its faint warm haze only, nothing bent (no shimmer: it would need motion)
+    # ... and the heat's: its sun in the corner, white-hot, its flares, still (no loop)
     heat = still["heat"]
-    assert heat["refracted"] == heat["shifts"] == 0 and heat["drawn"] > 0 and heat["band"] > 0 and not heat["running"], heat
-    # the heat (?fx=heat): a heat haze, not drawn lines (squiggles read as smell lines): a faint amber veil low down, and the canvas's
-    # own bottom band bent sideways through it in thin rows, by ripples rising and dying away upward
-    for name, hot in (("alone", got["heat"]), ("over", got["heatOver"])):
-        assert hot["errors"] == [] and hot["refracted"] > 0 and hot["band"] >= 0.25 * hot["height"], (name, hot)
-        assert hot["top"] + hot["band"] == hot["height"], (name, hot)   # (from the bottom: no flood)
-        rows = [(r, *row) for f in hot["frames"] for r, row in enumerate(f["rows"]) if r < hot["band"] - 3]   # (not the glints' rows)
-        # each row drawn exactly as the band was before it was bent, shifted by its own shift (none differing but those shifted)
-        assert all(match == shift for _, shift, _, match in rows if match is not None), (name, rows)
-        assert all(differs for _, shift, differs, match in rows if shift and match is not None), (name, rows)
-        assert all(not differs for _, shift, differs, _ in rows if not shift), (name, rows)
-        bent = [r for r, shift, _, match in rows if shift and match is not None]
-        assert len(bent) >= 0.2 * len(rows), (name, len(bent), len(rows))
-        # ... strongest at the bottom, dying away upward (its top eighth all but still), and never still: changing frame to frame
-        band, frames = hot["band"], hot["frames"]
-        mean = lambda lo, hi: sum(abs(v) for f in frames for v in f["shifts"][int(lo * band):int(hi * band)]) / (len(frames) * (int(hi * band) - int(lo * band)))
-        assert mean(0.75, 1) > 0.8 and mean(0.75, 1) > 3 * mean(0, 0.25) and mean(0, 0.125) < 0.1, (name, mean(0, 0.25), mean(0.75, 1))
-        assert all(max(map(abs, f["shifts"])) <= round(hot["most"]) + 1 for f in frames), name
-        assert sum(a != b for f, g in zip(frames, frames[1:]) for a, b in zip(f["shifts"], g["shifts"])) > 0.3 * band * (len(frames) - 1), name
-        # ... no long thin strokes in it (a pixel tall, 5 px or more long, brighter than above and below: a drawn squiggle)
-        assert hot["strokes"] <= 3, (name, hot["strokes"])
-    # ... alone: its veil over all of its bottom rows, faint, amber (red over green over blue: no green or brown smoke)
-    alone = got["heat"]
-    r, g, b = alone["colour"]
-    assert alone["cover"] > 0.9 and 0.08 < alone["alpha"] < 0.35 and r > g * 1.15 and g > b * 1.4 and r > 180, alone
+    assert heat["built"] == 1 and heat["flares"] >= 5 and heat["drawn"] > 0 and not heat["running"] and heat["frames"] == 0, heat
+    assert max(abs(a - b) for a, b in zip(heat["sun"], heat["home"])) <= 2 and heat["at"][3] > 60 and min(heat["at"][:3]) > 140, heat   # (faint: a still frame, every effect on)
+    # the heat (?fx=heat): a blazing sun's glare, not a shimmer: a white-gold bloom in the top right corner, lens flares strung along
+    # the diagonal from it through the window's middle, the window faintly warmed; more so the hotter
+    hot = got["heat"]
+    assert hot["errors"] == [] and hot["cost"] < 4, hot
+    looks = hot["looks"]
+    for look in looks:
+        w, h = look["size"]
+        # (its sun in the top right corner, its core white-hot: bright, warm (no blue over red), at every level)
+        assert look["home"][0] >= 0.9 * w and look["home"][1] <= 0.1 * h and look["built"] == look["level"], look
+        r, g, b = look["coreLook"]["colour"]
+        assert look["coreLook"]["light"] > 150 and r >= g >= b and b > 150, look["coreLook"]
+        # (its flares: five or more on screen, each standing out of the veil around it, near the line from the sun through the middle, the
+        # first nearer the sun than the middle, the last past it, of different sizes and kinds)
+        on = [f for f in look["flares"] if f["on"]]
+        assert len(on) >= 5 and all(f["alpha"] > 1.5 * look["veil"]["alpha"] for f in on), (on, look["veil"])
+        assert all(f["aside"] <= 0.03 * min(w, h) + 1.5 for f in on), on
+        assert min(f["k"] for f in on) < 0.5 and max(f["k"] for f in on) > 1.2, on
+        assert {f["kind"] for f in on} == {"ring", "hex", "disc"} and max(f["r"] for f in on) > 2.5 * min(f["r"] for f in on), on
+        # (the window outside the bloom faintly veiled, warm: red over blue, inked nearly all over, its light a lift, not a glare)
+        r, g, b = look["veil"]["colour"]
+        assert look["veil"]["alpha"] > 0.03 and r > 1.3 * b and look["veil"]["light"] < 25, look["veil"]
+    # ... stronger the hotter: from 35 °C to 43 °C the bloom bigger, its core larger, the veil warmer, the flares stronger
+    cool, warm, hottest = looks
+    assert cool["radius"] < warm["radius"] < hottest["radius"] and cool["core"] < hottest["core"], looks
+    assert cool["veil"]["light"] < warm["veil"]["light"] < hottest["veil"]["light"], [l["veil"] for l in looks]
+    assert cool["drawn"] < warm["drawn"] < hottest["drawn"] and cool["veil"]["alpha"] < hottest["veil"]["alpha"], looks
+    # ... dithered irregularly (no grid: under 100, as gridPeak sees it; ordered, about 200)
+    assert hot["grid"] < 100, hot["grid"]
+    # ... very slow: over 24 s the sun wandering a pixel or two about its home, never more than a pixel a second; each flare drifting
+    # with it, the other way past the middle ((1 - k) times as far, as a lens's flares do)
+    moving = hot["moving"]
+    home = looks[-1]["home"]
+    assert all(abs(m["sun"][0] - home[0]) <= 2 and abs(m["sun"][1] - home[1]) <= 2 for m in moving), moving
+    assert len({tuple(m["sun"]) for m in moving}) > 1, moving
+    assert all(abs(a - b) <= 1 for m, n in zip(moving, moving[1:]) for a, b in zip(m["sun"], n["sun"])), moving
+    for m, n in zip(moving, moving[1:]):
+        dx, dy = n["sun"][0] - m["sun"][0], n["sun"][1] - m["sun"][1]
+        for (x0, y0, k), (x1, y1, _) in zip(m["flares"], n["flares"]):
+            assert abs((x1 - x0) - (1 - k) * dx) <= abs(1 - k) + 1 and abs((y1 - y0) - (1 - k) * dy) <= abs(1 - k) + 1, (m, n)
+    # with the UV on too: the sun still white-hot in its corner (the UV's shafts cool violet beside it), the two within the cap
+    over = got["heatOver"]
+    assert over["errors"] == [] and over["looks"][0]["drawn"] < hottest["drawn"], over
+    r, g, b = over["looks"][0]["coreLook"]["colour"]
+    assert over["looks"][0]["coreLook"]["light"] > 150 and r >= b, over["looks"][0]["coreLook"]
 
 
 def clean_glass(marks):

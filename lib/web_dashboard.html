@@ -757,119 +757,142 @@ const Sky = (() => {
     };
   });
 
-  // ---------- heat: heat haze, the air over hot ground shimmering (a mirage's), bending whatever is seen through it ----------
-  // No lines of its own: a very faint warm haze low down (draw(), in its place among the effects: something there to bend even with
-  // nothing else on), then, once everything in front of the flood is drawn (refract(), from the loop's draw()), the canvas's own
-  // bottom band re-blitted in thin rows, each shifted sideways its own way: fine, fast, irregular ripples (a few waves and a little
-  // noise summed), rising and dying away upward, strongest at the bottom, as air over hot tarmac; and now and then a pale glint of
-  // mirage along the very bottom. Stronger the hotter it is (its level: 35 °C to 43 °C). Reduced or low motion: the still haze only.
-  // (In a flood, from its surface: from as low as its troughs go, flood.sunk(), and kept above() it, so nothing under it is touched)
-  const HEAT = ["#E2A85A", "#F4C982", "#FCE2AE", "#FFF4D8"].map(rgb);   // amber haze, faint to bright; the glint
+  // ---------- heat: a blazing sun's glare from the top right corner (where the light comes from in the rest's art) ----------
+  // A white-gold bloom in the corner: a white-hot core and a wide warm glow round it, a few thin spikes in it; a few faint sunbeams
+  // fanning down from it across the window; soft lens flares strung along the diagonal from it through the window's middle (rings,
+  // hexagons and discs of different sizes, each faintly its own colour); and the whole window faintly sun-bleached, a warm veil
+  // lifting the dark, warmest near the sun. Stronger and whiter the hotter (its level: 0.3 at 35 °C to 1 at 43 °C): a gentle warm
+  // glow at 35 °C; to 43 °C and up a bigger, whiter, blinding sun, its flares stronger. Very slow: the bloom breathing (its glow and
+  // its core out of step, the beams each half their own way), the sun wandering a pixel or so and the flares drifting with it (each
+  // its own way along the diagonal, as a lens's do). Each part painted once a size (the bloom once a level) and blitted; dithered on
+  // the blue noise (no grid). Reduced or low motion: one still frame. Drawn behind the flood (the sun in the sky, well clear of it),
+  // the sun itself (sun()) in front of the UV's shafts.
+  const SUN = ["#B8641E", "#D98A32", "#EFAE4C", "#F8CC70", "#FCE09A", "#FFEFC4", "#FFF8E6", "#FFFFFA"].map(rgb);   // ember to white-hot
+  const SUN_ALPHA = [18, 30, 48, 72, 104, 146, 196, 245];   // (the glow's shades' alphas)
+  const FLARE = ["#FFD27A", "#FFB08A", "#A6E8C6", "#F6A3A8", "#EEF0A0", "#FFE6B8"].map(rgb);   // gold, peach, mint, rose, lemon, cream
   const heat = effect((e) => {
-    const SPAN = 0.3, RISE = 14, ROW_MOST = 2;   // the band's height (of the window's); its ripples' speed upward (px/s); rows re-blitted
-    // at most this tall at once where they shift alike
-    const chance = seeded(4111), within = (lo, hi) => lo + (hi - lo) * chance();   // (its own randomness: the rest's as without it)
-    let haze = null, band = 0, copy = null, copied = null, shifts = new Int8Array(0), glints = [], glint = [], refracted = 0, top = 0;
-    // how far (px, + right) the row y px up from the band's bottom is shifted at t: summed waves riding upward, their phases wandering,
-    // a little noise, all dying away upward; `most`: at the bottom
-    const shiftOf = (y, t, most) => {
-      const u = y - t * RISE, k = Math.pow(1 - y / band, 1.4);
-      const w = 0.5 * Math.sin(u * 0.9 + 1.6 * Math.sin(u * 0.13 + t * 0.8)) + 0.3 * Math.sin(u * 2.3 - t * 5.1) +
-                0.9 * (noise(u * 0.55, t * 2.2, 4096, 17) - 0.5) + 0.25 * Math.sin(u * 0.37 + t * 1.3);
-      return Math.round(most * k * w * (0.8 + 0.2 * Math.sin(t * 0.7 + y * 0.05)));
+    const random = streamOf("sun"), between = random.between;   // (its own randomness)
+    const DRIFT = [1.6, 1.1];          // how far the sun wanders each way (art px), very slowly
+    let S = 0, home = [0, 0], at = [0, 0], veil = null, beams = [], spikes = [], flares = [], glow = null, core = null;
+    let built = 0, R = 0, rc = 0, placed = [];
+    // The bloom at level L: its glow (radius R, spikes and all) and its core (radius rc, white-hot), each a sprite centred on the sun
+    const build = (L) => {
+      built = L;
+      R = Math.round(S * (0.2 + 0.16 * L));
+      rc = Math.max(2, Math.round(S * (0.018 + 0.03 * L)));
+      glow = painted(2 * R + 1, 2 * R + 1, (x, y) => {
+        const dx = x - R, dy = y - R, r = Math.hypot(dx, dy), d = r / R;
+        if (d >= 1) return null;
+        const angle = Math.atan2(dy, dx);
+        let spike = 0;
+        for (const s of spikes) {
+          const off = Math.abs(((angle - s.angle + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) * r;   // (px off its line)
+          if (d < s.reach) spike = Math.max(spike, Math.exp(-(off * off) / (s.wide * s.wide)) * Math.pow(1 - d / s.reach, 1.4));
+        }
+        const v = Math.pow(1 - d, 2.4) * (0.5 + 0.5 * L) + 0.4 * spike * (0.45 + 0.55 * L), s = shadeOf(v, x, y, SUN.length);
+        return s < 0 ? null : [...SUN[Math.round(s * (0.55 + 0.45 * L))], SUN_ALPHA[s]];   // (golder the cooler)
+      });
+      const n = Math.ceil(rc * 1.8);
+      core = painted(2 * n + 1, 2 * n + 1, (x, y) => {
+        const d = Math.hypot(x - n, y - n) / rc, s = d < 1 ? 2 : shadeOf((1.8 - d) / 0.8, x, y, 3);
+        return s < 0 ? null : [...SUN[Math.min(7, 4 + s + (L > 0.6 ? 1 : 0))], [150, 210, 255][s]];
+      });
+    };
+    // A lens flare's sprite: radius r, its colour; a disc (soft, fading out), a ring (a thin bright rim, a whisper inside) or a hexagon
+    // (faintly filled, its rim brighter)
+    const flare = (kind, r, c) => {
+      const n = Math.ceil(r) + 1, tints = [c.map((v) => v * 0.85), c, c.map((v) => v + (255 - v) * 0.45)];
+      return painted(2 * n + 1, 2 * n + 1, (x, y) => {
+        const dx = x - n, dy = y - n, d = Math.hypot(dx, dy) / r;
+        let v;
+        if (kind === "disc") v = d < 1 ? 0.25 + 0.6 * Math.pow(1 - d * d, 0.7) : 0;
+        else if (kind === "ring") v = Math.exp(-Math.pow((d - 0.86) / 0.11, 2)) * 0.95 + (d < 0.86 ? 0.12 : 0);
+        else {   // (a hexagon: its edges' distance across, flat top and bottom)
+          const h = Math.max(Math.abs(dy), Math.abs(dy) / 2 + Math.abs(dx) * 0.866) / (r * 0.866);
+          v = h < 1 ? (h > 0.84 ? 0.85 : 0.22 + 0.1 * (1 - h)) : 0;
+        }
+        const s = shadeOf(v, x, y, 3);
+        return s < 0 ? null : [...tints[s].map(Math.round), [44, 70, 104][s]];
+      });
     };
     return {
-      strength: () => 0.35 + 0.3 * e.level,
-      // (for the tests: the band (art px), its top as last drawn, each of its rows' shift (top first), the most a row may shift now,
-      // how many frames it has refracted, the glints showing; seen(): the band as drawn against the band as it was before it was bent
-      // (the canvas's own, saved): each row's [shift, whether it differs, the shift that matches it (null: none does)])
-      probe: () => ({band, top, shifts: [...shifts], most: mostNow(), refracted, glints: glints.length, seen}),
-      forget() { glints = []; refracted = 0; shifts.fill(0); },
+      strength: () => 0.4 + 0.4 * e.level,
+      // (for the tests: the sun's middle as last drawn and its home (art px), the bloom's radius and its core's, the level it was
+      // built for, the beams; each flare as last drawn {kind, x, y (its middle), r, k: how far along the diagonal, colour})
+      probe: () => ({sun: at.map(Math.round), home, radius: R, core: rc, built, beams: beams.length, size: [W, H],
+                     flares: placed.map((f) => ({...f}))}),
       resize() {
-        band = Math.max(8, Math.ceil(H * SPAN));
-        // the haze: a faint warm veil, thickest at the bottom, its alpha in a few dithered steps, mottled in soft streaks wider than
-        // tall (so its bending shows)
-        haze = painted(W, band, (x, y) => {
-          const k = y / band, m = noise(x / 11, y / 1.6, Math.max(1, Math.ceil(W / 11)), 23), n = noise(x / 37, y / 5, Math.max(1, Math.ceil(W / 37)), 29);
-          const v = Math.pow(k, 2.2) * (0.3 + 0.5 * m * m + 0.2 * n), s = shadeOf(v, x, y, 6);
-          return s < 0 ? null : [...HEAT[s > 3 ? 1 : 0], 22 + 26 * s];
+        S = Math.min(W, H);
+        home = [W - Math.round(S * 0.03), Math.round(S * 0.03)];   // (in the corner: its glare over the tiles' edges, not their gauges)
+        at = home.slice();
+        built = 0;
+        // its spikes: six thin ones, about evenly round, each its own length
+        spikes = Array.from({length: 6}, (_, i) => ({angle: (i + between(-0.2, 0.2)) * Math.PI / 3 + 0.35, reach: between(0.55, 1),
+                                                    wide: between(0.7, 1.3)}));
+        // the veil: faint warm light over the whole window, warmest near the sun
+        const far = Math.hypot(W, H);
+        veil = painted(W, H, (x, y) => {
+          const v = 0.3 + 0.7 * Math.pow(1 - Math.min(1, Math.hypot(x - home[0], y - home[1]) / (far * 0.85)), 1.8);
+          const s = shadeOf(v, x, y, 4);
+          return s < 0 ? null : [...SUN[s > 1 ? 2 : 1], [16, 24, 34, 46][s]];
         });
-        copy = canvasOf(W, band);
-        copied = copy.getContext("2d");
-        shifts = new Int8Array(band);
-        glint = [8, 13, 19].map((n) => painted(n, 1, (x) => {   // (a glint: a broken streak a pixel tall, brightest in its middle)
-          const v = Math.sin(Math.PI * (x + 0.5) / n);
-          return dither(x * 7, n) < v * 0.9 ? [...HEAT[v > 0.6 ? 3 : 2], Math.round(255 * v)] : null;
+        // the sunbeams: five, fanning down and left from the sun, faint, fading as they go, each its own width and length; two
+        // canvases (alternate beams), breathing out of step
+        const rays = Array.from({length: 5}, (_, i) => ({angle: (0.56 + (i + between(-0.3, 0.3)) * 0.2) * Math.PI,   // (down to left)
+                                                       wide: between(0.018, 0.04), long: far * between(0.55, 0.95)}));
+        beams = [0, 1].map((half) => painted(W, H, (x, y) => {
+          const dx = x - home[0], dy = y - home[1], r = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
+          let v = 0;
+          for (let i = half; i < rays.length; i += 2) {
+            const b = rays[i], off = Math.abs(((angle - b.angle + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) / b.wide;
+            if (r < b.long && off < 3) v += Math.exp(-off * off) * Math.pow(1 - r / b.long, 1.2) * Math.min(1, r / (S * 0.12));
+          }
+          const s = shadeOf(v * 0.75, x, y, 3);
+          return s < 0 ? null : [...SUN[4 + s], [20, 30, 42][s]];
         }));
-        glints = [];
-      },
-      step(dt) {
-        if (STILL) return;
-        for (const g of glints) g.age += dt;
-        glints = glints.filter((g) => g.age < g.life);
-        if (glints.length < 4 && chance() < dt * (0.8 + 1.6 * e.level) * e.amount)
-          glints.push({x: within(0, W - 20), row: Math.floor(within(0, 3)), sprite: glint[Math.floor(within(0, 3))], age: 0,
-                       life: within(0.25, 0.9)});
-      },
-      draw(g, alpha) {
-        top = Math.round(H - band - flood.sunk());
-        flood.above(g, () => {
-          g.globalAlpha = Math.min(1, alpha * 1.2);
-          g.drawImage(haze, 0, top);
+        // the flares: along the diagonal from the sun through the window's middle (k: 0 at the sun, 1 at the middle), a little off it
+        // either way, of different sizes and kinds and faint colours
+        const KINDS = ["hex", "disc", "ring", "hex", "disc", "ring", "disc"];
+        const ks = [0.34, 0.52, 0.7, 0.93, 1.16, 1.42, 1.72];
+        flares = ks.map((k, i) => {
+          const kind = KINDS[i], r = S * (kind === "ring" ? between(0.04, 0.085) : kind === "hex" ? between(0.02, 0.045) : between(0.012, 0.035));
+          const colour = FLARE[Math.floor(random() * FLARE.length)];
+          return {kind, k: k + between(-0.04, 0.04), r, colour, aside: between(-0.015, 0.015) * S, weight: between(0.55, 1),
+                  sprite: flare(kind, r, colour)};
         });
       },
-      // The bending: the band as drawn so far saved, then each row whose shift isn't 0 drawn again shifted (rows alike drawn together,
-      // ROW_MOST at most), the gap it leaves at its edge filled from the row unshifted; then the glints, on their rows' shifts
-      refract(g, alpha, t) {
-        if (STILL || !band) return;
-        const most = mostNow();
-        for (let y = 0; y < band; y++) shifts[band - 1 - y] = shiftOf(y, t, most);
-        copied.clearRect(0, 0, W, band);
-        copied.drawImage(canvas, 0, top, W, band, 0, 0, W, band);
-        refracted++;
-        flood.above(g, () => {
-          g.globalAlpha = 1;
-          for (let r = 0; r < band;) {
-            const dx = shifts[r];
-            let n = 1;
-            while (n < ROW_MOST && r + n < band && shifts[r + n] === dx) n++;
-            if (dx) {
-              g.clearRect(0, top + r, W, n);
-              g.drawImage(copy, 0, r, W, n, dx, top + r, W, n);
-              if (dx > 0) g.drawImage(copy, 0, r, dx, n, 0, top + r, dx, n);
-              else g.drawImage(copy, W + dx, r, -dx, n, W + dx, top + r, -dx, n);
-            }
-            r += n;
-          }
-          for (const gl of glints) {
-            const r = band - 1 - gl.row;
-            g.globalAlpha = alpha * 0.9 * Math.sin(Math.PI * gl.age / gl.life);
-            g.drawImage(gl.sprite, Math.round(gl.x) + shifts[r], top + r);
-          }
+      draw(g, alpha, t) {
+        if (e.level > 0 && e.level !== built) build(e.level);
+        const L = built;
+        at = [home[0] + DRIFT[0] * Math.sin(t * 0.07 + 1.3), home[1] + DRIFT[1] * Math.sin(t * 0.053 + 0.4)];
+        const sx = Math.round(at[0] - home[0]), sy = Math.round(at[1] - home[1]);
+        g.globalAlpha = alpha * (0.75 + 0.25 * L);
+        g.drawImage(veil, 0, 0);
+        beams.forEach((b, i) => {
+          g.globalAlpha = alpha * (0.55 + 0.45 * L) * (0.7 + 0.3 * Math.sin(t * (i ? 0.23 : 0.29) + i * 2.1));
+          g.drawImage(b, sx, sy);
         });
+        // the flares: each where the line from the sun through the window's middle puts it (so drifting as the sun does, those past
+        // the middle the other way)
+        const mx = W / 2 - at[0], my = H / 2 - at[1], len = Math.hypot(mx, my) || 1;
+        placed = flares.map((f) => {
+          const x = Math.round(at[0] + f.k * mx - f.aside * my / len), y = Math.round(at[1] + f.k * my + f.aside * mx / len);
+          const n = (f.sprite.width - 1) / 2;
+          g.globalAlpha = alpha * f.weight * (0.35 + 0.65 * L) * (0.9 + 0.1 * Math.sin(t * 0.31 + f.k * 4));
+          g.drawImage(f.sprite, x - n, y - n);
+          return {kind: f.kind, x, y, r: f.r, k: f.k, colour: f.colour};
+        });
+      },
+      // The sun itself, drawn after the UV's shafts and glow (from the loop's draw()): its glow, breathing, and its white-hot core, so
+      // nothing cool lies over it
+      sun(g, alpha, t) {
+        g.globalAlpha = alpha * (0.86 + 0.14 * Math.sin(t * 0.45));   // (the glow breathing, about every 14 s)
+        g.drawImage(glow, Math.round(at[0]) - R, Math.round(at[1]) - R);
+        g.globalAlpha = Math.min(1, alpha * (1.15 + 0.15 * Math.sin(t * 0.71 + 2)));   // (the core: out of step with the glow)
+        const n = (core.width - 1) / 2;
+        g.drawImage(core, Math.round(at[0]) - n, Math.round(at[1]) - n);
       },
     };
-    function mostNow() { return (1 + 2.6 * e.level) * e.amount; }
-    function seen() {   // (test-only: see probe)
-      const now = ctx.getImageData(0, top, W, band).data, was = copied.getImageData(0, 0, W, band).data, edge = 10;
-      const rows = [];
-      for (let r = 0; r < band; r++) {
-        const at = (d, x) => r * W * 4 + x * 4, same = (x, dx) => {
-          for (let c = 0; c < 4; c++) if (now[at(now, x) + c] !== was[at(was, x - dx) + c]) return false;
-          return true;
-        };
-        let differs = false, ink = false;
-        for (let x = edge; x < W - edge; x++) { if (!same(x, 0)) differs = true; if (was[at(was, x) + 3]) ink = true; }
-        let match = null;
-        if (ink) for (const dx of [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7, 8, -8]) {
-          let ok = true;
-          for (let x = edge; x < W - edge && ok; x++) ok = same(x, dx);
-          if (ok) { match = dx; break; }
-        }
-        rows.push([shifts[r], differs, match]);
-      }
-      return rows;
-    }
   });
 
   // ---------- uv: soft shafts of violet light coming in from the top, slowly swaying and breathing ----------
@@ -2164,7 +2187,7 @@ const Sky = (() => {
   // one side; calming slowly as the rain eases. Rain, the drips and the wind's wisps end at it, none ever drawn below; every one of
   // the wind's leaves its surface reaches (its waves as they are, wherever a leaf meets them) sticks there, floats, then sinks and
   // rests on the bottom, every one, the flood's own from then on: there while it lasts, the wind gone or not, gone as it drains away; the haze
-  // and the heat's shimmer are drawn above it (above(): the haze down to its surface, the heat from as low as its troughs go). Rarely (about every FROG_EVERY s on
+  // is drawn above it (above(): down to its surface, as low as its troughs go). Rarely (about every FROG_EVERY s on
   // average, never in its first FROG_FIRST s) a bemused frog on a lily pad floats across, right to left with the wind, bobbing; the
   // test link's flood (level 2) sends its first one FROG_FIRST s after the water starts rising. Drawn after the drips and the
   // leaves (the sunken ones show through it, tinted and dimmed), before the ice.
@@ -2323,9 +2346,6 @@ const Sky = (() => {
       // window's bottom; each one [id, state, its bottom row against the surface at its middle]; all of them; shows())
       leaves: () => leafProbe(),
       lift: () => depth,
-      // (how far up from the window's bottom its surface's lowest trough can be: what sits on it is drawn down to there and kept
-      // above() it, so its edge is the wavy surface, never a straight line at its level)
-      sunk: () => (depth > 0 ? Math.max(0, depth - DIP) : 0),
       // paint(x, n, y) for each run of columns x to x + n - 1 whose surface is on row y (as drawn; H with no water), left to right
       columns(paint) {
         if (depth <= 0) return paint(0, W, H);
@@ -3163,9 +3183,9 @@ const Sky = (() => {
     for (const k of ORDER) {
       const fx = effects[k], a = fx.strength() * fx.amount * (OWN_STRENGTH.has(k) ? faint : cap);
       drawn[k] = fx.amount > 0 ? a : 0;
-      // (the heat's haze bending what's drawn so far, before the flood: everything in front of the water but the frost on the glass)
-      if (k === "flood" && effects.heat.amount > 0) effects.heat.refract(ctx, drawn.heat, clock);
       if (fx.amount > 0) fx.draw(ctx, a, clock);
+      // (the heat's sun in front of the UV's shafts: white-hot over their violet)
+      if (k === "uv" && effects.heat.amount > 0) effects.heat.sun(ctx, drawn.heat, clock);
     }
     ctx.globalAlpha = 1;
   }
