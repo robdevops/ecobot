@@ -39,6 +39,10 @@
 //     red frames; "stop"; the temporary test links (beside them, MCP_DASHBOARD_ANIMATIONS off); on, low, off and reduced motion; every effect at once (?fx=all: the frame time, the light, the particles);
 //     a flash flood;
 //     ?fx= as the page opens, a phone; prints {step: what was seen}.
+//   node web_dashboard_browser.js URL --rotate: a phone (412x839) and a tablet (820x1180), touch, scale 2: the page as a fresh load in each
+//     orientation, then portrait, landscape, portrait, landscape (orientationchange, the viewport turned, orientationchange, 400 ms);
+//     prints {device: {fresh: {portrait, landscape}, steps: [{orientation, now (what the screen shows), snapshot (what the fresh load
+//     of that orientation shows)}]}}.
 //   node web_dashboard_browser.js URL --fill CASES: for each case {name: [width, height, hidden titles]}, the page with those hidden;
 //     prints {name: {rects, columns, scroll}}.
 "use strict";
@@ -85,7 +89,7 @@ async function open(browser, url, width, height, options = {}) {
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(url, { waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent),
-                             null, { timeout: 15000 });
+                             null, { timeout: 15000 }).catch(async (e) => { throw new Error(`${e.message} ${errors} ${await page.evaluate(() => document.body.innerText.slice(0, 300))}`); });
   return { context, page, errors };
 }
 
@@ -587,7 +591,7 @@ async function arrangedFromPrefs(browser, url, out, allErrors) {
   const renamed = async (prefs) => {
     await page.evaluate(([key, prefs]) => localStorage.setItem(key, JSON.stringify(prefs)), [KEY, prefs]);
     await page.reload({ waitUntil: "load" });
-    await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
+  await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
     return titles(page);
   };
   out.renamedMoved = await renamed({ order: ["US AQI", ...initial.filter((t) => t !== "AQI")], hidden: [] });
@@ -1264,6 +1268,50 @@ async function fillMode(browser, url, cases) {
       rects: [...document.querySelectorAll("#grid .tile")].map((t) => t.getBoundingClientRect().toJSON()),
       columns: document.body.dataset.columns, scroll: document.body.dataset.scroll,
       scrollWidth: document.documentElement.scrollWidth })), errors };
+    await context.close();
+  }
+  process.stdout.write(JSON.stringify(out));
+}
+
+// ---------- a rotated screen ----------
+// What the page shows: the grid's columns and rows, the tiles' rounded rects, the weather's canvas, and the page's own fit to the screen
+const shown = () => {
+  const el = document.documentElement, g = document.getElementById("grid"), c = document.querySelector("#sky canvas"), vv = window.visualViewport;
+  const round = (r) => [r.left, r.top, r.width, r.height].map(Math.round);
+  return {
+    snapshot: { columns: getComputedStyle(g).gridTemplateColumns, rows: getComputedStyle(g).gridAutoRows, bodyColumns: document.body.dataset.columns,
+                tiles: [...g.children].map((t) => round(t.getBoundingClientRect())), sky: [c.width, c.height, c.style.width, c.style.height] },
+    fit: { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, innerWidth: window.innerWidth, scale: vv ? vv.scale : 1, scrollX: window.scrollX,
+           inside: [...g.children].every((t) => { const r = t.getBoundingClientRect(); return r.left >= 0 && r.right <= el.clientWidth + 0.5; }),
+           skyCovers: parseFloat(c.style.width) >= el.clientWidth && parseFloat(c.style.height) >= el.clientHeight } };
+};
+
+async function rotateMode(browser, url) {
+  const out = {};
+  const devices = { pixel7: [412, 839], ipadAir: [820, 1180] };
+  const sized = (name, landscape) => { const [w, h] = devices[name]; return landscape ? { width: h, height: w } : { width: w, height: h }; };
+  const settle = async (page) => { await page.evaluate(() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))); await page.waitForTimeout(400); };
+  for (const name of Object.keys(devices)) {
+    const fresh = {}, steps = [], errors = [];
+    for (const orientation of ["portrait", "landscape"]) {   // (a fresh load of each)
+      const opened = await open(browser, url, 1, 1, { context: { viewport: sized(name, orientation === "landscape"), isMobile: true, hasTouch: true } });
+      await settle(opened.page);
+      fresh[orientation] = await opened.page.evaluate(shown);
+      errors.push(...opened.errors);
+      await opened.context.close();
+    }
+    const { context, page, errors: more } = await open(browser, url, 1, 1, { context: { viewport: sized(name, false), isMobile: true, hasTouch: true } });
+    await settle(page);
+    for (const orientation of ["portrait", "landscape", "portrait", "landscape"]) {
+      const landscape = orientation === "landscape";
+      await page.evaluate(() => window.dispatchEvent(new Event("orientationchange")));
+      await page.setViewportSize(sized(name, landscape));
+      await page.evaluate(() => window.dispatchEvent(new Event("orientationchange")));
+      await settle(page);
+      steps.push({ orientation, now: await page.evaluate(shown) });
+    }
+    errors.push(...more);
+    out[name] = { fresh, steps, errors };
     await context.close();
   }
   process.stdout.write(JSON.stringify(out));
@@ -2380,7 +2428,7 @@ const WEATHER = {
                           stored: await stored(page) };
     // every effect at once: ?fx=all (no link of its own)
     await page.goto(url + "?fx=all", { waitUntil: "load" });
-    await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent));
+  await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent));
     out.links.all = { ...await weatherSeen(page), url: await page.evaluate(() => location.search) };
     await off;
     [out.phone360, out.phone390] = await phones;
@@ -3068,6 +3116,7 @@ async function weatherMode(browser, url, part) {
       const reports = await Promise.all(third.split("+").map((part) => PARTED[second](browser, url, part)));
       process.stdout.write(JSON.stringify(third.includes("+") ? reports : reports[0]) + "\n");
     }
+    else if (second === "--rotate") await rotateMode(browser, url);
     else if (second === "--fill") await fillMode(browser, url, JSON.parse(third));
     else if (second === "--weather") await weatherMode(browser, url, third);
     else await sizes(browser, url, second, JSON.parse(third));

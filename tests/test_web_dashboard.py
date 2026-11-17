@@ -1316,6 +1316,20 @@ async def test_fewer_tiles_grow_evenly_to_fill_the_window_and_never_shrink_below
     assert width("phone-eight") == width("phone-all") and got["phone-eight"]["columns"] == "2" and len(got["phone-eight"]["rects"]) == 8
 
 
+@needs_browser
+async def test_a_phone_or_tablet_turned_and_turned_back_lays_the_page_out_exactly_as_a_fresh_load_with_no_zoom_or_overflow(server, station):
+    got = await run_page(server, "--rotate")
+    for device, report in got.items():
+        assert report["errors"] == [], (device, report["errors"])
+        for step in report["steps"]:
+            now, orientation = step["now"], step["orientation"]
+            assert now["fit"] == {**now["fit"], "scrollWidth": now["fit"]["clientWidth"], "innerWidth": now["fit"]["clientWidth"], "scale": 1,
+                                  "scrollX": 0, "inside": True, "skyCovers": True}, (device, orientation, now["fit"])
+            assert now["snapshot"] == report["fresh"][orientation]["snapshot"], (device, orientation)
+        for orientation, fresh in report["fresh"].items():   # (a fresh load fits too)
+            assert fresh["fit"]["scrollWidth"] == fresh["fit"]["clientWidth"] and fresh["fit"]["inside"] and fresh["fit"]["skyCovers"], (device, orientation)
+
+
 # ---------- the zoomed view and its gallery ----------
 ZOOM_MS = 200
 GAPS_BEFORE = {"dial": 2, "thermometer": 21.7, "beaker": 16.7, "compass": 2}   # (the gap under the title, each kind, before the gauges

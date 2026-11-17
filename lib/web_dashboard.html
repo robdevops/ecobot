@@ -155,6 +155,9 @@
 <div id="status">loading…</div>
 <script>
 "use strict";
+// The room the page really has: the root element's client size (not window.innerWidth/Height, which a phone's browser zooms out
+// (reports the zoomed-out width) when a stale, too wide frame overflows after a rotation: the page then stays zoomed and off-centre)
+const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.documentElement.clientHeight});
 // ---------- the weather behind the tiles: pixel art on one canvas filling the window, behind everything ----------
 // Drawn at a low resolution (one art pixel: P CSS px, about a third of the window across) and scaled up crisply (image-rendering:
 // pixelated). Every sprite and texture is drawn once to a small offscreen canvas and blitted; one loop (at most 30 frames a second)
@@ -3206,11 +3209,12 @@ const Sky = (() => {
   const alive = () => ORDER.some((k) => effects[k].alive());
 
   function resize() {   // (the art made again for the window's size: only if that has changed)
-    const p = Math.max(3, Math.round(Math.max(window.innerWidth, window.innerHeight) / ART_PX));
-    if (W && p === P && W === Math.ceil(window.innerWidth / p) && H === Math.ceil(window.innerHeight / p)) return;
+    const {w, h} = screenRoom();
+    const p = Math.max(3, Math.round(Math.max(w, h) / ART_PX));
+    if (W && p === P && W === Math.ceil(w / p) && H === Math.ceil(h / p)) return;
     P = p;
-    W = Math.ceil(window.innerWidth / P);
-    H = Math.ceil(window.innerHeight / P);
+    W = Math.ceil(w / P);
+    H = Math.ceil(h / P);
     canvas.width = W;
     canvas.height = H;
     Object.assign(canvas.style, {width: `${W * P}px`, height: `${H * P}px`});
@@ -3775,14 +3779,14 @@ const Sky = (() => {
     const n = grid.children.length;
     if (!n || !L) return;
     const aspect = L.cell[0] / L.cell[1];
-    const W = window.innerWidth - 2 * PAD, H = window.innerHeight - 2 * PAD - STATUS;
+    const W = screenRoom().w - 2 * PAD, H = screenRoom().h - 2 * PAD - STATUS;
     let fit = columns(n, W, H, aspect);
     const all = columns(Math.max(tiles.length, n), W, H, aspect);
     if (fit.w < all.w) fit = all;   // (only where every tile scrolls: then these do too, at that size)
     const w = Math.max(Math.floor(fit.w), 1), {cols, scroll} = fit;
     document.documentElement.style.setProperty("--pad", PAD + "px");
     document.documentElement.style.setProperty("--status", STATUS + "px");
-    grid.style.gridTemplateColumns = `repeat(${cols}, ${w}px)`;
+    grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, ${w}px))`;
     grid.style.gridAutoRows = `${Math.floor(w / aspect)}px`;
     document.body.dataset.columns = cols;
     document.body.dataset.scroll = scroll ? "yes" : "no";
@@ -4033,7 +4037,7 @@ const Sky = (() => {
   // The units' switches too: beside the strip, on its left, where both fit across the window; else just above it, at the right (and
   // the corner then beside them, if it fits there, else above them)
   function placeCorner() {
-    const W = window.innerWidth, strip = statusLine.offsetWidth, h = statusLine.offsetHeight;
+    const W = screenRoom().w, strip = statusLine.offsetWidth, h = statusLine.offsetHeight;
     units.style.right = "0";
     const unitsW = units.offsetWidth, beside = strip + unitsW <= W;
     document.body.dataset.units = beside ? "beside" : "above";
@@ -4344,7 +4348,7 @@ const Sky = (() => {
   // fits beside the status strip, centred in its place
   function galleryLayout() {
     const boxes = [...grid.children], n = boxes.length;
-    const aspect = L.cell[0] / TABLE_TOP, W = window.innerWidth, H = window.innerHeight - 2 * PAD - STATUS;
+    const aspect = L.cell[0] / TABLE_TOP, W = screenRoom().w, H = screenRoom().h - 2 * PAD - STATUS;
     const w = Math.min(W - 2 * PAD, H * aspect), h = w / aspect;
     for (const [k, v] of Object.entries({"--zw": w, "--zh": h, "--zfull": w * L.cell[1] / L.cell[0], "--zx": (W - w) / 2, "--zy": PAD + (H - h) / 2, "--pitch": W}))
       grid.style.setProperty(k, `${v}px`);
@@ -4624,9 +4628,14 @@ const Sky = (() => {
   }
 
   let resizing = 0;
-  const relayout = () => { cancelAnimationFrame(resizing); resizing = requestAnimationFrame(layout); };
+  let settling = 0;
+  const relayout = () => {   // (at the next frame, and once more 300 ms on: a browser (Firefox) can report a rotation's size late)
+    cancelAnimationFrame(resizing); resizing = requestAnimationFrame(layout);
+    clearTimeout(settling); settling = setTimeout(() => { cancelAnimationFrame(resizing); layout(); placeCorner(); }, 300);
+  };
   window.addEventListener("resize", relayout);
   window.addEventListener("orientationchange", relayout);
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", relayout);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
   setInterval(refresh, REFETCH_MS);
   refresh();
