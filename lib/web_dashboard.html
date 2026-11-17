@@ -1438,15 +1438,27 @@ const Sky = (() => {
       for (let i = 0; i < W * H; i++) order[next[binOf(starts[i])]++] = i;
     }
     const LIFT = Float32Array.from({length: 257}, (_, j) => (j / 256) ** 0.8);   // (a thin haze still seen: t ** 0.8, looked up)
-    const fogShade = (t, i) => Math.min(FOG.length - 1, Math.floor(LIFT[(t * 256) | 0] * FOG.length + dith[i] - 1));   // (shadeOf, its dither kept)
+    // The fog's shades, finely stepped (FOG_STEP between each two of FOG, and as many from nothing up to the thinnest): the pixel's
+    // level among them dithered only a little (FOG_GRAIN of a step, blue noise: no grid), so it reads as smooth translucency with a
+    // faint grain. fogShade(t, i): the shade (0 to FOG_SHADES.length - 1) at thickness t, or -1 for none; FOG[k] is shade
+    // (k + 1) * FOG_STEP - 1
+    const FOG_STEP = 6, FOG_GRAIN = 0.35;
+    const FOG_SHADES = Array.from({length: FOG.length * FOG_STEP}, (_, j) => {
+      const u = (j + 1) / FOG_STEP;   // (in FOG's own shades: 1 its thinnest, FOG.length its thickest)
+      if (u <= 1) return [...FOG[0], Math.round(FOG_ALPHA[0] * u)];
+      const k = Math.floor(u) - 1, f = u - 1 - k, at = (a) => (f === 0 ? a[k] : a[k] + (a[k + 1] - a[k]) * f);
+      return [...[0, 1, 2].map((c) => Math.round(at(FOG.map((v) => v[c])))), Math.round(at(FOG_ALPHA))];
+    });
+    const fogShade = (t, i) => Math.min(FOG_SHADES.length - 1, Math.floor(LIFT[(t * 256) | 0] * FOG_SHADES.length + 0.5 + FOG_GRAIN * (dith[i] - 0.5)) - 1);
+    const RESIDUE = [FOG_STEP - 1, 2 * FOG_STEP - 1];   // (a streak of fog left in a trail: FOG's two thinnest shades)
     // A trail's looks, each in WET shades (faint to fresh), [colour, alpha at the faintest, at the freshest]: on clear glass a thin wet
     // film, greyish; grime, darker, along its edge here and there; a glint now and then; a tiny droplet left on it, now and then
     // its spark (none in a trail through the fog)
     const WET = 8, FILM = 1, GRIME = 2, GLINT = 3, DROP = 4, SPARK = 5;
     const LOOKS = [[rgb("#8E9DA8"), 8, 34], [rgb("#4C5861"), 22, 66], [WATER[4], 16, 78], [WATER[3], 34, 104], [WATER[4], 60, 150]];
-    const SHOWS = [[0, 0, 0, 0], ...FOG.map((c, s) => [...c, FOG_ALPHA[s]]),
+    const SHOWS = [[0, 0, 0, 0], ...FOG_SHADES,
                    ...LOOKS.flatMap(([c, a, b]) => Array.from({length: WET}, (_, k) => [...c, Math.round(a + (b - a) * k / (WET - 1))]))];
-    const showing = (p, k) => 1 + FOG.length + (p - 1) * WET + k - 1;   // (part p's shade k, 1 to WET)
+    const showing = (p, k) => 1 + FOG_SHADES.length + (p - 1) * WET + k - 1;   // (part p's shade k, 1 to WET)
     // What a pixel shows (an index of SHOWS): nothing, a fog shade, or a trail's look. Through the fog: the fog shown as it is (wiped,
     // coming back), a thin streak of it left here and there down the trail where the bead didn't wipe it clean (smear: its faintest
     // shade, the next in the streak's middle where the fog's thick), never a droplet or a speck. On clear glass
@@ -1458,7 +1470,7 @@ const Sky = (() => {
       if (p >= DROP && wet > 0 && full < FOG_AT && t <= 0.6 * full) return showing(p, clamp(Math.ceil(wet * WET), 1, WET));   // (clear glass only)
       if (t > 0) { const s = fogShade(t, i); if (s >= 0) return 1 + s; }
       if (!listed[i]) return 0;
-      if (full >= FOG_AT) return smear[i] ? 1 + (smear[i] === 255 && full > 0.4 ? 1 : 0) : 0;   // (a streak of residue, or wiped clean)
+      if (full >= FOG_AT) return smear[i] ? 1 + RESIDUE[smear[i] === 255 && full > 0.4 ? 1 : 0] : 0;   // (a streak of residue, or wiped clean)
       const q = wet * (1 - Math.min(1, full / 0.1)), s = thick[i] / 255;   // (clear glass: no fog wiped)
       if (!p || q <= 0.85 * (1 - s)) return 0;
       return showing(p, Math.min(WET, Math.max(1, Math.ceil(q * (0.45 + 0.55 * s) * 1.2 * WET))));
@@ -1911,21 +1923,39 @@ const Sky = (() => {
     // The fog's mean thickness (0-1, as shown): over the window, its middle (the central fifth each way) and its edges (the outer
     // tenth at the sides and the bottom); every other pixel each way. And how even it is, unwiped, inside (the window less its outer
     // sixth): its spread (the standard deviation over the mean) and its gaps (the pixels under half the mean)
-    const fogNow = () => {
+    const fogNow = (grained = false) => {   // (grained: its grain too, see below)
       const sums = {thickness: [0, 0], middle: [0, 0], edge: [0, 0], opacity: [0, 0]}, inner = [];
       if (base) for (let y = 0; y < H; y += 2) for (let x = 0; x < W; x += 2) {
         const i = y * W + x, t = fogOf(i, cover, dense, true), u = x / W, v = y / H;
         const add = (k, by = t) => { sums[k][0] += by; sums[k][1]++; };
         add("thickness");
         const k = t > 0 ? fogShade(t, i) : -1;
-        add("opacity", k < 0 ? 0 : FOG_ALPHA[k] / 255);
+        add("opacity", k < 0 ? 0 : FOG_SHADES[k][3] / 255);
         if (Math.abs(u - 0.5) < 0.2 && Math.abs(v - 0.5) < 0.2) add("middle");
         if (Math.min(u, 1 - u) < 0.1 || v > 0.9) add("edge");
         if (Math.min(u, 1 - u, v, 1 - v) > 1 / 6) inner.push(fogOf(i, cover, dense, false));
       }
+      // (its grain: between each two pixels side by side inside, unwiped, how much the alpha changes (mean, 0-255) and how often
+      // by a whole FOG shade's step or more (jumps); and the same as the fog was dithered before, in FOG's five shades with the
+      // dither's whole amplitude, for comparison)
+      const grainOf = (alphaAt) => {
+        let sum = 0, jumps = 0, n = 0;
+        for (let y = Math.ceil(H / 6); y < H - H / 6; y += 2) {
+          let last = -1;
+          for (let x = Math.ceil(W / 6); x < W - W / 6; x++) {
+            const a = alphaAt(fogOf(y * W + x, cover, dense, false), y * W + x);
+            if (last >= 0) { const d = Math.abs(a - last); sum += d; jumps += d >= 10; n++; }
+            last = a;
+          }
+        }
+        return {mean: sum / Math.max(n, 1), jumps: jumps / Math.max(n, 1)};
+      };
+      const grain = grained && base ? {now: grainOf((t, i) => { const k = t > 0 ? fogShade(t, i) : -1; return k < 0 ? 0 : FOG_SHADES[k][3]; }),
+                            before: grainOf((t, i) => { const k = t > 0 ? Math.min(FOG.length - 1, Math.floor(LIFT[(t * 256) | 0] * FOG.length + dith[i] - 1)) : -1;
+                                                        return k < 0 ? 0 : FOG_ALPHA[k]; })} : null;
       const mean = inner.reduce((s, v) => s + v, 0) / Math.max(inner.length, 1);
       const spread = Math.sqrt(inner.reduce((s, v) => s + (v - mean) ** 2, 0) / Math.max(inner.length, 1)) / Math.max(mean, 1e-9);
-      return {cover, dense, most: FOG_ALPHA[FOG_ALPHA.length - 1] / 255, spread, gaps: inner.filter((v) => v < 0.5 * mean).length, haze: mean,
+      return {cover, dense, most: FOG_ALPHA[FOG_ALPHA.length - 1] / 255, spread, grain, gaps: inner.filter((v) => v < 0.5 * mean).length, haze: mean,
               ...Object.fromEntries(Object.entries(sums).map(([k, [s, n]]) => [k, s / Math.max(n, 1)]))};
     };
     const used = () => { let n = 0; for (const b of all) n += b.still ? TINY_COST : 1; return n; };   // (its particles: a tiny bead a quarter)
@@ -2090,7 +2120,7 @@ const Sky = (() => {
                          const xs = Array.from({length: w + 6}, (_, k) => left - 3 + k).map((x) => clamp(x, 0, W - 1));
                          const m = at(left + (w - 1) / 2, y);
                          return {y, w, left, paused, wet: wetOf(m), mine: !!listed[m] && life[m] === Math.fround(b.life), alpha: xs.map((x) => SHOWS[key[y * W + x]][3]),
-                                 shows: xs.map((x) => key[y * W + x]), fogShades: FOG.length, residue: xs.map((x) => (listed[y * W + x] ? smear[y * W + x] : 0)),
+                                 shows: xs.map((x) => key[y * W + x]), fogShades: FOG_SHADES.length, residueShades: RESIDUE.map((k) => 1 + k), residue: xs.map((x) => (listed[y * W + x] ? smear[y * W + x] : 0)),
                                  life: xs.map((x) => (listed[y * W + x] ? life[y * W + x] : 0)),
                                  fog: xs.map((x) => [fogOf(y * W + x, cover, dense, true), fogOf(y * W + x, cover, dense, false)])};
                        });
@@ -2109,7 +2139,7 @@ const Sky = (() => {
                      marks: () => {
                        let ink = 0, wet = 0, looks = 0;
                        if (layer) { const d = layer.getContext("2d").getImageData(0, 0, W, H).data; for (let i = 3; i < d.length; i += 4) if (d[i]) ink++; }
-                       if (listed) for (let i = 0; i < W * H; i++) { wet += listed[i]; looks += key[i] > FOG.length; }
+                       if (listed) for (let i = 0; i < W * H; i++) { wet += listed[i]; looks += key[i] > FOG_SHADES.length; }
                        return {trails: trails.length, listed: wet, ink, looks, beads: all.length, cover, amount: e.amount};
                      },
                      stray: () => {   // (pixels left wiped, or wet, on the fog's canvas where no trail is any more)
@@ -3423,39 +3453,44 @@ const Sky = (() => {
 
   const DIAL = [240, 203, 138];   // a dial's centre and its ring's radius (the compass's too: the same size, lined up)
   const HUB = 13;                 // a dial's hub, its needle's pivot: its radius (its outline as thin, lw(1.5)); the needle's tail under it
-  // Today's trend (the pressure's: tile.trend, [[minutes since midnight, hPa], ...]) in a little LCD window below the hub, as a cheap
-  // barometer's dot-matrix display: a simple dark rectangle (a shade darker than the dial's face), a thin frame, slightly rounded corners;
-  // inside, a coarse grid of LCD_COLS by LCD_ROWS dots, the unlit ones faint, and one lit dot per hour that has readings (LCD_COLS
-  // columns across the whole day, midnight to midnight: it fills through the day), soft LED blue with a little glow, at the hour's
-  // mean on the day's own scale (its lowest reading the bottom row, its highest the top, at least TREND_SPAN hPa apart, so a still day
-  // reads still); the latest hour's dot the brightest. Under the needle and the hub; no dots with fewer than two readings (the window
-  // stays, dark). LCD: [left, top, right, bottom], the dial's own px, and the dots' inset from the frame
-  const LCD = [194, 221, 286, 253], LCD_PAD = 4, LCD_COLS = 24, LCD_ROWS = 7, TREND_SPAN = 2, DAY_MINUTES = 1440;
-  const LCD_FACE = "#0A0E11", LCD_LED = "#7CD3FF";
-  let lcds = 0;   // (each window's glow its own filter id)
-  function lcdCell(col, row) {   // a dot's centre (col 0 at the left, row 0 at the bottom)
-    const [x0, y0, x1, y1] = LCD, w = (x1 - x0 - 2 * LCD_PAD) / LCD_COLS, h = (y1 - y0 - 2 * LCD_PAD) / LCD_ROWS;
-    return [x0 + LCD_PAD + (col + 0.5) * w, y1 - LCD_PAD - (row + 0.5) * h, Math.min(w, h) * 0.74];
+  // Today's trend (the pressure's: tile.trend, [[minutes since midnight, hPa], ...]) as a patient monitor's trace below the hub: no
+  // window, frame or grid, only a smooth, continuous glowing line (a Catmull-Rom spline through the readings themselves: curved
+  // between them) across the dial's whole inner width, from one side of its coloured ring to the other (midnight at
+  // the left, the next midnight at the right: it grows through the day), in the pressure's mid-band blue-violet (TRACE_INK, its
+  // palette's middle) with a soft glow of the same, and a small bright point at the latest reading in the palette's palest
+  // (TRACE_DOT). Its height the day's own range (the lowest reading at the bottom, the highest at the top, at least TREND_SPAN hPa
+  // apart, so a still day reads still). Under the needle and the hub; nothing drawn with fewer than two readings. TRACE: [left, top,
+  // right, bottom], the dial's own px (between the hub and the unit, clear of the tick numbers either side; its ends just inside the
+  // ring's inner edge, radius 108)
+  const TRACE = [140, 219, 340, 237], TREND_SPAN = 2, DAY_MINUTES = 1440;
+  const TRACE_INK = "#8087F5", TRACE_DOT = "#C5CAFA";
+  let traces = 0;   // (each trace's glow its own filter id)
+  function traceAt(m, v, lo, hi) {   // a reading's place on the trace
+    const [x0, y0, x1, y1] = TRACE;
+    return [x0 + Math.min(Math.max(m / DAY_MINUTES, 0), 1) * (x1 - x0), y1 - (v - lo) / (hi - lo) * (y1 - y0)];
   }
-  function trendWindow(group, ink) {   // the window and its unlit dots, once; the lit ones (trendLine's) drawn over them
-    const [x0, y0, x1, y1] = LCD;
-    el("rect", {x: x0, y: y0, width: x1 - x0, height: y1 - y0, rx: 3, fill: LCD_FACE, stroke: ink(L.soft), "stroke-width": 1.2,
-                "stroke-opacity": 0.55, class: "window"}, group);
-    let d = "";
-    for (let c = 0; c < LCD_COLS; c++) for (let r = 0; r < LCD_ROWS; r++) {
-      const [x, y, s] = lcdCell(c, r);
-      d += `M${(x - s / 2).toFixed(2)},${(y - s / 2).toFixed(2)}h${s.toFixed(2)}v${s.toFixed(2)}h${(-s).toFixed(2)}z`;
+  function smooth(pts) {   // a path through the points (x rising): a Catmull-Rom spline, as a C segment between each two, its
+    const n = pts.length, f = (v) => v.toFixed(2);   // control points kept to the trace's height (so the curve never leaves it)
+    const y = (v) => Math.min(Math.max(v, TRACE[1]), TRACE[3]);
+    let path = `M${f(pts[0][0])},${f(pts[0][1])}`;
+    for (let i = 0; i < n - 1; i++) {
+      const p0 = pts[Math.max(i - 1, 0)], [xa, ya] = pts[i], [xb, yb] = pts[i + 1], p3 = pts[Math.min(i + 2, n - 1)];
+      const c1 = [xa + (xb - p0[0]) / 6, y(ya + (yb - p0[1]) / 6)], c2 = [xb - (p3[0] - xa) / 6, y(yb - (p3[1] - ya) / 6)];
+      path += `C${f(Math.min(c1[0], xb))},${f(c1[1])} ${f(Math.max(c2[0], xa))},${f(c2[1])} ${f(xb)},${f(yb)}`;
     }
-    el("path", {d, fill: ink(LCD_LED), "fill-opacity": 0.07, class: "unlit"}, group);
-    const id = `lcd-glow-${++lcds}`, f = el("filter", {id, x: "-50%", y: "-50%", width: "200%", height: "200%"}, el("defs", {}, group));
-    el("feGaussianBlur", {stdDeviation: 0.9, result: "glow"}, f);
+    return path;
+  }
+  function traceGlow(group, ink) {   // the glow and the trace's group, once; its line and point (trendLine's) drawn in it
+    const id = `trace-glow-${++traces}`, f = el("filter", {id, x: "-10%", y: "-60%", width: "120%", height: "220%"}, el("defs", {}, group));
+    el("feGaussianBlur", {stdDeviation: 1.6, result: "glow"}, f);
     const merge = el("feMerge", {}, f);
+    el("feMergeNode", {in: "glow"}, merge);
     el("feMergeNode", {in: "glow"}, merge);
     el("feMergeNode", {in: "SourceGraphic"}, merge);
     return el("g", {class: "lit", filter: `url(#${id})`}, group);
   }
   function trendLine(group, pts, ink) {
-    const lit = group.querySelector(":scope > g.lit") || trendWindow(group, ink);
+    const lit = group.querySelector(":scope > g.lit") || traceGlow(group, ink);
     lit.replaceChildren();
     const got = (pts || []).filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
     group.dataset.points = String(got.length);
@@ -3463,20 +3498,11 @@ const Sky = (() => {
     const values = got.map((p) => p[1]);
     let lo = Math.min(...values), hi = Math.max(...values);
     if (hi - lo < TREND_SPAN) { const mid = (hi + lo) / 2; lo = mid - TREND_SPAN / 2; hi = mid + TREND_SPAN / 2; }
-    const hours = new Map();   // column: [sum, count], in the order they come (oldest first)
-    for (const [m, v] of got) {
-      const col = Math.min(Math.max(Math.floor(m / DAY_MINUTES * LCD_COLS), 0), LCD_COLS - 1), h = hours.get(col) || [0, 0];
-      h[0] += v; h[1] += 1;
-      hours.set(col, h);
-    }
-    const latest = Math.min(Math.max(Math.floor(got[got.length - 1][0] / DAY_MINUTES * LCD_COLS), 0), LCD_COLS - 1);
-    for (const [col, [sum, count]] of hours) {
-      const row = Math.min(Math.max(Math.round((sum / count - lo) / (hi - lo) * (LCD_ROWS - 1)), 0), LCD_ROWS - 1);
-      const [x, y, s] = lcdCell(col, row), last = col === latest;
-      el("rect", {x: (x - s / 2).toFixed(2), y: (y - s / 2).toFixed(2), width: s.toFixed(2), height: s.toFixed(2), rx: 0.4,
-                  fill: ink(last ? "#E6F7FF" : LCD_LED), "fill-opacity": last ? 1 : 0.72, class: last ? "dot latest" : "dot",
-                  "data-col": col, "data-row": row}, lit);
-    }
+    const at = got.map(([m, v]) => traceAt(m, v, lo, hi));
+    el("path", {d: smooth(at), fill: "none", stroke: ink(TRACE_INK), "stroke-width": 1.8, "stroke-linecap": "round",
+                "stroke-linejoin": "round", class: "line"}, lit);
+    const [x, y] = at[at.length - 1];
+    el("circle", {cx: x.toFixed(2), cy: y.toFixed(2), r: 2.2, fill: ink(TRACE_DOT), class: "latest"}, lit);
   }
   function dial(svg, tile, ink) {
     const [cx, cy] = DIAL, angle = (v) => L.start - L.sweep * share(tile, v);
@@ -3494,7 +3520,7 @@ const Sky = (() => {
       const [x, y] = polar(cx, cy, L.label_radius, angle(tick));
       text(svg, x, y, tickText(tick), 17, ink(L.soft));
     }
-    text(svg, cx, cy + (tile.trend === undefined ? 64 : 68), tile.unit, 18, ink(L.soft));   // (the pressure's a little lower: its LCD above)
+    text(svg, cx, cy + 64, tile.unit, 18, ink(L.soft));
     const trend = tile.trend === undefined ? null : el("g", {class: "trend", "pointer-events": "none"}, svg);   // (the pressure's: under
     if (trend) trendLine(trend, tile.trend, ink);                                                                // the needle and hub)
     const needle = el("polygon", {fill: ink(L.needle)}, svg);

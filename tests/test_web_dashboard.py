@@ -45,6 +45,7 @@ from lib.service.context import Context
 from lib.service.names import Catalogue
 from lib.ecowitt.reads import directions_on, pressure_on
 from lib.gauge_look import CHIPS, MAX_CHIP, START, SWEEP
+from lib.ecowitt.dashboard import PRESSURE
 from lib.web_dashboard import (DESCRIPTION, ICON, ICON_URL, PAGE, RED_HANDS, WebDashboard, air_readings_of, rain_rate_of, readings_of,
                                today_highs)
 from tests.chart_samples import _air, _station
@@ -845,7 +846,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert all(c == rgb(MAX_CHIP) for t, heads in others.items() if t != "Wind" for n, c in heads if n.endswith("Max")), others
         assert hands["Wind"]["daily"] == [f"{v:.0f}" for v in wind.rows["Daily"]] and wind.rows["Daily"][1] >= 12, (hands["Wind"], wind)
         # every round dial's hub small (about half the old 25), its outline as thin, its needle pivoting on its centre; the compass's
-        # smaller still; the pressure in whole hPa, its reading and its table; today's trend in an LCD window below its hub, no other's
+        # smaller still; the pressure in whole hPa, its reading and its table; today's trend as a glowing trace below its hub, no other's
         dials = got["dials"]
         assert {d["kind"] for d in dials.values()} == {"dial", "compass"} and len(dials) >= 6, dials
         for title, d in dials.items():
@@ -859,7 +860,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert re.fullmatch(r"\d{3,4}", p["reading"]) and p["figures"] and all(re.fullmatch(r"\d{3,4}|-|", f) for f in p["figures"]), p
         trend_drawn(p, pressure_day(60), name)
         z = got["pressureZoomed"]
-        assert z["zoomed"] and z["trend"]["dots"] == p["trend"]["dots"] and z["hub"] == p["hub"], (name, z)
+        assert z["zoomed"] and z["trend"]["line"]["d"] == p["trend"]["line"]["d"] and z["trend"]["dot"] == p["trend"]["dot"] and z["hub"] == p["hub"], (name, z)
         assert z["trend"]["drawnWidth"] / z["trend"]["tileWidth"] == pytest.approx(p["trend"]["drawnWidth"] / p["trend"]["tileWidth"], rel=0.05)
         assert z["trend"]["tileWidth"] > p["trend"]["tileWidth"], (name, z)
         assert (shots / f"dashboard-{name}-pressure.png").exists()
@@ -877,7 +878,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     c = after["compass"]
     assert (c["label"], c["reading"], c["turn"]) == ("Wind direction 300° WNW", "300° WNW", "rotate(300.00 240 203)"), c
     rose_drawn(c, ROSE_LATER)                                                     # (today's rose redrawn in place with it)
-    trend_drawn(before["pressure"], pressure_day(60), "live, before")              # ... and the pressure's LCD grown, in place
+    trend_drawn(before["pressure"], pressure_day(60), "live, before")              # ... and the pressure's trace grown, in place
     trend_drawn(after["pressure"], pressure_day(90), "live, after")
     assert after["pressure"]["same"], after["pressure"]
     turns = c["turns"]
@@ -907,48 +908,52 @@ def pressure_day(n: int) -> list[tuple[float, float]]:
     return [(round(so_far * i / (n - 1), 1), round(1015 - 6 * math.sin(math.pi * i / (n - 1)) + (i % 3) * 0.1, 1)) for i in range(n)]
 
 
-LCD, LCD_PAD, LCD_COLS, LCD_ROWS = (194, 221, 286, 253), 4, 24, 7   # the pressure's LCD window (the page's): [left, top, right, bottom]
+TRACE = (140, 219, 340, 237)   # the pressure's trace (the page's): [left, top, right, bottom], the dial's own px
+TRACE_INK, TRACE_DOT = PRESSURE[2], PRESSURE[0]   # (the pressure's mid-band blue-violet, #8087F5; its palest, #C5CAFA)
 
 
 def trend_drawn(p: dict, readings: list[tuple[float, float]], name: str):
-    """The pressure's trend in its LCD window (dialsLook's): a small dark rectangle (darker than the dial's face, L.bg), a thin frame,
-    slightly rounded corners, below the hub and clear of the unit ("hPa"), the reading and the tick numbers, inside the ring; a coarse
-    grid of LCD_COLS by LCD_ROWS faint unlit dots; one lit, glowing dot per hour with readings, its column the hour (midnight at the left,
-    the next at the right), its row the hour's mean on the day's own range (at least 2 hPa: the lowest reading the bottom row, the
-    highest the top); the latest hour's dot the brightest; under the needle and the hub."""
+    """The pressure's trend as a monitor's trace (dialsLook's): no window, frame, grid or unlit dots, only one smooth, continuous
+    line (a single path of cubic curves, one between each two readings, through the readings themselves) across the dial's whole
+    inner width (TRACE: its ends just inside the coloured ring's inner edge; midnight at the left, the next at the right), each
+    reading's x its time of day and its y its value on the day's own range (at least 2 hPa: the lowest at the bottom, the highest at
+    the top); in the pressure's mid-band blue-violet with a soft glow of it (a blur merged under the line), a small bright point at
+    the latest reading in the palette's palest; below the hub, clear of the unit ("hPa"), the reading and the tick numbers; under the
+    needle and the hub."""
     t = p["trend"]
-    assert t["given"] == len(readings), (name, t)
-    w = t["window"]
-    assert w["box"] == pytest.approx(list(LCD)) and 2 <= w["rx"] <= 4 and w["strokeWidth"] <= 1.5, (name, w)
-    assert sum(int(c) for c in re.findall(r"\d+", w["fill"])) < sum(int(look()["bg"][i:i + 2], 16) for i in (1, 3, 5)), (name, w)
-    assert w["stroke"] == rgb(look()["soft"]) and t["unlit"] == LCD_COLS * LCD_ROWS and t["glow"], (name, t)
-    left, top, right, bottom = LCD
-    # below the hub; clear of the unit's and the reading's boxes (the font's line boxes: the unit's centre 30 px or more above the
-    # reading's, as before) and of the tick numbers'
-    assert t["hubBottom"] < top and bottom < t["unit"][1] and bottom < t["reading"][1], (name, t)
-    assert (t["reading"][1] + t["reading"][3]) / 2 - (t["unit"][1] + t["unit"][3]) / 2 >= 30, (name, t)
-    assert all(x1 < left or x0 > right or y1 < top or y0 > bottom for x0, y0, x1, y1 in t["ticks"]), (name, t)
-    assert all(math.hypot(x - 240, y - 203) < 138 - 4 for x in (left, right) for y in (top, bottom)), (name, t)   # (inside the ring)
+    assert t["given"] == len(readings) and t["others"] == 0, (name, t)
+    line, dot = t["line"], t["dot"]
+    assert line["subpaths"] == 1 and line["curves"] == len(readings) - 1, (name, line["d"][:200])   # one continuous curve
+    assert line["stroke"] == rgb(TRACE_INK) == "rgb(128, 135, 245)" and line["fill"] == "none" and 1 <= line["width"] <= 2.5, (name, line)
+    assert t["glow"] and t["glow"]["blur"] >= 1 and "SourceGraphic" in t["glow"]["merge"] and t["glow"]["merge"].count("glow") >= 1, (name, t)
+    left, top, right, bottom = TRACE
     values = [v for _, v in readings]
     lo, hi = min(values), max(values)
     if hi - lo < 2:
         lo, hi = (lo + hi) / 2 - 1, (lo + hi) / 2 + 1
-    hours: dict[int, list[float]] = {}
-    for m, v in readings:
-        hours.setdefault(min(int(m / 1440 * LCD_COLS), LCD_COLS - 1), []).append(v)
-    want = [(c, round((sum(vs) / len(vs) - lo) / (hi - lo) * (LCD_ROWS - 1))) for c, vs in hours.items()]
-    assert [(d["col"], d["row"]) for d in t["dots"]] == want, (name, t["dots"], want)
-    cw, rh = (right - left - 2 * LCD_PAD) / LCD_COLS, (bottom - top - 2 * LCD_PAD) / LCD_ROWS
-    for d in t["dots"]:                                                       # each where its hour and value put it, in the window
-        assert d["centre"] == pytest.approx([left + LCD_PAD + (d["col"] + 0.5) * cw, bottom - LCD_PAD - (d["row"] + 0.5) * rh], abs=0.02), d
-        assert left < d["centre"][0] - d["size"] / 2 and d["centre"][0] + d["size"] / 2 < right, d
-        assert top < d["centre"][1] - d["size"] / 2 and d["centre"][1] + d["size"] / 2 < bottom, d
-    latest = [d for d in t["dots"] if d["latest"]]
-    assert len(latest) == 1 and latest[0]["col"] == want[-1][0] == min(int(readings[-1][0] / 1440 * LCD_COLS), LCD_COLS - 1), (name, t)
-    assert all(d["opacity"] < latest[0]["opacity"] for d in t["dots"] if not d["latest"]), (name, t)            # the brightest
-    assert t["dot"] == latest[0]["centre"] and t["points"] == [d["centre"] for d in t["dots"]], (name, t)
+    want = [(left + m / 1440 * (right - left), bottom - (v - lo) / (hi - lo) * (bottom - top)) for m, v in readings]
+    numbers = [float(v) for v in re.findall(r"-?[\d.]+", line["d"])]
+    anchors = [numbers[:2]] + [numbers[k + 4:k + 6] for k in range(2, len(numbers), 6)]   # (M x,y; each C's end point)
+    assert len(anchors) == len(want) and sum(anchors, []) == pytest.approx(sum(map(list, want), []), abs=0.01), (name, anchors[:5], want[:5])
+    assert line["box"][0] == pytest.approx(left, abs=0.01) if readings[0][0] == 0 else line["box"][0] > left, (name, line["box"])
+    along = line["along"]                                                     # (smooth and unbroken, in its band, left to right)
+    assert len(along) > 20 and all(math.dist(a, b) <= 2.01 for a, b in zip(along, along[1:])), (name, along[:5])
+    assert all(left - 0.5 <= x <= right + 0.5 and top - 0.5 <= y <= bottom + 0.5 for x, y in along), (name, line["box"])
+    turns = [math.atan2(b[1] - a[1], b[0] - a[0]) for a, b in zip(along, along[1:])]   # (curved: its direction changing gradually)
+    assert max(abs(b - a) for a, b in zip(turns, turns[1:])) < 1.2, (name, max(abs(b - a) for a, b in zip(turns, turns[1:])))
+    # the whole inner width: its ends (midnight and the next) just inside the ring's coloured band's inner edge (radius 108), at the
+    # trace's middle height
+    mid = (top + bottom) / 2
+    for x in (left, right):
+        assert 100 <= math.hypot(x - 240, mid - 203) < look()["ring_outer"] - look()["band_width"], (name, x)
+    assert dot["centre"] == pytest.approx(list(want[-1]), abs=0.01) and dot["fill"] == rgb(TRACE_DOT) and 1.5 <= dot["r"] <= 3, (name, dot)
+    # below the hub; clear of the unit's and the reading's boxes (the font's line boxes: the unit's centre 30 px or more above the
+    # reading's, as before) and of the tick numbers'
+    x0, y0, x1, y1 = line["box"]
+    assert t["hubBottom"] < y0 and y1 + 1 < t["unit"][1] and y1 + 1 < t["reading"][1], (name, t["hubBottom"], line["box"], t["unit"])
+    assert (t["reading"][1] + t["reading"][3]) / 2 - (t["unit"][1] + t["unit"][3]) / 2 >= 30, (name, t)
+    assert all(tx1 < left or tx0 > right or ty1 < top - 1 or ty0 > bottom + 1 for tx0, ty0, tx1, ty1 in t["ticks"]), (name, t["ticks"])
     assert t["order"][0] < t["order"][1] < t["order"][2], (name, t)                        # under the needle, then the hub
-    assert len({d["fill"] for d in t["dots"] if not d["latest"]}) == 1 and t["dots"][0]["fill"] != rgb(look()["needle"]), (name, t)
 
 
 def limit_mark(h, name, title):
@@ -1001,8 +1006,7 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
     after, frames = got["after"], got["frames"]
     assert got["errors"] == [] and got["same_tile"], got                         # moved in place: the same tile, not drawn again
     trend = got["pressure"]["trend"]                                             # (the pressure's trend: one reading or none, no line)
-    assert trend["given"] == (1 if comes else 0) and trend["points"] == [] and trend["dot"] is None, trend   # (its window there, dark)
-    assert trend["window"]["box"] == pytest.approx(list(LCD)) and trend["unlit"] == LCD_COLS * LCD_ROWS, trend
+    assert trend["given"] == (1 if comes else 0) and trend["line"] is None and trend["dot"] is None and trend["others"] == 0, trend   # (nothing)
     numbers = [float(f["number"]) for f in frames]
     opacities = [f["opacity"] for f in frames]
     if comes:
@@ -1918,11 +1922,12 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             moves = [sum(a != b for a, b in zip(edge, edge[1:])) for edge in (t["lefts"], t["rights"])]
             assert len(set(t["lefts"] + t["rights"])) >= 2 and sum(moves) >= 0.1 * len(t["lefts"]), (name, t)
             assert len(set(t["widths"])) >= 2, (name, t)
-            # (clean inside: no droplet, glint or other trail's look in it, only the fog's faintest two shades as residue; and no
+            # (clean inside: no droplet, glint or other trail's look in it, only the fog's faint shades (FOG's two thinnest at most:
+            # residueShades, the residue's own) as residue or as the fog coming back; and no
             # dots: whatever shows inside it, not touching the fog beside it, is a streak of residue down it (3 rows or more, 2 px
             # wide at most, taller than wide), never a lone pixel or a small blob)
             inside = t["inside"]
-            assert inside["odd"] == [] and all(set(d["shows"]) <= {1, 2} for d in inside["patches"]), (name, t["id"], inside)
+            assert inside["odd"] == [] and all(1 <= k <= inside["residueShades"][1] for d in inside["patches"] for k in d["shows"]), (name, t["id"], inside)
             dots = [d for d in inside["patches"] if d["tall"] < 3 or d["wide"] > 2 or d["tall"] <= d["wide"]]
             assert dots == [], (name, t["id"], dots)
         # (a little streaky residue in them all told: some, under a tenth of the wiped px)
@@ -1939,9 +1944,9 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert all(t["crispTill"] is not None and t["crispTill"] < 0.25 * t["lasted"] for t in refog), refog
     assert all(t["fog"][0] == t["fog"][1] > 0 for t in refog), refog
     # (as it was picked, in the middle of the trail's row, fresh: wiped clear mostly; here and there a streak of the fog left
-    # unwiped (its two faintest shades), no more: no droplet left in it)
+    # unwiped (FOG's two faintest shades, or the fine ones between and below them), no more: no droplet left in it)
     assert sum(t["look"] == [0, 0, 0, 0] for t in refog) >= 0.5 * len(refog), refog
-    assert all(t["look"] in ([0, 0, 0, 0], [50, 60, 67, 56], [74, 85, 92, 69]) for t in refog), refog
+    assert all(t["look"] == [0, 0, 0, 0] or ([50, 60, 67] <= t["look"][:3] <= [74, 85, 92] and t["look"][3] <= 69) for t in refog), refog
     # ... light (91 %): a thinner fog than heavy (100 %), the fog first all the same; its tiny ones condensing a little slower (0.95
     # of MISTING, heavy 1.35) and swelling slower on its thinner fog (so more of them stay tiny a while: heavy's glass mostly small
     # beads by then, a small one a whole particle of the budget, a tiny one a quarter); far fewer running
@@ -1956,6 +1961,13 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert light["showing"]["running"] < 0.5 * heavy["showing"]["running"], (light["showing"], heavy["showing"])
     # the fog dithered irregularly: no grid in its pixels (as gridPeak sees it: under 100; ordered, about 420)
     assert heavy["grid"] < 100, heavy["grid"]
+    # ... and only faintly: in fine steps (6 between each two of FOG's 5 shades), dithered a third of a step, it reads as smooth
+    # translucency with a faint grain: between pixels side by side, the alpha changing far less than in FOG's 5 shades dithered
+    # whole, as before (about 1.5 of 255 against about 5), and hardly ever by a whole shade of those (under 1 %; before, about a
+    # third of the time)
+    for fog in (light["fog"], heavy["fog"]):
+        now, before = fog["grain"]["now"], fog["grain"]["before"]
+        assert now["mean"] < 0.4 * before["mean"] and now["jumps"] < 0.01 and before["jumps"] > 0.1, fog["grain"]
     assert light["first"]["after"] >= 2 and light["first"]["fog"] > 0.1 and light["first"]["formed"]["edge"] > 0.1, light["first"]
     # ... then heavy rain on it too (3 minutes): its splashes' droplets left on the fog as tiny beads, a few a landing, staying there
     # (snapping, swept up, growing with the fog as tiny ones do) well past the 40 s they'd last on clear glass, never drying away on
