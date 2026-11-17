@@ -28,7 +28,7 @@ from .specs import Dashboard, Tile
 ROWS = dict(zip(PERIODS, ("today", "month", "year")))   # a tile's rows, as current's context names them
 STATION = "station"
 INDOOR = "indoor"        # the indoor sensor's readings' group (current's, the live reading's): Indoor temperature, Indoor humidity
-FIRST = ("Temperature", "Humidity", "Atmospheric pressure", "Rain", "UV index", "US AQI")   # the dashboard's first tiles, in this order;
+FIRST = ("Temperature", "Humidity", "Atmospheric pressure", "Rain", "UV index", "AQI")   # the dashboard's first tiles, in this order;
 # the rest follow in their own order (the weather station's, then the air sensor's)
 PER_ROW = 3              # tiles to a row, up to ROWS_OF_THREE rows; more tiles: the columns that make them largest on a square
 ROWS_OF_THREE = 4

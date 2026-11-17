@@ -339,16 +339,16 @@ async def test_a_station_that_gives_nothing_sends_its_report_without_gauges(serv
 def test_the_air_gauges_scales_and_bands_are_the_epas_and_the_us_co2_guidance():
     from lib.airgradient.dashboard import AIR_GAUGES, EPA, EPA_NAMES
     g = {x.title: x for x in AIR_GAUGES}
-    assert list(g) == ["US AQI", "PM2.5", "PM10", "PM1", "CO₂", "VOC index", "NOx index"]               # no own temperature
+    assert list(g) == ["AQI", "PM2.5", "PM10", "PM1", "CO₂", "VOC index", "NOx index"]               # no own temperature
     assert (g["PM1"].bounds, g["PM1"].colours, g["PM1"].names) == (g["PM2.5"].bounds, g["PM2.5"].colours, g["PM2.5"].names)   # PM2.5's bands
     assert EPA == ("#00E400", "#FFFF00", "#FF7E00", "#FF0000", "#8F3F97", "#7E0023")
     assert EPA_NAMES == ("Good", "Moderate", "Unhealthy for Sensitive Groups", "Unhealthy", "Very Unhealthy", "Hazardous")
-    assert g["US AQI"].bounds == (0, 50, 100, 150, 200, 300, 500) and g["US AQI"].colours == EPA and g["US AQI"].aqi
+    assert g["AQI"].bounds == (0, 50, 100, 150, 200, 300, 500) and g["AQI"].colours == EPA and g["AQI"].aqi
     assert g["PM2.5"].bounds == (0, 9.0, 35.4, 55.4, 125.4, 225.4, 325.4) and g["PM2.5"].colours == EPA   # the 2024 breakpoints
     assert g["PM10"].bounds == (0, 54, 154, 254, 354, 424, 604) and g["PM10"].colours == EPA
     assert g["CO₂"].bounds == (400, 800, 1000, 1500, 2000, 2500)
     for title, readings in {
-            "US AQI": ((0, 0), (50, 0), (51, 1), (100, 1), (101, 2), (150, 2), (151, 3), (200, 3), (201, 4), (300, 4), (301, 5), (480, 5)),
+            "AQI": ((0, 0), (50, 0), (51, 1), (100, 1), (101, 2), (150, 2), (151, 3), (200, 3), (201, 4), (300, 4), (301, 5), (480, 5)),
             "PM2.5": ((0, 0), (9.0, 0), (9.1, 1), (35.4, 1), (35.5, 2), (55.4, 2), (55.5, 3), (125.4, 3), (125.5, 4), (225.4, 4),
                       (225.5, 5), (500, 5)),
             "PM10": ((54, 0), (55, 1), (154, 1), (155, 2), (254, 2), (255, 3), (354, 3), (355, 4), (424, 4), (425, 5), (700, 5))}.items():
@@ -375,8 +375,8 @@ def test_the_air_sensors_tiles_come_after_the_stations_with_their_aqi_bands_and_
     values = {"pm2_5_max": {date(2026, 10, 2): 70.0, TODAY: 30.0}, "pm2_5_min": {TODAY: 5.0}, "co2_max": {TODAY: 900}, "co2_min": {TODAY: 410}}
     sheet = gauge_sheet.sheet(air_result(latest, values))
     tiles = {t.title: t for t in sheet.tiles}
-    assert list(tiles) == ["Temperature", "US AQI", "PM2.5", "PM10", "PM1", "CO₂"]              # no VOC nor NOx sent: left out
-    aqi = tiles["US AQI"]
+    assert list(tiles) == ["Temperature", "AQI", "PM2.5", "PM10", "PM1", "CO₂"]              # no VOC nor NOx sent: left out
+    aqi = tiles["AQI"]
     assert (aqi.value, aqi.band, aqi.kind, aqi.low, aqi.high, aqi.columns) == (pm25_aqi(40.0)[0], "Unhealthy for Sensitive Groups", "dial",
                                                                                0, 500, ("Max",))
     assert aqi.rows["Daily"] == (pm25_aqi(40.0)[0],) and aqi.rows["Monthly"] == (pm25_aqi(70.0)[0],)   # (the higher of each; no Min)
@@ -388,7 +388,7 @@ def test_the_air_sensors_tiles_come_after_the_stations_with_their_aqi_bands_and_
     from tests.chart_samples import _air, _station
     live, days, today = _station()
     columns = {t.title: t.columns for t in gauge_sheet.sheet(gauges_result(live, days, today, *_air(today))).tiles}
-    assert {t for t, c in columns.items() if c == ("Max",)} == {"US AQI", "PM2.5", "PM10", "PM1", "UV index", "Rain rate", "Solar radiation"}
+    assert {t for t, c in columns.items() if c == ("Max",)} == {"AQI", "PM2.5", "PM10", "PM1", "UV index", "Rain rate", "Solar radiation"}
     assert columns["CO₂"] == columns["Temperature"] == ("Max", "Min") and all(len(r) == len(t.columns) for t in sheet.tiles for r in t.rows.values())
     assert [t.title for t in gauge_sheet.sheet(air_result(None)).tiles] == ["Temperature"]   # no air sensor: no air gauges
 
@@ -401,13 +401,13 @@ def test_the_aqi_and_pm25_tiles_name_the_band_their_needle_is_in_on_a_rise():
     from lib.gauge_look import share
     latest = {"pm2_5": {"value": 40.0, "unit": "µg/m³", "aqi_us": pm25_aqi(8.0)[0], "band": "good"}}   # (as latest() gives it after 8.0)
     tiles = {t.title: t for t in gauge_sheet.sheet(air_result(latest)).tiles}
-    aqi, pm = tiles["US AQI"], tiles["PM2.5"]
+    aqi, pm = tiles["AQI"], tiles["PM2.5"]
     assert (aqi.value, aqi.band, pm.value, pm.band) == (pm25_aqi(40.0)[0], "Unhealthy for Sensitive Groups", 40.0,
                                                         "Unhealthy for Sensitive Groups")
     assert 2 / 6 <= share(pm, pm.value) < 3 / 6 and 2 / 6 <= share(aqi, aqi.value) < 3 / 6   # both needles in the orange band
     for value in (4.0, 9.1, 20.0, 35.5, 45.0, 55.5, 90.0, 125.5, 175.0, 225.5, 300.0):   # each band, and just over each edge
         tiles = {t.title: t for t in gauge_sheet.sheet(air_result({"pm2_5": {"value": value, "unit": "µg/m³"}})).tiles}
-        pm, aqi = tiles["PM2.5"], tiles["US AQI"]
+        pm, aqi = tiles["PM2.5"], tiles["AQI"]
         assert pm.band == aqi.band == EPA_NAMES[min(int(share(pm, value) * 6), 5)] == EPA_NAMES[min(int(share(aqi, aqi.value) * 6), 5)]
 
 
@@ -416,13 +416,13 @@ def test_the_us_aqi_is_the_higher_of_pm25s_and_pm10s_and_says_when_pm10_sets_it(
     PM10 sets it. PM2.5 the higher: its band alone, as ever. PM10 with no PM2.5 still gives a US AQI."""
     from lib.airgradient.metrics import pm10_aqi, pm25_aqi
     dust = {"pm2_5": {"value": 5.0, "unit": "µg/m³"}, "pm10": {"value": 200.0, "unit": "µg/m³"}}
-    aqi = {t.title: t for t in gauge_sheet.sheet(air_result(dust)).tiles}["US AQI"]
+    aqi = {t.title: t for t in gauge_sheet.sheet(air_result(dust)).tiles}["AQI"]
     assert (aqi.value, aqi.band) == (pm10_aqi(200.0)[0], "Unhealthy for Sensitive Groups (PM10)")
     smoke = {"pm2_5": {"value": 40.0, "unit": "µg/m³"}, "pm10": {"value": 50.0, "unit": "µg/m³"}}
-    aqi = {t.title: t for t in gauge_sheet.sheet(air_result(smoke)).tiles}["US AQI"]
+    aqi = {t.title: t for t in gauge_sheet.sheet(air_result(smoke)).tiles}["AQI"]
     assert (aqi.value, aqi.band) == (pm25_aqi(40.0)[0], "Unhealthy for Sensitive Groups")
     alone = {t.title: t for t in gauge_sheet.sheet(air_result({"pm10": {"value": 60.0, "unit": "µg/m³"}})).tiles}
-    assert (alone["US AQI"].value, alone["US AQI"].band) == (pm10_aqi(60.0)[0], "Moderate (PM10)")
+    assert (alone["AQI"].value, alone["AQI"].band) == (pm10_aqi(60.0)[0], "Moderate (PM10)")
 
 
 def test_a_tile_with_no_reading_is_dimmed_at_its_floor_in_its_json():
@@ -433,7 +433,7 @@ def test_a_tile_with_no_reading_is_dimmed_at_its_floor_in_its_json():
                                             {"humidity_max": {TODAY: 80.0}, "humidity_min": {TODAY: 50.0}, "pressure_max": {TODAY: 1020.0}},
                                             TODAY, latest, values))
     tiles = {t.title: t for t in sheet.tiles}
-    humidity, co2, aqi = tiles["Humidity"], tiles["CO₂"], tiles["US AQI"]
+    humidity, co2, aqi = tiles["Humidity"], tiles["CO₂"], tiles["AQI"]
     assert humidity.value is None and co2.value is None and co2.band is None                    # figures, no reading now
     assert (floor(humidity), floor(co2), floor(tiles["Atmospheric pressure"]), floor(aqi)) == (0, 400, 950, 0)
     assert shown(co2) == 400 and share(co2, shown(co2)) == 0 and share(humidity, 0) == 0

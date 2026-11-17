@@ -156,10 +156,10 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     assert got["tiles"] == [{**tile_json(t), **({"rose": []} if t.kind == "compass" else {})} for t in sheet.tiles]   # (no file: no rose)
     assert got["as_of"] == AS_OF and got["look"] == look()
     titles = [t["title"] for t in got["tiles"]]
-    assert titles[:6] == ["Temperature", "Humidity", "Atmospheric pressure", "Rain", "UV index", "US AQI"]   # gauge_sheet.FIRST
+    assert titles[:6] == ["Temperature", "Humidity", "Atmospheric pressure", "Rain", "UV index", "AQI"]   # gauge_sheet.FIRST
     assert titles[-6:] == ["PM2.5", "PM10", "PM1", "CO₂", "VOC index", "NOx index"]       # the rest in their order: the air sensor's after
     tiles = {t["title"]: t for t in got["tiles"]}
-    aqi, nox = tiles["US AQI"], tiles["NOx index"]
+    aqi, nox = tiles["AQI"], tiles["NOx index"]
     assert (aqi["value"], aqi["band"], aqi["bounds"], aqi["faded"]) == (56, "Moderate", [0, 50, 100, 150, 200, 300, 500], False)
     assert (nox["value"], nox["faded"], nox["floor"], nox["rows"]["Daily"]) == (None, True, 1, [12, 1])   # no reading now: dimmed
     assert tiles["Atmospheric pressure"]["floor"] == 950 and tiles["Temperature"]["floor"] == 0
@@ -972,6 +972,9 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     # wind's direction, after Wind); an
     # absent tile's place and a later stage's keys kept
     assert got["corrupt"] == default
+    # a layout saved while the AQI tile was titled "US AQI": carried over to "AQI", the tile moved or hidden as it was left
+    assert "AQI" in default and got["renamedMoved"] == ["AQI"] + [t for t in default if t != "AQI"]
+    assert got["renamedHidden"] == [t for t in default if t not in ("AQI", "Rain")]
     saved = [t for t in default if t not in ("Rain", "Temperature", "Wind direction")] + ["Temperature"]   # (saved before the compass)
     assert got["newTile"] == moved(moved(saved, "Rain", "Atmospheric pressure"), "Wind direction", "Wind")
     assert got["keptOthers"] == {"order": moved(got["newTile"], "Humidity", "Rain") + ["Gone sensor"], "hidden": ["Gone sensor"], "later": True}
@@ -1042,7 +1045,7 @@ async def test_fewer_tiles_grow_evenly_to_fill_the_window_and_never_shrink_below
     every = titles_of(station)
     but = lambda *keep: [t for t in every if t not in keep]
     cases = {"desktop-all": (1920, 1080, []), "desktop-one": (1920, 1080, but("Temperature")),
-             "tablet-all": (1024, 768, []), "tablet-three": (1024, 768, but("Temperature", "Wind", "US AQI")),
+             "tablet-all": (1024, 768, []), "tablet-three": (1024, 768, but("Temperature", "Wind", "AQI")),
              "tablet-many": (1024, 768, ["Rain", "Wind"]),
              "phone-all": (390, 844, []), "phone-one": (390, 844, but("Humidity")), "phone-eight": (390, 844, every[:-8])}
     got = await run_page(server, "--fill", json.dumps(cases), weather=False)
@@ -1283,7 +1286,7 @@ async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_t
 STREAK = [[142, 157, 168], [76, 88, 97], [239, 250, 255]]   # a trail's thin streak on clear glass: its film, grime, glint
 DROPLET = [[166, 215, 242], [239, 250, 255]]                   # a tiny droplet left on a trail, its spark
 TRACK = 25.6   # px/s: down a trail, every running bead at least this fast (a freshly landed rain bead's there, r 3: 1.6 times its 16 on fog)
-EFFECTS = {"rain": "Rain", "haze": "US AQI", "uv": "UV index", "humidity": "Humidity", "wind": "Wind", "heat": "Temperature",
+EFFECTS = {"rain": "Rain", "haze": "AQI", "uv": "UV index", "humidity": "Humidity", "wind": "Wind", "heat": "Temperature",
            "ice": "Temperature"}
 
 
@@ -1533,7 +1536,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     got = await weather(server, "opened")
     # ?fx= when the page opens
     assert got["param"]["levels"] == {"gust": 0, "haze": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "flood": 0, "ice": 5}
-    assert sorted(got["param"]["framed"]) == ["Temperature", "US AQI", "Wind"] and got["param"]["errors"] == []
+    assert sorted(got["param"]["framed"]) == ["AQI", "Temperature", "Wind"] and got["param"]["errors"] == []
     # (the effects' earlier names, in links saved before, still work: as wind, uv, humidity, and smog4 as haze4)
     assert got["paramOld"]["effects"] == ["haze", "uv", "wind", "humidity"] and got["paramOld"]["errors"] == [], got["paramOld"]
     assert got["paramOld"]["levels"]["haze"] == 4, got["paramOld"]

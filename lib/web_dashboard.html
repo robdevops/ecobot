@@ -3689,13 +3689,16 @@ const Sky = (() => {
   // ---------- the preferences: the tiles' order and the hidden ones, kept in the browser ----------
   // localStorage under one versioned key; missing, unreadable or blocked (a private window, storage off): the defaults, nothing saved.
   // Keys this stage doesn't know (a later stage's) are kept as they are.
+  // A tile's earlier ids (titles it had before) are read as its id now, so a tile saved moved or hidden stays as it was left.
   const idOf = (t) => t.id || t.title;   // a tile's stable id: its title (unique on the dashboard)
+  const RENAMED = new Map([["US AQI", "AQI"]]);   // earlier id: id now
   const blank = () => ({order: [], hidden: []});
   const prefs = (() => {
     try {
       const saved = JSON.parse(localStorage.getItem(PREFS_KEY));
       if (saved && typeof saved === "object" && !Array.isArray(saved)) {
-        const ids = (list) => Array.isArray(list) ? [...new Set(list.filter((id) => typeof id === "string"))] : [];
+        const ids = (list) => Array.isArray(list)
+          ? [...new Set(list.filter((id) => typeof id === "string").map((id) => RENAMED.get(id) || id))] : [];
         return {...saved, order: ids(saved.order), hidden: ids(saved.hidden)};
       }
     } catch (e) { /* unreadable or blocked: the defaults */ }
@@ -4334,11 +4337,11 @@ const Sky = (() => {
   // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animation" (bottom left) ----------
   // (And with each new live gust reading over 99 km/h, something big blown across once: gusting(), below.)
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
-  // stronger to 8 mm/h), haze from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
+  // stronger to 8 mm/h), haze from the AQI tile's (the US AQI's) Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
   // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust), heat at 35 °C (stronger to 43 °C: 0.3 to 1), ice below 0 °C (how far below), a flash flood
   // over 30 mm/h (the rain's too). A tile
   // with no reading now calls for nothing.
-  const CALLED_BY = {rain: "Rain", haze: "US AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
+  const CALLED_BY = {rain: "Rain", haze: "AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
                      ice: "Temperature", flood: "Rain"};
   const BANDS = [50, 100, 150, 200, 300];   // the US AQI's bands' upper edges, Good to Very Unhealthy (the tile's own bounds if it has them)
   let real = {}, simulated = {}, conditions = {};
@@ -4347,9 +4350,9 @@ const Sky = (() => {
       const t = (data.tiles || []).find((tile) => idOf(tile) === title);
       return t && typeof t.value === "number" ? t.value : null;
     };
-    const rate = typeof data.rain_rate === "number" ? data.rain_rate : null, aqi = now("US AQI"), uvi = now("UV index");
+    const rate = typeof data.rain_rate === "number" ? data.rain_rate : null, aqi = now("AQI"), uvi = now("UV index");
     const humidity = now("Humidity"), wind = now("Wind"), temperature = now("Temperature");
-    const aqiTile = (data.tiles || []).find((t) => idOf(t) === "US AQI"), bands = aqiTile && aqiTile.bounds && aqiTile.bounds.length > 2
+    const aqiTile = (data.tiles || []).find((t) => idOf(t) === "AQI"), bands = aqiTile && aqiTile.bounds && aqiTile.bounds.length > 2
       ? aqiTile.bounds.slice(1, -1) : BANDS;
     return {rain: rate > 0 ? 0.3 + 0.7 * Math.min(1, rate / 8) : 0,
             haze: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),

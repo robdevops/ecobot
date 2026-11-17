@@ -258,10 +258,10 @@ the internet), and fits every tile on the screen in portrait or landscape where 
 updates by itself when a new reading arrives, and says "reconnecting…" while ecobot-mcp is away. This page is the dashboard: the
 Telegram bot has none of its own (its Status button sends a picture of the temperature, humidity and rain gauges alone).
 
-Temperature, humidity, pressure, rain, UV index and the US AQI come first; then the weather station's other gauges, then the air
+Temperature, humidity, pressure, rain, UV index and the AQI come first; then the weather station's other gauges, then the air
 sensor's (when there is one). The air sensor's bands are on US standards:
 
-- **US AQI**, the higher of PM2.5's and PM10's (as AirNow gives it; "(PM10)" after the category when PM10 sets it), on a 0-500 dial with the EPA's six categories and colours (Good 0-50 green, Moderate 51-100 yellow,
+- **AQI** (the tile's title; it is the US AQI, which the bot and ecobot-mcp's tools still call it), the higher of PM2.5's and PM10's (as AirNow gives it; "(PM10)" after the category when PM10 sets it), on a 0-500 dial with the EPA's six categories and colours (Good 0-50 green, Moderate 51-100 yellow,
   Unhealthy for Sensitive Groups 101-150 orange, Unhealthy 151-200 red, Very Unhealthy 201-300 purple, Hazardous 301-500 maroon), the
   category's name under the number;
 - **PM2.5** (µg/m³) on the EPA's 2024 breakpoints (9.0, 35.4, 55.4, 125.4, 225.4) and **PM10** on the EPA's (54, 154, 254, 354,
@@ -274,7 +274,7 @@ sensor's (when there is one). The air sensor's bands are on US standards:
 
 On the air dials every category gets an equal share of the dial (as AirNow's AQI dial draws them), so "good" and "moderate" aren't
 squeezed into a sliver of a scale that runs to 500; the numbers round the dial are the breakpoints. The monitor's own temperature and
-humidity repeat the station's outdoor ones, so they have no gauge. The US AQI and each category's name are of the reading now, so they
+humidity repeat the station's outdoor ones, so they have no gauge. The AQI and each category's name are of the reading now, so they
 always agree with the needle and with the PM2.5 and PM10 dials (the alerts and the bot's words rate PM2.5 and PM10 on the last two
 readings, so a passing spike isn't called poor). The page's data never asks the air sensor: with its reading
 stale it shows the one it holds.

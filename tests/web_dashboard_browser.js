@@ -450,6 +450,15 @@ async function arrangedFromPrefs(browser, url, out, allErrors) {
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
   out.corrupt = await titles(page);
+  // a layout saved while the AQI tile was titled "US AQI": that tile moved first, then hidden, as it was left
+  const renamed = async (prefs) => {
+    await page.evaluate(([key, prefs]) => localStorage.setItem(key, JSON.stringify(prefs)), [KEY, prefs]);
+    await page.reload({ waitUntil: "load" });
+    await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0);
+    return titles(page);
+  };
+  out.renamedMoved = await renamed({ order: ["US AQI", ...initial.filter((t) => t !== "AQI")], hidden: [] });
+  out.renamedHidden = await renamed({ order: [], hidden: ["US AQI", "Rain"] });
   const saved = initial.filter((t) => !["Rain", "Temperature", "Wind direction"].includes(t)).concat(["Temperature", "Gone sensor"]);
   await page.evaluate(([key, order]) => localStorage.setItem(key, JSON.stringify({ order, hidden: ["Gone sensor"], later: true })), [KEY, saved]);
   await page.reload({ waitUntil: "load" });
@@ -1167,7 +1176,7 @@ async function weatherPage(browser, url, options = {}) {
   });
   await context.route(/\/dashboard\/data$/, async (route) => {
     const response = await route.fetch(), data = await response.json();
-    const readings = { "US AQI": 40, ...state.readings };
+    const readings = { "AQI": 40, ...state.readings };
     for (const t of data.tiles) if (t.title in readings) t.value = readings[t.title];
     if ("rain_rate" in readings) data.rain_rate = readings.rain_rate;
     if ("gust" in readings) data.gust = readings.gust;              // (the gust now, km/h)
@@ -1912,7 +1921,7 @@ const framesIn = async (page, ms) => {   // the frames the page asked for in thi
 // and called for, nothing drawn; the rest as ever
 async function animationsOff(browser, url, out) {
   const { context, page, errors, reads } = await weatherPage(browser, url, { query: "?fx=all,gust", animations: "off" });
-  await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160, gust: 130 });
+  await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "AQI": 160, gust: 130 });
   const seen = async () => ({ ...await weatherSeen(page), frames: await page.evaluate(() => Sky.state().frames), ink: await canvasInk(page),
                               gust: await page.evaluate(() => Sky.state().gust.sent),   // (a gust over 99 km/h, and ?fx=gust: none sent)
                               ...await page.evaluate(() => ({ sky: getComputedStyle(document.getElementById("sky")).display,
@@ -1975,7 +1984,7 @@ async function lowMotion(browser, url, out) {
     const t = [...document.querySelectorAll(".tile")].find((e) => e.querySelector(".title").textContent === "UV index");
     return t.querySelector("svg .high").getAttribute("transform");
   });
-  const called = { "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160, gust: 130, high: { "UV index": 9 } };
+  const called = { "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "AQI": 160, gust: 130, high: { "UV index": 9 } };
   await reads(called);   // (the page asks at once: fetched LOW_EVERY after the last)
   out.called = { ...await seen(), hand: await hand() };
   out.beads = await page.evaluate(() => {   // (humidity's still frame: its biggest beads set off again, none elongating)
@@ -2025,7 +2034,7 @@ const WEATHER = {
     await calm(page, 5000);   // (the gauges' rise)
     out.nothing = { ...await weatherSeen(page), frames: await framesIn(page, 800), ink: await canvasInk(page) };
     // each mark: just short of it, then at it
-    const marks = { rain: [{ rain_rate: 0 }, { rain_rate: 0.1 }], haze: [{ "US AQI": 50 }, { "US AQI": 51 }],
+    const marks = { rain: [{ rain_rate: 0 }, { rain_rate: 0.1 }], haze: [{ "AQI": 50 }, { "AQI": 51 }],
                     uv: [{ "UV index": 10.9 }, { "UV index": 11 }], humidity: [{ Humidity: 89.9 }, { Humidity: 90 }],
                     wind: [{ Wind: 15 }, { Wind: 15.1 }], heat: [{ Temperature: 34.9 }, { Temperature: 35 }],
                     ice: [{ Temperature: 0.1 }, { Temperature: -0.1 }], iceAtZero: [{ Temperature: 0 }, { Temperature: -0.1 }] };
@@ -2037,7 +2046,7 @@ const WEATHER = {
       out.marks[name] = { below: short, at: await weatherSeen(page) };
     }
     out.hazeBands = [];
-    for (const aqi of [101, 151, 201, 301, 500]) { await reads({ "US AQI": aqi }); out.hazeBands.push((await weatherSeen(page)).levels.haze); }
+    for (const aqi of [101, 151, 201, 301, 500]) { await reads({ "AQI": aqi }); out.hazeBands.push((await weatherSeen(page)).levels.haze); }
     out.rainStrength = [];
     for (const rate of [0.5, 8, 20]) { await reads({ rain_rate: rate }); out.rainStrength.push((await weatherSeen(page)).levels.rain); }
     out.humidityStrength = [];
@@ -2053,7 +2062,7 @@ const WEATHER = {
     const { context, page, errors, reads } = await weatherPage(browser, url);
     await calm(page, 5000);   // (the gauges' rise)
     // several at once: one canvas, one loop (at most 30 frames a second)
-    await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160 });
+    await reads({ "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "AQI": 160 });
     await calm(page, 5000);   // (the gauges' move to their new readings, MOVE_MS: frames of their own)
     // (the frames asked for and drawn in a second, counted in the page: by its own clock, so no round trip's delay counts)
     const rate = await page.evaluate(() => new Promise((resolve) => {
@@ -2082,7 +2091,7 @@ const WEATHER = {
                })() };
     });
     // the tiles see-through: a tile's blank margin shows what's drawn behind it (haze, Hazardous, over the bottom row)
-    await reads({ "US AQI": 500 });
+    await reads({ "AQI": 500 });
     await page.waitForTimeout(1800);
     const margin = async () => {
       const r = await tileOf(page, "PM10").boundingBox();

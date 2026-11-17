@@ -720,9 +720,9 @@ Each step ships on its own, with the tests and evals green and the bot working t
      sizes) from `/dashboard/data` (gauge_sheet's tiles from `current` with context) and redrawing them on each `/dashboard/events`
      event (Server-Sent Events, on the gauges' readings changing in ecobot://now/weather's and ecobot://now/air's change detection).
      Read-only, so no token and no Host check; `/mcp` keeps both. After the station's gauges come the air sensor's
-     (`lib/airgradient/dashboard.py`, on US standards: the US AQI and PM2.5 on the EPA's 2024 categories, PM10 on the EPA's, CO2 on
+     (`lib/airgradient/dashboard.py`, on US standards: the US AQI (its tile titled "AQI") and PM2.5 on the EPA's 2024 categories, PM10 on the EPA's, CO2 on
      the usual ASHRAE-based indoor guidance, the VOC and NOx indices on bands of Sensirion's index); a tile with no reading now is
-     dimmed at its floor. The UV index's, the US AQI's and the particles' tables have a Max column alone (no Min); the Wind's,
+     dimmed at its floor. The UV index's, the AQI's and the particles' tables have a Max column alone (no Min); the Wind's,
      Rain rate's, Solar radiation's and UV index's dials carry a thin red hand at today's highest (`/dashboard/data`'s
      `today_highs`: their Daily Max, the Wind's Daily Gust, rising with the reading now).
    - **6b. Client only.** `BOT_MCP_URL` is required: the in-process mode (`LocalWeather`, the bot starting the sources, the syncers,

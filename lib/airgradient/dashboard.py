@@ -5,7 +5,7 @@ Every air gauge is a dial whose coloured bands are its categories, each band an 
 them), the needle placed in proportion within its band: so the bands that matter are as easy to read as the rest, and a scale that runs
 to 500 (or 600 µg/m³) doesn't squeeze "good" and "moderate" into a sliver. The numbers round the dial are the categories' breakpoints.
 
-  - US AQI (the higher of PM2.5's and PM10's now, as AirNow gives it, by the service's own lib/airgradient/metrics.py us_aqi, its band
+  - AQI, titled so on the dashboard but the US AQI (the higher of PM2.5's and PM10's now, as AirNow gives it, by the service's own lib/airgradient/metrics.py us_aqi, its band
     saying "(PM10)" when PM10 sets it; not the AirGradient's `aqi_us`, of PM2.5 alone and of the lower of the last two readings, so a dial
     of it could disagree with the PM2.5 and PM10 dials beside it): 0-500, the EPA's six categories and colours;
   - PM2.5 (µg/m³): the EPA's 2024 breakpoints, 0-9.0, 9.1-35.4, 35.5-55.4, 55.5-125.4, 125.5-225.4, 225.5+ (to 325.4, AQI 500);
@@ -72,7 +72,7 @@ class AirGauge:
 
 
 AIR_GAUGES = (
-    AirGauge("US AQI", "", "pm2_5", (0, *(a_hi for *_, a_hi, _ in PM25_AQI)), EPA, EPA_NAMES, 1, aqi=True, lowest=False),
+    AirGauge("AQI", "", "pm2_5", (0, *(a_hi for *_, a_hi, _ in PM25_AQI)), EPA, EPA_NAMES, 1, aqi=True, lowest=False),
     AirGauge("PM2.5", "µg/m³", "pm2_5", (0, *(hi for _, hi, *_ in PM25_AQI)), EPA, EPA_NAMES, 0.1, 1, lowest=False),
     AirGauge("PM10", "µg/m³", "pm10", (0, 54, 154, 254, 354, 424, 604), EPA, EPA_NAMES, 1, lowest=False),
     AirGauge("PM1", "µg/m³", "pm1", (0, *(hi for _, hi, *_ in PM25_AQI)), EPA, EPA_NAMES, 0.1, 1, lowest=False),   # (on PM2.5's bands: no standard of its own)
