@@ -220,8 +220,10 @@ class Core:
         eco, air, tasks, health = self.by_name.get("Ecowitt"), self.by_name.get("AirGradient"), self.tasks, self.health
 
         async def ecowitt_part():
-            # One request at a time (Ecowitt rate-limits): warm first, so the alerts' own look at the last 3 hours is answered
-            # from what was just fetched. A failed first refresh must not stop the alerts or the archive: safely() logs it
+            # One request at a time (Ecowitt rate-limits): the live reading first (the dashboard's tiles and the first "weather now"
+            # wait on it), then warm, so the alerts' own look at the last 3 hours is answered from what was just fetched. A failed
+            # first refresh must not stop the alerts or the archive: safely() logs it
+            await eco.first_live()
             await safely(health.track("Ecowitt refresh", eco.warm), True)
             try:
                 if self.rules is not None:

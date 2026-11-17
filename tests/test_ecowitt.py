@@ -1543,3 +1543,78 @@ def test_a_reading_with_figures_but_no_readings_in_the_window_draws_no_line_rath
     q = object.__new__(HistoryQuery)
     q.drawing, q.store, q.units = ("raw", 0), {}, {"outdoor.temperature": "°C"}
     assert q._series_entry("outdoor.temperature") is None
+
+
+class HeldLive:
+    """The station's real_time requests held until let go: (urgent, groups) of each one asked, and a gate to answer them all."""
+
+    def __init__(self, eco, fail: Exception | None = None):
+        self.asked, self.gate, self.fail, self.real = [], asyncio.Event(), fail, eco.api.realtime
+        eco.api.realtime = self.realtime
+
+    async def realtime(self, mac, groups, urgent=False):
+        self.asked.append((urgent, groups))
+        await self.gate.wait()
+        if self.fail:
+            raise self.fail
+        return await self.real(mac, groups, urgent=urgent)
+
+
+async def started(*coros):
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    for _ in range(5):
+        await asyncio.sleep(0)   # (each is in flight or waiting on one)
+    return tasks
+
+
+async def test_a_question_awaits_the_live_reading_already_being_asked_for_rather_than_asking_again(station):
+    from lib.ecowitt.source import LIVE_GROUPS
+    eco, _ = station
+    held = HeldLive(eco)
+    first, question, second = await started(eco.first_live(), eco._live_data(["outdoor"]), eco._live_data(LIVE_GROUPS))
+    assert held.asked == [(True, ",".join(LIVE_GROUPS))]                 # the start's urgent request, every group; the questions wait on it
+    held.gate.set()
+    await first
+    out, every = await question, await second
+    assert list(out) == ["outdoor"] and out["outdoor"] == eco._live[1]["outdoor"] and every == eco._live[1]
+    assert len(held.asked) == 1
+
+
+async def test_a_question_does_not_wait_on_a_background_live_reading_but_a_background_check_does(station):
+    from lib.ecowitt.source import LIVE_GROUPS
+    eco, _ = station
+    held = HeldLive(eco)
+    rain, = await started(eco.live_rain())                         # the minute check's request is out
+    check, question = await started(eco._fetch_live(LIVE_GROUPS), eco._live_data(["outdoor"], max_age=0))
+    assert [urgent for urgent, _ in held.asked] == [False, True]   # the minute check's, then the question's own, ahead of the queue
+    held.gate.set()
+    await rain                                                     # (the fake station has no rain gauge: None, and logged)
+    assert await check == eco._live[1] and list(await question) == ["outdoor"]
+    assert len(held.asked) == 2
+
+
+async def test_a_caller_that_gives_up_leaves_the_live_reading_to_the_others_and_it_is_kept(station):
+    from lib.ecowitt.source import LIVE_GROUPS
+    eco, _ = station
+    held = HeldLive(eco)
+    gives_up, waits = await started(eco._fetch_live(LIVE_GROUPS, urgent=True), eco._live_data(["outdoor"]))
+    gives_up.cancel()
+    await asyncio.sleep(0)
+    held.gate.set()
+    assert list(await waits) == ["outdoor"] and eco._live is not None and len(held.asked) == 1
+    with pytest.raises(asyncio.CancelledError):
+        await gives_up
+
+
+async def test_a_failed_live_reading_fails_each_waiting_caller_and_the_next_asks_again(station, caplog):
+    from lib.ecowitt.source import LIVE_GROUPS
+    eco, _ = station
+    held = HeldLive(eco, fail=ecowitt_api.EcowittError("busy", transient=True))
+    first, question = await started(eco.first_live(), eco._live_data(["outdoor"]))
+    held.gate.set()
+    await first                                                            # the start's own failure is only logged
+    with pytest.raises(ecowitt_api.EcowittError):
+        await question
+    assert "Live reading at start failed: EcowittError: busy" in caplog.text and eco._live is None
+    held.fail = None
+    assert "outdoor" in await eco._live_data(LIVE_GROUPS) and len(held.asked) == 2

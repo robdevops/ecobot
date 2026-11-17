@@ -105,6 +105,7 @@ class Ecowitt(Source):
         self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
         self._live_ok: bool | None = None  # the live rain reading: None until first tried
         self._live: tuple[float, dict] | None = None   # (fetched at, the real_time data) from the keep-warm's minute check
+        self._live_flight: tuple[bool, asyncio.Future] | None = None   # (urgent, the request) of every group, while it is asked
         self.on_live: list = []             # called (no arguments) when the poll finds a reading newer than the last: the rain alert's
         self._seen = 0                       # the time of the newest reading the poll has found
         self._polled: float = 0.0            # when the poll last had an answer
@@ -171,12 +172,35 @@ class Ecowitt(Source):
 
     async def _fetch_live(self, groups: list[str], urgent: bool = False) -> dict:
         """A real_time request for these groups, counted into the 5-minute bands; with every group in it, kept as the minute's own reading
-        for the next to ask (the report's gauges)."""
+        for the next to ask (the report's gauges). Single-flight: while a request of every group is out, a caller wanting no more than it
+        awaits that one instead of queueing another (a question joins a background one only once it is urgent too, so it never waits
+        behind the refreshes queued ahead of it)."""
+        wanted = set(groups)
+        if (flight := self._live_flight) and not flight[1].done() and wanted <= set(LIVE_GROUPS) and (flight[0] or not urgent):
+            data = await asyncio.shield(flight[1])
+            return {g: data[g] for g in groups if g in data}
+        if not wanted >= set(LIVE_GROUPS):
+            data = await self.api.realtime(self.mac, ",".join(groups), urgent=urgent)
+            await self._record_live(data)
+            return data
+        task = asyncio.ensure_future(self._fetch_every_live(groups, urgent))
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())   # (its failure is its callers'; none left is no warning)
+        self._live_flight = (urgent, task)
+        return await asyncio.shield(task)   # (a caller that gives up leaves it to the others, and the reading is still kept)
+
+    async def _fetch_every_live(self, groups: list[str], urgent: bool) -> dict:
         data = await self.api.realtime(self.mac, ",".join(groups), urgent=urgent)
-        if set(groups) >= set(LIVE_GROUPS):
-            self._live = (time.time(), data)
+        self._live = (time.time(), data)
         await self._record_live(data)
         return data
+
+    async def first_live(self):
+        """The live reading at start, before the history: the dashboard's tiles and the first "weather now" wait on it (a question asked
+        meanwhile joins this request). Urgent: people are waiting. A failure is logged; the next minute's check asks again."""
+        try:
+            await self._fetch_live(LIVE_GROUPS, urgent=True)
+        except Exception as e:
+            log.warning("Live reading at start failed: %s: %s", type(e).__name__, e)
 
     @property
     def ranges_from_ha(self) -> bool:
@@ -298,6 +322,8 @@ class Ecowitt(Source):
         return await self.readings("5min", naive_local(local_epoch(now, self.tz) - hours * 3600, self.tz), now)
 
     async def close(self):
+        if (flight := self._live_flight) and not flight[1].done():
+            flight[1].cancel()
         try:
             await self.api.close()
         finally:

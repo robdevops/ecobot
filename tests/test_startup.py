@@ -118,6 +118,18 @@ async def test_ecobot_mcp_starts_warms_archives_and_shuts_down_cleanly(tmp_path,
     assert "Alerts NOT running" not in log and "Telegram" not in log
 
 
+async def test_the_stations_live_reading_is_asked_for_first_after_start_ahead_of_the_history(tmp_path, monkeypatch, caplog):
+    """The dashboard's tiles and the first "weather now" wait on it: it goes before the warm-up's history requests (a second or more
+    apart), not after them."""
+    eco_t, fake = ecowitt_transport(history_days=10)
+    eco_init = core.Ecowitt.__init__
+    ecobot_mcp_settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(core.Ecowitt, "__init__", lambda self, c, transport=None, **kw: eco_init(self, c, eco_t, **kw))
+    await run_ecobot_mcp_until_archived(caplog)
+    paths = [call.get("path") for call in fake.calls]
+    assert paths[:3] == ["list", "real_time", "history"] and "Live reading at start failed" not in caplog.text
+
+
 async def test_the_weather_alerts_that_could_not_start_are_named_as_not_running(tmp_path, monkeypatch, caplog):
     from lib.alerts.weather import WeatherMonitor
     caplog.set_level("INFO")
