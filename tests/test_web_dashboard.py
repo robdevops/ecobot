@@ -1606,7 +1606,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     marked = got["humidity"]["alone"]["marked"]
     assert marked["trails"] > 30 and marked["ink"] > 0 and marked["cover"] > 0, marked
     started_afresh(got["humidity"]["alone"]["restarted"], "humidity")
-    # BEAD_RULES, the physics every bead runs by: its speed on each glass, dry slowest (0.25 of fog's: crawling), fog quicker, a trail
+    # BEAD_RULES, the physics every bead runs by: its speed on each glass, dry slowest (0.3 of fog's: crawling), fog quicker, a trail
     # fastest (1.6 times fog's: water on water; the user: fog beads move fast down tracks like with rain), for the same size, and down
     # a trail never under TRACK (a freshly landed rain bead's speed there, r 3: a condensed one as quick as a rain one down a track);
     # still under the run size (about sixteen tiny ones' water: r 1.4), from there creeping extremely slowly, rising gradually with
@@ -1622,7 +1622,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
         else:
             assert speed["dry"][i] < speed["fog"][i] < speed["trail"][i], (r, speed)
             assert speed["trail"][i] == pytest.approx(max(1.6 * speed["fog"][i], track)), (r, speed)
-            assert speed["dry"][i] == pytest.approx(0.25 * speed["fog"][i]), (r, speed)
+            assert speed["dry"][i] == pytest.approx(0.3 * speed["fog"][i]), (r, speed)
         assert after["fog"][i] > r and after["trail"][i] == r and after["dry"][i] < r, (r, after)
     assert [v for r, v in zip(sizes, speed["trail"]) if physics["run"] <= r <= 3] == [track] * 4, speed["trail"]   # (r 1.4-3: TRACK)
     for g in ("dry", "trail", "fog"):
@@ -1636,7 +1636,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert after["dry"][0] == 0 and after["fog"][-1] > sizes[-1], after
     # heavy rain's beads: light rain none; heavy, a drop sticking every few s (one in 3 s), a dozen or so (14) on the glass at most, each landing at once
     # (no fading in) as a large bead (r 3 or more) with a splash (a ring of 10 or more droplets, 3 to 6 of them left on the glass as
-    # tiny beads); on dry glass crawling (about 0.25 of its speed on fog, the same size), down a trail at TRACK or more (its own size's
+    # tiny beads); on dry glass crawling (about 0.3 of its speed on fog, the same size), down a trail at TRACK or more (its own size's
     # speed there), shrinking only (its water left behind), never growing; none vanishing; their wet streaks on the
     # clear glass drying over 3 to 10 minutes, each its own: thin streaks (a third of the bead's width or less: a px or two), faint
     # (a greyish film, grime along an edge, a glint, a tiny droplet), uneven along their length (thicker and thinner, now and then
@@ -1651,7 +1651,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert all(s["r"] >= 3 and s["alpha"] == 1 and s["dots"] >= 10 and s["phase"] == "heavy" for s in sticking["stuck"]), sticking["stuck"]
     assert all(3 <= s["stay"] <= 6 for s in sticking["stuck"]) and len({s["stay"] for s in sticking["stuck"]}) >= 3, sticking["stuck"]
     dry, trail = heavy_rain["glass"]["dry"], heavy_rain["glass"]["trail"]
-    assert dry["lost"] > 0 and dry["gained"] == 0 and 0.17 < dry["all"] / dry["norm"] < 0.33, dry
+    assert dry["lost"] > 0 and dry["gained"] == 0 and 0.2 < dry["all"] / dry["norm"] < 0.4, dry
     assert trail["moves"] > 100 and all(0.75 < o["all"] / o["pace"] < 1.3 for o in (dry, trail)), heavy_rain["glass"]
     assert 0.75 * TRACK < trail["px"] / trail["s"] < 1.3 * 31, trail   # (r 1.8-3.2 down a trail: about TRACK, not their size's)
     # (the splash's droplets left on the glass: tiny beads (r 0.55) like any other, from the splash's end on, as many as were left;

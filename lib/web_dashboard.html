@@ -1262,7 +1262,7 @@ const Sky = (() => {
     const SIZES = [0.6, 1, 1.4, 1.9, 2.4, 2.9, 3.4, 3.9, 4.5];   // a bead's radius (its half-width), growing (and past the last:
                                                                  // ... drawn as wide as it is, however big, see sprite())
     const DRY = 0, TRAIL = 1, FOGGY = 2, GLASSES = ["dry", "trail", "fog"];   // the glass under a bead
-    const PACE = [0.25, 1.6, 1];        // how fast a bead runs on each [dry, trail, fog]: dry slowest, fog quicker, a trail fastest (water on water) ...
+    const PACE = [0.3, 1.6, 1];        // how fast a bead runs on each [dry, trail, fog]: dry slowest, fog quicker, a trail fastest (water on water) ...
     const SPEED = 13;                  // ... times this, px/s, for a bead of r 2.8; from RUN_R up, rising gradually with its size, ever
                                        // ... faster (r 0.87: about 0.04 px/s on fog, r 1: 0.08, r 1.4: 0.4, r 2: 2.4, r 2.8: 13, r 4: 38)
     const GATHER = 0.1;                // water a bead gathers for each px it runs through fog, for each px of its width (fog at 1) ...
@@ -1620,6 +1620,7 @@ const Sky = (() => {
       const b = {id: ++made, kind: "rain", x, y, r, merged: 0, life: between(...LIFE)};
       shows(b);
       b.shown = APPEAR;   // (there at once)
+      b.pause = between(0.45, 0.8);   // (settling a moment after its splash before it runs: its droplets thrown clear first)
       all.push(b);
       const cy = y + heightOf(r) / 2, n = 10 + Math.floor(random() * 4);
       const dots = Array.from({length: n}, (_, j) => ({a: (j + between(-0.3, 0.3)) * 2 * Math.PI / n, v: between(14, 24), s: random() < 0.4 ? 1 : 0}));
