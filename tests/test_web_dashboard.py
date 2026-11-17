@@ -1763,10 +1763,11 @@ async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alon
     # ... the ice grown all the way in too, its frost across much of the glass: as cheap
     assert got["costFrosted"]["cost"] < 8 and got["costFrosted"]["crystals"] > 0.15, got["costFrosted"]
     # ... after minutes of the weather's time (over 200 s, the humidity's trails and beads built up: tens of thousands of trail
-    # pixels): no dearer than at the start (its cost not growing with them: about 1.2 ms against 2; it grew to over twice that at
-    # full screen); and with its time 20 times as fast, the trails' sweep capped (a slice of them a frame, never all), still cheap
+    # pixels): no dearer than twice the start's (its cost not growing with the trails: about 1.2 ms against 2; it grew to over twice
+    # that at full screen; heavy humidity's budget a third larger than it was, its beads a little dearer); and with its time 20
+    # times as fast, the trails' sweep capped (a slice of them a frame, never all), still cheap
     late, fast = got["costFrosted"], got["costFast"]
-    assert late["clock"] > 200 and late["trails"] > 15000 and late["beads"] > 100 and late["cost"] < 1.5 * got["cost"], (got["cost"], late)
+    assert late["clock"] > 200 and late["trails"] > 15000 and late["beads"] > 100 and late["cost"] < 2 * got["cost"], (got["cost"], late)
     assert fast["trails"] > 15000 and 0 < fast["swept"] <= fast["most"] == 2500 and fast["cost"] < 8, fast
     # several at once no brighter than one strong one: every effect on (the ice grown all the way in), against Hazardous haze alone
     assert 0 < got["light"]["all"] <= got["light"]["haze5"], got["light"]
@@ -2030,6 +2031,10 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     per_s = {k: sorted((s["vol"] - s["r0"] ** 3) / s["fogged"] for s in b["swells"]) for k, b in (("light", light), ("heavy", heavy))}
     assert len(per_s["light"]) >= 3 and per_s["light"][len(per_s["light"]) // 2] < 0.85 * per_s["heavy"][len(per_s["heavy"]) // 2], per_s
     assert light["showing"]["running"] < 0.5 * heavy["showing"]["running"], (light["showing"], heavy["showing"])
+    # ... but heavy's glass shows more still beads than light's after the same time (clearly: grown beads cost their whole particle of
+    # the budget, so a heavy glass of them showed fewer than light's mostly tiny ones; heavy's budget is the larger)
+    still_light, still_heavy = got["stillBeads"]
+    assert still_heavy > 1.1 * still_light > 0, got["stillBeads"]
     # the fog dithered irregularly: no grid in its pixels (as gridPeak sees it: under 100; ordered, about 420)
     assert heavy["grid"] < 100, heavy["grid"]
     # ... and only faintly: in fine steps (6 between each two of FOG's 5 shades), dithered a third of a step, it reads as smooth

@@ -2795,6 +2795,17 @@ const WEATHER = {
     }));
     // humidity's beads condensing on the glass and running down it over 3.6 minutes of the page's time (its weather's time 6 times as
     // fast), alone and with the wind, beside the rest (small: cheap) (heavy: 100 %); and light (91 %), watched for 2 minutes
+    // light (91 %) and heavy (100 %) humidity's still beads after the same time (1500 frames, then the mean of ten counts 20 frames
+    // apart): heavy's more (a grown bead costs a whole particle of the budget, a tiny one a quarter; heavy's budget the larger)
+    const counting = Promise.all(["humidity", "humidity2"].map(async (name) => {
+      const p = await weatherPage(browser, url, { query: `?fx=${name}`, pace: 10, driven: true, context: { viewport: { width: 640, height: 480 } } });
+      await p.page.evaluate(() => Sky.timeScale(6));
+      await drive(p.page, 1500);
+      let sum = 0;
+      for (let k = 0; k < 10; k++) { await drive(p.page, 20); sum += await p.page.evaluate(() => Sky.state().humidity.beads.filter((b) => b.v < 1).length); }
+      await p.context.close();
+      return sum / 10;
+    }));
     const beading = Promise.all(["humidity2", "humidity2,wind", "humidity"].map(async (name) => {
       // (the wind's page another glass than humidity's alone, its own seed: the wind blows no water on the glass, so seeded alike it
       // would be the very same beads, nothing more seen)
@@ -2988,6 +2999,7 @@ const WEATHER = {
     await Promise.all([params, alone, phoned]);
     [out.uv, out.frost] = await swaying;
     [out.humidity.alone, out.humidity.windy, out.humidityLight] = await beading;
+    out.stillBeads = await counting;   // ([light, heavy])
     out.rainBeads = await sticking;
     [out.heat, out.heatOver] = await hot;
     [out.rain.alone, out.rain.windy, out.rain.phone] = await raining;
