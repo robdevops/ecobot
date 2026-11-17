@@ -1187,6 +1187,7 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
     assert got["rainStrength"][0] < 0.4 and got["rainStrength"][1:] == [1, 1]    # light at 0.5 mm/h, heavy from 8
     assert got["humidityStrength"] == pytest.approx([0.1, 0.5, 1])              # heavier from 90 % to 100 %
     assert got["iceDepth"] == [0.5, 5]                                           # further in the colder
+    assert got["heatStrength"] == pytest.approx([0.3, 0.65, 1, 1])               # stronger from 35 °C to 43 °C
 
 
 @needs_browser
@@ -1817,6 +1818,33 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert flood["depth"] == flood["full"] > 0 and flood["frog"] is None and not flood["running"] and flood["frames"] == 0, flood
     # ... and a gust (the page's, the test link's, asked for by name): nothing blown across, no loop
     assert still["gust"] == {"fling": None, "sent": 0, "running": False, "frames": 0}, still["gust"]
+    # ... and the heat's: its faint warm haze only, nothing bent (no shimmer: it would need motion)
+    heat = still["heat"]
+    assert heat["refracted"] == heat["shifts"] == 0 and heat["drawn"] > 0 and heat["band"] > 0 and not heat["running"], heat
+    # the heat (?fx=heat): a heat haze, not drawn lines (squiggles read as smell lines): a faint amber veil low down, and the canvas's
+    # own bottom band bent sideways through it in thin rows, by ripples rising and dying away upward
+    for name, hot in (("alone", got["heat"]), ("over", got["heatOver"])):
+        assert hot["errors"] == [] and hot["refracted"] > 0 and hot["band"] >= 0.25 * hot["height"], (name, hot)
+        assert hot["top"] + hot["band"] == hot["height"], (name, hot)   # (from the bottom: no flood)
+        rows = [(r, *row) for f in hot["frames"] for r, row in enumerate(f["rows"]) if r < hot["band"] - 3]   # (not the glints' rows)
+        # each row drawn exactly as the band was before it was bent, shifted by its own shift (none differing but those shifted)
+        assert all(match == shift for _, shift, _, match in rows if match is not None), (name, rows)
+        assert all(differs for _, shift, differs, match in rows if shift and match is not None), (name, rows)
+        assert all(not differs for _, shift, differs, _ in rows if not shift), (name, rows)
+        bent = [r for r, shift, _, match in rows if shift and match is not None]
+        assert len(bent) >= 0.2 * len(rows), (name, len(bent), len(rows))
+        # ... strongest at the bottom, dying away upward (its top eighth all but still), and never still: changing frame to frame
+        band, frames = hot["band"], hot["frames"]
+        mean = lambda lo, hi: sum(abs(v) for f in frames for v in f["shifts"][int(lo * band):int(hi * band)]) / (len(frames) * (int(hi * band) - int(lo * band)))
+        assert mean(0.75, 1) > 0.8 and mean(0.75, 1) > 3 * mean(0, 0.25) and mean(0, 0.125) < 0.1, (name, mean(0, 0.25), mean(0.75, 1))
+        assert all(max(map(abs, f["shifts"])) <= round(hot["most"]) + 1 for f in frames), name
+        assert sum(a != b for f, g in zip(frames, frames[1:]) for a, b in zip(f["shifts"], g["shifts"])) > 0.3 * band * (len(frames) - 1), name
+        # ... no long thin strokes in it (a pixel tall, 5 px or more long, brighter than above and below: a drawn squiggle)
+        assert hot["strokes"] <= 3, (name, hot["strokes"])
+    # ... alone: its veil over all of its bottom rows, faint, amber (red over green over blue: no green or brown smoke)
+    alone = got["heat"]
+    r, g, b = alone["colour"]
+    assert alone["cover"] > 0.9 and 0.08 < alone["alpha"] < 0.35 and r > g * 1.15 and g > b * 1.4 and r > 180, alone
 
 
 def clean_glass(marks):

@@ -1348,6 +1348,42 @@ const rainSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
   const begun = () => Sky.clock().frames >= 50 ? look() : __next(begun);
   begun();
 }), ms);
+// The heat's haze on a driven page (its effect on, and nothing else but what the query asks for), 60 frames in, then 8 frames 5
+// apart: each its band's rows as Sky's heat probe sees them (seen(): [shift, differs from the band as drawn before it was bent, the
+// shift that matches it]) and its shifts; then the canvas: in the band (all but its bottom 4 rows: the mirage's glints), the long thin
+// strokes (runs of 5 px or more a pixel tall, each brighter than the pixels above and below it by half again: a drawn line), the share
+// of its bottom 10 rows drawn, the drawn pixels' mean colour and alpha (0-1) there
+const heatSeen = (page) => page.evaluate(() => {
+  Sky.advance(60);
+  const frames = [];
+  for (let i = 0; i < 8; i++) {
+    Sky.advance(5);
+    const h = Sky.state().heat;
+    frames.push({ rows: h.seen(), shifts: h.shifts });
+  }
+  const h = Sky.state().heat, c = document.querySelector("#sky canvas"), W = c.width;
+  const d = c.getContext("2d").getImageData(0, h.top, W, h.band).data;
+  const light = (x, y) => { const i = (y * W + x) * 4; return (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * d[i + 3] / 255; };
+  let strokes = 0;
+  for (let y = 1; y < h.band - 4; y++) {
+    let run = 0;
+    for (let x = 0; x <= W; x++) {
+      const on = x < W && light(x, y) > 4 && light(x, y) > 1.5 * Math.max(light(x, y - 1), light(x, y + 1));
+      if (on) run++;
+      else { if (run >= 5) strokes++; run = 0; }
+    }
+  }
+  let drawn = 0, n = 0, rgb = [0, 0, 0], alpha = 0;
+  for (let y = h.band - 10; y < h.band; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4;
+    n++;
+    if (!d[i + 3]) continue;
+    drawn++; alpha += d[i + 3] / 255;
+    for (let k = 0; k < 3; k++) rgb[k] += d[i + k];
+  }
+  return { band: h.band, top: h.top, most: h.most, refracted: h.refracted, frames, strokes, cover: drawn / n,
+           colour: rgb.map((v) => Math.round(v / Math.max(drawn, 1))), alpha: alpha / Math.max(drawn, 1), height: c.height };
+});
 // uv's beams over 40 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame drawn 0.1 s on, Sky's
 // longest step): where each beam's halo was drawn (with uv alone, the glow, then each beam's halo and core), its least and greatest x
 // (art px), how many times it turned back (from going one way to the other), and how faint and bright it was
@@ -1890,6 +1926,8 @@ const WEATHER = {
     for (const rate of [0.5, 8, 20]) { await reads({ rain_rate: rate }); out.rainStrength.push((await weatherSeen(page)).levels.rain); }
     out.humidityStrength = [];
     for (const rh of [91, 95, 100]) { await reads({ Humidity: rh }); out.humidityStrength.push((await weatherSeen(page)).levels.humidity); }
+    out.heatStrength = [];
+    for (const t of [35, 39, 43, 48]) { await reads({ Temperature: t }); out.heatStrength.push((await weatherSeen(page)).levels.heat); }
     out.iceDepth = [];
     for (const t of [-0.5, -5]) { await reads({ Temperature: t }); out.iceDepth.push((await weatherSeen(page)).levels.ice); }
     out.errors = errors;
@@ -2415,6 +2453,14 @@ const WEATHER = {
       await uv.context.close();
       return [seen, frost];
     })();
+    // the heat's haze, alone and over the haze's clouds and heavy rain in the wind (small: cheap)
+    const hot = Promise.all(["heat", "heat,haze3,rain2,wind"].map(async (name) => {
+      const p = await weatherPage(browser, url, { query: `?fx=${name}`, driven: true, context: { viewport: { width: 640, height: 480 } } });
+      const seen = await heatSeen(p.page);
+      seen.errors = p.errors;
+      await p.context.close();
+      return seen;
+    }));
     // humidity's beads condensing on the glass and running down it over 3.6 minutes of the page's time (its weather's time 6 times as
     // fast), alone and with the wind, beside the rest (small: cheap) (heavy: 100 %); and light (91 %), watched for 2 minutes
     const beading = Promise.all(["humidity2", "humidity2,wind", "humidity"].map(async (name) => {
@@ -2624,6 +2670,12 @@ const WEATHER = {
       const f = Sky.state().flood;
       return { depth: f.depth, full: f.full, frog: f.frog, running: Sky.state().running, frames: Sky.state().frames };
     });
+    out.still.heat = await still.page.evaluate(() => {   // (the heat: its still haze only, nothing bent)
+      document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { heat: 1 } }));
+      const h = Sky.state().heat;
+      return { refracted: h.refracted, shifts: h.shifts.filter((v) => v).length, top: h.top, band: h.band, drawn: Sky.state().drawn.heat,
+               running: Sky.state().running };
+    });
     out.still.gust = await still.page.evaluate(() => {   // (a gust: nothing sent, by the page or the test link)
       document.dispatchEvent(new Event("ecobot-gust"));
       document.querySelector("#fxtest button[data-gust]").click();
@@ -2635,6 +2687,7 @@ const WEATHER = {
     [out.uv, out.frost] = await swaying;
     [out.humidity.alone, out.humidity.windy, out.humidityLight] = await beading;
     out.rainBeads = await sticking;
+    [out.heat, out.heatOver] = await hot;
     [out.rain.alone, out.rain.windy, out.rain.phone] = await raining;
     [out.bare, out.barePhone] = await bare;
     out.errors = [];

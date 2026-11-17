@@ -149,7 +149,7 @@
 // out; the tab hidden, it waits; with reduced motion, or low motion (MCP_DASHBOARD_ANIMATIONS=low), one still, faint frame and no loop
 // (low motion: drawn again only as the conditions change).
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), haze: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
-//   100 %), uv, wind, heat: 0 or 1, ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
+//   100 %), uv, wind: 0 or 1, heat: 0-1 (35 °C to 43 °C), ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
 //   sooner)}; animate false (the page's "stop animation", or
 //   MCP_DASHBOARD_ANIMATIONS off): nothing drawn (and anything blown across gone).
 //   Sky.fling(kind): something big blown across far behind (a gust over 99 km/h): "cow", "barn" or "chicken", else one at random;
@@ -747,66 +747,119 @@ const Sky = (() => {
     };
   });
 
-  // ---------- heat: a shimmering amber glow rising from the bottom, its ripples riding up and wavering sideways ----------
-  // (In a flood, from its surface: from as low as its troughs go, flood.sunk(), and kept above() it, so its edge is the wavy surface;
-  // the haze is drawn above it too, and neither below it)
-  const HEAT = ["#3A1C0A", "#62300E", "#955015", "#C97B24", "#EFB05A"].map(rgb);
+  // ---------- heat: heat haze, the air over hot ground shimmering (a mirage's), bending whatever is seen through it ----------
+  // No lines of its own: a very faint warm haze low down (draw(), in its place among the effects: something there to bend even with
+  // nothing else on), then, once everything in front of the flood is drawn (refract(), from the loop's draw()), the canvas's own
+  // bottom band re-blitted in thin rows, each shifted sideways its own way: fine, fast, irregular ripples (a few waves and a little
+  // noise summed), rising and dying away upward, strongest at the bottom, as air over hot tarmac; and now and then a pale glint of
+  // mirage along the very bottom. Stronger the hotter it is (its level: 35 °C to 43 °C). Reduced or low motion: the still haze only.
+  // (In a flood, from its surface: from as low as its troughs go, flood.sunk(), and kept above() it, so nothing under it is touched)
+  const HEAT = ["#E2A85A", "#F4C982", "#FCE2AE", "#FFF4D8"].map(rgb);   // amber haze, faint to bright; the glint
   const heat = effect((e) => {
-    const SPAN = 0.34, PERIOD = 13, LINES = 7, RISE = 9, SPARE = 4;   // its height (of the window's); its ripples' spacing (px), how many
-    // differ before they repeat, their speed (px/s); the spare px each side for wavering
-    let glow = null, ripples = null, band = 0, glowRows = null, rippleRows = null;
-    const inked = (c) => {   // (which of a texture's rows have anything in them: the empty ones never drawn)
-      const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data, rows = new Uint8Array(c.height);
-      for (let i = 3; i < d.length; i += 4) if (d[i]) rows[(i >> 2) / c.width | 0] = 1;
-      return rows;
+    const SPAN = 0.3, RISE = 14, ROW_MOST = 2;   // the band's height (of the window's); its ripples' speed upward (px/s); rows re-blitted
+    // at most this tall at once where they shift alike
+    const chance = seeded(4111), within = (lo, hi) => lo + (hi - lo) * chance();   // (its own randomness: the rest's as without it)
+    let haze = null, band = 0, copy = null, copied = null, shifts = new Int8Array(0), glints = [], glint = [], refracted = 0, top = 0;
+    // how far (px, + right) the row y px up from the band's bottom is shifted at t: summed waves riding upward, their phases wandering,
+    // a little noise, all dying away upward; `most`: at the bottom
+    const shiftOf = (y, t, most) => {
+      const u = y - t * RISE, k = Math.pow(1 - y / band, 1.4);
+      const w = 0.5 * Math.sin(u * 0.9 + 1.6 * Math.sin(u * 0.13 + t * 0.8)) + 0.3 * Math.sin(u * 2.3 - t * 5.1) +
+                0.9 * (noise(u * 0.55, t * 2.2, 4096, 17) - 0.5) + 0.25 * Math.sin(u * 0.37 + t * 1.3);
+      return Math.round(most * k * w * (0.8 + 0.2 * Math.sin(t * 0.7 + y * 0.05)));
     };
     return {
-      strength: () => 0.75,
+      strength: () => 0.35 + 0.3 * e.level,
+      // (for the tests: the band (art px), its top as last drawn, each of its rows' shift (top first), the most a row may shift now,
+      // how many frames it has refracted, the glints showing; seen(): the band as drawn against the band as it was before it was bent
+      // (the canvas's own, saved): each row's [shift, whether it differs, the shift that matches it (null: none does)])
+      probe: () => ({band, top, shifts: [...shifts], most: mostNow(), refracted, glints: glints.length, seen}),
+      forget() { glints = []; refracted = 0; shifts.fill(0); },
       resize() {
-        band = Math.ceil(H * SPAN);
-        glow = painted(W + 2 * SPARE, band, (x, y) => {   // dithered, brightest at the bottom, in slow columns
-          const v = Math.pow(y / band, 2.2) * (0.55 + 0.35 * noise(x / 26, 0.5, Math.ceil((W + 2 * SPARE) / 26), 5));
-          const s = shadeOf(v, x, y, 3);
-          return s < 0 ? null : HEAT[s];
+        band = Math.max(8, Math.ceil(H * SPAN));
+        // the haze: a faint warm veil, thickest at the bottom, its alpha in a few dithered steps, mottled in soft streaks wider than
+        // tall (so its bending shows)
+        haze = painted(W, band, (x, y) => {
+          const k = y / band, m = noise(x / 11, y / 1.6, Math.max(1, Math.ceil(W / 11)), 23), n = noise(x / 37, y / 5, Math.max(1, Math.ceil(W / 37)), 29);
+          const v = Math.pow(k, 2.2) * (0.3 + 0.5 * m * m + 0.2 * n), s = shadeOf(v, x, y, 6);
+          return s < 0 ? null : [...HEAT[s > 3 ? 1 : 0], 22 + 26 * s];
         });
-        const across = W + 2 * SPARE;
-        ripples = painted(across, PERIOD * LINES, (x, y) => {   // wavy wisps, a bright crest over a dark trough, every PERIOD px
-          const line = Math.round(y / PERIOD) % LINES, wave = Math.round(1.4 * Math.sin(x * (0.08 + 0.015 * line) + line * 2.1) +
-                                                                    0.8 * Math.sin(x * 0.031 + line));
-          const row = y - line * PERIOD - wave;
-          if (row !== 0 && row !== 1) return null;
-          const lit = noise(x / (10 + line * 2), line * 3.7, Math.ceil(across / (10 + line * 2)), 9);   // (broken into wisps)
-          if (lit < 0.5) return null;
-          return row === 0 ? HEAT[lit > 0.72 ? 4 : 3] : HEAT[1];
-        });
-        glowRows = inked(glow);
-        rippleRows = inked(ripples);
+        copy = canvasOf(W, band);
+        copied = copy.getContext("2d");
+        shifts = new Int8Array(band);
+        glint = [8, 13, 19].map((n) => painted(n, 1, (x) => {   // (a glint: a broken streak a pixel tall, brightest in its middle)
+          const v = Math.sin(Math.PI * (x + 0.5) / n);
+          return dither(x * 7, n) < v * 0.9 ? [...HEAT[v > 0.6 ? 3 : 2], Math.round(255 * v)] : null;
+        }));
+        glints = [];
       },
-      draw(g, alpha, t) {
-        const top = Math.round(H - band - flood.sunk()), rows = PERIOD * LINES, scroll = Math.floor(t * RISE) % rows;   // (a flood: from its surface)
-        const shift = (y) => Math.round(Math.sin(y * 0.5 - t * 3.1) * (0.5 + 1.8 * y / band));   // (wavering more lower down)
+      step(dt) {
+        if (STILL) return;
+        for (const g of glints) g.age += dt;
+        glints = glints.filter((g) => g.age < g.life);
+        if (glints.length < 4 && chance() < dt * (0.8 + 1.6 * e.level) * e.amount)
+          glints.push({x: within(0, W - 20), row: Math.floor(within(0, 3)), sprite: glint[Math.floor(within(0, 3))], age: 0,
+                       life: within(0.25, 0.9)});
+      },
+      draw(g, alpha) {
+        top = Math.round(H - band - flood.sunk());
         flood.above(g, () => {
-          // each row shifted its own way, the glow's rows shifted alike drawn together (and empty rows not at all): drawn as it
-          // would be row by row, the glow under the wisps in each
-          for (let y = 0; y < band;) {
-            const dx = shift(y);
+          g.globalAlpha = Math.min(1, alpha * 1.2);
+          g.drawImage(haze, 0, top);
+        });
+      },
+      // The bending: the band as drawn so far saved, then each row whose shift isn't 0 drawn again shifted (rows alike drawn together,
+      // ROW_MOST at most), the gap it leaves at its edge filled from the row unshifted; then the glints, on their rows' shifts
+      refract(g, alpha, t) {
+        if (STILL || !band) return;
+        const most = mostNow();
+        for (let y = 0; y < band; y++) shifts[band - 1 - y] = shiftOf(y, t, most);
+        copied.clearRect(0, 0, W, band);
+        copied.drawImage(canvas, 0, top, W, band, 0, 0, W, band);
+        refracted++;
+        flood.above(g, () => {
+          g.globalAlpha = 1;
+          for (let r = 0; r < band;) {
+            const dx = shifts[r];
             let n = 1;
-            while (y + n < band && glowRows[y + n] === glowRows[y] && shift(y + n) === dx) n++;
-            if (glowRows[y]) {
-              g.globalAlpha = alpha * 0.85;
-              g.drawImage(glow, SPARE - dx, y, W, n, 0, top + y, W, n);
+            while (n < ROW_MOST && r + n < band && shifts[r + n] === dx) n++;
+            if (dx) {
+              g.clearRect(0, top + r, W, n);
+              g.drawImage(copy, 0, r, W, n, dx, top + r, W, n);
+              if (dx > 0) g.drawImage(copy, 0, r, dx, n, 0, top + r, dx, n);
+              else g.drawImage(copy, W + dx, r, -dx, n, W + dx, top + r, -dx, n);
             }
-            for (let r = y; r < y + n; r++) {
-              const from = (r + scroll) % rows;
-              if (!rippleRows[from]) continue;
-              g.globalAlpha = alpha * Math.pow(r / band, 1.3) * 0.7;
-              g.drawImage(ripples, SPARE + dx, from, W, 1, 0, top + r, W, 1);
-            }
-            y += n;
+            r += n;
+          }
+          for (const gl of glints) {
+            const r = band - 1 - gl.row;
+            g.globalAlpha = alpha * 0.9 * Math.sin(Math.PI * gl.age / gl.life);
+            g.drawImage(gl.sprite, Math.round(gl.x) + shifts[r], top + r);
           }
         });
       },
     };
+    function mostNow() { return (1 + 2.6 * e.level) * e.amount; }
+    function seen() {   // (test-only: see probe)
+      const now = ctx.getImageData(0, top, W, band).data, was = copied.getImageData(0, 0, W, band).data, edge = 10;
+      const rows = [];
+      for (let r = 0; r < band; r++) {
+        const at = (d, x) => r * W * 4 + x * 4, same = (x, dx) => {
+          for (let c = 0; c < 4; c++) if (now[at(now, x) + c] !== was[at(was, x - dx) + c]) return false;
+          return true;
+        };
+        let differs = false, ink = false;
+        for (let x = edge; x < W - edge; x++) { if (!same(x, 0)) differs = true; if (was[at(was, x) + 3]) ink = true; }
+        let match = null;
+        if (ink) for (const dx of [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7, 8, -8]) {
+          let ok = true;
+          for (let x = edge; x < W - edge && ok; x++) ok = same(x, dx);
+          if (ok) { match = dx; break; }
+        }
+        rows.push([shifts[r], differs, match]);
+      }
+      return rows;
+    }
   });
 
   // ---------- uv: soft shafts of violet light coming in from the top, slowly swaying and breathing ----------
@@ -3076,6 +3129,8 @@ const Sky = (() => {
     for (const k of ORDER) {
       const fx = effects[k], a = fx.strength() * fx.amount * (OWN_STRENGTH.has(k) ? faint : cap);
       drawn[k] = fx.amount > 0 ? a : 0;
+      // (the heat's haze bending what's drawn so far, before the flood: everything in front of the water but the frost on the glass)
+      if (k === "flood" && effects.heat.amount > 0) effects.heat.refract(ctx, drawn.heat, clock);
       if (fx.amount > 0) fx.draw(ctx, a, clock);
     }
     ctx.globalAlpha = 1;
@@ -3171,7 +3226,7 @@ const Sky = (() => {
                               own: [...OWN_BUDGET], drawn: {...drawn}, cap: CAP,
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
                               wind: effects.wind.probe(), rain: effects.rain.probe(), haze: effects.haze.probe(),
-                              humidity: effects.humidity.probe(), flood: effects.flood.probe(),
+                              humidity: effects.humidity.probe(), flood: effects.flood.probe(), heat: effects.heat.probe(),
                               gust: effects.gust.probe(), stills})};
 })();
 </script>
@@ -4204,7 +4259,7 @@ const Sky = (() => {
   // (And with each new live gust reading over 99 km/h, something big blown across once: gusting(), below.)
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
   // stronger to 8 mm/h), haze from the US AQI's Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
-  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust), heat at 35 °C, ice below 0 °C (how far below), a flash flood
+  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust), heat at 35 °C (stronger to 43 °C: 0.3 to 1), ice below 0 °C (how far below), a flash flood
   // over 30 mm/h (the rain's too). A tile
   // with no reading now calls for nothing.
   const CALLED_BY = {rain: "Rain", haze: "US AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
@@ -4224,7 +4279,7 @@ const Sky = (() => {
             haze: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),
             uv: uvi !== null && uvi >= 11 ? 1 : 0,
             humidity: humidity !== null && humidity >= 90 ? Math.max(0.05, Math.min(1, (humidity - 90) / 10)) : 0,
-            wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 1 : 0,
+            wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 0.3 + 0.7 * Math.min(1, (temperature - 35) / 8) : 0,
             ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: rate > 30 ? 1 : 0};
   }
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop animation" shows)
