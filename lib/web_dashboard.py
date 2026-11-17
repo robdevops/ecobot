@@ -18,8 +18,9 @@
     device's own (`devices`: {"station", "air"}: its reading's time, ISO in the station's zone, null with none held; a device not
     configured is not there), for the strip's stalled device greyed out, the look, and the station's rain rate now
     (`rain_rate`, mm/h: its rain gauge's, or its piezo gauge's where that's the one reporting, which no tile shows; null with
-    neither), for the page's rain behind the tiles; the past hour's highest of the dials with a thin red hand (`hour_highs`, by
-    title: Wind's gust, Rain rate's, Solar radiation's, UV index's: hour_highs()), the Wind direction tile's `rose` (today's
+    neither), for the page's rain behind the tiles; today's highest of the dials with a thin red hand (`today_highs`, by title,
+    the station's day in its zone: Wind's gust, Rain rate's, Solar radiation's, UV index's: their tiles' Daily Max, the Wind's its
+    Daily Gust, the reading now counted in: today_highs()), the Wind direction tile's `rose` (today's
     share of the wind's direction from each of the 16 compass points, N first, clockwise, from the file's readings, calm ones left out;
     [] with none: rose()), and the gust now (`gust`, km/h: over 99, a new
     reading sends a cow, a barn or a chicken across behind the tiles);
@@ -60,7 +61,7 @@ from .airgradient.dashboard import AIR_GAUGES
 from .airgradient.metrics import value_of
 from .service.common import iso
 from .ecowitt.dashboard import GAUGES, GUST, live_value
-from .ecowitt.reads import directions_on, highest_on
+from .ecowitt.reads import directions_on
 from .gauge_look import look, tile_json
 from .timeutil import day_bounds, local_date
 
@@ -80,10 +81,10 @@ RETRY_MS = 5000              # how soon a browser connects again after its strea
 QUEUED = 4                   # events waiting on a stream that isn't read: more are dropped (one says it all: fetch again)
 NOT_ANSWERING = "The weather station isn't answering right now."
 RAIN_RATES = ("rainfall", "rainfall_piezo")   # where the station's rain rate is (current's groups): its rain gauge's first, then the piezo's
-HOUR_SECONDS = 3600          # a red hand's reach back: the highest of the past hour, rolling (a peak held until it is an hour old)
 ROSE_SECONDS = 60           # the wind rose (today's directions) read from the file at most this often (the data asked for again sooner: the same)
 ROSE_DECIMALS = 4           # its shares rounded so
-HOURLY = {g.title: g.hourly for g in GAUGES if g.hourly}   # the dials with a red hand, and the reading whose past hour it shows
+RED_HANDS = {g.title: "Gust" if g.gust else "Max" for g in GAUGES if g.high_hand}   # the dials with a red hand at today's highest,
+# and the column of their table whose Daily figure it is (the Wind's: its highest gust)
 
 
 def readings_of(live: dict | None, indoor: bool = True) -> tuple | None:
@@ -93,7 +94,7 @@ def readings_of(live: dict | None, indoor: bool = True) -> tuple | None:
     if not live:
         return None
     gauges = [g for g in GAUGES if indoor or not gauge_sheet.is_indoor(g)]
-    return (*(live_value(live, where) for g in gauges for where in dict.fromkeys((g.live, *([g.hourly] if g.hourly else [])))),
+    return (*(live_value(live, where) for g in gauges for where in dict.fromkeys((g.live, *([g.high_hand] if g.high_hand else [])))),
             live_value(live, ("rainfall_piezo", "rain_rate")))   # (the piezo gauge's rain rate: the page's rain, with no gauge of its own)
 
 
@@ -118,6 +119,18 @@ def now_of(result: dict, live: dict | None, where: tuple[str, str]) -> float | N
         except (KeyError, TypeError, ValueError):
             return None
     return got
+
+
+def today_highs(tiles) -> dict[str, float | None]:
+    """{title: today's highest} of these tiles' dials with a thin red hand (RED_HANDS: Wind's gust, Rain rate's, Solar radiation's, UV
+    index's): their table's Daily figure (the Max; the Wind's Gust), which current gives for the station's day in its zone with the
+    reading now counted in, so the hand rises with it; None with none. Nothing read for it: the sheet already holds it."""
+    out = {}
+    for tile in tiles:
+        if tile.title in RED_HANDS:
+            daily = dict(zip(tile.columns, tile.rows.get("Daily") or ()))
+            out[tile.title] = daily.get(RED_HANDS[tile.title])
+    return out
 
 
 def air_readings_of(row: dict | None) -> tuple | None:
@@ -148,7 +161,7 @@ class WebDashboard:
 
     # ---------- the data ----------
     async def data(self) -> dict:
-        """{as_of, devices, tiles, look, rain_rate, gust, hour_highs}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
+        """{as_of, devices, tiles, look, rain_rate, gust, today_highs}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
         (fetch off): an open request on the LAN never asks the station (the keep-warm keeps the live reading, and the events come from it)."""
         tool = self.server.service.get("current")
         result = json.loads(await tool.call(gauge_sheet.call(), {"fetch": False})) if tool else {"error": "no current"}
@@ -160,31 +173,9 @@ class WebDashboard:
                 tile["rose"] = await self.rose()
         out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": tiles, "look": look(),
                "rain_rate": rain_rate_of(result, live), "gust": now_of(result, live, GUST),
-               "hour_highs": await self.hour_highs(result, live, [t.title for t in sheet.tiles] if sheet else [])}
+               "today_highs": today_highs(sheet.tiles if sheet else [])}
         if sheet is None:
             out["unavailable"] = (result.get("unavailable") or {}).get("station") or NOT_ANSWERING
-        return out
-
-    async def hour_highs(self, result: dict, live: dict | None, titles: list[str]) -> dict[str, float | None]:
-        """{title: its reading's highest of the past HOUR_SECONDS} for these tiles' dials with a red hand (HOURLY): of the readings kept
-        in the station's file (its minutes and 5-minute readings, with their bands of the live readings the bot saw: highest_on) and its
-        reading now (the kept live reading's, else current's); None for one with neither. Read in one go from what is held, never
-        asked of the station; the file not read (none, or an error): the readings now alone."""
-        wanted = {title: HOURLY[title] for title in titles if title in HOURLY}
-        if not wanted:
-            return {}
-        held: dict = {}
-        eco = self.server.ctx.eco
-        if getattr(eco, "storage", None) is not None and getattr(eco, "mac", None):
-            now = int(time.time())
-            try:
-                held = await eco.storage.read(highest_on, eco.mac, list(dict.fromkeys(wanted.values())), now - HOUR_SECONDS, now + 60)
-            except Exception as e:   # (the hands then show the readings now)
-                log.warning("Dashboard: couldn't read the past hour's highest: %s: %s", type(e).__name__, e)
-        out = {}
-        for title, where in wanted.items():
-            found = [v for v in (held.get(where), now_of(result, live, where) if self._recent(live, where) else None) if v is not None]
-            out[title] = max(found) if found else None
         return out
 
     async def rose(self) -> list[float]:
@@ -205,16 +196,6 @@ class WebDashboard:
                 log.warning("Dashboard: couldn't read today's wind directions: %s: %s", type(e).__name__, e)
         self._rose = (now, start, shares)
         return shares
-
-    @staticmethod
-    def _recent(live: dict | None, where: tuple[str, str]) -> bool:
-        """Is the kept live reading's (else current's) of this reading from the past hour: not one read longer ago (a station silent
-        for hours), which no longer counts. A reading with no time of its own counts."""
-        try:
-            at = int(((live or {}).get(where[0]) or {}).get(where[1], {}).get("time") or 0)
-        except (AttributeError, TypeError, ValueError):
-            return True
-        return not at or at >= time.time() - HOUR_SECONDS
 
     def device_times(self) -> dict[str, str | None]:
         """{"station", "air"}: the time of each configured device's reading as it is held (the station's: its newest reading's own time
@@ -337,4 +318,4 @@ class WebDashboard:
                 Route(f"{path}/events", self.events, methods=["GET"])]
 
 
-__all__ = ["HOURLY", "ROSE_SECONDS", "WebDashboard", "air_readings_of", "now_of", "rain_rate_of", "readings_of"]
+__all__ = ["RED_HANDS", "ROSE_SECONDS", "WebDashboard", "air_readings_of", "now_of", "rain_rate_of", "readings_of", "today_highs"]

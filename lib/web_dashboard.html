@@ -3504,14 +3504,14 @@ const Sky = (() => {
     }
     text(svg, cx, cy + 64, tile.unit, 18, ink(L.soft));
     const needle = el("polygon", {fill: ink(L.needle)}, svg);
-    // The past hour's highest (the wind's gust, rain rate, sun, UV: tile.hour, null with none): a very thin red hand, like a clock's
+    // Today's highest (the wind's gust, rain rate, sun, UV: tile.todayHigh, null with none): a very thin red hand, like a clock's
     // second hand, over the dial and the needle and under the hub, its short tail behind the hub with a small counterweight. Drawn
     // pointing right (0 degrees), turned to its reading
-    const hand = tile.hour === undefined ? null : el("g", {class: "hour", "pointer-events": "none"}, svg);
+    const hand = tile.todayHigh === undefined ? null : el("g", {class: "high", "pointer-events": "none"}, svg);
     if (hand) {
-      el("path", {d: `M${cx - 40},${cy} L${cx + outer - 3},${cy}`, stroke: L.hour_hand, "stroke-width": L.hour_hand_width,
+      el("path", {d: `M${cx - 40},${cy} L${cx + outer - 3},${cy}`, stroke: L.high_hand, "stroke-width": L.high_hand_width,
                   "stroke-linecap": "round", fill: "none"}, hand);
-      el("circle", {cx: cx - 34, cy, r: 3.6, fill: L.hour_hand}, hand);
+      el("circle", {cx: cx - 34, cy, r: 3.6, fill: L.high_hand}, hand);
     }
     const label = text(svg, cx, cy + 102, "", 50, ink(L.ink));   // (the reading alone: no band word ("Moderate") under the dial, its
     label.classList.add("reading");                                // colours say it)
@@ -3639,7 +3639,7 @@ const Sky = (() => {
   // What can't change in place (a tile so different is drawn again): its kind and scale. A reading coming or going doesn't: the tile
   // brightens or dims (its opacity, eased) and the gauge moves from or to its floor.
   const shape = (t) => JSON.stringify([t.kind, t.title, t.unit, t.low, t.high, t.colours, t.ticks, t.bounds, t.columns, t.decimals,
-                                       t.hour !== undefined]);
+                                       t.todayHigh !== undefined]);
   const label = (t) => t.value === null ? `${t.title}: no reading` : t.kind === "compass" ? `${t.title} ${figure(t.value, t.decimals)}° ${t.band || ""}`.trim()
                                                                      : `${t.title} ${figure(t.value, t.decimals)} ${t.unit}`.trim();
   let clips = 0;
@@ -3668,14 +3668,14 @@ const Sky = (() => {
     close.setAttribute("aria-label", `Hide ${tile.title}`);
     close.addEventListener("click", () => hide(idOf(tile), close.matches(":focus-visible")));
     box.append(grip, close);
-    const drawnTile = {box, shape: shape(tile), value: shown(tile), frame: 0, hour: tile.hour ?? null, hourFrame: 0};
+    const drawnTile = {box, shape: shape(tile), value: shown(tile), frame: 0, high: tile.todayHigh ?? null, highFrame: 0};
     drawnTile.update = (t) => {   // the same gauge at a new reading: the needle, mercury or water moves there, the figures change;
       box.setAttribute("aria-label", label(t));   // a reading come or gone: the tile brightens or dims, the gauge from or to its floor
       box.classList.toggle("faded", !!t.faded);
       fill(t);
       if (at.band) at.band(t);
       move(drawnTile.value, aim(drawnTile.value, shown(t)), MOVE_MS);
-      if (at.hand) moveHand(drawnTile.hour, t.hour ?? null, MOVE_MS);
+      if (at.hand) moveHand(drawnTile.high, t.todayHigh ?? null, MOVE_MS);
     };
     const aim = (from, to) => at.toward ? at.toward(from, to) : to;   // (a compass's needle: the short way round)
     const move = (from, to, ms) => {
@@ -3693,22 +3693,22 @@ const Sky = (() => {
     // The red hand on its own clock (its value changes apart from the needle's): eased there, or put there at once with reduced motion,
     // a hidden page, or coming or going (null)
     const moveHand = (from, to, ms) => {
-      drawnTile.hour = to;
-      cancelAnimationFrame(drawnTile.hourFrame);
+      drawnTile.high = to;
+      cancelAnimationFrame(drawnTile.highFrame);
       if (from === to || from === null || to === null || STILL || document.hidden) return at.hand(to);
       const start = performance.now();
       const step = (now) => {
         const p = Math.min(Math.max((now - start) / ms, 0), 1), eased = 1 - (1 - p) ** 3;
         at.hand(p < 1 ? from + (to - from) * eased : to);
-        if (p < 1) drawnTile.hourFrame = requestAnimationFrame(step);
+        if (p < 1) drawnTile.highFrame = requestAnimationFrame(step);
       };
-      drawnTile.hourFrame = requestAnimationFrame(step);
+      drawnTile.highFrame = requestAnimationFrame(step);
     };
     if (opening) move(tile.floor, aim(tile.floor, shown(tile)), RISE_MS);   // the page just opened: every gauge rises from its floor to its reading
     else at(shown(tile));
     if (at.hand) {   // (its hand with it)
-      at.hand(tile.hour === null ? null : opening ? tile.floor : tile.hour);
-      if (opening) moveHand(tile.floor, tile.hour, RISE_MS);
+      at.hand(tile.todayHigh === null ? null : opening ? tile.floor : tile.todayHigh);
+      if (opening) moveHand(tile.floor, tile.todayHigh, RISE_MS);
     }
     return drawnTile;
   }
@@ -3923,8 +3923,8 @@ const Sky = (() => {
     L = data.look;
     document.documentElement.style.setProperty("--fade", L.fade);
     tiles = data.tiles || [];
-    const hours = data.hour_highs || {};   // (the dials with a red hand: their past hour's highest, null with none)
-    for (const t of tiles) if (t.title in hours) t.hour = hours[t.title];
+    const highs = data.today_highs || {};   // (the dials with a red hand: today's highest, null with none)
+    for (const t of tiles) if (t.title in highs) t.todayHigh = highs[t.title];
     asOf = data.as_of && data.as_of.time ? data.as_of.time : null;
     devices = data.devices || {};
     unavailable = data.unavailable || "";

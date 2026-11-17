@@ -21,6 +21,9 @@ to 500 (or 600 µg/m³) doesn't squeeze "good" and "moderate" into a sliver. The
     high, 300-500 very high (the EPA's first four colours). The edges at 150 and 250 (VOC) and 20 and 150 (NOx) are the service's own
     ratings (lib/series.py AIR).
 
+Each table has a Max and a Min column, but the US AQI's and the particles' (PM2.5, PM10, PM1): their Max alone (`lowest`), as the
+UV index's: how clean the air got says little beside how bad it got.
+
 Left out: PM1 (no US standard for it), and the sensor's own temperature and humidity (it is outdoors: the station's outdoor gauges show
 the same air).
 """
@@ -46,6 +49,8 @@ class AirGauge:
     step: float                       # the breakpoints' resolution: a reading below an edge + step is still in the band below
     decimals: int = 0
     aqi: bool = False                 # shows the US AQI (the higher of PM2.5's and PM10's now: metrics.us_aqi), not the reading itself
+    lowest: bool = True               # its table has a Min column beside its Max (not the particles' and the AQI's: their lowest says
+                                      # nothing worth a column, as the UV index's doesn't)
 
     @property
     def reading(self) -> str:
@@ -67,10 +72,10 @@ class AirGauge:
 
 
 AIR_GAUGES = (
-    AirGauge("US AQI", "", "pm2_5", (0, *(a_hi for *_, a_hi, _ in PM25_AQI)), EPA, EPA_NAMES, 1, aqi=True),
-    AirGauge("PM2.5", "µg/m³", "pm2_5", (0, *(hi for _, hi, *_ in PM25_AQI)), EPA, EPA_NAMES, 0.1, 1),
-    AirGauge("PM10", "µg/m³", "pm10", (0, 54, 154, 254, 354, 424, 604), EPA, EPA_NAMES, 1),
-    AirGauge("PM1", "µg/m³", "pm1", (0, *(hi for _, hi, *_ in PM25_AQI)), EPA, EPA_NAMES, 0.1, 1),   # (on PM2.5's bands: no standard of its own)
+    AirGauge("US AQI", "", "pm2_5", (0, *(a_hi for *_, a_hi, _ in PM25_AQI)), EPA, EPA_NAMES, 1, aqi=True, lowest=False),
+    AirGauge("PM2.5", "µg/m³", "pm2_5", (0, *(hi for _, hi, *_ in PM25_AQI)), EPA, EPA_NAMES, 0.1, 1, lowest=False),
+    AirGauge("PM10", "µg/m³", "pm10", (0, 54, 154, 254, 354, 424, 604), EPA, EPA_NAMES, 1, lowest=False),
+    AirGauge("PM1", "µg/m³", "pm1", (0, *(hi for _, hi, *_ in PM25_AQI)), EPA, EPA_NAMES, 0.1, 1, lowest=False),   # (on PM2.5's bands: no standard of its own)
     AirGauge("CO₂", "ppm", "co2", (400, 800, 1000, 1500, 2000, 2500), EPA[:5], ("Good", "Fair", "Poor", "Bad", "Very bad"), 0),
     AirGauge("VOC index", "", "voc_index", (1, 100, 150, 250, 400, 500), VOC_COLOURS,
              ("Low", "Average", "Elevated", "High", "Very high"), 0),

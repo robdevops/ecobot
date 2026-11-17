@@ -290,7 +290,7 @@ def gauge_of(name: str) -> Gauge | None:
     no figures (the wind's direction: its compass)."""
     if name == "wind.wind_gust":
         wind = next(g for g in GAUGES if g.live == ("wind", "wind_speed"))
-        return replace(wind, live=GUST, highest=wind.gust, gust=None, hourly=None)
+        return replace(wind, live=GUST, highest=wind.gust, gust=None, high_hand=None)
     return next((g for g in GAUGES if g.reading == name and g.highest), None)
 
 

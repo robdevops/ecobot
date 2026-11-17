@@ -369,7 +369,7 @@ def air_result(latest: dict | None, air_values: dict | None = None) -> dict:
 
 
 def test_the_air_sensors_tiles_come_after_the_stations_with_their_aqi_bands_and_figures():
-    from lib.airgradient.metrics import pm10_aqi, pm25_aqi
+    from lib.airgradient.metrics import pm25_aqi
     latest = {"pm2_5": {"value": 40.0, "unit": "µg/m³"}, "pm10": {"value": 60.0, "unit": "µg/m³"}, "pm1": {"value": 20.0, "unit": "µg/m³"},
               "co2": {"value": 1200, "unit": "ppm"}}
     values = {"pm2_5_max": {date(2026, 10, 2): 70.0, TODAY: 30.0}, "pm2_5_min": {TODAY: 5.0}, "co2_max": {TODAY: 900}, "co2_min": {TODAY: 410}}
@@ -378,12 +378,18 @@ def test_the_air_sensors_tiles_come_after_the_stations_with_their_aqi_bands_and_
     assert list(tiles) == ["Temperature", "US AQI", "PM2.5", "PM10", "PM1", "CO₂"]              # no VOC nor NOx sent: left out
     aqi = tiles["US AQI"]
     assert (aqi.value, aqi.band, aqi.kind, aqi.low, aqi.high, aqi.columns) == (pm25_aqi(40.0)[0], "Unhealthy for Sensitive Groups", "dial",
-                                                                               0, 500, ("Max", "Min"))
-    assert aqi.rows["Daily"] == (pm25_aqi(40.0)[0], pm10_aqi(60.0)[0]) and aqi.rows["Monthly"][0] == pm25_aqi(70.0)[0]   # (the higher of each)
+                                                                               0, 500, ("Max",))
+    assert aqi.rows["Daily"] == (pm25_aqi(40.0)[0],) and aqi.rows["Monthly"] == (pm25_aqi(70.0)[0],)   # (the higher of each; no Min)
     assert aqi.ticks == aqi.bounds == (0, 50, 100, 150, 200, 300, 500)
     pm = tiles["PM2.5"]
-    assert (pm.value, pm.band, pm.decimals, pm.rows["Monthly"]) == (40.0, "Unhealthy for Sensitive Groups", 1, (70.0, 5.0))
+    assert (pm.value, pm.band, pm.decimals, pm.rows["Monthly"]) == (40.0, "Unhealthy for Sensitive Groups", 1, (70.0,))
     assert (tiles["PM10"].band, tiles["CO₂"].band, tiles["CO₂"].rows["Daily"]) == ("Moderate", "Poor", (1200.0, 410.0))
+    # the US AQI's and the particles' tables: their Max alone, as the UV index's; the rest a Min beside their Max
+    from tests.chart_samples import _air, _station
+    live, days, today = _station()
+    columns = {t.title: t.columns for t in gauge_sheet.sheet(gauges_result(live, days, today, *_air(today))).tiles}
+    assert {t for t, c in columns.items() if c == ("Max",)} == {"US AQI", "PM2.5", "PM10", "PM1", "UV index", "Rain rate", "Solar radiation"}
+    assert columns["CO₂"] == columns["Temperature"] == ("Max", "Min") and all(len(r) == len(t.columns) for t in sheet.tiles for r in t.rows.values())
     assert [t.title for t in gauge_sheet.sheet(air_result(None)).tiles] == ["Temperature"]   # no air sensor: no air gauges
 
 

@@ -2,9 +2,9 @@
 gauges (lib/web_dashboard.py) and the Status picture's three (lib/status.py, drawn by lib/gauges.py): each gauge's scale and colours (the weather station's, lib/ecowitt/dashboard.py GAUGES, then the air sensor's,
 lib/airgradient/dashboard.py AIR_GAUGES) filled from the service's `current` with `context`, its reading now and the highs and lows of
 today, the month and the year beside it (rain: its totals and wettest day; wind: its highest speed, and its highest gust in a Gust
-column where Min usually is; the US AQI: the higher of PM2.5's
-and PM10's, as AQI). An air gauge's band is named from its own reading now, and the US AQI is worked out from PM2.5 and PM10 now, the
-higher of the two, its band saying "(PM10)" when PM10 sets it: the dials agree with their needles (the service's `aqi_us` and `band`
+column where Min usually is; the UV index, the US AQI and the particles (PM2.5, PM10, PM1): their highest alone, no Min; the US AQI:
+the higher of PM2.5's and PM10's, as AQI). An air gauge's band is named from its own reading now, and the US AQI is worked out from
+PM2.5 and PM10 now, the higher of the two, its band saying "(PM10)" when PM10 sets it: the dials agree with their needles (the service's `aqi_us` and `band`
 are of the lower of the last two readings, for its ratings).
 
 The wind's direction is a compass (its needle where the wind comes from, its band the compass point current gives with it), with no
@@ -48,7 +48,7 @@ def _row(gauge: Gauge | AirGauge, figures: dict) -> tuple[float | None, ...]:
     """A row of a tile's table from current's figures of that period: Max and Min, Max alone, (wind) Max and Gust, or (rain) its wettest
     day and Total (the US AQI's already worked out as AQI: _aqi_entry)."""
     if isinstance(gauge, AirGauge):
-        return figures.get("high"), figures.get("low")
+        return (figures.get("high"), figures.get("low")) if gauge.lowest else (figures.get("high"),)
     if gauge.total:
         return (figures.get("wettest_day") or {}).get("rain"), figures.get("total")
     if gauge.gust:
@@ -94,7 +94,7 @@ def _tile(gauge: Gauge | AirGauge, entry: dict) -> Tile | None:
         if band and entry.get("from") == "PM10":
             band = f"{band} (PM10)"
         ticks = gauge.bounds
-        return Tile(gauge.title, gauge.unit, now, "dial", gauge.low, gauge.high, gauge.colours, ("Max", "Min"), rows, ticks,
+        return Tile(gauge.title, gauge.unit, now, "dial", gauge.low, gauge.high, gauge.colours, ("Max", "Min") if gauge.lowest else ("Max",), rows, ticks,
                     gauge.decimals, gauge.bounds, band)
     columns = ("Max", "Total") if gauge.total else ("Max", "Min") if gauge.lowest else ("Max", "Gust") if gauge.gust else ("Max",)
     low, high, colours, ticks = scale(gauge, now)   # (a thermometer's widens to take in the reading)

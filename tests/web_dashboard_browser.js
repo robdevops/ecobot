@@ -102,7 +102,7 @@ async function sizes(browser, url, shots, wanted) {
       }),
     })), errors };
     await handsSettled(page);
-    report[name].hands = await handsLook(page);   // the dials' thin red hands: the past hour's highest
+    report[name].hands = await handsLook(page);   // the dials' thin red hands: today's highest
     await compassSettled(page);
     report[name].compass = await compassLook(page);   // the wind's direction in the grid: its compass, no table
     // zoomed (Enter on the first tile): its look (box, title, text, table) and a screenshot (SHOTS/dashboard-NAME-zoomed.png)
@@ -134,7 +134,7 @@ async function sizes(browser, url, shots, wanted) {
 // Each tile's red hand (null without one): its turn, shown or not, its colour and width, where it is among the dial's parts (after the
 // needle, before the hub: [needle, hand, hub] indexes), its drawn box's narrower side against the needle's; with the Wind tile's table
 const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#grid .tile")].map((t) => {
-  const hand = t.querySelector("svg .hour"), title = t.querySelector(".title").textContent;
+  const hand = t.querySelector("svg .high"), title = t.querySelector(".title").textContent;
   if (!hand) return [title, null];
   const parts = [...t.querySelector("svg > g.gauge").children], line = hand.querySelector("path");
   const hub = parts.filter((e) => e.tagName === "circle").pop(), needle = t.querySelector("svg > g.gauge > polygon");
@@ -146,7 +146,7 @@ const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
 })));
 // The red hands at rest (the opening's rise or a move over): none turned since the last look, 150 ms before, rather than a fixed wait
 const handsSettled = (page) => page.waitForFunction(() => {
-  const now = [...document.querySelectorAll("#grid .tile svg .hour")].map((h) => h.getAttribute("transform")).join("|");
+  const now = [...document.querySelectorAll("#grid .tile svg .high")].map((h) => h.getAttribute("transform")).join("|");
   const still = now && now === window.__hands;
   window.__hands = now;
   return still;
@@ -200,9 +200,9 @@ async function live(browser, url) {
   await handsSettled(page);
   await page.evaluate(() => {
     window.__turns = [];
-    window.__hand = [];   // (and the Wind's red hand, every frame: its past hour's highest gust rises)
+    window.__hand = [];   // (and the Wind's red hand, every frame: today's highest gust rises)
     const needle = document.querySelector('.tile[data-kind="compass"] .needle');
-    const wind = [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === "Wind").querySelector("svg .hour");
+    const wind = [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === "Wind").querySelector("svg .high");
     const sample = () => {
       window.__turns.push(Number(/rotate\(([-\d.]+)/.exec(needle.getAttribute("transform"))[1]));
       window.__hand.push(Number(/rotate\(([-\d.]+)/.exec(wind.getAttribute("transform"))[1]));
@@ -1118,7 +1118,7 @@ async function weatherPage(browser, url, options = {}) {
     if ("rain_rate" in readings) data.rain_rate = readings.rain_rate;
     if ("gust" in readings) data.gust = readings.gust;              // (the gust now, km/h)
     if (readings.asOf) data.as_of = { ...data.as_of, time: readings.asOf };   // (a new reading: its time)
-    if (readings.hour) Object.assign(data.hour_highs, readings.hour);   // (the red hands' past hour)
+    if (readings.high) Object.assign(data.today_highs, readings.high);   // (the red hands': today's highest)
     await route.fulfill({ response, json: data });
   });
   const page = await context.newPage();
@@ -1936,9 +1936,9 @@ async function lowMotion(browser, url, out) {
     .map((e) => getComputedStyle(e).transitionDuration).filter((d) => d.split(",").some((t) => parseFloat(t) > 0)).length);
   const hand = () => page.evaluate(() => {
     const t = [...document.querySelectorAll(".tile")].find((e) => e.querySelector(".title").textContent === "UV index");
-    return t.querySelector("svg .hour").getAttribute("transform");
+    return t.querySelector("svg .high").getAttribute("transform");
   });
-  const called = { "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160, gust: 130, hour: { "UV index": 9 } };
+  const called = { "UV index": 11, Wind: 60, Temperature: -3, rain_rate: 2, Humidity: 97, "US AQI": 160, gust: 130, high: { "UV index": 9 } };
   await reads(called);   // (the page asks at once: fetched LOW_EVERY after the last)
   out.called = { ...await seen(), hand: await hand() };
   out.beads = await page.evaluate(() => {   // (humidity's still frame: its biggest beads set off again, none elongating)
@@ -2738,10 +2738,10 @@ const WEATHER = {
     })();
     // reduced motion: no loop, one still, faint frame; the frames as ever
     const still = await weatherPage(browser, url, { context: { reducedMotion: "reduce" } });
-    await still.reads({ "UV index": 11, Temperature: -4, hour: { "UV index": 9 } });
+    await still.reads({ "UV index": 11, Temperature: -4, high: { "UV index": 9 } });
     const stillHand = await still.page.evaluate(() => {   // (the UV's red hand at once at its new highest: no frames for it)
       const t = [...document.querySelectorAll(".tile")].find((e) => e.querySelector(".title").textContent === "UV index");
-      return t.querySelector("svg .hour").getAttribute("transform");
+      return t.querySelector("svg .high").getAttribute("transform");
     });
     await still.page.waitForTimeout(500);
     out.still = { ...await weatherSeen(still.page), frames: await framesIn(still.page, 800), ink: await canvasInk(still.page), hand: stillHand,

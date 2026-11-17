@@ -66,26 +66,6 @@ def first_minute_on(r: Reader, mac: str, groups: list[str], start: int, end: int
     return min((t for t in found if t is not None), default=None)
 
 
-def highest_on(r: Reader, mac: str, wheres: list[tuple[str, str]], start: int, end: int) -> dict[tuple[str, str], float]:
-    """{(group, field): the highest of the reading from start to end}, of its minutes (Home Assistant's) and its 5-minute readings, each
-    with the highest of its band where it has one (the bot's live readings counted into it: a 5-minute row holding only a band counts
-    too). A reading with none is left out. One query per kind of sensor (the web page's red hands: the past hour's highest)."""
-    by_sensor: dict = {}
-    for where in wheres:
-        sensor, place = r.sensor(mac, where[0]), column_of(*where)
-        if sensor is not None and place is not None and place[1] == "value":
-            by_sensor.setdefault((sensor.kind, sensor.id), []).append((where, place[0]))
-    out: dict[tuple[str, str], float] = {}
-    for (kind, sensor), columns in by_sensor.items():
-        picks = ", ".join(f"MAX({q(c)}), MAX({q(c + '_hi')})" for _, c in columns)
-        got = r.db.execute(f"SELECT {picks} FROM {kind} WHERE sensor = ? AND res IN ('1min', '5min') AND ts BETWEEN ? AND ?",
-                           (sensor, start, end)).fetchone()
-        for i, (where, _) in enumerate(columns):
-            if found := [v for v in got[2 * i:2 * i + 2] if v is not None]:
-                out[where] = float(max(found))
-    return out
-
-
 def directions_on(r: Reader, mac: str, start: int, end: int) -> list[int]:
     """How long the wind blew from each of the 16 compass points (direction.sector: N first, clockwise) from start to end, in minutes, of
     the wind's 5-minute readings (5 each) and its minutes (1 each) where no 5-minute reading covers them (300 s either side), in one query;
