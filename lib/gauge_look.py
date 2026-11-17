@@ -19,7 +19,7 @@ HIGH_HAND = "#FF3B30"       # a dial's red mark at its reading's highest today (
 HIGH_HAND_WIDTH = 1.4       # ... the hand: how wide (pixels)
 LIMIT_MARK = (118, 138, 8.5)   # ... the triangle: its tip's and its base's radius, its base's half-width (pixels; the band ends at 130,
                                # the outline at 138)
-WIND_CHIPS = {**CHIPS, "Max": GUST_CHIP, "Gust": HIGH_HAND}   # the web page's Wind table: its Max grey, its Gust its red hand's red
+
 FILL = "#D32F27"            # the thermometer's mercury
 TUBE_HALF, BULB_RADIUS = 28, 38   # the thermometer: half the tube's width, the bulb's radius (pixels, to the outline)
 MERCURY_GAP = 7             # the gap between the outline and the red, the same round the bulb as up the tube
@@ -31,6 +31,8 @@ COMPASS_LABEL_Y = 346       # ... its reading ("99° E") under it
 COMPASS_BAND = "#262E34"    # ... its ring, under the ticks and the letters N, E, S and W
 WATER = "#4FB3F6"           # the rain beaker's water
 NEEDLE = "#3E86C0"
+WIND_CHIPS = {**CHIPS, "Max": NEEDLE, "Gust": HIGH_HAND}   # the web page's Wind table: its Max the needle's colour (the speed
+                                                           # it shows), its Gust its limit mark's red (today's highest gust)
 CELL_W, CELL_H, MARGIN = 480, 575, 20
 FADE = 0.4                  # how much of its colour a tile with no reading keeps
 SWEEP, START = 250.0, 215.0   # the dial runs clockwise from START degrees (0 = right, 90 = up) through SWEEP degrees

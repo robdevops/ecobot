@@ -3423,18 +3423,11 @@ const Sky = (() => {
     }
     text(svg, cx, cy + 64, tile.unit, 18, ink(L.soft));
     const needle = el("polygon", {fill: ink(L.needle)}, svg);
-    // Today's highest (the wind's gust, rain rate, sun, UV: tile.todayHigh, null with none). The Wind's (its gust): a very thin red
-    // hand, like a clock's second hand, over the dial and the needle and under the hub, its short tail behind the hub with a small
-    // counterweight. The others': a gauge's limit mark, a small solid red triangle just outside the coloured band (its tip over the
-    // outline, clear of the numbers inside and the title above), pointing in at it. Either drawn pointing right (0 degrees), turned
-    // to its reading
-    const hand = tile.todayHigh === undefined ? null : el("g", {class: "high", "pointer-events": "none"}, svg);
-    if (hand && tile.columns.includes("Gust")) {   // (the Wind's)
-      el("path", {d: `M${cx - 40},${cy} L${cx + outer - 3},${cy}`, stroke: L.high_hand, "stroke-width": L.high_hand_width,
-                  "stroke-linecap": "round", fill: "none"}, hand);
-      el("circle", {cx: cx - 34, cy, r: 3.6, fill: L.high_hand}, hand);
-    } else if (hand) {
-      hand.classList.add("limit");
+    // Today's highest (the wind's gust, rain rate, sun, UV: tile.todayHigh, null with none): a gauge's limit mark, a small solid red
+    // triangle, its base flush with the dial's outer edge and its tip reaching into the coloured band (clear of the numbers inside and
+    // the title above), pointing in at it; drawn pointing right (0 degrees), turned to its reading
+    const hand = tile.todayHigh === undefined ? null : el("g", {class: "high limit", "pointer-events": "none"}, svg);
+    if (hand) {
       const [tip, base, half] = L.limit_mark;
       el("polygon", {points: points([[cx + tip, cy], [cx + base, cy - half], [cx + base, cy + half]]), fill: L.high_hand,
                      "stroke-linejoin": "round"}, hand);
@@ -3547,7 +3540,7 @@ const Sky = (() => {
     const left = 60, top = 378, w = 128, h = 38, gap = 4;
     const xs = tile.columns.map((_, i) => left + (w + gap) * (i + 1));
     place(box, left, top, w, h, 17, tile.unit, "unit", {color: ink(L.ink), fontWeight: 700});
-    const chips = tile.columns.includes("Gust") ? L.wind_chips : L.chips;   // (the Wind's: its Max grey, its Gust its red hand's red)
+    const chips = tile.columns.includes("Gust") ? L.wind_chips : L.chips;   // (the Wind's: its Max the needle's colour, its Gust its limit mark's red)
     tile.columns.forEach((name, i) =>
       place(box, xs[i], top, w, h, 19, `${L.marks[name]} ${name}`, "chip head", {background: ink(chips[name]), color: ink("#FFFFFF"), fontWeight: 700}));
     L.rows.forEach((name, r) => {
@@ -3935,8 +3928,8 @@ const Sky = (() => {
     L = data.look;
     document.documentElement.style.setProperty("--fade", L.fade);
     raw = data.tiles || [];   // (as the server sends them: metric; the weather's marks read these)
-    const highs = data.today_highs || {};   // (the dials with a red hand: today's highest, null with none)
-    for (const t of raw) if (t.title in highs) t.todayHigh = highs[t.title];
+    const highs = data.today_highs || {};   // (the dials with a limit mark: today's highest, null with none; none shown while it's 0)
+    for (const t of raw) if (t.title in highs) t.todayHigh = highs[t.title] > 0 ? highs[t.title] : null;
     tiles = raw.map(inUnits);   // (in this browser's units)
     asOf = data.as_of && data.as_of.time ? data.as_of.time : null;
     devices = data.devices || {};

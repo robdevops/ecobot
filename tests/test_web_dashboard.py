@@ -44,7 +44,7 @@ from lib.mcp_server import AIR_URI, EcobotServer, WEATHER_URI, http_app
 from lib.service.context import Context
 from lib.service.names import Catalogue
 from lib.ecowitt.reads import directions_on
-from lib.gauge_look import CHIPS, GUST_CHIP, MAX_CHIP, START, SWEEP
+from lib.gauge_look import CHIPS, MAX_CHIP, START, SWEEP
 from lib.web_dashboard import (DESCRIPTION, ICON, ICON_URL, PAGE, RED_HANDS, WebDashboard, air_readings_of, rain_rate_of, readings_of,
                                today_highs)
 from tests.chart_samples import _air, _station
@@ -684,7 +684,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         before = json.loads(await asyncio.wait_for(live.stdout.readline(), 60))
         station.reads("outdoor", "temperature", "21.5")
         station.reads("wind", "wind_direction", "300")                           # (and the wind backs from the east to WNW)
-        station.highs_today({"wind_gust": 60.0, "uv_max": 9.0})                   # (and today's highest gust and UV rise, and today's
+        station.highs_today({"wind_gust": 60.0, "uv_max": 9.0, "rain_rate_max": 0.0})   # (and today's highest gust and UV rise, rain
+                                                                                 # rate's a dry day's 0, and today's
         station.held(ROSE_LATER)                                                  # rose turns to the west)
         await server.publish_changes()
         live.stdin.write(b"go\n")
@@ -758,11 +759,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
             h, tile = hands[title], next(t for t in sheet if t.title == title)
             assert h["turn"] == hand_turn(tile, value) and h["shown"], (name, title, h)
             assert h["order"][0] < h["order"][1] < h["order"][2], (name, title, h)
-            if title == "Wind":   # the Wind's (its gust): a thin red hand, as ever
-                assert h["kind"] == "hand" and h["limit"] is None, (name, title, h)
-                assert h["colour"] == look()["high_hand"] and h["width"] <= 1.5 and h["needleWidth"] > 10 * h["width"], (name, title, h)
-            else:                 # the others': no hand, a limit mark (rim triangle) just outside the band, pointing in
-                limit_mark(h, name, title)
+            limit_mark(h, name, title)   # (every one, the Wind's gust too: no hand, a limit mark (rim triangle) pointing in)
         # ... zoomed, the UV's the same, scaled with the tile
         z, grid = got["uvZoomed"], hands["UV index"]
         assert z["zoomed"] and z["turn"] == grid["turn"] and z["limit"]["tileWidth"] > grid["limit"]["tileWidth"], (name, z)
@@ -771,9 +768,9 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert (shots / f"dashboard-{name}-uv.png").exists()
         assert hands["Wind"]["heads"] == ["▲ Max", "» Gust"] and wind.columns == ("Max", "Gust"), hands["Wind"]
         # ... its heads: Max grey, Gust in the red hand's very red (the hand and its column go together); every other tile's Max red
-        assert hands["Wind"]["headColours"] == [rgb(GUST_CHIP), rgb(look()["high_hand"])], hands["Wind"]
+        assert hands["Wind"]["headColours"] == [rgb(look()["needle"]), rgb(look()["high_hand"])], hands["Wind"]
         others = got["headColours"]
-        assert others["Wind"] == [["▲ Max", rgb(GUST_CHIP)], ["» Gust", rgb(look()["high_hand"])]], others
+        assert others["Wind"] == [["▲ Max", rgb(look()["needle"])], ["» Gust", rgb(look()["high_hand"])]], others
         assert any(t != "Wind" and heads for t, heads in others.items()), others
         assert all(c == rgb(CHIPS[n.split()[-1]]) for t, heads in others.items() if t != "Wind" for n, c in heads), others
         assert all(c == rgb(MAX_CHIP) for t, heads in others.items() if t != "Wind" for n, c in heads if n.endswith("Max")), others
@@ -806,6 +803,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     assert h["kind"] == "limit" and h["turn"] == hand_turn(uv, 9.0) and frames[0] == turn_of(uv, 6.5) and frames[-1] == turn_of(uv, 9.0), (h, frames)
     between = [f for f in frames if turn_of(uv, 6.5) < f < turn_of(uv, 9.0)]
     assert len(set(between)) >= 8 and all(a <= b for a, b in zip(frames, frames[1:])), frames
+    # ... and Rain rate's hidden while today's highest is 0 (a dry day: nothing to mark)
+    assert after["hands"]["Rain rate"]["kind"] == "limit" and not after["hands"]["Rain rate"]["shown"], after["hands"]["Rain rate"]
 
 
 def limit_mark(h, name, title):
