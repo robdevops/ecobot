@@ -2,6 +2,7 @@
 writes there), within Ecowitt's per-request limits."""
 
 import asyncio
+import contextlib
 import functools
 import logging
 import time
@@ -10,7 +11,7 @@ from datetime import datetime, timedelta, tzinfo
 from ..storage import Storage
 from ..storage.coverage import merge as merge_intervals
 from ..timeutil import local_epoch, naive_local
-from .api import CYCLES, EcowittError, NotInYet
+from .api import CYCLES, EcowittError, NotInYet, Urgency
 from .reads import rows_on
 
 log = logging.getLogger(__name__)
@@ -33,14 +34,43 @@ class Recent:
     """The newest fetch of each station, cycle and group: the time it covered and when it was made. What it brought is in the storage (what
     is newer than the cycle's settle horizon as provisional readings, which the next fetch replaces), so for FRESH_SECONDS a question reads
     it there instead of asking Ecowitt again (the keep-warm refreshes it). And one fetch at a time per station and cycle, so a question
-    waits for one in flight instead of asking for the same thing."""
+    waits for one in flight instead of asking for the same thing: a background fetch a question waits for is hurried (its requests go
+    in the urgent line), as is any that holds the cycle while a question waits."""
 
     def __init__(self):
         self._fetched: dict[tuple[str, str, str], tuple[int, int, float]] = {}
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._holders: dict[tuple[str, str], Urgency] = {}   # the urgency of the fetch holding each station and cycle
+        self._waiting: dict[tuple[str, str], int] = {}        # questions waiting for it
 
     def lock(self, mac: str, cycle: str) -> asyncio.Lock:
         return self._locks.setdefault((mac, cycle), asyncio.Lock())
+
+    @contextlib.asynccontextmanager
+    async def turn(self, mac: str, cycle: str, urgent: bool):
+        """Hold the fetch of this station and cycle; yields the Urgency to send its requests with. A question (urgent) that has to
+        wait hurries the fetch holding it, and any background one that takes it while the question still waits."""
+        key, lock = (mac, cycle), self.lock(mac, cycle)
+        if urgent and lock.locked():
+            self._waiting[key] = self._waiting.get(key, 0) + 1
+            if (held := self._holders.get(key)) is not None:
+                held.hurry()
+            try:
+                await lock.acquire()
+            finally:
+                if not (left := self._waiting[key] - 1):
+                    del self._waiting[key]
+                else:
+                    self._waiting[key] = left
+        else:
+            await lock.acquire()
+        self._holders[key] = urgency = Urgency(urgent or bool(self._waiting.get(key)))
+        try:
+            yield urgency
+        finally:
+            if self._holders.get(key) is urgency:
+                del self._holders[key]
+            lock.release()
 
     def covers(self, mac: str, cycle: str, group: str, start: int, end: int) -> bool:
         """Did a fresh enough fetch cover the whole of [start, end]? One that reached the present covers anything up to now (what is newer
@@ -105,12 +135,14 @@ class Fetcher:
         s, e = self.epoch(start), self.epoch(end)
         if not refresh and (held := await self._read(cycle, s, e, load, fetch=False)) is not None:
             return held
-        async with self.recent.lock(self.mac, cycle):
-            return await self._read(cycle, s, e, load, fetch=True, refresh=refresh)
+        async with self.recent.turn(self.mac, cycle, self.urgent) as urgency:
+            return await self._read(cycle, s, e, load, fetch=True, refresh=refresh, urgency=urgency)
 
-    async def _read(self, cycle: str, s: int, e: int, load: bool, fetch: bool, refresh: bool = False) -> list | None:
+    async def _read(self, cycle: str, s: int, e: int, load: bool, fetch: bool, refresh: bool = False,
+                    urgency: Urgency | None = None) -> list | None:
         """[s, e] (epoch seconds) from the storage, and (fetch) what it does not hold, nor a fresh fetch brought, from Ecowitt (written to
-        the storage first). None, with nothing counted, when fetch is False and some of it is neither held nor fresh."""
+        the storage first). None, with nothing counted, when fetch is False and some of it is neither held nor fresh. urgency: what
+        its requests are sent with (else the fetcher's own)."""
         (missing,) = self.uncovered(cycle, [(s, e)])
         gaps = merge_intervals([iv for ivs in missing.values() for iv in ivs])
         from_memory = 0
@@ -122,7 +154,7 @@ class Fetcher:
             if not fetch:
                 return None
             for a, b in spans(cycle, self.local(gap_start), self.local(gap_end)):   # one request each, within Ecowitt's limit
-                data = await self._fetch(cycle, a, b, need)
+                data = await self._fetch(cycle, a, b, need, urgency)
                 if data is None or not data and not getattr(self.api, "empty_is_final", True):
                     continue  # failed, or told nothing by an API that only has what it recorded: not recorded as fetched, so it's tried again
                 piece = (self.epoch(a), self.epoch(b))
@@ -135,7 +167,7 @@ class Fetcher:
             return []
         return await self.storage.read(rows_on, self.mac, self.groups, cycle, s, e)
 
-    async def _fetch(self, cycle: str, start: datetime, end: datetime, groups: list[str]) -> dict | None:
+    async def _fetch(self, cycle: str, start: datetime, end: datetime, groups: list[str], urgency: Urgency | None = None) -> dict | None:
         """One Ecowitt request: its data ({} if none), or None if it failed."""
         if self.rejected >= REJECTIONS_STOP:   # Ecowitt keeps saying no (a bad parameter): stop asking for the rest of this job
             return None
@@ -143,7 +175,7 @@ class Fetcher:
         try:
             if not self.mac:   # (the station not found yet: a first start, its device list still to answer)
                 raise NotInYet()
-            return await self.api.history(self.mac, cycle, start, end, ",".join(groups), urgent=self.urgent)
+            return await self.api.history(self.mac, cycle, start, end, ",".join(groups), urgent=self.urgent if urgency is None else urgency)
         except EcowittError as e:
             label = f"{cycle} {start:%d %b %Y} - {end:%d %b %Y}"
             log.warning("History request failed (%s): %s", label, e)

@@ -253,6 +253,14 @@ async def test_a_questions_requests_go_before_the_background_ones_and_the_refres
     assert marked and not any(marked)   # a chart drawn ahead: nobody is waiting for it
 
 
+async def test_the_keep_warm_asks_for_the_last_hours_and_days_first(station):
+    eco, fake = station
+    await eco.warm(True)
+    asked = [c["cycle_type"] for c in fake.calls if c["path"] == "history"]
+    first = list(dict.fromkeys(asked))
+    assert first[:2] == ["5min", "30min"] and set(first) == {"5min", "30min", "4hour", "1day"}
+
+
 async def test_the_refresh_builds_no_result_it_would_not_read(station, monkeypatch):
     from lib.ecowitt import fetch
     eco, fake = station
@@ -1329,6 +1337,87 @@ async def test_a_waiting_person_goes_before_the_background_requests_queued_ahead
     assert order == ["in flight", "person", "background 0", "background 1", "background 2"]
     await use("after")                                  # and the lock is free again
     assert order[-1] == "after" and not lock._locked
+
+
+async def test_a_background_request_hurried_while_it_waits_moves_to_the_urgent_line():
+    from lib.ecowitt.api import Urgency, _TurnLock
+    lock, order = _TurnLock(), []
+    hurried = Urgency()
+
+    async def use(name, urgent=False):
+        await lock.acquire(urgent)
+        try:
+            order.append(name)
+            await asyncio.sleep(0.01)
+        finally:
+            lock.release()
+    running = asyncio.create_task(use("in flight"))
+    await asyncio.sleep(0)
+    tasks = [asyncio.create_task(use(name, urgent)) for name, urgent in
+             (("background 0", False), ("person", True), ("background 1", False), ("waited for", hurried))]
+    await asyncio.sleep(0)
+    hurried.hurry()                                     # a question has come to wait for it
+    await asyncio.gather(running, *tasks)
+    assert order == ["in flight", "person", "waited for", "background 0", "background 1"]   # behind the person already waiting
+    assert hurried and hurried._queued is None and not lock._locked
+
+
+async def test_a_hurried_waiter_that_is_cancelled_leaves_no_trace_in_the_urgent_line():
+    from lib.ecowitt.api import Urgency, _TurnLock
+    lock, urgency = _TurnLock(), Urgency()
+    await lock.acquire()
+    waiting = asyncio.create_task(lock.acquire(urgency))
+    await asyncio.sleep(0)
+    urgency.hurry()
+    waiting.cancel()
+    await asyncio.gather(waiting, return_exceptions=True)
+    assert not lock._queues[True] and not lock._queues[False]
+    lock.release()
+    await asyncio.wait_for(lock.acquire(), 1)
+    lock.release()
+
+
+async def test_a_question_waiting_for_a_background_fetch_hurries_its_requests_ahead_of_the_other_background_ones(station):
+    eco, fake = station
+    now = eco.now()
+    start = now - timedelta(days=2)
+    await eco.api._turn.acquire()                       # a request in flight: everything after it queues
+    background = [asyncio.create_task(eco.fetcher(["outdoor"]).get(cycle, start, now, load=False))
+                  for cycle in ("4hour", "1day", "30min")]
+    await asyncio.sleep(0.01)                           # each holds its cycle, its request queued in the background line
+    fake.calls.clear()
+    question = eco.fetcher(["outdoor"], urgent=True)
+    asked = asyncio.create_task(question.get("30min", start, now))
+    await asyncio.sleep(0.01)                           # waiting for the background 30-minute fetch
+    eco.api._turn.release()
+    rows = await asyncio.wait_for(asked, 2)
+    assert [c["cycle_type"] for c in fake.calls][:1] == ["30min"]   # the fetch it waits for went first
+    assert rows and question.calls == 0                 # and it brought what the question reads
+    await asyncio.gather(*background)
+    assert sorted(c["cycle_type"] for c in fake.calls) == ["1day", "30min", "4hour"]
+
+
+async def test_a_background_fetch_taking_a_cycle_while_a_question_waits_for_it_is_hurried_too(tmp_path):
+    from lib.ecowitt.fetch import Recent
+    recent, seen = Recent(), []
+    first = recent.turn("m", "5min", False)
+    held = await first.__aenter__()                      # a background fetch holds the cycle
+    behind = asyncio.create_task(_hold(recent, False, seen))    # another background one waits for it ...
+    await asyncio.sleep(0)
+    question = asyncio.create_task(_hold(recent, True, seen))   # ... then a question
+    await asyncio.sleep(0)
+    assert held                                          # the holder was hurried
+    await first.__aexit__(None, None, None)
+    await asyncio.gather(behind, question)
+    assert seen == [True, True]                          # the background one taking it next sends urgently: the question waits on it
+    async with recent.turn("m", "5min", False) as later:  # nobody waiting any more
+        assert not later
+
+
+async def _hold(recent, urgent: bool, seen: list):
+    async with recent.turn("m", "5min", urgent) as urgency:
+        seen.append(bool(urgency))
+        await asyncio.sleep(0)
 
 
 async def test_a_cancelled_waiter_does_not_block_the_lock():

@@ -456,8 +456,8 @@ class Ecowitt(Source):
         await self.listed.wait()
         now = self.now()
         today = datetime.combine(now.date(), datetime.min.time())
-        windows = {"30min": today - timedelta(days=6), "5min": today - timedelta(days=1),
-                   "4hour": today - timedelta(days=3), "1day": today - timedelta(days=3)}
+        windows = {"5min": today - timedelta(days=1), "30min": today - timedelta(days=6),   # (in this order: what questions on
+                   "4hour": today - timedelta(days=3), "1day": today - timedelta(days=3)}    # the last hours and days read first)
         fetchers = {cycle: self.fetcher(self.groups) for cycle in windows}
 
         await asyncio.gather(*(fetchers[cycle].get(cycle, start, now, refresh=fresh and cycle in FINE_CYCLES, load=False)

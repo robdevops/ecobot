@@ -142,28 +142,64 @@ def _body(res: httpx.Response) -> dict | None:
     return body if isinstance(body, dict) and "code" in body else None
 
 
+class Urgency:
+    """Whether someone is waiting for a job's requests, which can change while they wait: a background fetch a question comes to wait
+    for is hurried, and its request queued for the turn moves to the urgent line (as do its later ones). Passed as `urgent`; true
+    when urgent."""
+
+    def __init__(self, urgent: bool = False):
+        self.urgent = bool(urgent)
+        self._queued: tuple["_TurnLock", asyncio.Future] | None = None   # its request waiting for the turn, if one is
+
+    def __bool__(self) -> bool:
+        return self.urgent
+
+    def __repr__(self) -> str:
+        return f"Urgency({self.urgent})"
+
+    def hurry(self):
+        if not self.urgent:
+            self.urgent = True
+            if self._queued is not None:
+                self._queued[0].promote(self._queued[1])
+
+
 class _TurnLock:
     """One request at a time, with an urgent line: a person waiting for a reading goes before the background refreshes
-    queued behind the request in flight (a keep-warm round can queue several requests, two seconds apart)."""
+    queued behind the request in flight (a keep-warm round can queue several requests, two seconds apart). A request
+    sent with an Urgency moves to the urgent line when it is hurried while it waits."""
 
     def __init__(self):
         self._locked = False
         self._queues = {True: deque(), False: deque()}
 
-    async def acquire(self, urgent: bool = False):
+    async def acquire(self, urgent: "bool | Urgency" = False):
         if not self._locked and not self._queues[True] and not self._queues[False]:
             self._locked = True
             return
         waiter = asyncio.get_running_loop().create_future()
-        self._queues[urgent].append(waiter)
+        self._queues[bool(urgent)].append(waiter)
+        if isinstance(urgent, Urgency):
+            urgent._queued = (self, waiter)
         try:
             await waiter
         except asyncio.CancelledError:
             if waiter.done() and not waiter.cancelled():   # the turn was already handed to us: pass it on
                 self.release()
-            elif waiter in self._queues[urgent]:            # (a release since the cancel has already dropped it)
-                self._queues[urgent].remove(waiter)
+            else:                                           # (a release since the cancel has already dropped it)
+                for queue in self._queues.values():
+                    if waiter in queue:
+                        queue.remove(waiter)
             raise
+        finally:
+            if isinstance(urgent, Urgency) and urgent._queued and urgent._queued[1] is waiter:
+                urgent._queued = None
+
+    def promote(self, waiter: asyncio.Future):
+        """A background waiter someone has come to wait for: to the back of the urgent line."""
+        if waiter in self._queues[False]:
+            self._queues[False].remove(waiter)
+            self._queues[True].append(waiter)
 
     def release(self):
         for urgent in (True, False):
@@ -186,11 +222,11 @@ class EcowittAPI:
     async def close(self):
         await self.client.aclose()
 
-    async def _get(self, path: str, urgent: bool = False, **params) -> dict | list:
+    async def _get(self, path: str, urgent: "bool | Urgency" = False, **params) -> dict | list:
         """The response's "data"; raises EcowittError. Asked again, up to BUSY_RETRIES times and waiting longer each time, when
         Ecowitt is busy, rate limited or erring (429, 5xx), not when it refuses the request or there is no answer at all.
         urgent: someone is waiting for it, so it goes before queued background requests (and the turn is free while a request
-        waits to be asked again)."""
+        waits to be asked again); an Urgency moves it there if it is hurried while it waits."""
         loop = asyncio.get_running_loop()
         for attempt in range(BUSY_RETRIES + 1):
             await self._turn.acquire(urgent)
