@@ -3130,6 +3130,62 @@ const WEATHER = {
       out.errors.push(...p.errors);
       await p.context.close();
     }));
+    // the pure turn (the page's screenGravity(ax, ay, angle, ios) -> the pull in the screen's x right, y down), against readings worked out
+    // here from the physics, not from the page's table: the device turned a quarter COUNTER-clockwise `angle` degrees (screen.orientation.angle:
+    // 90 is the device's top to the viewer's left), its axes in the viewer's world (x right, y up) x = (cos a, sin a), y = (-sin a, cos a);
+    // the screen's own edge `dir` (left, right, top, bottom) lowered, the pull in the world that way; the reading by the spec is minus the
+    // pull in the device's axes, iOS's the pull itself
+    const pure = await (await weatherPage(browser, url, opts(0))).page.evaluate(() => {
+      const world = { left: [-1, 0], right: [1, 0], top: [0, 1], bottom: [0, -1] }, got = {};
+      for (const angle of [0, 90, 180, 270, -90]) for (const ios of [false, true]) for (const [edge, [wx, wy]] of Object.entries(world)) {
+        const t = angle * Math.PI / 180, dx = Math.cos(t) * wx + Math.sin(t) * wy, dy = -Math.sin(t) * wx + Math.cos(t) * wy;   // (the pull in the device's axes)
+        const k = ios ? 1 : -1, [x, y] = window.__screenGravity(k * 9.8 * dx, k * 9.8 * dy, angle, ios);
+        got[`${angle}/${ios ? "ios" : "spec"}/${edge}`] = [Math.round(x * 100) / 100 + 0, Math.round(y * 100) / 100 + 0];
+      }
+      return got;
+    });
+    out.pure = pure;
+    // end to end on an iPad (its user agent: the sign turned), the window shaped as the screen is, the user's cases in landscape: tilted left
+    // (the screen's left edge down), its top edge raised, its top edge lowered. NOTE: these encode the assumed iOS convention (the pull's own
+    // sign, device frame x right / y up, angle 90 = turned counter-clockwise); a real iPad is not verified to follow it (see ?tiltdebug=1)
+    const ipad = (w, h) => ({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true,
+                              userAgent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" });
+    const reported = (angle, extra) => ({ fn: ([angle, extra]) => {
+      Object.defineProperty(window.screen.orientation, "angle", { configurable: true, get: () => angle });
+      if (extra.windowOrientation !== undefined) Object.defineProperty(window, "orientation", { configurable: true, value: extra.windowOrientation });
+      if (extra.type) Object.defineProperty(window.screen.orientation, "type", { configurable: true, get: () => extra.type });
+    }, arg: [angle, extra] });
+    // (iOS's readings: the pull itself, in the device's axes: x right, y up; angle 90 CCW: screen left = device top, screen top = device right edge)
+    const ipads = {
+      landscapeLeftDown:   { angle: 90,  w: 400, h: 300, reading: [0, 9.8, 0], edge: "left" },
+      landscapeTopRaised:  { angle: 90,  w: 400, h: 300, reading: [-9.8, 0, 0], edge: "bottom" },
+      landscapeTopLowered: { angle: 90,  w: 400, h: 300, reading: [9.8, 0, 0], edge: "top" },
+      landscapeRightDown:  { angle: 90,  w: 400, h: 300, reading: [0, -9.8, 0], edge: "right" },
+      flippedLeftDown:     { angle: 270, w: 400, h: 300, reading: [0, -9.8, 0], edge: "left" },
+      flippedTopRaised:    { angle: 270, w: 400, h: 300, reading: [9.8, 0, 0], edge: "bottom" },
+      flippedTopLowered:   { angle: 270, w: 400, h: 300, reading: [-9.8, 0, 0], edge: "top" },
+      portraitLeftDown:    { angle: 0,   w: 300, h: 400, reading: [-9.8, 0, 0], edge: "left" },
+      portraitTopRaised:   { angle: 0,   w: 300, h: 400, reading: [0, -9.8, 0], edge: "bottom" },
+      portraitTopLowered:  { angle: 0,   w: 300, h: 400, reading: [0, 9.8, 0], edge: "top" },
+      upsideDownLeftDown:  { angle: 180, w: 300, h: 400, reading: [9.8, 0, 0], edge: "left" },
+    };
+    out.ipads = {};
+    await Promise.all(Object.entries(ipads).map(async ([name, c]) => {
+      const p = await weatherPage(browser, url, { ...opts(c.angle), context: ipad(c.w, c.h), init: reported(c.angle, c.extra || {}) });
+      await shake(p.page, ...c.reading);
+      out.ipads[name] = { edge: c.edge, tilt: await p.page.evaluate(() => Sky.state().tilt) };
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }));
+    // ?tiltdebug=1: the readout of the raw numbers appears with a reading; without it, none
+    {
+      const dbg = await weatherPage(browser, url, { ...opts(90), query: (opts(90).query || "") + "?tiltdebug=1" });
+      const off = await weatherPage(browser, url, opts(90));
+      await shake(dbg.page, 1.5, 9.5, 0.5); await shake(off.page, 1.5, 9.5, 0.5);
+      out.debugText = await dbg.page.evaluate(() => (document.getElementById("tiltdebug") || {}).textContent || null);
+      out.debugOff = await off.page.evaluate(() => !document.getElementById("tiltdebug"));
+      await dbg.context.close(); await off.context.close();
+    }
     // no sensor reading: as ever (every bead straight down, no reading taken)
     const none = await weatherPage(browser, url, opts(0));
     out.none = await run(none.page);

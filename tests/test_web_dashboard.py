@@ -2607,6 +2607,19 @@ async def test_a_phones_gravity_turns_the_humidity_beads_downhill_by_the_screens
         assert not c["tilt"]["tilted"] and c["tilt"]["epoch"] == 0 and c["tilt"]["mode"] == 0 and c["tilt"]["readings"] == 1, (name, c)
         assert (c["dx"], c["dy"], c["ranOff"]) == (got["none"]["dx"], got["none"]["dy"], got["none"]["ranOff"]), (name, c, got["none"])
     assert cases["flat"]["tilt"]["flat"] and cases["nearlyFlat"]["tilt"]["flat"] and not cases["upright"]["tilt"]["flat"]
+    # (the pure turn, by readings worked out from the physics, at every screen angle and both signs: the lowered edge is the downhill one;
+    # the user's iPad landscape regressions: left tilted -> left, the top raised -> the bottom, the top lowered -> the top)
+    want = {"left": (-9.8, 0), "right": (9.8, 0), "top": (0, -9.8), "bottom": (0, 9.8)}
+    assert len(got["pure"]) == 5 * 2 * 4
+    for key, (x, y) in got["pure"].items():
+        angle, sign, edge = key.split("/")
+        assert (x, y) == pytest.approx(want[edge], abs=0.02), (key, x, y)
+    for name, c in got["ipads"].items():
+        t, edge = c["tilt"], c["edge"]
+        ux, uy = {"left": (-1, 0), "right": (1, 0), "top": (0, -1), "bottom": (0, 1)}[edge]
+        assert t["tilted"] == (edge != "bottom") and t["x"] == pytest.approx(ux, abs=0.05)   # (the bottom: straight down, as ever)
+        assert t["y"] == pytest.approx(uy, abs=0.05), (name, c)
+    assert got["debugOff"] and "raw x 1.50 y 9.50 z 0.50" in got["debugText"] and "window.orientation" in got["debugText"], got["debugText"]
     # (no sensor: straight down, no reading taken; an empty event (a desktop's) ignored)
     none = got["none"]
     assert none["tilt"] == {"x": 0, "y": 1, "angle": 0, "tilted": False, "mode": 0, "readings": 0, "raw": None, "flat": True, "epoch": 0}, none
