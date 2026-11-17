@@ -798,7 +798,7 @@ const Sky = (() => {
   // Stronger the hotter (its level: 0.3 at 35 °C to 1 at 43 °C): brighter, and more of them (about that share of them on, the
   // others fading out), the first few on at 35 °C spread about at random. Drawn behind the flood (nothing below its water).
   // Reduced or low motion: one still frame.
-  const EMBER = ["#2A0F0C", "#4A1A13", "#7C2C1E", "#B24A34", "#F0A08A"].map(rgb);   // ember red, faint (the UV's violet's way)
+  const EMBER = ["#2C0508", "#500913", "#8A1020", "#CE2034", "#FF7A86"].map(rgb);   // deep crimson, infrared imagery's red (no orange), faint (the UV's violet's way)
   const HEAT_LONGER = 1.4;             // each this much longer than a UV shaft
   const heat = effect((e) => {
     const random = streamOf("heat"), between = random.between;   // (its own randomness)
@@ -3434,14 +3434,21 @@ const Sky = (() => {
     }
     text(svg, cx, cy + 64, tile.unit, 18, ink(L.soft));
     const needle = el("polygon", {fill: ink(L.needle)}, svg);
-    // Today's highest (the wind's gust, rain rate, sun, UV: tile.todayHigh, null with none): a very thin red hand, like a clock's
-    // second hand, over the dial and the needle and under the hub, its short tail behind the hub with a small counterweight. Drawn
-    // pointing right (0 degrees), turned to its reading
+    // Today's highest (the wind's gust, rain rate, sun, UV: tile.todayHigh, null with none). The Wind's (its gust): a very thin red
+    // hand, like a clock's second hand, over the dial and the needle and under the hub, its short tail behind the hub with a small
+    // counterweight. The others': a gauge's limit mark, a small solid red triangle just outside the coloured band (its tip over the
+    // outline, clear of the numbers inside and the title above), pointing in at it. Either drawn pointing right (0 degrees), turned
+    // to its reading
     const hand = tile.todayHigh === undefined ? null : el("g", {class: "high", "pointer-events": "none"}, svg);
-    if (hand) {
+    if (hand && tile.columns.includes("Gust")) {   // (the Wind's)
       el("path", {d: `M${cx - 40},${cy} L${cx + outer - 3},${cy}`, stroke: L.high_hand, "stroke-width": L.high_hand_width,
                   "stroke-linecap": "round", fill: "none"}, hand);
       el("circle", {cx: cx - 34, cy, r: 3.6, fill: L.high_hand}, hand);
+    } else if (hand) {
+      hand.classList.add("limit");
+      const [tip, base, half] = L.limit_mark;
+      el("polygon", {points: points([[cx + tip, cy], [cx + base, cy - half], [cx + base, cy + half]]), fill: L.high_hand,
+                     "stroke-linejoin": "round"}, hand);
     }
     const label = text(svg, cx, cy + 102, "", 50, ink(L.ink));   // (the reading alone: no band word ("Moderate") under the dial, its
     label.classList.add("reading");                                // colours say it)

@@ -683,7 +683,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         before = json.loads(await asyncio.wait_for(live.stdout.readline(), 60))
         station.reads("outdoor", "temperature", "21.5")
         station.reads("wind", "wind_direction", "300")                           # (and the wind backs from the east to WNW)
-        station.highs_today({"wind_gust": 60.0})                                  # (and today's highest gust rises, and today's
+        station.highs_today({"wind_gust": 60.0, "uv_max": 9.0})                   # (and today's highest gust and UV rise, and today's
         station.held(ROSE_LATER)                                                  # rose turns to the west)
         await server.publish_changes()
         live.stdin.write(b"go\n")
@@ -749,15 +749,25 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         compass_as_a_dial(z)
         rose_drawn(z, ROSE)
         assert (shots / f"dashboard-{name}-compass.png").exists()
-        # the dials with a thin red hand at today's highest (Wind's gust, Rain rate's, Solar radiation's, UV's), over the dial
-        # and the needle, under the hub; none on any other tile; the Wind's table: its highest speed, and its highest gust beside it
+        # the dials with a red mark at today's highest (Wind's gust, Rain rate's, Solar radiation's, UV's), over the dial and the
+        # needle, under the hub; none on any other tile; the Wind's table: its highest speed, and its highest gust beside it
         hands = got["hands"]
         assert {t for t, h in hands.items() if h} == set(RED_HANDS), hands
         for title, value in {"Wind": 37.0, "Rain rate": 4.2, "Solar radiation": 820.0, "UV index": 6.5}.items():
             h, tile = hands[title], next(t for t in sheet if t.title == title)
             assert h["turn"] == hand_turn(tile, value) and h["shown"], (name, title, h)
-            assert h["colour"] == look()["high_hand"] and h["width"] <= 1.5 and h["needleWidth"] > 10 * h["width"], (name, title, h)
             assert h["order"][0] < h["order"][1] < h["order"][2], (name, title, h)
+            if title == "Wind":   # the Wind's (its gust): a thin red hand, as ever
+                assert h["kind"] == "hand" and h["limit"] is None, (name, title, h)
+                assert h["colour"] == look()["high_hand"] and h["width"] <= 1.5 and h["needleWidth"] > 10 * h["width"], (name, title, h)
+            else:                 # the others': no hand, a limit mark (rim triangle) just outside the band, pointing in
+                limit_mark(h, name, title)
+        # ... zoomed, the UV's the same, scaled with the tile
+        z, grid = got["uvZoomed"], hands["UV index"]
+        assert z["zoomed"] and z["turn"] == grid["turn"] and z["limit"]["tileWidth"] > grid["limit"]["tileWidth"], (name, z)
+        limit_mark(z, name, "UV index (zoomed)")
+        assert (z["limit"]["drawnWidth"] / z["limit"]["tileWidth"] == pytest.approx(grid["limit"]["drawnWidth"] / grid["limit"]["tileWidth"], rel=0.05)), (z, grid)
+        assert (shots / f"dashboard-{name}-uv.png").exists()
         assert hands["Wind"]["heads"] == ["▲ Max", "» Gust"] and wind.columns == ("Max", "Gust"), hands["Wind"]
         # ... its heads: Max grey, Gust in the red hand's very red (the hand and its column go together); every other tile's Max red
         assert hands["Wind"]["headColours"] == [rgb(GUST_CHIP), rgb(look()["high_hand"])], hands["Wind"]
@@ -789,6 +799,25 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     assert h["turn"] == hand_turn(windy, 60.0) and frames[0] == turn_of(windy, 37.0) and frames[-1] == turn_of(windy, 60.0), h
     between = [f for f in frames if turn_of(windy, 37.0) < f < turn_of(windy, 60.0)]
     assert len(set(between)) >= 8 and all(a <= b for a, b in zip(frames, frames[1:])), frames
+    # ... and the UV's limit mark, eased the same way from today's highest before (6.5) to the new one (9), still a limit mark
+    uv = next(t for t in sheet if t.title == "UV index")
+    h, frames = after["hands"]["UV index"], after["hands"]["limitFrames"]
+    assert h["kind"] == "limit" and h["turn"] == hand_turn(uv, 9.0) and frames[0] == turn_of(uv, 6.5) and frames[-1] == turn_of(uv, 9.0), (h, frames)
+    between = [f for f in frames if turn_of(uv, 6.5) < f < turn_of(uv, 9.0)]
+    assert len(set(between)) >= 8 and all(a <= b for a, b in zip(frames, frames[1:])), frames
+
+
+def limit_mark(h, name, title):
+    """A dial's limit mark at today's highest (handsLook's): a small solid triangle in the red hands' red, no hand; its tip just outside
+    the coloured band (RING_OUTER), its base a little outside the outline, the tip pointing in at the centre; small (about 4 % of the
+    tile's width); clear of the title's text and of every tick number."""
+    m = h["limit"]
+    assert h["kind"] == "limit" and h["colour"] is None and m["fill"] == look()["high_hand"], (name, title, h)
+    tip, *base = m["radii"]
+    assert look()["ring_outer"] < tip < m["ring"] < min(base) <= m["ring"] + 20 and m["inward"], (name, title, m)
+    assert 12 <= m["size"]["width"] <= 24 and 12 <= m["size"]["height"] <= 24, (name, title, m)
+    assert 0.02 < m["drawnWidth"] / m["tileWidth"] < 0.06, (name, title, m)
+    assert m["clearOfTitle"] and m["clearOfTicks"], (name, title, m)
 
 
 def turn_of(tile, value: float) -> float:
@@ -1994,7 +2023,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     still = got["still"]
     assert still["effects"] == ["uv", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still
     assert still["ink"] > 0 and sorted(still["framed"]) == ["Temperature", "UV index"] and still["link"] == "stop animation", still
-    assert still["hand"] == "rotate(-27.50 240 203)", still["hand"]                 # (the UV's red hand at once at 9: no frames for it)
+    assert still["hand"] == "rotate(-27.50 240 203)", still["hand"]                 # (the UV's limit mark at once at 9: no frames for it)
+    assert still["noHigh"] == {"marks": 1, "shown": False}, still["noHigh"]         # (no highest today: none shown)
     # ... and humidity's still frame as it would be some minutes in: the fog formed, many beads on it, some that have run, their trails
     beading = still["humidity"]
     assert beading["fog"] == 1 and beading["beads"] >= 20 and beading["trails"] > 30 and beading["stray"] == 0, beading
@@ -2034,6 +2064,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
         assert r > 1.5 * b and r > 1.5 * g and 0.01 < look["top"]["alpha"] < 0.25, look["top"]
         r, g, b = look["atHeat"]["colour"]
         assert r > 1.5 * b and look["atHeat"]["alpha"] > 3 * look["atUv"]["alpha"], (look["atHeat"], look["atUv"])
+        # (a deep, saturated crimson, infrared imagery's red, not an orange ember: the red far over the green, little blue)
+        assert g < 0.15 * r and b < 0.35 * r, look["atHeat"]
     # ... stronger the hotter: from 35 °C to 43 °C more of them, brighter
     cool, warm, hottest = looks
     count = [sum(s["on"] == 1 for s in l["shafts"]) for l in looks]

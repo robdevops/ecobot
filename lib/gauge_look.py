@@ -14,8 +14,11 @@ CHIP = "#3A4046"            # the row names' backing
 MAX_CHIP, MIN_CHIP, TOTAL_CHIP, GUST_CHIP = "#C62828", "#4FB3F6", "#5BC8F0", "#7C8790"
 CHIPS = {"Max": MAX_CHIP, "Min": MIN_CHIP, "Total": TOTAL_CHIP, "Gust": GUST_CHIP}
 MARKS = {"Max": "▲", "Min": "▼", "Total": "+", "Gust": "»"}   # in front of a column's name
-HIGH_HAND = "#FF3B30"       # a dial's thin red hand: its reading's highest today (the web page's: wind's gust, rain rate, sun, UV)
-HIGH_HAND_WIDTH = 1.4       # ... how wide (pixels)
+HIGH_HAND = "#FF3B30"       # a dial's red mark at its reading's highest today (the web page's: the wind's gust a thin hand; rain rate,
+                            # sun and UV a limit mark, a small triangle outside the coloured band, pointing in)
+HIGH_HAND_WIDTH = 1.4       # ... the hand: how wide (pixels)
+LIMIT_MARK = (134, 154, 8.5)   # ... the triangle: its tip's and its base's radius, its base's half-width (pixels; the band ends at 130,
+                               # the outline at 138)
 WIND_CHIPS = {**CHIPS, "Max": GUST_CHIP, "Gust": HIGH_HAND}   # the web page's Wind table: its Max grey, its Gust its red hand's red
 FILL = "#D32F27"            # the thermometer's mercury
 TUBE_HALF, BULB_RADIUS = 28, 38   # the thermometer: half the tube's width, the bulb's radius (pixels, to the outline)
@@ -67,7 +70,7 @@ def share(tile: Tile, value: float) -> float:
 def look() -> dict:
     """The figures above as JSON, for the web page to draw with."""
     return {"bg": BG, "ink": INK, "soft": SOFT, "chip": CHIP, "chips": CHIPS, "wind_chips": WIND_CHIPS, "marks": MARKS, "fill": FILL, "water": WATER,
-            "needle": NEEDLE, "high_hand": HIGH_HAND, "high_hand_width": HIGH_HAND_WIDTH, "tube_half": TUBE_HALF, "bulb_radius": BULB_RADIUS, "mercury_gap": MERCURY_GAP, "bar_width": BAR_WIDTH,
+            "needle": NEEDLE, "high_hand": HIGH_HAND, "high_hand_width": HIGH_HAND_WIDTH, "limit_mark": list(LIMIT_MARK), "tube_half": TUBE_HALF, "bulb_radius": BULB_RADIUS, "mercury_gap": MERCURY_GAP, "bar_width": BAR_WIDTH,
             "bar_gap": BAR_GAP, "ring_outer": RING_OUTER, "band_width": BAND_WIDTH, "label_radius": LABEL_RADIUS,
             "cell": [CELL_W, CELL_H], "compass": list(COMPASS),
             "compass_label_y": COMPASS_LABEL_Y, "compass_band": COMPASS_BAND, "points": list(POINTS),

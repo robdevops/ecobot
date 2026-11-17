@@ -94,7 +94,10 @@ async function sizes(browser, url, shots, wanted) {
       // each tile's gauge, in its own px (480 wide): its kind and title, how far its drawing's top is below the title's bottom, the
       // lowest of its drawing and its words, its words (svg text) but its reading, and any band word's element
       gauges: [...document.querySelectorAll(".tile")].map((t) => {
-        const box = t.getBoundingClientRect(), k = 480 / box.width, g = t.querySelector("svg g.gauge").getBoundingClientRect();
+        const box = t.getBoundingClientRect(), k = 480 / box.width;
+        const drawn = [...t.querySelector("svg g.gauge").children].filter((e) => !e.matches(".limit, defs")).map((e) => e.getBoundingClientRect())
+          .filter((r) => r.width || r.height);   // (the gauge's drawing, but a limit mark outside its ring: handsLook's, clear of the title)
+        const g = { top: Math.min(...drawn.map((r) => r.top)), bottom: Math.max(...drawn.map((r) => r.bottom)) };
         const texts = [...t.querySelectorAll("svg text")];
         return { kind: t.dataset.kind, title: t.querySelector(".title").textContent, gap: (g.top - t.querySelector(".title").getBoundingClientRect().bottom) * k,
                  bottom: Math.max(g.bottom, ...texts.map((e) => e.getBoundingClientRect().bottom)) * k - box.top * k,
@@ -128,20 +131,45 @@ async function sizes(browser, url, shots, wanted) {
     await calm(page, 400);
     await page.screenshot({ path: `${shots}/dashboard-${name}-compass.png` });
     report[name].compassZoomed = await compassLook(page);
+    // back, then the UV index zoomed: its limit mark as in the grid, scaled with it (SHOTS/dashboard-NAME-uv.png)
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.body.classList.contains("zoomed") && !document.querySelector(".tile.zooming, .tile.fading"));
+    await page.evaluate(() => [...document.querySelectorAll("#grid .tile")].find((t) => t.querySelector(".title").textContent === "UV index").focus());
+    await page.keyboard.press("Enter");
+    await calm(page, 400);
+    await page.screenshot({ path: `${shots}/dashboard-${name}-uv.png` });
+    report[name].uvZoomed = { zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")), ...(await handsLook(page))["UV index"] };
     await context.close();
   }));
   process.stdout.write(JSON.stringify(Object.fromEntries(Object.keys(wanted).map((name) => [name, report[name]]))));
 }
 
-// Each tile's red hand (null without one): its turn, shown or not, its colour and width, where it is among the dial's parts (after the
-// needle, before the hub: [needle, hand, hub] indexes), its drawn box's narrower side against the needle's; with the Wind tile's table
+// Each tile's red mark at today's highest (null without one): its turn, shown or not, where it is among the dial's parts (after the
+// needle, before the hub: [needle, mark, hub] indexes). A hand (the Wind's): its colour and width, its drawn box's narrower side against
+// the needle's. A limit mark (a triangle: the others'): its fill, its corners' distances from the dial's centre (its own px, unturned),
+// whether its tip points at the centre (its first corner, on the line through the centre it is turned on), the ring's radius, its own
+// box; whether, drawn, it is clear of the title's text and of every tick number; its drawn width and its tile's (window px). With the
+// Wind tile's table
 const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#grid .tile")].map((t) => {
   const hand = t.querySelector("svg .high"), title = t.querySelector(".title").textContent;
   if (!hand) return [title, null];
-  const parts = [...t.querySelector("svg > g.gauge").children], line = hand.querySelector("path");
+  const parts = [...t.querySelector("svg > g.gauge").children], line = hand.querySelector("path"), mark = hand.querySelector("polygon");
   const hub = parts.filter((e) => e.tagName === "circle").pop(), needle = t.querySelector("svg > g.gauge > polygon");
-  return [title, { turn: hand.getAttribute("transform"), shown: hand.style.display !== "none", colour: line.getAttribute("stroke"),
-                   width: Number(line.getAttribute("stroke-width")), needleWidth: needle.getBBox().width,
+  const apart = (a, b) => a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
+  const range = document.createRange();
+  range.selectNodeContents(t.querySelector(".title"));
+  const ring = parts.find((e) => e.tagName === "circle"), [cx, cy] = [Number(ring.getAttribute("cx")), Number(ring.getAttribute("cy"))];
+  const corners = mark && mark.getAttribute("points").split(" ").map((p) => p.split(",").map(Number));
+  const limit = mark && { fill: mark.getAttribute("fill"), radii: corners.map(([x, y]) => Math.hypot(x - cx, y - cy)),
+                          inward: Math.abs(corners[0][1] - cy) < 0.01 && corners[0][0] > cx,
+                          ring: Number(ring.getAttribute("r")), size: (({ width, height }) => ({ width, height }))(mark.getBBox()),
+                          clearOfTitle: apart(mark.getBoundingClientRect(), range.getBoundingClientRect()),
+                          clearOfTicks: [...t.querySelectorAll("svg > g.gauge > text")].filter((e) => /^[\d.]+$/.test(e.textContent))
+                            .every((e) => apart(mark.getBoundingClientRect(), e.getBoundingClientRect())),
+                          tileWidth: t.getBoundingClientRect().width, drawnWidth: mark.getBoundingClientRect().width };
+  return [title, { turn: hand.getAttribute("transform"), shown: hand.style.display !== "none", kind: mark ? "limit" : "hand",
+                   colour: line ? line.getAttribute("stroke") : null, width: line ? Number(line.getAttribute("stroke-width")) : null,
+                   limit, needleWidth: needle.getBBox().width,
                    order: [parts.indexOf(needle), parts.indexOf(hand), parts.indexOf(hub)],
                    heads: title === "Wind" ? [...t.querySelectorAll(".chip.head")].map((e) => e.textContent) : undefined,
                    headColours: title === "Wind" ? [...t.querySelectorAll(".chip.head")].map((e) => getComputedStyle(e).backgroundColor) : undefined,
@@ -203,12 +231,15 @@ async function live(browser, url) {
   await handsSettled(page);
   await page.evaluate(() => {
     window.__turns = [];
-    window.__hand = [];   // (and the Wind's red hand, every frame: today's highest gust rises)
+    window.__hand = [];   // (and the Wind's red hand, every frame: today's highest gust rises; and the UV's limit mark: its highest rises)
+    window.__limit = [];
     const needle = document.querySelector('.tile[data-kind="compass"] .needle');
-    const wind = [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === "Wind").querySelector("svg .high");
+    const high = (title) => [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === title).querySelector("svg .high");
+    const wind = high("Wind"), uv = high("UV index");
     const sample = () => {
       window.__turns.push(Number(/rotate\(([-\d.]+)/.exec(needle.getAttribute("transform"))[1]));
       window.__hand.push(Number(/rotate\(([-\d.]+)/.exec(wind.getAttribute("transform"))[1]));
+      window.__limit.push(Number(/rotate\(([-\d.]+)/.exec(uv.getAttribute("transform"))[1]));
       requestAnimationFrame(sample);
     };
     requestAnimationFrame(sample);
@@ -226,7 +257,7 @@ async function live(browser, url) {
   await compassSettled(page);
   const compass = { ...await compassLook(page), turns: await page.evaluate(() => window.__turns) };
   await handsSettled(page);
-  const hands = { ...await handsLook(page), frames: await page.evaluate(() => window.__hand) };
+  const hands = { ...await handsLook(page), frames: await page.evaluate(() => window.__hand), limitFrames: await page.evaluate(() => window.__limit) };
   process.stdout.write(JSON.stringify({ label: await label(), same_page: same, same_tile: sameTile, shown, compass, hands, errors }) + "\n");
 }
 
@@ -2776,6 +2807,11 @@ const WEATHER = {
       document.dispatchEvent(new Event("ecobot-gust"));
       document.querySelector("#fxtest button[data-gust]").click();
       return { fling: Sky.fling("cow"), sent: Sky.state().gust.sent, running: Sky.state().running, frames: Sky.state().frames };
+    });
+    await still.reads({ "UV index": 11, Temperature: -4, high: { "UV index": null } });   // (no highest today: no limit mark)
+    out.still.noHigh = await still.page.evaluate(() => {
+      const t = [...document.querySelectorAll(".tile")].find((e) => e.querySelector(".title").textContent === "UV index");
+      return { marks: t.querySelectorAll("svg .high.limit").length, shown: t.querySelector("svg .high").style.display !== "none" };
     });
     out.still.errors = still.errors;
     await still.context.close();
