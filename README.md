@@ -291,13 +291,15 @@ usual order (and the units below back to metric). Fewer tiles grow to fill the w
 is kept in the browser (its local storage, per browser and device); nothing is sent to ecobot-mcp. A gauge added later takes its
 usual place among yours.
 
-Two small switches at the bottom right, left of the time, choose the units: "°C | °F" for every temperature tile (Temperature, Dew
-point, Feels like, Indoor temperature) and "km/h | mph" for the Wind's, the one in use lit (buttons, so Tab and Enter or Space work
-too). The tile's reading, its scale and the numbers on it (0-40 °C becomes 32-104 °F, 0-100 km/h becomes 0-60 mph), its Daily,
-Monthly and Yearly figures, its unit and the Wind's gust hand all change in place, with the same decimals; ecobot-mcp still sends
-metric and the browser converts. Rain stays in mm, pressure in hPa and the wind's direction in degrees. Each browser keeps its choice
-with the arrangement, and "reset preferences" (shown while either is not metric) puts both back to °C and km/h. The weather behind
-the gauges goes by the metric readings whatever is shown (heat from 35 °C, leaves above 15 km/h).
+Four small switches at the bottom right, left of the time (just above it on a phone), choose the units: "°C | °F" for every
+temperature tile (Temperature, Dew point, Feels like, Indoor temperature), "km/h | mph" for the Wind's, "hPa | inHg" for Atmospheric
+pressure and "mm | in" for Rain and Rain rate (mm/h becomes in/h), the one in use lit (buttons, so Tab and Enter or Space work too).
+The tile's reading, its scale and the numbers on it (0-40 °C becomes 32-104 °F, 0-100 km/h 0-60 mph, 950-1050 hPa 28-31 inHg, the
+rain's 0-100 mm 0-4 in and its rate's 0-50 mm/h 0-2 in/h), its Daily, Monthly and Yearly figures, its unit and the red hand (the
+Wind's gust, the rain rate's high) all change in place, with the same decimals (two in inHg and inches); the pressure's trend keeps
+its shape. ecobot-mcp still sends metric and the browser converts. The wind's direction stays in degrees. Each browser keeps its
+choice with the arrangement, and "reset preferences" (shown while any is not metric) puts all four back to metric. The weather
+behind the gauges goes by the metric readings whatever is shown (heat from 35 °C, leaves above 15 km/h, a flood above 30 mm/h).
 
 A click or tap on a gauge (or Enter or Space on a tile reached with Tab) zooms its title and gauge (its table hidden until you go
 back) to fill the window, a single tile shown too. Zoomed, page through the tiles like a photo gallery, each still live: ← and →, Space (next) and Backspace (previous), a

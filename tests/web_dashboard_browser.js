@@ -162,6 +162,9 @@ async function sizes(browser, url, shots, wanted) {
     await calm(page, 400);
     await page.screenshot({ path: `${shots}/dashboard-${name}-pressure.png` });
     report[name].pressureZoomed = { zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")), ...(await dialsLook(page))["Atmospheric pressure"] };
+    await page.evaluate(() => document.querySelector("#units button[data-unit='inHg']").click());   // (in inHg: its trend the same)
+    await calm(page, 1200);
+    report[name].pressureInHg = (await dialsLook(page))["Atmospheric pressure"];
     await context.close();
   }));
   process.stdout.write(JSON.stringify(Object.fromEntries(Object.keys(wanted).map((name) => [name, report[name]]))));
@@ -223,7 +226,7 @@ const dialsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
       const box = (e) => { const b = e.getBBox(); return [b.x, b.y, b.x + b.width, b.y + b.height]; };
       const filter = lit && lit.getAttribute("filter") && g.querySelector(lit.getAttribute("filter").slice(4, -1));
       const ticks = parts.filter((e) => e.tagName === "text" && /^[\d.]+$/.test(e.textContent));
-      const unit = parts.find((e) => e.tagName === "text" && e.textContent === "hPa"), reading = gauge.querySelector(":scope > text.reading");
+      const unit = parts.find((e) => e.tagName === "text" && /^(hPa|inHg)$/.test(e.textContent)), reading = gauge.querySelector(":scope > text.reading");
       const along = [];
       if (line) for (let s = 0, len = line.getTotalLength(); s <= len; s += 2) { const q = line.getPointAtLength(s); along.push([q.x, q.y]); }
       trend = { given: Number(g.dataset.points),
@@ -518,17 +521,18 @@ async function arrangedHidden(browser, url, out, allErrors) {
   allErrors.push(...errors);
   await context.close();
 }
-// The units' switches (on the "hidden" part's page, after its reset): the temperature tiles, the Wind and Humidity (untouched) as they
-// look (unitsLook) in metric, then °F (clicked), then mph too (the Wind's needle sampled each frame as it eases); reloaded; km/h
-// again from the keyboard; then "reset preferences" (metric again). Each: the looks, the switches' pressed state and the strip
-const UNIT_TILES = ["Temperature", "Dew point", "Feels like", "Wind", "Humidity"];
+// The units' switches (on the "hidden" part's page, after its reset): the temperature tiles, the Wind, Atmospheric pressure, Rain,
+// Rain rate and Humidity (untouched) as they look (unitsLook) in metric, then °F (clicked), then mph too (the Wind's needle sampled
+// each frame as it eases), then inHg, then in; reloaded; km/h again from the keyboard; then "reset preferences" (metric again). Each:
+// the looks (the pressure's trend's path too), the switches' pressed state and the strip
+const UNIT_TILES = ["Temperature", "Dew point", "Feels like", "Wind", "Humidity", "Atmospheric pressure", "Rain", "Rain rate"];
 const unitsLook = (page) => page.evaluate((names) => {
   const look = {};
   for (const t of document.querySelectorAll("#grid .tile")) {
     const title = t.querySelector(".title").textContent;
     if (!names.includes(title)) continue;
-    const high = t.querySelector("svg .high");
-    look[title] = { label: t.getAttribute("aria-label"), reading: t.querySelector("svg text.reading").textContent,
+    const high = t.querySelector("svg .high"), trend = t.querySelector("svg g.trend path.line");
+    look[title] = { trend: trend ? trend.getAttribute("d") : null, label: t.getAttribute("aria-label"), reading: t.querySelector("svg text.reading").textContent,
                     words: [...t.querySelectorAll("svg text:not(.reading)")].map((e) => e.textContent),
                     unit: t.querySelector(".unit").textContent, figures: [...t.querySelectorAll(".figure")].map((e) => e.textContent),
                     hand: high ? high.getAttribute("transform") : null };
@@ -554,6 +558,12 @@ async function unitsSwitched(page, out) {
   seen.needleSteps = new Set(frames).size;
   await calm(page, 2000);
   seen.mph = await unitsLook(page);
+  await page.click("#units button[data-unit='inHg']");
+  await calm(page, 2000);
+  seen.inHg = await unitsLook(page);
+  await page.click("#units button[data-unit='in']");
+  await calm(page, 2000);
+  seen.inches = await unitsLook(page);
   await page.reload({ waitUntil: "load" });
   await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent));
   await calm(page, 2000);
@@ -1359,15 +1369,16 @@ const weatherSeen = (page) => page.evaluate(() => {
 });
 // The bottom corners: "stop" (its words, its box), the test row's and its last link's boxes (null without them), the strip's;
 // the row's links' words, whether its "test:" shows, whether all of it fits unscrolled, the room left right of the link; whether the
-// link is clear of the strip, and on the screen
+// link is clear of the strip (and of the units' switches: their box), and on the screen
 const cornerSeen = (page) => page.evaluate(() => {
   const box = (e) => e ? e.getBoundingClientRect().toJSON() : null, link = document.querySelector("#motion .animations");
   const row = document.getElementById("fxtest"), buttons = row ? [...row.querySelectorAll("button")] : [];
-  const m = box(document.getElementById("motion")), s = box(document.getElementById("status"));
-  return { link: link ? link.textContent : null, motion: m, row: box(row), last: box(buttons.at(-1)), strip: s,
+  const m = box(document.getElementById("motion")), s = box(document.getElementById("status")), u = box(document.getElementById("units"));
+  const clear = (s) => m.right <= s.left || s.right <= m.left || m.bottom <= s.top || s.bottom <= m.top;
+  return { units: u, link: link ? link.textContent : null, motion: m, row: box(row), last: box(buttons.at(-1)), strip: s,
            buttons: buttons.map((b) => b.textContent), tag: row ? !!row.querySelector(".tag") : null,   // (no "test:" label any more)
            fits: row ? row.scrollWidth <= row.clientWidth && row.scrollLeft === 0 : null, spare: innerWidth - m.right,
-           window: [innerWidth, innerHeight], apart: m.right <= s.left || s.right <= m.left || m.bottom <= s.top || s.bottom <= m.top,
+           window: [innerWidth, innerHeight], apart: clear(s) && clear(u),
            onScreen: m.left >= 0 && m.right <= innerWidth && m.bottom <= innerHeight };
 });
 const canvasInk = (page) => page.evaluate(() => {   // how many of the canvas's pixels have anything drawn
@@ -2164,11 +2175,17 @@ const WEATHER = {
     for (const t of [35, 39, 43, 48]) { await reads({ Temperature: t }); out.heatStrength.push((await weatherSeen(page)).levels.heat); }
     out.iceDepth = [];
     for (const t of [-0.5, -5]) { await reads({ Temperature: t }); out.iceDepth.push((await weatherSeen(page)).levels.ice); }
-    // in °F and mph (the switches): the marks the same, of the readings in °C and km/h; the thermometer's scale widened as in °C
-    await page.click("#units button[data-unit='°F']");
-    await page.click("#units button[data-unit='mph']");
+    // in °F, mph, inHg and in (the switches): the marks the same, of the readings in °C, km/h and mm/h (the rain above 0, heavy from
+    // 8 mm/h, the flood above 30 mm/h); the thermometer's scale widened as in °C
+    for (const unit of ["°F", "mph", "inHg", "in"]) await page.click(`#units button[data-unit='${unit}']`);
+    out.unitsRain = [];
+    for (const rate of [0.5, 8, 30, 30.1]) {
+      await reads({ rain_rate: rate });
+      const { levels } = await weatherSeen(page);
+      out.unitsRain.push([levels.rain, levels.flood]);
+    }
     out.unitsMarks = {};
-    for (const name of ["heat", "wind", "ice"]) {
+    for (const name of ["heat", "wind", "ice", "rain"]) {
       const [below, at] = marks[name];
       await reads(below);
       const short = await weatherSeen(page);

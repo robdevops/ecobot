@@ -11,7 +11,8 @@
      colours and sizes (lib/gauge_look.py, sent with the data); redrawn on each /dashboard/events event, and every minute regardless.
      The tiles can be rearranged in the browser: dragged to reorder (a long press on a touch screen), hidden with their × or the
      remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server.
-     The units' switches beside the strip ("°C | °F", "km/h | mph"): the temperatures and the wind shown in those, converted here
+     The units' switches beside the strip ("°C | °F", "km/h | mph", "hPa | inHg", "mm | in"): the temperatures, the wind, the
+     pressure and the rain (its rate with it) shown in those, converted here
      (the server sends metric), kept with the preferences, metric again on "reset preferences".
      A click or tap on a gauge zooms its tile (title and gauge, no table) to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
      Behind everything, the weather as pixel art on one canvas (Sky): rain, haze, uv, humidity, wind, heat and ice, each while the
@@ -46,7 +47,7 @@
   .chip { border-radius: 1.875cqw; }
   /* The grip and the × (hide), shown only on mouseover, on a tile picked up, or (touch) on one long-pressed and let go in place */
   .grip, .close { position: absolute; top: 6px; z-index: 1; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; }
-  .grip { left: 8px; width: 25px; height: 15px; cursor: grab;   /* (dots 5px apart: five across, three down) */
+  .grip { left: 8px; width: 15px; height: 25px; cursor: grab;   /* (dots 5px apart: three across, five down) */
     background: radial-gradient(circle, var(--soft) 1.1px, transparent 1.5px) 0 0 / 5px 5px; }
   .close { right: 5px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--soft);
     font: 18px/22px system-ui, sans-serif; cursor: pointer; }
@@ -94,7 +95,7 @@
   html.scroll { scroll-snap-type: y proximity; scroll-padding-top: var(--pad, 8px); }
   .tile { scroll-snap-align: start; }
   html.scroll:has(body.dragging) { scroll-snap-type: none; }   /* (a drag's own scrolling stops where it stops) */
-  /* The units' two switches ("°C | °F", "km/h | mph"), the active one lit: just left of the strip, as one with it; where the window is
+  /* The units' switches ("°C | °F", "km/h | mph", "hPa | inHg", "mm | in"), the active one lit: just left of the strip, as one with it; where the window is
      too narrow for both side by side (a phone, a long strip), just above it at the right (placeCorner()) */
   #units { position: fixed; right: 0; bottom: 0; z-index: 1; display: flex; align-items: center; gap: 4px; height: var(--status, 18px);
     padding: 0 0 0 8px; font-size: 11px; color: var(--soft); background: rgba(20, 25, 29, 0.85); border-top-left-radius: 6px; white-space: nowrap; }
@@ -3860,30 +3861,37 @@ const Sky = (() => {
     showStatus();
   }
 
-  // ---------- the units: the temperatures in °C or °F, the wind in km/h or mph, each browser its own (prefs.temperature, prefs.wind:
-  // kept only when not metric). The server sends metric; a tile in °C or km/h is converted here, its reading, scale, ticks, figures,
-  // unit and red hand, with the same decimals. Its scale's ends converted (a thermometer's 0 to 40 °C: 32 to 104 °F, its coloured bands
-  // as they were), its ticks every round step (10, 20, 50 ...) that gives no more of them than it had; a dial's (the wind's 0 to 100
-  // km/h) ending on its last tick (0 to 60 mph, every 10). The weather's marks (heat from 35 °C, leaves from 15 km/h) read the server's
-  // own figures: unchanged by these.
+  // ---------- the units: the temperatures in °C or °F, the wind in km/h or mph, the pressure in hPa or inHg, the rain in mm or in (its
+  // rate in mm/h or in/h with it), each browser its own (prefs.temperature, prefs.wind, prefs.pressure, prefs.rain: kept only when not
+  // metric). The server sends metric; a tile in °C, km/h, hPa, mm or mm/h is converted here, its reading, scale, ticks, figures, unit
+  // and red hand, with the same decimals (inHg and inches with two). Its scale's ends converted (a thermometer's 0 to 40 °C: 32 to 104
+  // °F, its coloured bands as they were), its ticks every round step (0.5, 1, 2, 5, 10 ...) that gives no more of them than it had; a
+  // dial's (the wind's 0 to 100 km/h), and a scale `round` (the rain's beaker), ending on its ticks (0 to 60 mph, every 10; 950 to 1050
+  // hPa: 28 to 31 inHg, every 0.5; 0 to 100 mm: 0 to 4 in, every 1; 0 to 50 mm/h: 0 to 2 in/h, every 0.5). The pressure's trend (no
+  // numbers on it) as it was: its shape the same in either. The weather's marks (heat from 35 °C, leaves from 15 km/h, flood above 30
+  // mm/h) read the server's own figures: unchanged by these.
   const UNITS = {temperature: {metric: "°C", other: "°F", name: "Temperature unit", convert: (c) => c * 9 / 5 + 32},
-                 wind: {metric: "km/h", other: "mph", name: "Wind speed unit", convert: (k) => k / 1.609344}};
+                 wind: {metric: "km/h", other: "mph", name: "Wind speed unit", convert: (k) => k / 1.609344},
+                 pressure: {metric: "hPa", other: "inHg", name: "Pressure unit", convert: (h) => h / 33.8639, decimals: 2, round: true},
+                 rain: {metric: "mm", other: "in", name: "Rain unit", convert: (m) => m / 25.4, decimals: 2, round: true,
+                        also: {"mm/h": "in/h"}}};   // (the rain rate's with the rain's)
   const unitOf = (key) => prefs[key] === UNITS[key].other ? UNITS[key].other : UNITS[key].metric;
-  const STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+  const STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
   function inUnits(t) {
-    const key = Object.keys(UNITS).find((k) => UNITS[k].metric === t.unit);
+    const key = Object.keys(UNITS).find((k) => UNITS[k].metric === t.unit || t.unit in (UNITS[k].also || {}));
     if (!key || unitOf(key) === UNITS[key].metric) return t;
-    const conv = UNITS[key].convert, c = (v) => typeof v === "number" ? conv(v) : v;
+    const u = UNITS[key], conv = u.convert, c = (v) => typeof v === "number" ? conv(v) : v;
     const dial = t.kind === "dial", most = t.ticks.length + (dial ? 1 : 0);
     let low = conv(t.low), high = conv(t.high);
     const step = STEPS.find((s) => Math.floor((high - low) / s + 1e-9) + 1 <= most) || STEPS[STEPS.length - 1];
-    if (dial) { low = Math.floor(low / step + 1e-9) * step; high = Math.max(low + step, Math.round(high / step) * step); }
+    if (dial || u.round) { low = Math.floor(low / step + 1e-9) * step; high = Math.max(low + step, Math.round(high / step) * step); }
+    low = Math.round(low * 1e6) / 1e6; high = Math.round(high * 1e6) / 1e6;
     const ticks = [];
-    for (let v = Math.ceil(low / step - 1e-9) * step; v <= high + 1e-9; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+    for (let i = Math.ceil(low / step - 1e-9); i * step <= high + 1e-9; i++) ticks.push(Math.round(i * step * 1e6) / 1e6);
     if (t.ticks.length > 1 && t.ticks[0] > t.ticks[t.ticks.length - 1]) ticks.reverse();   // (a thermometer's: high to low)
     const rows = Object.fromEntries(Object.entries(t.rows || {}).map(([name, figures]) => [name, figures.map(c)]));
-    return {...t, unit: UNITS[key].other, value: c(t.value), floor: c(t.floor), low, high, ticks, rows,
-            ...("todayHigh" in t ? {todayHigh: c(t.todayHigh)} : {})};
+    return {...t, unit: t.unit === u.metric ? u.other : u.also[t.unit], value: c(t.value), floor: t.floor === t.low ? low : c(t.floor),
+            low, high, ticks, rows, decimals: u.decimals ?? t.decimals, ...("todayHigh" in t ? {todayHigh: c(t.todayHigh)} : {})};
   }
   // A unit chosen: saved, every tile it changes drawn again in it, its gauge (and red hand) eased on from where it was
   function setUnit(key, unit) {

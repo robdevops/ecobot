@@ -864,6 +864,12 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert z["trend"]["drawnWidth"] / z["trend"]["tileWidth"] == pytest.approx(p["trend"]["drawnWidth"] / p["trend"]["tileWidth"], rel=0.05)
         assert z["trend"]["tileWidth"] > p["trend"]["tileWidth"], (name, z)
         assert (shots / f"dashboard-{name}-pressure.png").exists()
+        # ... in inHg (zoomed, its switch pressed): its reading in inHg, its trend's trace the same shape, in the same place, clear of
+        # the unit and the new tick numbers
+        h = got["pressureInHg"]
+        trend_drawn(h, pressure_day(60), f"{name}, inHg")
+        assert re.fullmatch(r"\d\d\.\d\d", h["reading"]) and h["trend"]["line"]["d"] == z["trend"]["line"]["d"], (name, h)
+        assert h["trend"]["dot"] == z["trend"]["dot"] and h["trend"]["given"] == z["trend"]["given"], (name, h)
     for name in ("tablet-landscape", "tablet-portrait", "desktop"):            # these fit every tile without scrolling
         got = report[name]
         assert got["scroll"] == "no" and got["scrollHeight"] <= SIZES[name][1], (name, got)
@@ -918,7 +924,7 @@ def trend_drawn(p: dict, readings: list[tuple[float, float]], name: str):
     inner width (TRACE: its ends just inside the coloured ring's inner edge; midnight at the left, the next at the right), each
     reading's x its time of day and its y its value on the day's own range (at least 2 hPa: the lowest at the bottom, the highest at
     the top); in the pressure's mid-band blue-violet with a soft glow of it (a blur merged under the line), a small bright point at
-    the latest reading in the palette's palest; below the hub, clear of the unit ("hPa"), the reading and the tick numbers; under the
+    the latest reading in the palette's palest; below the hub, clear of the unit ("hPa" or "inHg"), the reading and the tick numbers; under the
     needle and the hub."""
     t = p["trend"]
     assert t["given"] == len(readings) and t["others"] == 0, (name, t)
@@ -1109,11 +1115,14 @@ def in_units(figure: str, convert, decimals: int) -> str:
 
 def units_switched(seen: dict):
     """The units' switches (unitsSwitched's): °F converts every temperature tile (its reading, scale, ticks, figures and unit), mph the
-    Wind's (its reading, dial, ticks, figures, unit and gust hand), the same decimals, the rest untouched; the gauges eased there;
-    kept across a reload; km/h again from the keyboard; "reset preferences" metric again, nothing kept."""
-    f, mph = (lambda c: c * 9 / 5 + 32), (lambda k: k / 1.609344)
+    Wind's (its reading, dial, ticks, figures, unit and gust hand), inHg Atmospheric pressure's (its trend's shape as it was), in the
+    Rain's and the Rain rate's (its limit mark too), the same decimals (two in inHg and inches), the rest untouched; the gauges eased
+    there; kept across a reload; km/h again from the keyboard; "reset preferences" metric again, nothing kept."""
+    f, mph, inhg, inch = (lambda c: c * 9 / 5 + 32), (lambda k: k / 1.609344), (lambda h: h / 33.8639), (lambda m: m / 25.4)
     metric, fahrenheit, both = seen["metric"], seen["fahrenheit"], seen["mph"]
-    switch = lambda t, w: [["°C", str(not t).lower()], ["°F", str(t).lower()], ["km/h", str(not w).lower()], ["mph", str(w).lower()]]
+    pairs = (("°C", "°F"), ("km/h", "mph"), ("hPa", "inHg"), ("mm", "in"))
+    switch = lambda *on: [[u, str(o if i else not o).lower()] for (pair, o) in zip(pairs, [*on, False, False][:4]) for i, u in enumerate(pair)]
+    RAINS = ("Atmospheric pressure", "Rain", "Rain rate")
     assert metric["pressed"] == switch(False, False) and metric["status"] == "last reading 18:42" and metric["stored"] is None, metric
     for title in TEMPERATURES:
         was, now = metric["tiles"][title], fahrenheit["tiles"][title]
@@ -1138,14 +1147,46 @@ def units_switched(seen: dict):
     assert {t: both["tiles"][t] for t in TEMPERATURES} == {t: fahrenheit["tiles"][t] for t in TEMPERATURES}
     assert both["tiles"]["Humidity"] == metric["tiles"]["Humidity"] and both["pressed"] == switch(True, True)
     assert both["stored"] == {"order": [], "hidden": [], "temperature": "°F", "wind": "mph"}, both["stored"]
+    assert {t: fahrenheit["tiles"][t] for t in RAINS} == {t: both["tiles"][t] for t in RAINS} == {t: metric["tiles"][t] for t in RAINS}
+    # inHg: Atmospheric pressure's reading, dial (950-1050 hPa: 28-31 inHg, every 0.5), figures (two decimals) and unit; its trend's
+    # shape the same; the rest as they were
+    was, now = metric["tiles"]["Atmospheric pressure"], seen["inHg"]["tiles"]["Atmospheric pressure"]
+    assert was["words"] == ["950", "970", "990", "1010", "1030", "1050", "hPa"], was
+    assert now["words"] == ["28", "28.5", "29", "29.5", "30", "30.5", "31", "inHg"], now
+    assert (was["reading"], now["reading"]) == ("1026", "30.30") and now["label"] == "Atmospheric pressure 30.30 inHg", now
+    assert now["figures"] == [in_units(x, inhg, 2) for x in was["figures"]] and now["figures"][-1] == "29.47", (was, now)   # (998 hPa)
+    assert (was["unit"], now["unit"]) == ("hPa", "inHg") and now["trend"] == was["trend"], now   # (its trace: the sizes' test's)
+    assert {t: v for t, v in seen["inHg"]["tiles"].items() if t != "Atmospheric pressure"} == \
+        {t: v for t, v in both["tiles"].items() if t != "Atmospheric pressure"}
+    assert seen["inHg"]["pressed"] == switch(True, True, True)
+    assert seen["inHg"]["stored"] == {"order": [], "hidden": [], "temperature": "°F", "wind": "mph", "pressure": "inHg"}
+    # in: the Rain's reading, beaker (0-100 mm: 0-4 in), figures and unit; the Rain rate's reading, dial (0-50 mm/h: 0-2 in/h, every
+    # 0.5), figures, unit and limit mark (today's high, 8 mm/h); two decimals; the rest as they were
+    inches = seen["inches"]
+    was, now = metric["tiles"]["Rain"], inches["tiles"]["Rain"]
+    assert was["words"] == ["100", "80", "60", "40", "20", "0"] and now["words"] == ["4", "3", "2", "1", "0"], now
+    assert (was["reading"], now["reading"]) == ("0.2 mm", "0.01 in") and now["label"] == "Rain 0.01 in" and now["unit"] == "in", now
+    assert now["figures"] == [in_units(x, inch, 2) for x in was["figures"]] and now["figures"][-1] == "9.14", (was, now)   # (232.2 mm)
+    was, now = metric["tiles"]["Rain rate"], inches["tiles"]["Rain rate"]
+    assert was["words"] == ["0", "10", "20", "30", "40", "50", "mm/h"] and now["words"] == ["0", "0.5", "1", "1.5", "2", "in/h"], now
+    assert (was["reading"], now["reading"]) == ("0.0", "0.00") and now["label"] == "Rain rate 0.00 in/h" and now["unit"] == "in/h", now
+    assert now["figures"] == [in_units(x, inch, 2) for x in was["figures"]] and now["figures"][0] == "0.31", (was, now)   # (8.0 mm/h)
+    turned = lambda share: f"rotate({-(look()['start'] - look()['sweep'] * share):.2f} 240 203)"
+    assert was["hand"] == turned(8 / 50) and now["hand"] == turned(inch(8) / 2), (was, now)
+    assert {t: v for t, v in inches["tiles"].items() if t not in ("Rain", "Rain rate")} == \
+        {t: v for t, v in seen["inHg"]["tiles"].items() if t not in ("Rain", "Rain rate")}
+    assert inches["pressed"] == switch(True, True, True, True) and inches["focused"] == "in", inches
+    assert inches["status"] == "reset preferences · last reading 18:42"
+    assert inches["stored"] == {"order": [], "hidden": [], "temperature": "°F", "wind": "mph", "pressure": "inHg", "rain": "in"}
     # reloaded: as it was left
-    assert seen["reloaded"]["tiles"] == both["tiles"] and seen["reloaded"]["pressed"] == switch(True, True), seen["reloaded"]
-    # km/h from the keyboard (Enter): the Wind metric again, the temperatures still °F, the focus kept on the switch
+    assert seen["reloaded"]["tiles"] == inches["tiles"] and seen["reloaded"]["pressed"] == switch(True, True, True, True), seen["reloaded"]
+    # km/h from the keyboard (Enter): the Wind metric again, the rest as they were, the focus kept on the switch
     keyboard = seen["keyboard"]
-    assert keyboard["tiles"]["Wind"] == metric["tiles"]["Wind"] and keyboard["pressed"] == switch(True, False) and keyboard["focused"] == "km/h"
-    assert {t: keyboard["tiles"][t] for t in TEMPERATURES} == {t: fahrenheit["tiles"][t] for t in TEMPERATURES}
-    assert keyboard["stored"] == {"order": [], "hidden": [], "temperature": "°F"}
-    # "reset preferences": metric, nothing kept, the link gone
+    assert keyboard["tiles"]["Wind"] == metric["tiles"]["Wind"] and keyboard["pressed"] == switch(True, False, True, True)
+    assert keyboard["focused"] == "km/h"
+    assert {t: v for t, v in keyboard["tiles"].items() if t != "Wind"} == {t: v for t, v in inches["tiles"].items() if t != "Wind"}
+    assert keyboard["stored"] == {"order": [], "hidden": [], "temperature": "°F", "pressure": "inHg", "rain": "in"}
+    # "reset preferences": all four metric, nothing kept, the link gone
     assert seen["reset"]["tiles"] == metric["tiles"] and seen["reset"]["pressed"] == switch(False, False), seen["reset"]
     assert seen["reset"]["stored"] is None and seen["reset"]["status"] == "last reading 18:42"
 
@@ -1157,8 +1198,8 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     assert got["errors"] == [] and got["initial"] == default, got["errors"]
     # mouseover: the grip and the × on the tile under the mouse only
     assert got["hover"] == [{"grip": "0", "close": "0"}, {"grip": "1", "close": "1"}, {"grip": "0", "close": "0"}]
-    # the grip: 20 by 20 px (dots 5 px apart: four across, four down), in the tile's top left corner
-    assert got["grip"] == {"width": 25, "height": 15, "left": 8, "top": 6, "dots": "5px 5px"}, got["grip"]
+    # the grip: 15 by 25 px (dots 5 px apart: three across, five down), in the tile's top left corner
+    assert got["grip"] == {"width": 15, "height": 25, "left": 8, "top": 6, "dots": "5px 5px"}, got["grip"]
     # dragged from its gauge: the others make room as it goes (transforms), the remove zone shows; the order kept
     assert got["during"] == {"zone": "none", "over": False, "dragging": True, "moved": ["Humidity", "Atmospheric pressure"]}
     reordered = moved(default, "Temperature", "Atmospheric pressure")
@@ -1531,8 +1572,12 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
     assert got["humidityStrength"] == pytest.approx([0.1, 0.5, 1])              # heavier from 90 % to 100 %
     assert got["iceDepth"] == [0.5, 5]                                           # further in the colder
     assert got["heatStrength"] == pytest.approx([0.3, 0.65, 1, 1])               # stronger from 35 °C to 43 °C
-    # shown in °F and mph: the same marks, of the readings in °C and km/h (heat from 35 °C, leaves above 15 km/h, ice below 0 °C)
-    assert got["unitsMarks"] == {k: got["marks"][k] for k in ("heat", "wind", "ice")}, got["unitsMarks"]
+    # shown in °F, mph, inHg and in: the same marks, of the readings in °C, km/h and mm/h (heat from 35 °C, leaves above 15 km/h, ice
+    # below 0 °C, rain above 0 mm/h, heavy from 8, a flood above 30 mm/h, not at it)
+    calm = lambda m: {**m, "below": m["below"] | {"running": None}}   # (just short: whether the last effect's still fading out aside)
+    assert {k: calm(m) for k, m in got["unitsMarks"].items()} == {k: calm(got["marks"][k]) for k in ("heat", "wind", "ice", "rain")}
+    assert got["unitsRain"][0][0] < 0.4 and [r for r, _ in got["unitsRain"][1:]] == [1, 1, 1], got["unitsRain"]
+    assert [bool(f) for _, f in got["unitsRain"]] == [False, False, False, True], got["unitsRain"]
     # the thermometer's scale widened as the server widens it in °C (-10 to 40 °C: 14 to 104 °F; 0 to 50 °C: 32 to 122 °F)
     assert got["widened"] == ["Temperature 23.0 °F", ["100", "80", "60", "40", "20"]], got["widened"]
     assert got["widenedHot"] == ["Temperature 109.4 °F", ["120", "100", "80", "60", "40"]], got["widenedHot"]
@@ -2209,7 +2254,9 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     corner = got["phoneCorner"]
     assert corner["link"] == "stop" and corner["apart"] and corner["onScreen"], corner
     just_right_of_the_row(corner)
-    assert corner["motion"]["bottom"] == pytest.approx(corner["strip"]["top"], abs=0.5), corner                  # (above the strip)
+    # (above the strip; the units' four switches there too, at the right, too wide for the row beside them: just above those)
+    assert corner["units"]["bottom"] == pytest.approx(corner["strip"]["top"], abs=0.5) and corner["units"]["right"] == corner["window"][0]
+    assert corner["motion"]["bottom"] == pytest.approx(corner["units"]["top"], abs=0.5), corner
     # (no "test:" there, all of it unscrolled, room for one more short link: as with every effect on, in the links' test)
     assert not corner["tag"] and corner["fits"] and corner["spare"] >= 30, corner
     for bare in (got["bare"], got["barePhone"]):
