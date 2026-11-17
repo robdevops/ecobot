@@ -2789,95 +2789,120 @@ async def test_a_bead_that_pooled_and_runs_again_lays_its_trail_at_once_from_its
         assert len(run) >= max(1, math.floor(r["along"]) - 1), r   # (and rows enough for the way it has gone: within 2 px of travel, at once)
 
 
-# The frog's head as it was on its lily pad (rows 0-8, 21 wide), pixel for pixel: the long-bodied frog keeps it
+# The frog's head at 2/3 of what it was (rows 0-8, 21 wide in the 65 x 52 sprite; now 15 x 7 in 43 x 35)
 OLD_FROG_HEAD = [".....kkkk...kkkk.....", "....klwwwk.kllggk....", "....kwwwwkkkkkkkk....", "....kwwwpk.kwwwpk....",
                  "...kkgkkkgkgkkkgkk...", "..kgggggggggggggggk..", "..kglllllllllllllgk..", "..kgkkkkkkkkkkkkkgk..",
                  "..kggggggggggggkdgk.."]
-HEAD_AT = 22           # (the head's first column in the 65 x 52 sprite)
-OLD_SPRITE = (37, 28)  # (the previous sprite: width, height)
-OLD_TRUNK_ROWS = 10    # (rows of its trunk between the head and the hips: `git show 0801f16:lib/web_dashboard.html`, rows 9-18, kgggk / kyyyk)
-SPRITE_W, SPRITE_H, CX = 65, 52, 32
+HEAD_AT, HEAD_W, HEAD_H = 14, 15, 7   # (the head's first column, its width and rows in the sprite)
+OLD_SPRITE = (65, 52)
+SPRITE_W, SPRITE_H, CX = 43, 35, 21
 
 
 def frog_frames() -> list[list[str]]:
     html = (Path(__file__).parent.parent / "lib" / "web_dashboard.html").read_text()
-    body = html.split("const FROG_FRAMES = [", 1)[1].split("];", 1)[0]
+    body = html.split("const FROG_FRAMES = [", 1)[1].split("\n    ];", 1)[0]
     rows = re.findall(r'"([^"]+)"', body)
     return [rows[i:i + SPRITE_H] for i in range(0, len(rows), SPRITE_H)]
 
 
 FROG_FRAMES = frog_frames()
+HTML = (Path(__file__).parent.parent / "lib" / "web_dashboard.html").read_text()
 
 
-def test_the_frog_flails_with_its_head_as_it_was_and_no_lily_pad():
-    assert len(FROG_FRAMES) >= 4 and all(len(f) == SPRITE_H and all(len(r) == SPRITE_W for r in f) for f in FROG_FRAMES)
-    assert SPRITE_H >= 1.2 * OLD_SPRITE[1] and SPRITE_W > OLD_SPRITE[0]
+def test_the_frog_is_two_thirds_the_size_with_its_head_as_designed_and_no_lily_pad():
+    assert len(FROG_FRAMES) >= 6 and all(len(f) == SPRITE_H and all(len(r) == SPRITE_W for r in f) for f in FROG_FRAMES)
+    assert 0.55 <= SPRITE_W / OLD_SPRITE[0] <= 0.75 and 0.55 <= SPRITE_H / OLD_SPRITE[1] <= 0.75
     for rows in FROG_FRAMES:
-        for y, old in enumerate(OLD_FROG_HEAD):   # (the head: every pixel of it; below row 7 limbs may reach beside it)
-            got = rows[y][HEAD_AT:HEAD_AT + 21]
-            if y < 7:
-                assert got.replace("m", ".") == old and rows[y][:HEAD_AT].strip(".m") == "", (y, rows[y])
-            else:
-                assert all(a == b for a, b in zip(got, old) if b != "."), (y, rows[y], old)
+        head = [r[HEAD_AT:HEAD_AT + HEAD_W] for r in rows[:HEAD_H]]
+        assert all(r[:HEAD_AT] == r[HEAD_AT + HEAD_W:][::-1] for r in rows[:HEAD_H])   # (hands raised beside the head mirror too)
+        # two eyes: one wide (white over pupil, two rows), one half-lidded (a lid line over a sliver)
+        assert head[1][1:7].count("w") >= 3 and head[2][1:7].count("p") == 1 and head[2][1:7].count("w") >= 3, head
+        assert head[1][8:14] == "kkkkkk" and head[2][8:14].count("w") >= 3 and head[2][8:14].count("p") == 1, head   # (the lid, the sliver)
+        assert head[1][1:7].count("w") > head[2][8:14].count("w") - 1
+        # the long flat drooping mouth, one end lower
+        mouth = max((len(m) for m in re.findall(r"k+", head[5][1:-1])), default=0)
+        assert mouth >= 8 and "kd" in head[6], head
         assert not set("".join(rows)) & set("QPRS"), "no lily pad colours"
-    assert len({tuple(f) for f in FROG_FRAMES}) == len(FROG_FRAMES)   # (every stroke its own)
-    joined = "".join(open(Path(__file__).parent.parent / "lib" / "web_dashboard.html").read().split("const FROG = {", 1)[1].split("};", 1)[0])
+    assert all([r[HEAD_AT:HEAD_AT + HEAD_W] for r in f[:HEAD_H]] == [r[HEAD_AT:HEAD_AT + HEAD_W] for r in FROG_FRAMES[0][:HEAD_H]] for f in FROG_FRAMES)   # (the same head every frame)
+    assert len({tuple(f) for f in FROG_FRAMES}) >= 6
+    joined = HTML.split("const FROG = {", 1)[1].split("};", 1)[0]
     assert not re.search(r"\b[QPRS]:", joined)
+
+
+def test_every_frame_of_the_frog_is_an_exact_mirror_image_below_the_head():
+    for rows in FROG_FRAMES:
+        for y in range(HEAD_H, SPRITE_H):
+            assert rows[y] == rows[y][::-1], (y, rows[y])   # (the trunk and every limb)
+        assert all(r[:HEAD_AT] == r[HEAD_AT + HEAD_W:][::-1] for r in rows[:HEAD_H])   # (the head alone may be lopsided: its eyes and mouth)
+    # (the blink changes only the eyes' own rows)
+    assert 'y >= 1 && y <= 2 ? row.replace(/[wp]/g, "g")' in HTML
 
 
 def test_the_frog_has_a_long_soft_teardrop_belly_wide_under_the_head_narrow_at_the_hips():
     for rows in FROG_FRAMES:
-        trunk = sum(1 for r in rows[9:] if "k" in r[CX - 9:CX + 10])   # (rows with a wall of the trunk)
-        assert trunk >= 1.8 * OLD_TRUNK_ROWS, trunk   # (twice the old trunk, 0801f16's)
-        belly = [max((len(m) for m in re.findall(r"y+", r)), default=0) for r in rows[9:32]]
-        belly = belly[next(i for i, n in enumerate(belly) if n):]   # (from where the pale belly starts)
-        assert 10 <= max(belly) <= 14 and belly.index(max(belly)) <= 6, belly   # (widest just under the head, as the references' chests)
-        assert all(a >= b - 2 for a, b in zip(belly, belly[1:])) and belly[-3] <= 5, belly   # (tapering, soft)
+        trunk = sum(1 for r in rows[HEAD_H:] if "y" in r[CX - 4:CX + 5])   # (rows of pale belly)
+        assert trunk >= 10, trunk
+        belly = [max((len(m) for m in re.findall(r"y+", r)), default=0) for r in rows[7:23]]
+        belly = belly[next(i for i, n in enumerate(belly) if n):]
+        assert 7 <= max(belly) <= 10 and belly.index(max(belly)) <= 4, belly
+        assert all(a >= b - 1 for a, b in zip(belly, belly[1:])) and belly[-3] <= 4, belly
 
 
 def test_the_frogs_limbs_are_short_tapering_and_curved_as_in_the_references():
     for rows in FROG_FRAMES:
-        px = {(x, y) for y in range(9, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] in "gl"}
-        # no leg or arm pixel reaches further from its joint than the references' lengths (legs about 1.2 head widths, arms 0.8)
-        assert all(math.dist((x, y), (CX + (2 if x > CX else -2), 29)) <= 27 for x, y in px if y > 29), rows
-        assert all(math.dist((x, y), (CX + (8 if x > CX else -8), 12)) <= 26 for x, y in px if abs(x - CX) > 9 and y < 28), rows
-        # mostly 1-2 px thick, 3 only at the thigh
+        px = {(x, y) for y in range(7, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] in "gl"}
+        assert all(math.dist((x, y), (CX + (2 if x > CX else -2), 20)) <= 21 for x, y in px if y > 21), rows
+        assert all(math.dist((x, y), (CX + (5 if x > CX else -5), 9)) <= 18 for x, y in px if abs(x - CX) > 7 and y < 20), rows
         limb = thick = 0
-        tips = [(x, y) for y in range(9, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l"]
+        tips = [(x, y) for y in range(7, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l"]
         for x, y in px:
-            if abs(x - CX) <= 9 and y < 30 or any(abs(x - tx) <= 6 and abs(y - ty) <= 6 for tx, ty in tips):
+            if abs(x - CX) <= 7 and y < 22 or any(abs(x - tx) <= 4 and abs(y - ty) <= 4 for tx, ty in tips):
                 continue
             across = len(re.search(r"[gl]*$", rows[y][:x + 1]).group()) + len(re.match(r"[gl]*", rows[y][x + 1:]).group()) - 1
             col = "".join(r[x] for r in rows)
             top = y
-            while top > 9 and col[top - 1] in "gl": top -= 1
+            while top > 7 and col[top - 1] in "gl": top -= 1
             bot = y
             while bot < SPRITE_H - 1 and col[bot + 1] in "gl": bot += 1
             limb += 1
             thick += min(across, bot - top + 1) > 3
-        assert limb > 20 and thick <= 0.2 * limb, (limb, thick)
-    assert 1.2 * OLD_SPRITE[1] <= SPRITE_H <= 1.9 * OLD_SPRITE[1]
+        assert len(px) > 40 and thick <= 0.25 * max(limb, 1), (limb, thick)
 
 
-def test_the_frog_is_drawn_only_within_the_flood_and_only_when_it_is_nearly_full():
-    html = (Path(__file__).parent.parent / "lib" / "web_dashboard.html").read_text()
-    assert "depth >= 0.9 * full" in html
-    assert "Math.min(pic.under.height, H - frog.y)" in html and "pic.under, 0, 0, pic.under.width, rowsBelow" in html
+def test_the_frog_is_drawn_only_within_the_flood_and_only_when_it_is_deep_enough():
+    assert "depth >= 0.7 * full" in HTML
+    assert "Math.min(pic.under.height, H - frog.y)" in HTML and "pic.under, 0, 0, pic.under.width, rowsBelow" in HTML
+    assert 0.7 * 192 > SPRITE_H - 8   # (the sprite's underwater rows fit above the floor of a 768 px window's flood)
 
 
-def test_the_frog_flails_out_of_step_each_stroke_held_for_a_different_time():
-    html = (Path(__file__).parent.parent / "lib" / "web_dashboard.html").read_text()
-    beats = [float(v) for v in re.search(r"FROG_BEATS = \[([\d., ]+)\]", html).group(1).split(",")]
-    assert len(beats) == len(FROG_FRAMES) and len(set(beats)) > 1 and all(0.2 <= b <= 0.35 for b in beats), beats
+def test_the_frog_swims_a_steady_breast_stroke_one_smooth_cycle():
+    beats = [float(v) for v in re.search(r"FROG_BEATS = \[([\d., ]+)\]", HTML).group(1).split(",")]
+    assert len(beats) == len(FROG_FRAMES) and all(0.15 <= b <= 0.5 for b in beats) and 1.5 <= sum(beats) <= 2.1, beats
+    assert beats[0] == max(beats) and max(beats[1:]) <= 0.25   # (a long glide, then even beats)
+    bob = [int(v) for v in re.search(r"FROG_BOB = \[([\d, ]+)\]", HTML).group(1).split(",")]
+    assert len(bob) == len(beats) and set(bob) <= {0, 1} and bob[0] == 1 and bob[1] == 0   # (down on the glide, up on the pull)
+    pace = [float(v) for v in re.search(r"FROG_SURGE = \[([\d., ]+)\]", HTML).group(1).split(",")]
+    assert max(pace) <= 1.25 and min(pace) >= 0.75   # (a mild surge with the kick)
+    assert "FROG_RIPPLES" in HTML and "for (const d of [-1, 1])" in HTML   # (a ripple each side)
 
 
 def test_every_limb_of_the_frog_shows_separate_toes_or_fingers():
     for rows in FROG_FRAMES:
-        tips = [(x, y) for y in range(SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l" and not (y < 9 and HEAD_AT <= x < HEAD_AT + 21)]
-        assert all(max(abs(a - c), abs(b - d)) >= 2 for i, (a, b) in enumerate(tips) for c, d in tips[i + 1:]), tips   # (tips separated)
-        assert len(tips) >= 14, len(tips)   # (two feet of 4 separate toe tips, two hands of 3 finger tips)
+        tips = [(x, y) for y in range(SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l" and not (y < HEAD_H and HEAD_AT <= x < HEAD_AT + HEAD_W)]
+        assert all(max(abs(a - c), abs(b - d)) >= 2 for i, (a, b) in enumerate(tips) for c, d in tips[i + 1:]), tips
+        for side in (lambda x: x < CX, lambda x: x > CX):
+            mine = [t for t in tips if side(t[0])]
+            clusters = []
+            for t in mine:
+                for c in clusters:
+                    if any(math.dist(t, u) < 8 for u in c):
+                        c.append(t)
+                        break
+                else:
+                    clusters.append([t])
+            sizes = sorted(len(c) for c in clusters)
+            assert len(sizes) == 2 and sizes[0] >= 2 and sizes[1] >= 3 and sum(sizes) >= 6, sizes   # (a hand of 2+ fingers, a foot of 3+ toes)
 
 
 def test_the_frog_blinks_over_the_same_head():
-    html = (Path(__file__).parent.parent / "lib" / "web_dashboard.html").read_text()
-    assert 'y >= 1 && y <= 3 ? row.replace(/[wp]/g, "g")' in html
+    assert 'y >= 1 && y <= 2 ? row.replace(/[wp]/g, "g")' in HTML
