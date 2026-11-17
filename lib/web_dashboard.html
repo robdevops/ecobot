@@ -1692,8 +1692,8 @@ const Sky = (() => {
     function shows(b) {   // on the glass now: running from here
       b.vol = b.r ** 3;
       Object.assign(b, {state: "on", x0: b.x, y0: b.y, slant: 0, bend: own(b, "path").between(3, 10), pause: own(b, "pauses").between(0, 1), on: false, v: 0, g: FOGGY, rows: [],
-                        laid: Math.floor(b.y) + (heightOf(b.r) >> 1), shown: 0, mode: grav.mode, epoch: grav.epoch});
-      if (b.mode >= 2) b.laid = Math.round(b.x);
+                        shown: 0, mode: grav.mode, epoch: grav.epoch});
+      laidAt(b);
       b.c0 = crossB(b);
       pace(b);
     }
@@ -2031,7 +2031,12 @@ const Sky = (() => {
     }
     // Downhill changed (the phone tilted): a bead's bounds across its way kept from where it is now; its trail begun afresh if the edge it
     // runs for has changed (rows or columns, which way)
-    const laidAt = (b) => { b.laid = b.mode < 2 ? Math.floor(b.y) + (heightOf(b.r) >> 1) : Math.round(b.x); };
+    // The trail starts at once, from the bead's back edge (its top running down, its bottom running up, its left or right sideways): the
+    // rows its body covers are laid as it moves off them, not only once it has travelled half its length (as when this began at its middle)
+    const laidAt = (b) => {
+      const w = sprite(b.r).width, h = heightOf(b.r), left = Math.round(b.x) - (w >> 1), top = Math.floor(b.y);
+      b.laid = [top, top + h - 1, left, left + w - 1][b.mode];
+    };
     function turned(b) {
       b.epoch = grav.epoch;
       b.x0 = b.x; b.y0 = b.y; b.c0 = crossB(b);
@@ -2318,6 +2323,8 @@ const Sky = (() => {
                      // it), then from left - 3 to left + w + 2: alpha: as shown on the fog's
                      // canvas, shows: what it shows (0 nothing, 1 to fogShades a fog shade, more a trail's look), residue: the fog
                      // left unwiped there (0 none), life: its trail's life (0 none: which trail it is), fog: [as shown, not wiped] (0-1)})
+                     // (and, test-only, the rows (columns, running sideways) a bead has laid its trail in, in order, the latest 80)
+                     laidOf: (id) => { const b = all.find((b) => b.id === id); return b && b.rows ? b.rows.map((r) => r[0]) : []; },
                      trailOf: (id) => {
                        const b = all.find((b) => b.id === id);
                        return !b || !b.rows ? [] : b.rows.map(([y, , , left, w, paused]) => {

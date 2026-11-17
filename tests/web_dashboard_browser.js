@@ -3368,6 +3368,50 @@ const WEATHER = {
       out.errors.push(...p.errors);
       await p.context.close();
     }));
+    // stop-start: flat (pooled) then tilted, several times over: each time a bead runs again its trail begins at once, from its own back edge
+    // (no gap, no half-length missing): within 2 px of travel its rows reach from where its top stood to its top now, with none missing
+    const restarts = [];
+    out.restarts = restarts;
+    await Promise.all([0, 1, 2, 3].map(async (edge) => {
+      const p = await weatherPage(browser, url, opts(0));
+      const got = await p.page.evaluate((edge) => {
+        const g = 9.8, flat = () => Sky.tilt(0, 0, g, Infinity);
+        // (the downhill edge: 0 the bottom, 1 the top, 2 the left, 3 the right; the screen up, steepest, tipped that way)
+        const tip = () => Sky.tilt(...[[0, g, 0], [0, -g, 0], [-g, 0, 0], [g, 0, 0]][edge], Infinity);
+        Sky.timeScale(30);
+        const rows = [];
+        for (let cycle = 0; cycle < 5; cycle++) {
+          flat();
+          for (let n = 0; n < 40; n++) Sky.advance(1);
+          const pooledTrails = Sky.state().humidity.trails;
+          tip();
+          Sky.timeScale(3);
+          // (the beads that run: where each first ran from, then each step until one has moved 2 px along its way)
+          const h0 = Sky.state().humidity;
+          const start = new Map(), ids = new Set(h0.beads.filter((b) => b.kind === "fog" && !b.fading && b.r >= 1.5).map((b) => b.id));
+          const done = new Set(), bad = [];
+          for (let n = 0; n < 600 && done.size < 6; n++) {
+            Sky.advance(1);
+            const h = Sky.state().humidity;
+            for (const b of h.beads) {
+              if (!ids.has(b.id) || done.has(b.id) || !(b.v > 0)) continue;
+              if (!start.has(b.id)) start.set(b.id, [b.x0, b.y0, Math.floor(b.y0) + b.bottom - Math.floor(b.y)]);   // (its first running frame: where it set off from)
+              const [x0, y0, bottom0] = start.get(b.id), along = edge === 0 ? b.y - y0 : edge === 1 ? bottom0 - b.bottom : edge === 3 ? b.x - x0 : x0 - b.x;
+              if (along < 2 || along > 6) { if (along > 6) done.add(b.id); continue; }
+              done.add(b.id);
+              const tr = h.laidOf(b.id);
+              rows.push({ edge, cycle, id: b.id, along, rows: tr.length, ys: tr, y0, bottom0, x0, left0: Math.round(x0) - (b.w >> 1), right0: Math.round(x0) - (b.w >> 1) + b.w });
+            }
+          }
+          Sky.timeScale(30);
+          rows.push({ edge, cycle, pooledTrails, trails: Sky.state().humidity.trails, mode: Sky.state().tilt.mode, ran: done.size, seen: ids.size });
+        }
+        return rows;
+      }, edge);
+      restarts.push(...got);
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }));
   },
   async gust(browser, url, out) {
     const opened = (async () => {   // (beside the rest)

@@ -2723,3 +2723,24 @@ async def test_a_phones_gravity_turns_the_humidity_beads_downhill_by_the_screens
     assert f["hyst"] == [True, False, False, True], f
     assert not f["level"]["tilted"] and f["level"]["raw"] is None, f
     assert got["errors"] == [], got["errors"]
+
+
+@needs_browser
+async def test_a_bead_that_pooled_and_runs_again_lays_its_trail_at_once_from_its_own_back_edge(server, station):
+    got = await weather(server, "tilt")
+    import math
+    recs = [r for r in got["restarts"] if "ys" in r]
+    assert {r["edge"] for r in recs} == {0, 1, 2, 3} and {r["cycle"] for r in recs if r["cycle"] > 0} == {1, 2, 3, 4}, got["restarts"][:3]
+    for r in recs:
+        # (the rows (columns, running sideways) laid since it set off again: the last unbroken run of them, counted from its back edge:
+        # edge 0 runs down (its top the back edge), 1 up (its bottom), 2 left (its right edge), 3 right (its left edge))
+        ys, back = r["ys"], {0: math.floor(r["y0"]), 1: r["bottom0"] - 1, 2: r["right0"] - 1, 3: r["left0"]}[r["edge"]]
+        run = [ys[-1]]
+        for y in reversed(ys[:-1]):
+            if abs(y - run[0]) > 1:
+                break
+            run.insert(0, y)
+        # (from its own back edge: no first rows skipped; a px of leeway for where it first ran from, its half-length (2 px or more) is not)
+        ahead = (run[0] <= back + 1) if r["edge"] in (0, 3) else (run[0] >= back - 1)
+        assert ahead, (r["ys"], r, back)
+        assert len(run) >= max(1, math.floor(r["along"]) - 1), r   # (and rows enough for the way it has gone: within 2 px of travel, at once)
