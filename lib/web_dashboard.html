@@ -3405,6 +3405,28 @@ const Sky = (() => {
   }
 
   const DIAL = [240, 203, 138];   // a dial's centre and its ring's radius (the compass's too: the same size, lined up)
+  const HUB = 13;                 // a dial's hub, its needle's pivot: its radius (its outline as thin, lw(1.5)); the needle's tail under it
+  // Today's trend (the pressure's: tile.trend, [[minutes since midnight, hPa], ...]): a thin, quiet line across the dial's face, between
+  // its numbers and its hub, the day's midnight at its left and the next at its right (so it grows through the day), its height the
+  // day's own lowest to highest (at least TREND_SPAN hPa, so a still day reads still), a little padding; a small dot at its latest.
+  // Under the needle and the hub; nothing with fewer than two points. [left, top, right, bottom], the dial's own px
+  const TREND_BOX = [182, 148, 298, 180], TREND_SPAN = 2, TREND_PAD = 0.1, DAY_MINUTES = 1440;
+  function trendLine(group, pts, ink) {
+    group.replaceChildren();
+    const got = (pts || []).filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+    group.dataset.points = String(got.length);
+    if (got.length < 2) return;
+    const [x0, y0, x1, y1] = TREND_BOX, values = got.map((p) => p[1]);
+    let lo = Math.min(...values), hi = Math.max(...values);
+    if (hi - lo < TREND_SPAN) { const mid = (hi + lo) / 2; lo = mid - TREND_SPAN / 2; hi = mid + TREND_SPAN / 2; }
+    const pad = (hi - lo) * TREND_PAD;
+    lo -= pad; hi += pad;
+    const xy = got.map(([m, v]) => [x0 + Math.min(Math.max(m / DAY_MINUTES, 0), 1) * (x1 - x0), y1 - (v - lo) / (hi - lo) * (y1 - y0)]);
+    el("path", {d: "M" + xy.map((p) => p.map((n) => n.toFixed(2)).join(",")).join(" L"), fill: "none", stroke: ink(L.soft),
+                "stroke-width": 1.6, "stroke-opacity": 0.55, "stroke-linejoin": "round", "stroke-linecap": "round", class: "line"}, group);
+    const [x, y] = xy[xy.length - 1];
+    el("circle", {cx: x.toFixed(2), cy: y.toFixed(2), r: 2.8, fill: ink(L.soft), "fill-opacity": 0.85, class: "latest"}, group);
+  }
   function dial(svg, tile, ink) {
     const [cx, cy] = DIAL, angle = (v) => L.start - L.sweep * share(tile, v);
     el("circle", {cx, cy, r: DIAL[2], fill: "none", stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
@@ -3422,6 +3444,8 @@ const Sky = (() => {
       text(svg, x, y, tickText(tick), 17, ink(L.soft));
     }
     text(svg, cx, cy + 64, tile.unit, 18, ink(L.soft));
+    const trend = tile.trend === undefined ? null : el("g", {class: "trend", "pointer-events": "none"}, svg);   // (the pressure's: under
+    if (trend) trendLine(trend, tile.trend, ink);                                                                // the needle and hub)
     const needle = el("polygon", {fill: ink(L.needle)}, svg);
     // Today's highest (the wind's gust, rain rate, sun, UV: tile.todayHigh, null with none): a gauge's limit mark, a small solid red
     // triangle, its base flush with the dial's outer edge and its tip reaching into the coloured band (clear of the numbers inside and
@@ -3434,12 +3458,18 @@ const Sky = (() => {
     }
     const label = text(svg, cx, cy + 102, "", 50, ink(L.ink));   // (the reading alone: no band word ("Moderate") under the dial, its
     label.classList.add("reading");                                // colours say it)
-    el("circle", {cx, cy, r: 25, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
+    el("circle", {cx, cy, r: HUB, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(1.5), class: "hub"}, svg);
     const at = (v) => {
       const a = angle(v);
-      const pts = [polar(cx, cy, outer - L.band_width - 6, a), polar(cx, cy, 10, a + 90), polar(cx, cy, -24, a), polar(cx, cy, 10, a - 90)];
+      const pts = [polar(cx, cy, outer - L.band_width - 6, a), polar(cx, cy, 10, a + 90), polar(cx, cy, -(HUB - 1), a), polar(cx, cy, 10, a - 90)];
       needle.setAttribute("points", pts.map((p) => p.map((n) => n.toFixed(2)).join(",")).join(" "));
       label.textContent = figure(v, tile.decimals);
+    };
+    let drawnTrend = JSON.stringify(tile.trend || []);
+    if (trend) at.band = (t) => {   // (the tile as given again: today's trend redrawn in place if it changed)
+      const next = JSON.stringify(t.trend || []);
+      if (next !== drawnTrend) trendLine(trend, t.trend, ink);
+      drawnTrend = next;
     };
     if (hand) at.hand = (v) => {   // the red hand at v (moved in place, frame by frame); null: none to show
       hand.style.display = v === null ? "none" : "";
@@ -3559,7 +3589,7 @@ const Sky = (() => {
   // What can't change in place (a tile so different is drawn again): its kind and scale. A reading coming or going doesn't: the tile
   // brightens or dims (its opacity, eased) and the gauge moves from or to its floor.
   const shape = (t) => JSON.stringify([t.kind, t.title, t.unit, t.low, t.high, t.colours, t.ticks, t.bounds, t.columns, t.decimals,
-                                       t.todayHigh !== undefined]);
+                                       t.todayHigh !== undefined, t.trend !== undefined]);
   const label = (t) => t.value === null ? `${t.title}: no reading` : t.kind === "compass" ? `${t.title} ${figure(t.value, t.decimals)}° ${t.band || ""}`.trim()
                                                                      : `${t.title} ${figure(t.value, t.decimals)} ${t.unit}`.trim();
   let clips = 0;

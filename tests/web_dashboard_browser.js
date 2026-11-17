@@ -3,14 +3,17 @@
 //     NAME.png, device scale factor 2) and, on stdout, {name: {tiles, rects, columns, scroll, scrollWidth, scrollHeight, status, glass (each
 //     tile's [kind, its glass highlights' paths]), errors,
 //     zoomed, compass, compassZoomed}}; then the first tile zoomed (Enter): its look, and a screenshot (SHOTS/dashboard-NAME-zoomed.png);
-//     then the compass (the wind's direction) zoomed: its look (compassLook), and a screenshot (SHOTS/dashboard-NAME-compass.png).
+//     then the compass (the wind's direction) zoomed: its look (compassLook), and a screenshot (SHOTS/dashboard-NAME-compass.png);
+//     every dial's hub and pivot and the pressure's trend (dials: dialsLook), and the pressure zoomed (pressureZoomed, and a screenshot:
+//     SHOTS/dashboard-NAME-pressure.png).
 //   node web_dashboard_browser.js URL --live: the page open at 800x600; prints {label} (the first tile's), waits for a line on stdin
 //     (the test has changed the reading, and the wind's direction), then prints {label, same_page, compass (its look, and its needle's
-//     turn every frame since), errors} once the tile shows it, or after 15 s.
+//     turn every frame since), pressure (dialsLook's, and whether its trend is the same element), errors} once the tile shows it, or
+//     after 15 s.
 //   node web_dashboard_browser.js URL --arrive TITLE: the page open at 1024x768; prints the tile's state ({label, faded, opacity, shown,
 //     needle}), waits for a line on stdin (the test has given it a reading, or taken it away), then, once its label changes, samples it
 //     every frame for 1.5 s and prints {before, after, frames: [{opacity, number}], same_tile, compass: [before, after] (compassLook),
-//     errors}.
+//     pressure (dialsLook's), errors}.
 //   node web_dashboard_browser.js URL --arrange PART: the page at 1024x768 with a mouse, a part of the arranging (arrangeMode):
 //     "dragged" (dragging to reorder, the drag's text zones, the grip and the × on mouseover, the tiles' see-through look), "hidden"
 //     (the ×, the remove zone, the reset link, the preferences across a reload), "prefs" (the preferences corrupt or from elsewhere (a
@@ -121,6 +124,7 @@ async function sizes(browser, url, shots, wanted) {
       [t.querySelector(".title").textContent, [...t.querySelectorAll(".chip.head")].map((e) => [e.textContent, getComputedStyle(e).backgroundColor])])));   // table's heads
     await compassSettled(page);
     report[name].compass = await compassLook(page);   // the wind's direction in the grid: its compass, no table
+    report[name].dials = await dialsLook(page);       // every round dial's hub and pivot, and the pressure's trend line
     // zoomed (Enter on the first tile): its look (box, title, text, table) and a screenshot (SHOTS/dashboard-NAME-zoomed.png)
     await page.focus(".tile");
     await page.keyboard.press("Enter");
@@ -150,6 +154,14 @@ async function sizes(browser, url, shots, wanted) {
     await calm(page, 400);
     await page.screenshot({ path: `${shots}/dashboard-${name}-uv.png` });
     report[name].uvZoomed = { zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")), ...(await handsLook(page))["UV index"] };
+    // back, then the pressure zoomed: its hub and trend line as in the grid, scaled with it (SHOTS/dashboard-NAME-pressure.png)
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.body.classList.contains("zoomed") && !document.querySelector(".tile.zooming, .tile.fading"));
+    await page.evaluate(() => [...document.querySelectorAll("#grid .tile")].find((t) => t.querySelector(".title").textContent === "Atmospheric pressure").focus());
+    await page.keyboard.press("Enter");
+    await calm(page, 400);
+    await page.screenshot({ path: `${shots}/dashboard-${name}-pressure.png` });
+    report[name].pressureZoomed = { zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")), ...(await dialsLook(page))["Atmospheric pressure"] };
     await context.close();
   }));
   process.stdout.write(JSON.stringify(Object.fromEntries(Object.keys(wanted).map((name) => [name, report[name]]))));
@@ -186,6 +198,38 @@ const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
                    headColours: title === "Wind" ? [...t.querySelectorAll(".chip.head")].map((e) => getComputedStyle(e).backgroundColor) : undefined,
                    daily: title === "Wind" ? [...t.querySelectorAll(".figure")].slice(0, 2).map((e) => e.textContent) : undefined }];
 })));
+// Every round dial's (and the compass's) hub and its needle's pivot, in its own px: the hub's centre, radius and outline width; the
+// needle's pivot (a dial's: the midpoint of its polygon's two side corners; the compass's: the centre its turn is about). Its trend line
+// (null without one: its group's absence): its points as drawn ([x, y] each, the path's), its latest dot's centre and radius, the hub's
+// top, the tick numbers' lowest bottom, its parts' order in the gauge ([trend, needle, hub] indexes), its stroke's colour, width and
+// opacity, its points' count as given (data-points), and its drawn width against the tile's (window px)
+const dialsLook = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#grid .tile")]
+  .filter((t) => t.dataset.kind === "dial" || t.dataset.kind === "compass").map((t) => {
+    const title = t.querySelector(".title").textContent, gauge = t.querySelector("svg > g.gauge"), parts = [...gauge.children];
+    const hub = t.dataset.kind === "compass" ? gauge.querySelector(":scope > .hub") : parts.filter((e) => e.tagName === "circle").pop();
+    const n = (e, k) => Number(e.getAttribute(k));
+    let pivot;
+    if (t.dataset.kind === "compass") pivot = /rotate\([-\d.]+ ([-\d.]+) ([-\d.]+)\)/.exec(gauge.querySelector(".needle").getAttribute("transform")).slice(1).map(Number);
+    else {
+      const pts = gauge.querySelector(":scope > polygon").getAttribute("points").split(" ").map((p) => p.split(",").map(Number));
+      pivot = [(pts[1][0] + pts[3][0]) / 2, (pts[1][1] + pts[3][1]) / 2];
+    }
+    const g = gauge.querySelector(":scope > g.trend"), needle = gauge.querySelector(":scope > polygon, :scope > g.needle");
+    let trend = null;
+    if (g) {
+      const line = g.querySelector(".line"), dot = g.querySelector(".latest"), c = line && getComputedStyle(line);
+      const ticks = parts.filter((e) => e.tagName === "text" && /^[\d.]+$/.test(e.textContent));
+      trend = { given: Number(g.dataset.points), points: line ? line.getAttribute("d").slice(1).split(" L").map((p) => p.split(",").map(Number)) : [],
+                dot: dot ? [n(dot, "cx"), n(dot, "cy"), n(dot, "r")] : null, hubTop: n(hub, "cy") - n(hub, "r"),
+                ticksBottom: Math.max(...ticks.filter((e) => n(e, "y") < n(hub, "cy") - 40).map((e) => e.getBBox().y + e.getBBox().height)),
+                order: [parts.indexOf(g), parts.indexOf(needle), parts.indexOf(hub)],
+                colour: c && c.stroke, width: c && parseFloat(c.strokeWidth), opacity: c && Number(c.strokeOpacity),
+                tileWidth: t.getBoundingClientRect().width, drawnWidth: line ? line.getBoundingClientRect().width : 0 };
+    }
+    return [title, { kind: t.dataset.kind, hub: [n(hub, "cx"), n(hub, "cy"), n(hub, "r"), n(hub, "stroke-width")], pivot, trend,
+                     reading: (gauge.querySelector(":scope > text.reading") || {}).textContent,
+                     figures: title === "Atmospheric pressure" ? [...t.querySelectorAll(".figure")].map((e) => e.textContent) : undefined }];
+  })));
 // The red hands at rest (the opening's rise or a move over): none turned since the last look, 150 ms before, rather than a fixed wait
 const handsSettled = (page) => page.waitForFunction(() => {
   const now = [...document.querySelectorAll("#grid .tile svg .high")].map((h) => h.getAttribute("transform")).join("|");
@@ -236,7 +280,12 @@ const compassSettled = (page) => page.waitForFunction(() => {
 async function live(browser, url) {
   const { page, errors } = await open(browser, url, 800, 600);
   const label = () => page.evaluate(() => document.querySelector(".tile").getAttribute("aria-label"));
-  await page.evaluate(() => { window.__mark = 1; document.querySelector(".tile").__mark = 1; });
+  await page.evaluate(() => {
+    window.__mark = 1; document.querySelector(".tile").__mark = 1;
+    window.__pressureTile = () => [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === "Atmospheric pressure");
+    window.__pressure = window.__pressureTile().querySelector("g.trend");   // (the pressure's trend line: the same group after)
+  });
+  const pressureBefore = (await dialsLook(page))["Atmospheric pressure"];
   // (the compass's needle, every frame from now, the opening's rise over: the wind's direction changes with the temperature)
   await compassSettled(page);
   await handsSettled(page);
@@ -256,7 +305,7 @@ async function live(browser, url) {
     requestAnimationFrame(sample);
   });
   const before = await label();
-  process.stdout.write(JSON.stringify({ label: before }) + "\n");
+  process.stdout.write(JSON.stringify({ label: before, pressure: pressureBefore }) + "\n");
   await new Promise((resolve) => readline.createInterface({ input: process.stdin }).once("line", resolve));
   try {
     await page.waitForFunction((was) => document.querySelector(".tile").getAttribute("aria-label") !== was, before, { timeout: 15000 });
@@ -269,7 +318,9 @@ async function live(browser, url) {
   const compass = { ...await compassLook(page), turns: await page.evaluate(() => window.__turns) };
   await handsSettled(page);
   const hands = { ...await handsLook(page), frames: await page.evaluate(() => window.__hand), limitFrames: await page.evaluate(() => window.__limit) };
-  process.stdout.write(JSON.stringify({ label: await label(), same_page: same, same_tile: sameTile, shown, compass, hands, errors }) + "\n");
+  const pressureSame = await page.evaluate(() => window.__pressure.isConnected && window.__pressure === window.__pressureTile().querySelector("g.trend"));
+  const pressure = { ...(await dialsLook(page))["Atmospheric pressure"], same: pressureSame };   // (its trend redrawn in place)
+  process.stdout.write(JSON.stringify({ label: await label(), same_page: same, same_tile: sameTile, shown, compass, hands, pressure, errors }) + "\n");
 }
 
 async function arrive(browser, url, title) {
@@ -305,7 +356,7 @@ async function arrive(browser, url, title) {
     [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === title) === window.__tile, title);
   await compassSettled(page);
   process.stdout.write(JSON.stringify({ before, after: await state(), frames, same_tile: sameTile, compass: [compassBefore, await compassLook(page)],
-                                        errors }) + "\n");
+                                        pressure: (await dialsLook(page))["Atmospheric pressure"], errors }) + "\n");
 }
 
 // ---------- arranging ----------

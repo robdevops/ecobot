@@ -88,6 +88,27 @@ def directions_on(r: Reader, mac: str, start: int, end: int) -> list[int]:
     return counts
 
 
+def pressure_on(r: Reader, mac: str, start: int, end: int) -> list[tuple[int, float]]:
+    """The relative pressure (hPa) from start to end, oldest first, [(epoch, hPa)]: its 5-minute readings and its minutes where no 5-minute
+    reading covers them (300 s either side, as directions_on), in one query; [] with none, or no pressure sensor (the web page's pressure
+    trend: today's)."""
+    sensor, place = r.sensor(mac, "pressure"), column_of("pressure", "relative")
+    if sensor is None or sensor.kind not in KINDS or place is None:
+        return []
+    column = q(place[0])
+    got = r.db.execute(f"SELECT res, ts, {column} FROM {sensor.kind} WHERE sensor = ? AND res IN ('1min', '5min') AND ts BETWEEN ? AND ? "
+                       f"AND {column} IS NOT NULL ORDER BY ts", (sensor.id, start, end)).fetchall()
+    fives = [ts for res, ts, _ in got if res == "5min"]
+    out = []
+    for res, ts, value in got:
+        if res == "1min":
+            i = bisect.bisect_left(fives, ts - 299)
+            if i < len(fives) and fives[i] < ts + 300:
+                continue
+        out.append((ts, float(value)))
+    return out
+
+
 def newest_minute_on(r: Reader, mac: str) -> int | None:
     """The time of the newest minute held of the station (where the next pull of Home Assistant's starts), None for none."""
     found = [r.db.execute(f"SELECT MAX(ts) FROM {s.kind} WHERE sensor = ? AND res = '1min'", (s.id,)).fetchone()[0]
@@ -184,5 +205,5 @@ def history_on(r: Reader, mac: str, groups: list[str], plan: list[tuple[str, int
     return held
 
 
-__all__ = ["Held", "Store", "buckets_on", "counts_on", "directions_on", "first_minute_on", "history_on", "newest_minute_on", "readings_on", "rows_on",
+__all__ = ["Held", "Store", "buckets_on", "counts_on", "directions_on", "first_minute_on", "history_on", "newest_minute_on", "pressure_on", "readings_on", "rows_on",
            "slot_values_on"]
