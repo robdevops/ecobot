@@ -924,8 +924,7 @@ def arrow_drawn(p: dict, way: str | None, name: str):
     """The pressure's arrow after its reading (dialsLook's), its way over the past hour: none (`way` None: hidden), or a thin, simple
     arrow: one straight shaft and a small open head (two short strokes from its tip, back at 45 degrees either side), no fill, as thin
     as the dial's thin text (about lw(1.5)), with an edge in the tile's background under it; up and blue (the needle's) when rising,
-    down and red (the red hands') when falling, pointing right and grey (L.soft) when steady, about the digits' height (the steady
-    one shorter); just after the reading (a small gap after its advance width), vertically centred on its digits' ink; clear of the
+    down and red (the red hands') when falling, none when steady (`way` None), about the digits' height; just after the reading (a small gap after its advance width), vertically centred on its digits' ink; clear of the
     hub, the unit, the tick numbers, the title and the table, and inside the dial's outline (beside a reading in hPa; inHg's wider
     reading reaches the outline itself, and the arrow's edge parts it there)."""
     a = p["arrow"]
@@ -933,7 +932,7 @@ def arrow_drawn(p: dict, way: str | None, name: str):
         assert a is not None and not a["shown"] and a["way"] == "", (name, a)
         return
     assert a["shown"] and a["way"] == way and a["fill"] == "none", (name, a)
-    assert a["stroke"] == rgb({"up": look()["needle"], "down": look()["high_hand"], "steady": look()["soft"]}[way]), (name, a)
+    assert a["stroke"] == rgb({"up": look()["needle"], "down": look()["high_hand"]}[way]), (name, a)
     assert look()["rising"] == look()["needle"] == "#3E86C0" and look()["falling"] == look()["high_hand"] == "#FF3B30", look()
     assert 1.5 <= a["width"] <= 2.5 and a["edge"]["stroke"] == rgb(look()["bg"]) and a["edge"]["d"] == a["d"], (name, a)
     assert 2 <= a["edge"]["width"] - a["width"] <= 4, (name, a["edge"])
@@ -944,11 +943,8 @@ def arrow_drawn(p: dict, way: str | None, name: str):
     assert 3 <= k <= 8 and abs(hy0 - ty) == pytest.approx(k) and (hx1, hy1) in {(hx0, 2 * ty - hy0), (2 * tx - hx0, hy0)}, (name, a["d"])
     ink_top, ink_bottom = a["ink"]
     tall = ink_bottom - ink_top                                                  # (the digits' height: about 38 px at 50 px)
-    if way == "steady":
-        assert y0 == y1 and x1 > x0 and hx0 == hx1 == pytest.approx(tx - k) and 12 <= x1 - x0 <= 0.8 * tall, (name, a["d"])
-    else:
-        assert x0 == x1 and hy0 == hy1 == pytest.approx(ty + k if way == "up" else ty - k), (name, a["d"])
-        assert (y1 < y0) == (way == "up") and 0.7 * tall <= abs(y1 - y0) <= tall, (name, a["d"], tall)
+    assert x0 == x1 and hy0 == hy1 == pytest.approx(ty + k if way == "up" else ty - k), (name, a["d"])
+    assert (y1 < y0) == (way == "up") and 0.7 * tall <= abs(y1 - y0) <= tall, (name, a["d"], tall)
     bx0, by0, bx1, by1 = a["box"]
     assert 3 <= bx0 - a["reading"][2] <= 10, (name, a["box"], a["reading"])      # just after the reading, a small gap
     assert (by0 + by1) / 2 == pytest.approx((ink_top + ink_bottom) / 2, abs=1), (name, a["box"], a["ink"])   # centred on its digits
@@ -1014,7 +1010,7 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
     got = json.loads(out)
     after, frames = got["after"], got["frames"]
     assert got["errors"] == [] and got["same_tile"], got                         # moved in place: the same tile, not drawn again
-    arrow_drawn(got["pressure"], "steady" if comes else None, f"arrive, {comes}")   # (the pressure's arrow: steady, or none)
+    arrow_drawn(got["pressure"], None, f"arrive, {comes}")   # (the pressure's arrow: none, steady or without an hour of readings)
     numbers = [float(f["number"]) for f in frames]
     opacities = [f["opacity"] for f in frames]
     if comes:

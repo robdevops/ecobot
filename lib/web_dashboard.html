@@ -3472,14 +3472,13 @@ const Sky = (() => {
   // before; null with none about an hour old): a thin, simple arrow just after the reading under the dial, a small gap after its last
   // digit whatever its width (hPa or inHg; the reading stays centred), vertically centred on its digits: a straight shaft with a small
   // open head, as thin as the dial's thin text (lw(1.5)), about the digits' height. Rising: pointing up, in L.rising (the needle's
-  // blue); falling: pointing down, in L.falling (the red hands' red); steady (under 0.3 hPa either way): pointing right, shorter, in
-  // L.soft. None with no tendency or no reading. Clear of the ring's outline beside a reading in hPa; a wide one (inHg's "29.92")
+  // blue); falling: pointing down, in L.falling (the red hands' red). None when steady (under 0.3 hPa either way), with no tendency or
+  // no reading. Clear of the ring's outline beside a reading in hPa; a wide one (inHg's "29.92")
   // reaches it, as the reading itself does: there the arrow's thin edge in the tile's background parts the outline round it. No
   // motion: it is only put in place as the reading changes. The reading's width and its digits' ink are measured on a canvas (no
   // layout asked of the page), once for each text.
-  // ARROW: the gap after the number and the head's half-width (px), the arrow's height (of the digits'), the steady one's length (of
-  // that height), the stroke's width, and its edge's (in the background: each side)
-  const ARROW = {gap: 6, head: 5, tall: 0.8, steady: 0.62, width: lw(1.5), edge: 1.5};
+  // ARROW: the gap after the number and the head's half-width (px), the arrow's height (of the digits'), the stroke's width, and its edge's (in the background: each side)
+  const ARROW = {gap: 6, head: 5, tall: 0.8, width: lw(1.5), edge: 1.5};
   const digits = new Map();   // ({size/text: [its width, its digits' ink centre below the em box's middle, their height]})
   let measuring = null;
   function measure(words, size) {
@@ -3499,8 +3498,8 @@ const Sky = (() => {
     const edge = el("path", {stroke: L.bg, "stroke-width": ARROW.width + 2 * ARROW.edge, class: "edge"}, group);
     const arrow = el("path", {"stroke-width": ARROW.width, class: "arrow"}, group);
     let shown = null, words = null;
-    return (way) => {   // the arrow at the reading as it reads now, this way ("up", "down" or "steady"; anything else: none)
-      if (way !== "up" && way !== "down" && way !== "steady") way = null;
+    return (way) => {   // the arrow at the reading as it reads now, this way ("up" or "down"; anything else, "steady" too: none)
+      if (way !== "up" && way !== "down") way = null;
       group.style.display = way ? "" : "none";
       group.dataset.way = way || "";
       if (!way || (way === shown && label.textContent === words)) return;
@@ -3508,17 +3507,11 @@ const Sky = (() => {
       words = label.textContent;
       const [width, middle, high] = measure(words, size), h = high * ARROW.tall, k = ARROW.head, f = (v) => v.toFixed(2);
       const left = x + width / 2 + ARROW.gap, cy = y + middle;
-      let d;
-      if (way === "steady") {
-        const tip = left + h * ARROW.steady;
-        d = `M${f(left)},${f(cy)} L${f(tip)},${f(cy)} M${f(tip - k)},${f(cy - k)} L${f(tip)},${f(cy)} L${f(tip - k)},${f(cy + k)}`;
-      } else {
-        const sx = left + k, sign = way === "up" ? -1 : 1, tip = cy + sign * h / 2;
-        d = `M${f(sx)},${f(cy - sign * h / 2)} L${f(sx)},${f(tip)} M${f(sx - k)},${f(tip - sign * k)} L${f(sx)},${f(tip)} L${f(sx + k)},${f(tip - sign * k)}`;
-      }
+      const sx = left + k, sign = way === "up" ? -1 : 1, tip = cy + sign * h / 2;
+      const d = `M${f(sx)},${f(cy - sign * h / 2)} L${f(sx)},${f(tip)} M${f(sx - k)},${f(tip - sign * k)} L${f(sx)},${f(tip)} L${f(sx + k)},${f(tip - sign * k)}`;
       edge.setAttribute("d", d);
       arrow.setAttribute("d", d);
-      arrow.setAttribute("stroke", ink(way === "up" ? L.rising : way === "down" ? L.falling : L.soft));
+      arrow.setAttribute("stroke", ink(way === "up" ? L.rising : L.falling));
     };
   }
   function dial(svg, tile, ink) {

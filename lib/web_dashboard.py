@@ -90,7 +90,7 @@ TENDENCY_TITLE = "Atmospheric pressure"   # the tile with an arrow after its rea
 TENDENCY_SECONDS = 60       # the past hour's pressure read from the file at most this often (as the rose)
 TENDENCY_AGO = (45 * 60, 60 * 60, 75 * 60)   # ... the reading it is told from: the one nearest an hour before the newest, 45 to 75 min before it
 TENDENCY_READ = 90 * 60     # ... read from this long before now (the newest more than 45 min old: no reading about an hour before it read)
-TENDENCY_STEADY = 0.3       # ... a change under this (hPa) either way: steady (a sideways arrow)
+TENDENCY_STEADY = 0.3       # ... a change under this (hPa) either way: steady (no arrow)
 RED_HANDS = {g.title: "Gust" if g.gust else "Max" for g in GAUGES if g.high_hand}   # the dials with a red hand at today's highest,
 # and the column of their table whose Daily figure it is (the Wind's: its highest gust)
 

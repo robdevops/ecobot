@@ -32,7 +32,7 @@ COMPASS_BAND = "#262E34"    # ... its ring, under the ticks and the letters N, E
 WATER = "#4FB3F6"           # the rain beaker's water
 NEEDLE = "#3E86C0"
 RISING, FALLING = NEEDLE, HIGH_HAND   # the web page's pressure arrow after its reading (its way over the past hour): up, in the
-                                     # needle's blue; down, in the red hands' red (steady: sideways, in SOFT)
+                                     # needle's blue; down, in the red hands' red (steady: none)
 WIND_CHIPS = {**CHIPS, "Max": NEEDLE, "Gust": HIGH_HAND}   # the web page's Wind table: its Max the needle's colour (the speed
                                                            # it shows), its Gust its limit mark's red (today's highest gust)
 CELL_W, CELL_H, MARGIN = 480, 575, 20
