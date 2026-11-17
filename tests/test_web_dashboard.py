@@ -2795,7 +2795,7 @@ OLD_FROG_HEAD = [".....kkkk...kkkk.....", "....klwwwk.kllggk....", "....kwwwwkkk
                  "..kggggggggggggkdgk.."]
 HEAD_AT, HEAD_W, HEAD_H = 16, 15, 7   # (the head's first column, its width and rows in the sprite)
 OLD_SPRITE = (65, 52)
-SPRITE_W, SPRITE_H, CX = 47, 40, 23
+SPRITE_W, SPRITE_H, CX = 47, 50, 23
 
 
 def frog_frames() -> list[list[str]]:
@@ -2811,7 +2811,7 @@ HTML = (Path(__file__).parent.parent / "lib" / "web_dashboard.html").read_text()
 
 def test_the_frog_is_two_thirds_the_size_with_its_head_as_designed_and_no_lily_pad():
     assert len(FROG_FRAMES) >= 6 and all(len(f) == SPRITE_H and all(len(r) == SPRITE_W for r in f) for f in FROG_FRAMES)
-    assert 0.55 <= SPRITE_W / OLD_SPRITE[0] <= 0.8 and 0.55 <= SPRITE_H / OLD_SPRITE[1] <= 0.8
+    assert 0.55 <= SPRITE_W / OLD_SPRITE[0] <= 0.8 and SPRITE_H >= 0.8 * OLD_SPRITE[1]   # (the head and body at 2/3, the legs longer than the body)
     for rows in FROG_FRAMES:
         head = [r[HEAD_AT:HEAD_AT + HEAD_W] for r in rows[:HEAD_H]]
         assert all(r[:HEAD_AT] == r[HEAD_AT + HEAD_W:][::-1] for r in rows[:HEAD_H])   # (hands raised beside the head mirror too)
@@ -2848,10 +2848,10 @@ def test_the_frog_has_a_long_soft_teardrop_belly_wide_under_the_head_narrow_at_t
         assert all(a >= b - 1 for a, b in zip(belly, belly[1:])) and belly[-3] <= 4, belly
 
 
-def test_the_frogs_limbs_are_short_tapering_and_curved_as_in_the_references():
+def test_the_frogs_limbs_are_thin_and_tapering_as_in_the_references():
     for rows in FROG_FRAMES:
         px = {(x, y) for y in range(7, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] in "gl"}
-        assert all(math.dist((x, y), (CX + (2 if x > CX else -2), 20)) <= 27 for x, y in px if y > 21), rows
+        assert all(math.dist((x, y), (CX + (2 if x > CX else -2), 20)) <= 34 for x, y in px if y > 21), rows
         assert all(math.dist((x, y), (CX + (5 if x > CX else -5), 9)) <= 18 for x, y in px if abs(x - CX) > 7 and y < 20), rows
         limb = thick = 0
         tips = [(x, y) for y in range(7, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l"]
@@ -2866,13 +2866,13 @@ def test_the_frogs_limbs_are_short_tapering_and_curved_as_in_the_references():
             while bot < SPRITE_H - 1 and col[bot + 1] in "gl": bot += 1
             limb += 1
             thick += min(across, bot - top + 1) > 3
-        assert len(px) > 40 and thick <= 0.25 * max(limb, 1), (limb, thick)
+        assert len(px) > 40 and thick <= 0.35 * max(limb, 1), (limb, thick)   # (the tucked legs' sharp folds clot a little at the joints)
 
 
 def test_the_frog_is_drawn_only_within_the_flood_and_only_when_it_is_deep_enough():
-    assert "depth >= 0.7 * full" in HTML
+    assert "depth >= 0.85 * full" in HTML
     assert "Math.min(pic.under.height, H - frog.y)" in HTML and "pic.under, 0, 0, pic.under.width, rowsBelow" in HTML
-    assert 0.7 * 192 > SPRITE_H - 8   # (the sprite's underwater rows fit above the floor of a 768 px window's flood)
+    assert 0.85 * 192 >= 1.1 * (SPRITE_H - 8)   # (the sprite's underwater rows fit in the flood's depth when the frog first appears, with 10 % or more to spare)
 
 
 def test_the_frog_swims_a_steady_breast_stroke_one_smooth_cycle():
@@ -2934,6 +2934,70 @@ def test_in_the_recover_and_knees_up_frames_the_knees_sit_beside_the_belly_not_b
         assert knee[1] < 22   # (above the hips' row)
 
 
+def _hip_row(rows):   # (the belly's last pale row: the hips' joint is level with it)
+    return max(y for y in range(HEAD_H, SPRITE_H) if "y" in rows[y])
+
+
+def _lowest_toe_row(rows, side_of):
+    return max(y for q in _pads(rows, side_of) if len(q) >= 4 for _, y in q)
+
+
+def test_the_extended_legs_are_longer_than_the_head_and_body_together_as_in_the_photo():
+    for n in (0, 1, 2, 5, 6):   # (glide, pulls, kick, legs together: the legs stretched out)
+        rows = FROG_FRAMES[n]
+        top = next(y for y, r in enumerate(rows) if r.strip("."))
+        hip = _hip_row(rows)
+        body = hip - top   # (the top of the head to the hips)
+        for side in (lambda x: x > CX, lambda x: x < CX):
+            leg = _lowest_toe_row(rows, side) - hip   # (hip to the longest toe's tip)
+            assert 1.15 * body <= leg <= 1.7 * body, (n, body, leg)
+
+
+def test_the_extended_legs_are_straight_at_the_knee_and_ankle_thigh_shin_and_ankle_in_one_soft_line():
+    for n in (0, 1, 2, 5, 6):
+        rows = FROG_FRAMES[n]
+        hip = _hip_row(rows)
+        centres = {}
+        for y in range(hip + 2, hip + 14):   # (down the thigh, shin and ankle: before the toes)
+            run = re.search(r"g+", rows[y][CX + 2:])
+            assert run, (n, y)
+            centres[y] = CX + 2 + (run.start() + run.end() - 1) / 2
+        ys = sorted(centres)
+        for y in ys:   # (within 1.5 px of the straight line from the thigh's top to the ankle's end)
+            line = centres[ys[0]] + (centres[ys[-1]] - centres[ys[0]]) * (y - ys[0]) / (ys[-1] - ys[0])
+            assert abs(centres[y] - line) <= 1.6, (n, y, centres[y], line)
+
+
+def _z_joints(rows):
+    """a tucked right leg's joints from its thick (2 x 2) pixels: the knee (top, out), the heel (the shin's lower end: the innermost below the knee) and the ankle's outer end"""
+    px = {(x, y) for y in range(14, SPRITE_H) for x in range(CX + 1, SPRITE_W) if rows[y][x] == "g"}
+    thick = {q for (x, y) in px if {(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)} <= px for q in ((x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1))}
+    leg = [p for p in thick if p[0] >= CX + 4]
+    knee = min((p for p in leg if p[0] >= CX + 6), key=lambda p: (p[1], -p[0]))
+    low = [p for p in leg if p[1] >= knee[1] + 5]
+    heel = min(low, key=lambda p: (p[0], -p[1]))
+    ankle = max(low, key=lambda p: (p[0], p[1]))
+    return knee, heel, ankle
+
+
+def test_in_the_knees_up_frames_each_leg_folds_in_a_z_thigh_up_and_out_shin_down_and_in_ankle_back_out():
+    for n in (3, 4):
+        rows = FROG_FRAMES[n]
+        hip = (CX + 2, _hip_row(rows))
+        knee, heel, ankle = _z_joints(rows)
+        assert knee[1] < hip[1] and knee[0] > hip[0] + 3, (n, hip, knee)   # (the thigh runs up and out to the knee beside the torso)
+        assert heel[1] > knee[1] + 4 and heel[0] < knee[0] - 1, (n, knee, heel)   # (the shin folds sharply down and in)
+        assert knee[1] < ankle[1] and ankle[0] > heel[0] + 4, (n, heel, ankle)   # (the ankle goes back out, the knee higher than it)
+        tips, _, _ = _toe_lengths(rows, lambda x: x > CX)
+        assert all(x > heel[0] for x, _ in tips) and sum(x for x, _ in tips) / 4 > ankle[0], (n, heel, ankle, tips)   # (the foot points outward)
+        # the ankle bends past a right angle at the heel (an acute angle between shin and ankle)
+        v1, v2 = (knee[0] - heel[0], knee[1] - heel[1]), (ankle[0] - heel[0], ankle[1] - heel[1])
+        angle = math.degrees(math.acos((v1[0] * v2[0] + v1[1] * v2[1]) / (math.hypot(*v1) * math.hypot(*v2))))
+        assert angle < 85, (n, angle)
+        # a long ankle: about as long as the shin
+        assert math.dist(heel, ankle) >= 0.7 * math.dist(knee, heel), (n, knee, heel, ankle)
+
+
 def _toe_lengths(rows, side_of):
     """each foot's toe pads (their pixel nearest the sprite's centre line, to keep it one point) and how far each toe reaches from the limb's thick part (the pixels of the shin in a 2 x 2 block): the toe's length"""
     px = {(x, y) for y in range(HEAD_H, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "g" and side_of(x)}
@@ -2966,7 +3030,7 @@ def test_the_frogs_toes_are_long_thin_and_end_in_round_light_pads():   # (toes ~
     # the tucked feet's toes show beside the hips, out from the belly's line, not hidden behind the shin
     for n in (3, 4):
         tips, _, _ = _toe_lengths(FROG_FRAMES[n], lambda x: x > CX)
-        assert all(24 <= y <= 36 for _, y in tips) and all(x >= CX + 1 for x, _ in tips), (n, tips)
+        assert all(18 <= y <= 36 for _, y in tips) and all(x >= CX + 1 for x, _ in tips), (n, tips)
 
 
 def test_the_frog_blinks_over_the_same_head():
@@ -2998,7 +3062,7 @@ def test_the_frogs_feet_are_webbed_between_the_toes_and_the_hands_are_not():
             cy = sum(y for _, y in tips) / 4
             # each web pixel is a foot's (lower part of the sprite); for each neighbouring pair of tips (by angle about the foot's base) the web lies between them
             base = (sum(x for x, _ in web) / len(web), min(y for _, y in web)) if web else None
-            assert web and all(y >= 24 for _, y in web), (n, web)
+            assert web and all(y >= 15 for _, y in web), (n, web)
             assert len(web) >= 4, (n, len(web))
             ordered = sorted(tips, key=lambda t: math.atan2(t[1] - cy, t[0] - cx))
             for a, b in zip(ordered, ordered[1:]):
@@ -3006,7 +3070,7 @@ def test_the_frogs_feet_are_webbed_between_the_toes_and_the_hands_are_not():
                 near = [w for w in web if math.dist(w, (mx, my)) <= max(6, math.dist(a, b))]
                 assert len(near) >= 2, (n, a, b, near)   # (web at least 2 px between each pair of toes)
     # the web never touches the hands (above the feet's rows), and the webs are lighter than the limb but not the tip colour
-    assert all(c != "v" for f in FROG_FRAMES for r in f[:24] for c in r)
+    assert all(c != "v" for f in FROG_FRAMES for r in f[:15] for c in r)
     assert re.search(r'v: rgb\("#5F9C47"\)', HTML)
     # wider webbing in the kick (the fan open) than while the legs sweep together
     span = lambda n: (lambda w: max(x for x, _ in w) - min(x for x, _ in w))(_webs(FROG_FRAMES[n], lambda x: x > CX)[1])
