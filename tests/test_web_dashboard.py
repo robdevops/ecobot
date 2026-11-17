@@ -1304,8 +1304,13 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
         "effects": [e for e in EVERY if e != "heat"], "levels": None, "running": False, "framed": low["called"]["framed"], "link": None, "frames": 0, "drawn": 0,
         "stills": 1, "gust": 0, "ink": None, "hand": "rotate(-27.50 240 203)"}, low["called"]
     assert low["called"]["ink"] > 0, low["called"]
-    # (humidity's still frame, some minutes in: its biggest beads set off again after pauses meanwhile, none ever elongating)
-    assert low["beads"]["beads"] >= 20 and low["beads"]["restarts"] >= 1 and low["beads"]["stretches"] == low["beads"]["stretched"] == 0, low["beads"]
+    # (humidity's still frame, some minutes in: its biggest beads set off again after pauses meanwhile, none ever elongating; seen
+    # over many still frames, the glass fresh for each (at the end): in one, its few biggest may never pause)
+    frames = [low["beads"], *low["again"]]
+    assert len(frames) == 40 and all(f["beads"] >= 20 for f in frames), frames
+    # (restarts in a good share of them: on the whole one in every other frame or more (a frame's own 0 to a dozen or more, about
+    # 1 to 2 a frame), so a frame without one is no matter)
+    assert sum(f["restarts"] for f in frames) >= len(frames) / 2 and all(f["stretches"] == f["stretched"] == 0 for f in frames), frames
     # the data asked for again and again, the same conditions: fetched once more, no new frame; new conditions: one new still frame
     assert low["same"] == {k: v for k, v in low["called"].items() if k != "hand"}, low["same"]
     assert low["changed"]["stills"] == 2 and low["changed"]["effects"] == [e for e in EVERY if e not in ("heat", "uv")] and low["changed"]["frames"] == 0, low["changed"]
@@ -1372,6 +1377,24 @@ async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alon
     assert together["uv"] == 0 and together["wind"] > 0 and together["rain"] > 0, together
     # ... the shared budget kept by every effect but humidity's beads (their own limits bound them: heavy rain keeps every drop)
     assert sum(v for k, v in together.items() if k not in ("budget", "humidity")) <= together["budget"] + 3, together   # (each rounded)
+
+
+def _whole_streaks(looks):
+    """Each bead's clear-glass streak, from all the looks at it (each its latest rows as it ran on): each row as first looked at
+    (fresh), in order down the glass; its width (w) the rows' mean."""
+    rows = {}
+    for t in looks:
+        if t["kind"] != "clear":
+            continue
+        mine = rows.setdefault(t["id"], {})
+        for k, y in enumerate(t["ys"]):
+            mine.setdefault(y, (t["widths"][k], t["paused"][k], t["w"]))
+    streaks = []
+    for bead, mine in rows.items():
+        ys = sorted(mine)
+        streaks.append({"id": bead, "kind": "clear", "ys": ys, "widths": [mine[y][0] for y in ys], "paused": [mine[y][1] for y in ys],
+                        "w": sum(mine[y][2] for y in ys) / len(ys)})
+    return streaks
 
 
 @needs_browser
@@ -1450,8 +1473,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
         assert speed["trail"] > 1.6 * speed["fog"], (name, speed)
         assert 0.75 < glass["fog"]["all"] / glass["fog"]["norm"] < 1.3 and 1.6 < glass["trail"]["all"] / glass["trail"]["norm"], (name, glass)
         assert all(0.75 < glass[g]["all"] / glass[g]["pace"] < 1.3 for g in ("fog", "trail")), (name, glass)
-        # (down a trail, r 1.8-3.2, all at about TRACK (a rain bead's least there, about 25.6 px/s; r 3.2: 31), not their size's 2-20)
-        assert 0.75 * TRACK < glass["trail"]["px"] / glass["trail"]["s"] < 1.3 * 31, (name, glass["trail"])
+        # (down a trail, r 1.8-3.2, all at about TRACK: seen over all three, below)
         on_fog = [px / s for px, s in beads["sizes"] if s > 0]   # (by size: under 1, 1-1.6, 1.6-2.4, 2.4-3.2, 3.2 and over)
         assert beads["sizes"][0] == [0, 0], (name, beads["sizes"])   # (under r 1: none running, they run from r 1.4)
         assert len(on_fog) == 4 and on_fog == sorted(on_fog) and on_fog[0] < 1 and on_fog[-1] > 5, (name, beads["sizes"])   # (1.4-1.6: creeping)
@@ -1477,13 +1499,21 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
         # (heavy humidity condensing them fast, its glass beaded up a while first (150 frames): full from the watch's start; light's
         # watched from the first, below: more and more of them)
         assert beads["tinies"][1]["n"] >= beads["tinies"][1]["cap"] - 3, (name, beads["tinies"])
-        # (the biggest (r 2.5 and up) now and then elongating as they set off again after a pause: about one restart in three; never
-        # a smaller one (as followed here, the weather's time 6 times as fast: a stretch is over within a frame, seen in rain's, below))
-        assert beads["restarts"] >= 20 and 0.15 * beads["restarts"] <= beads["stretches"] <= 0.55 * beads["restarts"], (name, beads["restarts"], beads["stretches"])
+        # (the biggest (r 2.5 and up) now and then elongating as they set off again after a pause: about one restart in three, as
+        # seen over all three, below; never a smaller one (as followed here, the weather's time 6 times as fast: a stretch is over
+        # within a frame, seen in rain's, below))
         assert beads["watched"]["small"] == 0 and all(e["r"] >= 2.5 for e in beads["watched"]["stretches"]), (name, beads["watched"])
         assert any(t["n"] >= t["cap"] - 3 for t in beads["tinies"]), (name, beads["tinies"])
         assert all(t["n"] <= 1.05 * t["cap"] + 4 for t in beads["tinies"]), (name, beads["tinies"])
         assert beads["sizes"][1][0] > 0, (name, beads["sizes"])
+    # (down a trail, r 1.8-3.2, all at about TRACK (a rain bead's least there, about 25.6 px/s; r 3.2: 31), not their size's 2-20:
+    # seen over all three pages' together, a page's own a second or two of them, too few for a mean, its pauses one way or another)
+    px, s = (sum(beads["glass"]["trail"][k] for beads in got["humidity"].values()) for k in ("px", "s"))
+    assert s >= 3 and 0.75 * TRACK < px / s < 1.3 * 31, {n: b["glass"]["trail"] for n, b in got["humidity"].items()}
+    # (about one restart in three elongating: seen over all of each page's beads since it opened (the glass beading up first too)
+    # together, a hundred restarts or more, so a watch's handful more or fewer is no matter)
+    restarts, stretches = (sum(beads["since"][k] for beads in got["humidity"].values()) for k in ("restarts", "stretches"))
+    assert restarts >= 20 * len(got["humidity"]) and 0.15 * restarts <= stretches <= 0.55 * restarts, {n: b["since"] for n, b in got["humidity"].items()}
     # ... nothing at all drawn in the canvas's top two rows (humidity alone: no water along the top edge)
     assert got["humidity"]["alone"]["top"] == 0, got["humidity"]["alone"]
     # ... two tiny beads put close together (not touching, within the snap): snapped into one small bead (not tiny) in a few frames,
@@ -1647,9 +1677,17 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     heavy_rain = sticking["heavy"]
     # (75 s of heavy rain at one in 3 s: about 26; more than the handful (5) there were at most before, up to 14)
     assert 12 <= heavy_rain["landed"] <= 42 and 6 <= heavy_rain["rainMost"] <= 14 and heavy_rain["popped"] == 0, heavy_rain
+    # (each landing seen: shown at once, or, landing on a bead already there, merged into it at once (in its absorbed))
     assert len(sticking["stuck"]) == heavy_rain["landed"], sticking["stuck"]
-    assert all(s["r"] >= 3 and s["alpha"] == 1 and s["dots"] >= 10 and s["phase"] == "heavy" for s in sticking["stuck"]), sticking["stuck"]
-    assert all(3 <= s["stay"] <= 6 for s in sticking["stuck"]) and len({s["stay"] for s in sticking["stuck"]}) >= 3, sticking["stuck"]
+    assert all(s["r"] >= 3 and (s["alpha"] == 1 or s.get("merged")) and s["dots"] >= 10 and s["phase"] == "heavy" for s in sticking["stuck"]), sticking["stuck"]
+    # (3 to 6 of its droplets meant to stay, all of them left but those thrown off the window or into a flood (off), as many as the
+    # beads' own most had room for as it landed (room): none cut while there was room, every one past it cut)
+    assert all(3 <= s["meant"] <= 6 and s["stay"] + s["cut"] + s["off"] == s["meant"] and s["stay"] == min(s["meant"] - s["off"], s["room"])
+               for s in sticking["stuck"]), sticking["stuck"]
+    # (... where there was room, 3 or more left, as ever, but one now and then thrown off the window by a drop landing near its edge)
+    roomy = [s for s in sticking["stuck"] if s["room"] >= s["meant"]]
+    assert roomy and all(s["stay"] >= 3 for s in roomy if not s["off"]) and sum(s["off"] > 0 for s in roomy) <= 0.2 * len(roomy), sticking["stuck"]
+    assert len({s["meant"] for s in sticking["stuck"]}) >= 3, sticking["stuck"]
     dry, trail = heavy_rain["glass"]["dry"], heavy_rain["glass"]["trail"]
     assert dry["lost"] > 0 and dry["gained"] == 0 and 0.2 < dry["all"] / dry["norm"] < 0.4, dry
     assert trail["moves"] > 100 and all(0.75 < o["all"] / o["pace"] < 1.3 for o in (dry, trail)), heavy_rain["glass"]
@@ -1666,7 +1704,9 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert len({round(d["fadedAt"]) for d in ends["faded"]}) >= 8, ends["faded"]   # (each its own time)
     # (thrown past the drop's edge every way, up and down too: hardly any taken back the moment it's left (by a runner passing);
     # none landing on its drop, or close enough to snap back into it at once (they did, about one in ten))
-    assert sum(d["end"] == "taken" and d["aged"] <= 0.45 for d in left_on) <= 0.05 * len(left_on), left_on
+    # (each left in the heavy rain, as followed here and on, below, as its biggest beads set off again: every one once)
+    every = list({d["id"]: d for d in left_on + sticking["stretching"]["splashes"]}.values())
+    assert len(every) >= 120 and sum(d["end"] == "taken" and d["aged"] <= 0.45 for d in every) <= 0.05 * len(every), every
     # (none outstaying its drying (shown 0.4 s in, 40 s at most, half a second drying away): gone, a merged one shrunk away)
     assert all(d["aged"] <= 42 for d in ends["on"] + ends["other"]), left_on
     # (the biggest (r 2.5 and up: here most) setting off again after a pause (heavy rain's own time, 30 s): about one restart in three
@@ -1686,16 +1726,26 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert all(t["look"][:3] in STREAK + DROPLET and 0 < t["look"][3] <= (150 if t["look"][:3] in DROPLET else 80) for t in sticking["drying"]), sticking["drying"]
     hidden = sorted(t["hidden"] for t in sticking["drying"])
     assert hidden[0] < 0.75 and hidden[-1] > 0.7, sticking["drying"]
-    streaks = list({t["id"]: t for t in sticking["looks"] if t["kind"] == "clear"}.values())   # (each bead's once)
-    assert len(streaks) >= 2 and all(t["kind"] == "clear" for t in sticking["looks"]), sticking["looks"]
+    assert all(t["kind"] == "clear" for t in sticking["looks"]), sticking["looks"]
+    streaks = list({t["id"]: t for t in reversed(sticking["looks"])}.values())   # (each bead's first look, as it had run 20 px)
+    whole = {t["id"]: t for t in _whole_streaks(sticking["looks"])}   # (... and all its looks together: its trail as far as it ran)
+    assert len(streaks) >= 2, sticking["looks"]
     # (thin: all told a third of the beads' width or less; each a px or two (2 at most on the whole, but where it paused: a little
     # wider there, a blob; a bead shrunk on dry glass to under 6 px wide keeps its streak's width, so a third of its own width may
     # be under 2); a blob)
     rows = [w for t in streaks for w in t["widths"]]
     assert sum(rows) / len(rows) <= sum(t["w"] for t in streaks) / len(streaks) / 3, streaks
+    # (their width where they ran, on the whole: over all their trails, as far as each ran, each row held to its own bead's most
+    # (a mean over one bead's rows alone, a dozen or two of them, is a px or two's wobble)); a px or two everywhere
+    ran, most = [], 0
+    for t in whole.values():
+        rows = [w for w, paused in zip(t["widths"], t["paused"]) if not paused]
+        ran += rows
+        most += len(rows) * (2 if t["w"] >= 5.5 else max(1.6, t["w"] / 3))
+    assert len(ran) >= 100 and sum(ran) <= most, list(whole.values())
     for t in streaks:
-        widths, ran = t["widths"], [w for w, paused in zip(t["widths"], t["paused"]) if not paused]
-        assert sum(ran) / len(ran) <= (2 if t["w"] >= 5.5 else max(1.6, t["w"] / 3)) and max(widths) <= t["w"] / 2 + 1.5, t
+        widths = t["widths"]
+        assert max(widths) <= t["w"] / 2 + 1.5, t
         assert len(set(widths)) >= 2 and max(widths) - min(widths) >= 1, t                              # (uneven along it)
         empty = [w == 0 for w in widths]
         runs = [len(r) for r in "".join("x" if e else "." for e in empty).split(".") if r]
@@ -1705,11 +1755,12 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     eased, gone = sticking["eased"], sticking["after"]
     assert gone["landed"] == eased["landed"] and gone["beads"] == 0 and gone["popped"] == 0, (eased, gone)
     # (each run off or shrunk to nothing, or merged into one that was: none dried away otherwise but the splashes' droplets, each
-    # after 15 to 40 s (some within a frame there: gone between two looks))
+    # after 15 to 40 s (some within a frame there: gone between two looks), unless swept up first by a runner passing (taken), as
+    # ever)
     assert gone["ranOff"] + gone["shrunk"] > eased["ranOff"] + eased["shrunk"] and eased["beads"] > 0, (eased, gone)
     dried = sticking["afterWatched"]["splashes"]
-    assert dried and all(d["end"] in ("faded", "other") and d["aged"] <= 42 and d["glass"] != "fog" for d in dried), dried
-    assert gone["faded"] - eased["faded"] == len(dried), (eased, gone, len(dried))
+    assert dried and all(d["end"] in ("faded", "other", "taken") and d["aged"] <= 42 and d["glass"] != "fog" for d in dried), dried
+    assert gone["faded"] - eased["faded"] == sum(d["end"] != "taken" for d in dried) > 0, (eased, gone, dried)
     assert all(15 <= d["fadedAt"] <= 41 for d in dried if d["fadedAt"] is not None), dried
     # ... their streaks, the rain still on, drying on their own time: there still 6 s after the last bead had gone
     easing = sticking["easing"]
@@ -1809,10 +1860,16 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert still["hand"] == "rotate(-27.50 240 203)", still["hand"]                 # (the UV's red hand at once at 9: no frames for it)
     # ... and humidity's still frame as it would be some minutes in: the fog formed, many beads on it, some that have run, their trails
     beading = still["humidity"]
-    assert beading["fog"] == 1 and beading["beads"] >= 20 and beading["ran"] >= 2 and beading["trails"] > 30 and beading["stray"] == 0, beading
+    assert beading["fog"] == 1 and beading["beads"] >= 20 and beading["trails"] > 30 and beading["stray"] == 0, beading
     assert not beading["running"] and beading["frames"] == 0, beading
-    # (its biggest beads setting off again after pauses meanwhile, none ever elongating: no stretch in reduced motion)
-    assert beading["restarts"] >= 1 and beading["stretches"] == beading["stretched"] == 0, beading
+    # (its beads running meanwhile, and its biggest setting off again after pauses, none ever elongating: no stretch in reduced
+    # motion; seen over many still frames, the glass fresh for each: in one, its few biggest may never pause)
+    frames = [beading, *still["again"]]
+    assert len(frames) == 40 and all(f["beads"] >= 20 for f in frames), frames
+    # (on the whole one run, and one restart, in every other frame or more: a frame's own few (0 to 4 run, about 1 a frame; restarts
+    # 0 to a dozen or more, about 1 to 2) too few to bound one alone)
+    assert sum(f["ran"] for f in frames) >= len(frames) / 2 and sum(f["restarts"] for f in frames) >= len(frames) / 2, frames
+    assert all(f["stretches"] == f["stretched"] == 0 for f in frames), frames
     # ... and a flash flood's: full at once, still, no frog
     flood = still["flood"]
     assert flood["depth"] == flood["full"] > 0 and flood["frog"] is None and not flood["running"] and flood["frames"] == 0, flood

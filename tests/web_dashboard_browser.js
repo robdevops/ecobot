@@ -1085,7 +1085,8 @@ async function weatherPage(browser, url, options = {}) {
       response.json = async () => { const data = await json(); window.__fetched++; return data; };   // (counted before the page renders it)
       return response;
     };
-  }, [options.pace || 1, !!options.driven, Number(process.env.SKY_SEED) || 0]);   // (SKY_SEED: the weather's randomness seeded otherwise)
+  }, [options.pace || 1, !!options.driven, (Number(process.env.SKY_SEED) || (options.seed ? 1115 : 0)) + (options.seed || 0)]);   // (SKY_SEED: the
+  // weather's randomness seeded otherwise; `seed`: this page's seeded that much further on, another sample of the same weather)
   if (options.init) await context.addInitScript(options.init.fn, options.init.arg);
   if (options.animations) await context.route((u) => u.pathname.endsWith("/dashboard"), async (route) => {   // (as served with
     const response = await route.fetch(), page = await response.text();                                       // MCP_DASHBOARD_ANIMATIONS)
@@ -1518,7 +1519,7 @@ const beadWatch = () => {
         if (b.kind === "splash") {
           let d = splashes.get(b.id);
           const before = last.get(b.id);
-          if (!d) { d = { r: b.r, tiny: true, moved: 0, glass: null, fogged: 0, aged: 0, fadedAt: null, end: "other" }; splashes.set(b.id, d); }
+          if (!d) { d = { id: b.id, r: b.r, tiny: true, moved: 0, glass: null, fogged: 0, aged: 0, fadedAt: null, end: "other" }; splashes.set(b.id, d); }
           d.r = Math.max(d.r, b.r);
           if (!b.tiny) d.tiny = false;
           if (before && b.tiny && !b.snapping && !before.snapping && (b.x !== before.x || b.y !== before.y)) d.moved++;
@@ -1633,7 +1634,8 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
               wiped: [...wiped.values()].map((t) => ({ ...t, end: { shown: h.fogAt(...t.at)[0], wet: h.wetAt(...t.at) } })),
               fog: h.fog(), first: h.first, colours: h.colours(), aged: h.beads.filter((b) => !b.fading).map((b) => b.age),
               landed: h.landed, looks, crept, tinies, snaps: h.snaps - snaps, tiny: h.tiny,
-              restarts: h.restarts - from.restarts, stretches: h.stretches - from.stretches, watched: watch && watch.result() });
+              restarts: h.restarts - from.restarts, stretches: h.stretches - from.stretches, watched: watch && watch.result(),
+              since: { restarts: h.restarts, stretches: h.stretches } });   // (since the page opened: its beading up first too)
   };
   __next(step);
 }), frames);
@@ -1742,7 +1744,7 @@ const trailsAge = (page, k, through, most) => page.evaluate(([k, through, most])
 // clock held the while, so they're no older for it)) the rain light again: no new one sticking, and those there run off or
 // shrunk away
 const rainBeads = (page, light, heavy, after, scale, from = "light") => page.evaluate(([light, heavy, after, scale, from]) => new Promise((resolve) => {
-  const out = { stuck: [], looks: [] }, seenIds = new Set(), last = new Map(), looked = new Set(), h0 = Sky.state().humidity;
+  const out = { stuck: [], looks: [] }, seenIds = new Set(), last = new Map(), looked = new Map(), h0 = Sky.state().humidity;
   const watch = window.__beadWatch ? window.__beadWatch() : null, counts = { restarts: h0.restarts, stretches: h0.stretches };
   let n = 0, phase = from, popped = 0, start = Sky.state().frames;
   const end = () => {   // (the beads followed, and the biggest's restarts after a pause and their stretches the while)
@@ -1756,15 +1758,22 @@ const rainBeads = (page, light, heavy, after, scale, from = "light") => page.eva
     last.clear();
     for (const b of h.beads) {
       last.set(b.id, b);
-      if (b.kind === "rain" && b.y - b.y0 > 20 && !looked.has(b.id) && window.__trailLook) {   // (its trail's looks, once)
-        looked.add(b.id);
+      // (its trail's looks: once it has run 20 px, and again each 40 px further on (its latest rows, up to 80): all its trail, as far
+      // as it runs, looked at)
+      if (b.kind === "rain" && b.y - b.y0 > 20 && b.y - (looked.has(b.id) ? looked.get(b.id) : -Infinity) >= 40 && window.__trailLook) {
+        looked.set(b.id, b.y);
         out.looks.push(...window.__trailLook(h, b));
       }
       if (b.kind === "rain" && !seenIds.has(b.id)) {
         seenIds.add(b.id);
         const s = h.splashes.find((s) => s.id === b.id);
-        out.stuck.push({ r: s ? s.r : 0, alpha: b.alpha, dots: s ? s.dots : 0, stay: s ? s.stay : 0, phase });   // (r: as it landed)
+        out.stuck.push({ r: s ? s.r : 0, alpha: b.alpha, dots: s ? s.dots : 0, stay: s ? s.stay : 0, meant: s ? s.meant : 0, cut: s ? s.cut : 0,
+                         off: s ? s.off : 0, room: s ? s.room : 0, phase });   // (r: as it landed)
       }
+    }
+    for (const s of h.splashes) if (!seenIds.has(s.id) && absorbed.has(s.id)) {   // (one landing on a bead there, merged at once: never
+      seenIds.add(s.id);                                                          // shown on its own)
+      out.stuck.push({ r: s.r, alpha: null, dots: s.dots, stay: s.stay, meant: s.meant, cut: s.cut, off: s.off, room: s.room, phase, merged: true });
     }
     n = state.frames - start;
     if (phase === "light" && n >= light) {
@@ -1839,6 +1848,23 @@ async function animationsOff(browser, url, out) {
 // transition, no zoom animation or slide; the data applied at most once a minute (here LOW_EVERY ms: window.__lowTest), however often
 // it is asked for; no "stop animation"
 const LOW_EVERY = 1200;
+// Humidity's still frame (reduced or low motion) made again `times` times, the glass fresh each time (humidity off, then on again
+// at full, the other effects as they are: each another 2.5 minutes of its weather as it would be): each frame's beads, those that
+// ran (10 px or more, or off the bottom), its biggest beads' restarts after a pause, its stretches set going and its beads elongated
+// (none, ever): so what a still frame's few biggest beads do is seen over many
+const STILL_AGAIN = 39;
+const stillAgain = (page, times) => page.evaluate((times) => {
+  const frames = [], levels = Sky.state().levels;
+  for (let n = 0; n < times; n++) {
+    const h0 = Sky.state().humidity;
+    Sky.set({ ...levels, humidity: 0 }, true);
+    Sky.set({ ...levels, humidity: 1 }, true);
+    const h = Sky.state().humidity;
+    frames.push({ beads: h.beads.length, ran: h.beads.filter((b) => b.y - b.y0 >= 10).length + h.ranOff - h0.ranOff,
+                  restarts: h.restarts - h0.restarts, stretches: h.stretches - h0.stretches, stretched: h.beads.filter((b) => b.stretch > 0).length });
+  }
+  return frames;
+}, times);
 async function lowMotion(browser, url, out) {
   const { context, page, errors, reads } = await weatherPage(browser, url, { animations: "low", init: { fn: (every) => {
     window.__lowTest = { every };
@@ -1891,6 +1917,7 @@ async function lowMotion(browser, url, out) {
                                             tiles: document.querySelectorAll(".tile").length }));
   out.frames = await page.evaluate((opening) => window.__own - opening, opening);
   out.opening = opening;
+  out.again = await stillAgain(page, STILL_AGAIN);   // (humidity's still frame again and again: its biggest beads' restarts)
   out.errors = errors;
   await context.close();
 }
@@ -2082,8 +2109,11 @@ const WEATHER = {
     out.links.rain = [];   // (rain: light, heavy, heavy with a flash flood (the test's own flood level), off: [rain, flood])
     for (let i = 0; i < 4; i++) { await fx("rain"); const { levels } = await weatherSeen(page); out.links.rain.push([levels.rain, levels.flood]); }
     await page.waitForFunction(() => Sky.state().iceReach > 2.5);   // (the ice grown in a little)
-    const grown = await page.evaluate(() => Sky.state().iceReach);
-    await fx("ice");   // (off: it melts back, the loop running on until it's gone)
+    const grown = await page.evaluate(() => {   // (as far as it had grown as it's turned off (one step: none growing between, the
+      const reach = Sky.state().iceReach;       // machine however slow)); off: it melts back, the loop running on until it's gone
+      [...document.querySelectorAll("#fxtest button")].find((b) => /^ice/.test(b.textContent)).click();
+      return reach;
+    });
     await page.waitForTimeout(300);
     out.links.melting = { grown, reach: await page.evaluate(() => Sky.state().iceReach), ...await weatherSeen(page) };
     out.links.pressed = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#fxtest button[data-fx]")]
@@ -2464,7 +2494,10 @@ const WEATHER = {
     // humidity's beads condensing on the glass and running down it over 3.6 minutes of the page's time (its weather's time 6 times as
     // fast), alone and with the wind, beside the rest (small: cheap) (heavy: 100 %); and light (91 %), watched for 2 minutes
     const beading = Promise.all(["humidity2", "humidity2,wind", "humidity"].map(async (name) => {
-      const p = await weatherPage(browser, url, { query: `?fx=${name}`, pace: 10, driven: true, context: { viewport: { width: 640, height: 480 } } });
+      // (the wind's page another glass than humidity's alone, its own seed: the wind blows no water on the glass, so seeded alike it
+      // would be the very same beads, nothing more seen)
+      const p = await weatherPage(browser, url, { query: `?fx=${name}`, pace: 10, driven: true, seed: name.includes("wind") ? 1 : 0,
+                                                  context: { viewport: { width: 640, height: 480 } } });
       await p.page.evaluate(() => Sky.timeScale(6));
       await lookable(p.page);
       if (name !== "humidity") await drive(p.page, 150);   // (beaded up a while first: beads run only from about large)
@@ -2665,6 +2698,7 @@ const WEATHER = {
                fog: h.fog().cover, running: Sky.state().running, frames: Sky.state().frames,
                restarts: h.restarts, stretches: h.stretches, stretched: h.beads.filter((b) => b.stretch > 0).length };   // (none elongating)
     });
+    out.still.again = await stillAgain(still.page, STILL_AGAIN);   // (more of its still frames, the glass fresh each time)
     out.still.flood = await still.page.evaluate(() => {   // (a flood: full at once, still; no frog)
       document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { rain: 1, flood: 1 } }));
       const f = Sky.state().flood;
