@@ -812,9 +812,9 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert len(glass) == 1 and all(g["height"] > 0 and tile["left"] <= g["left"] and g["right"] <= tile["right"] for g in glass)
         assert glass[0]["height"] > tile["width"] * 0.2 and glass[0]["width"] < glass[0]["height"] * 0.06, (glass, tile)
         # the wind's direction, a compass: N, E, S and W named (all four alike: no red N), its needle's head turned to where the wind comes
-        # from (99°, east), its reading "99° E" (the service's compass point); no table, the same size as its neighbours
+        # from (99°, east), its reading "99°" (the degrees only; its label keeps the compass point); no table, the same size as its neighbours
         c, rects = got["compass"], got["rects"]
-        assert (c["label"], c["reading"], c["turn"], c["faded"]) == ("Wind direction 99° E", "99° E", "rotate(99.00 240 203)", False), c
+        assert (c["label"], c["reading"], c["turn"], c["faded"]) == ("Wind direction 99° E", "99°", "rotate(99.00 240 203)", False), c
         assert c["points"] == ["N", "E", "S", "W"] and c["table"] == 0, c
         assert c["pointColours"] == [look()["soft"]] * 4 and "compass_north" not in look(), c
         assert any(near(c["box"], r, 0.5) for r in rects) and len({(round(r["width"]), round(r["height"])) for r in rects}) == 1, c
@@ -897,7 +897,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     assert after["same_tile"] and "21.5 °C" in after["shown"], after                 # the gauge moved in place to the new reading
     # the compass's needle swung from 99° to 300° the short way round, through north (never through the south), the reading WNW
     c = after["compass"]
-    assert (c["label"], c["reading"], c["turn"]) == ("Wind direction 300° WNW", "300° WNW", "rotate(300.00 240 203)"), c
+    assert (c["label"], c["reading"], c["turn"]) == ("Wind direction 300° WNW", "300°", "rotate(300.00 240 203)"), c
     rose_drawn(c, ROSE_LATER)                                                     # (today's rose redrawn in place with it)
     arrow_drawn(before["pressure"], "up", "live, before")                         # ... and the pressure's arrow turned down, in place
     arrow_drawn(after["pressure"], "down", "live, after")
@@ -1028,7 +1028,7 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
         assert opacities == sorted(opacities, reverse=True), opacities
         # the compass with no reading: dimmed, its needle back at north, no figure or point claimed
         was, now = got["compass"]
-        assert not was["faded"] and was["reading"] == "99° E", was
+        assert not was["faded"] and was["reading"] == "99°", was
         assert now["faded"] and (now["label"], now["reading"], now["turn"]) == ("Wind direction: no reading", "–", "rotate(0.00 240 203)"), now
         assert was["petals"] == [] == now["petals"] and was["layers"][0] == "rose", was   # (no file: no rose drawn, nothing else in its place)
 

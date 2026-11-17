@@ -3721,12 +3721,11 @@ const Sky = (() => {
   // The wind's direction, a compass, flat like the dials and the same size (DIAL: its ring where theirs is, so it lines up with its
   // neighbours, grid or zoomed). Layers, bottom to top: today's wind rose (rose: 16 soft petals in the needles' colour, each as long as
   // its compass point's share of today's readings, the longest ROSE_REACH of the radius; none with no data), the reading inside the
-  // ring, below the hub ("99° E": the compass point the service gives, or, while the needle swings to it, the point it is passing), then
+  // ring, below the hub (the degrees only: "99°"), then
   // the face (one thin ring, fine ticks every 10 degrees and longer ones every 45, N, E, S and W, all four alike) and the needle
   // (pointing where the wind comes from, in degrees clockwise from north: a slim blade with a sharp head in the red hands' red, over
   // the blue rose, and a short, dim, tapered tail) on a small hub ringed in the same red. No table.
   const ROSE_REACH = 0.8, ROSE_HALF = 9;   // the longest petal's reach (of the radius) and each petal's half-width (degrees)
-  const pointOf = (deg) => L.points[Math.floor(((deg % 360) + 360 + 11.25) / 22.5) % 16];   // (direction.py sector())
   // The needle pointing north from (cx, cy), its tip `reach` out ([x, y], ...): the head a slim blade to a sharp tip, widest at the hub;
   // the tail a short taper behind it
   const blade = (cx, cy, reach) => [[0, reach], [5, 0], [-5, 0]].map(([x, y]) => [cx + x, cy - y]);
@@ -3776,8 +3775,7 @@ const Sky = (() => {
     const at = (v) => {
       const deg = ((v % 360) + 360) % 360;
       needle.setAttribute("transform", `rotate(${deg.toFixed(2)} ${cx} ${cy})`);
-      const whole = Math.round(deg) % 360, still = now.value !== null && Math.abs(deg - now.value) < 1e-6;
-      label.textContent = now.value === null ? "–" : `${whole}° ${still && now.band ? now.band : pointOf(deg)}`;
+      label.textContent = now.value === null ? "–" : `${Math.round(deg) % 360}°`;
     };
     let drawnRose = JSON.stringify(tile.rose || []);
     at.band = (t) => {   // (the tile as given again: its reading's compass point, and today's rose, redrawn if it changed)
