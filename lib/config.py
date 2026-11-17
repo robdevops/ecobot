@@ -335,7 +335,7 @@ class Config:
     mcp_bind: tuple[str, int] = _setting("MCP_BIND", ("127.0.0.1", 8765), _bind, old="MCP_SERVICE_BIND")    # host:port ecobot-mcp listens on
     mcp_allowed_hosts: tuple[str, ...] = _setting("MCP_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names, old="MCP_SERVICE_ALLOWED_HOSTS")   # the Host names it answers (any port, unless one is given)
     mcp_dashboard: bool = _setting("MCP_DASHBOARD", True, _flag)    # the gauges' live web page at /dashboard beside /mcp: read-only, no token, any Host (off: 404)
-    mcp_dashboard_animations: str = _setting("MCP_DASHBOARD_ANIMATIONS", "on", _animations)   # on: the page's weather drawn behind its gauges, moving; off: none, for every viewer; low: low motion for e-ink (nothing moves)
+    mcp_dashboard_animations: str = _setting("MCP_DASHBOARD_ANIMATIONS", "on", _animations)   # on: everything animated, the weather drawn behind the gauges; low: no weather, the zoom at once (the gauges and tiles moving); off: no weather, nothing animated
     mcp_dashboard_indoor: bool = _setting("MCP_DASHBOARD_INDOOR", True, _flag)   # off: the page leaves out the indoor tiles, drawn nor sent (privacy); the bot, tools, Status picture and alerts unchanged
     mcp_chart_base_url: str = _setting("MCP_CHART_BASE_URL", "", _url)   # where people's browsers reach the chart links' pictures (/charts beside /mcp, e.g. through a proxy: https://example.org/ecobot-charts); unset: the MCP request's own address with /charts
     mcp_chart_link_hours: int = _setting("MCP_CHART_LINK_HOURS", 24, _between(1, 720))   # how long a chart link's picture is kept (in memory: a restart forgets them)

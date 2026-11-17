@@ -83,8 +83,8 @@ async def main():
                  ", ".join(hosts))
         if cfg.mcp_dashboard:
             log.info("Dashboard: http://%s:%d/dashboard (read-only, no token, any Host; MCP_DASHBOARD=off turns it off)%s", shown, port,
-                     {"off": "; no weather behind its gauges (MCP_DASHBOARD_ANIMATIONS=off)",
-                      "low": "; low motion: nothing moves, updates once a minute (MCP_DASHBOARD_ANIMATIONS=low)"}.get(cfg.mcp_dashboard_animations, "")
+                     {"off": "; no weather behind its gauges, nothing animated (MCP_DASHBOARD_ANIMATIONS=off)",
+                      "low": "; no weather behind its gauges, the zoom at once (MCP_DASHBOARD_ANIMATIONS=low)"}.get(cfg.mcp_dashboard_animations, "")
                      + ("" if cfg.mcp_dashboard_indoor else "; no indoor readings (MCP_DASHBOARD_INDOOR=off)"))
         log.info("Chart links (?charts=link): %s/<id>.png, kept %d h in memory (no token: an id is its key)",
                  cfg.mcp_chart_base_url or f"http://{shown}:{port}/charts (or as the MCP request reached it)", cfg.mcp_chart_link_hours)

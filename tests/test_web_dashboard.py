@@ -8,13 +8,14 @@ console error; the tiles rearranged (dragged with a mouse and with a touch's lon
 across reloads, reset), the strip's reading time with a device's reading over an hour old (greyed out), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds; a tile zoomed to
 fill the window and the gallery through the others (keys, mouse drags, a trackpad's swipe, touch swipes, both ends, the text still
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
-one canvas behind the tiles, "stop", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place
+one canvas behind the tiles, "stop", the temporary test links and ?fx=, MCP_DASHBOARD_ANIMATIONS on, low and off and reduced motion
+(what moves in each), uv's beams swaying slowly in place
 with no particles, the wind's leaves within the budget and blowing right to left, rain in the wind bunched into curtains, its drops
 knocking the leaves they hit, humidity's fog and its beads, heavy rain's drops sticking to the glass, a flash flood filling the window
 a quarter up, its waves, its leaves and its frog, a cow, a barn or a chicken blown across in a gust over 99 km/h), the data's rain
 rate, and the
 dials' thin red hands at today's highest (the wind's gust, rain rate, sun, UV: their tiles' Daily figures, the reading now counted in,
-moving smoothly, at once with reduced motion) with the wind's Gust column.
+moving smoothly) with the wind's Gust column.
 With ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
@@ -573,7 +574,7 @@ def test_mcp_dashboard_animations_is_read_as_on_off_or_low_on_by_default_and_a_t
 
 
 async def test_the_page_is_told_whether_to_draw_the_weather_behind_its_gauges_and_whether_anything_moves(server):
-    """MCP_DASHBOARD_ANIMATIONS: the page served with data-animations="on" on its <html> (the default), "off" or "low" (low motion);
+    """MCP_DASHBOARD_ANIMATIONS: the page served with data-animations="on" on its <html> (the default), "off" or "low";
     nothing else changes. (True and False, as earlier: "on" and "off"; anything else refused.)"""
     pages = {}
     for animations in ("on", "off", "low", True, False, None):
@@ -839,9 +840,9 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
     back at north and no figure claimed."""
     title, column, value = ("NOx index", "nox_index", 60) if comes else ("VOC index", "voc_index", None)
     port = free_port()
-    async with Serving(http_app(server, tokens=(TOKEN,), dashboard_animations=False), port):   # (no weather: as run_page's weather=False)
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):   # (no weather: as run_page's weather=False)
         page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", "--arrive", title,
-                                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=NO_WEATHER)
         before = json.loads(await asyncio.wait_for(page.stdout.readline(), 60))
         station.air_reads(column, value)
         if not comes:                                                            # (the wind's direction gone too: the station's)
@@ -906,17 +907,21 @@ def test_what_the_events_compare_of_the_air_is_its_gauges_readings():
 
 
 # ---------- arranging the tiles (drag, hide, reset, preferences) and their fill ----------
+# The browser script's environment for a page with no weather behind the tiles, the rest animated (web_dashboard_browser.js's NO_WEATHER)
+NO_WEATHER = {**os.environ, "DASHBOARD_NO_WEATHER": "1"}
 async def run_page(server, *args, timeout=120, weather=True, parts=None, nice=0) -> dict:
     """The page served, driven by the browser script with these arguments; its report. With `parts`, each part after the arguments,
     side by side (each its own page, in one browser: one script's start, not one a part): their reports in one, the first part's
-    where two report the same, their errors together. (`weather` False: served as with MCP_DASHBOARD_ANIMATIONS off, no weather drawn
-    behind the tiles: for the pages that drive the tiles and time their moves, not the weather, so the machine's time goes to those
-    moves. The weather's own tests drive the tiles over it, zoomed too.) `nice`: the browser run at that lower priority."""
+    where two report the same, their errors together. (`weather` False: no weather drawn behind the tiles, everything else animated as
+    with MCP_DASHBOARD_ANIMATIONS on (NO_WEATHER): for the pages that drive the tiles and time their moves, not the weather, so the
+    machine's time goes to those moves. The weather's own tests drive the tiles over it, zoomed too.) `nice`: the browser run at that
+    lower priority."""
     port = free_port()
-    async with Serving(http_app(server, tokens=(TOKEN,), dashboard_animations=weather), port):
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):
         lower = ["nice", "-n", str(nice)] if nice and shutil.which("nice") else []
         page = await asyncio.create_subprocess_exec(*lower, "node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", *args,
-                                                    *(["+".join(parts)] if parts else []), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                                    *(["+".join(parts)] if parts else []), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                    env=None if weather else NO_WEATHER)
         out, err = await asyncio.wait_for(page.communicate(), timeout)
     assert page.returncode == 0, err.decode()
     reports = json.loads(out)
@@ -1157,9 +1162,9 @@ def fills(zl, width, height):
 @needs_browser
 async def test_a_click_on_a_gauge_zooms_its_tile_to_fill_the_window_the_tile_beside_it_live_and_the_keys_page(server, station):
     port = free_port()
-    async with Serving(http_app(server, tokens=(TOKEN,), dashboard_animations=False), port):   # (no weather: as run_page's weather=False)
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):   # (no weather: as run_page's weather=False)
         page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", "--zoom", "in", stdin=subprocess.PIPE,
-                                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=NO_WEATHER)
         before = json.loads(await asyncio.wait_for(page.stdout.readline(), 60))
         station.reads("outdoor", "temperature", "21.5")                         # Temperature: beside the tile shown, off the screen
         await server.publish_changes()
@@ -1484,35 +1489,47 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
     assert off["tiles"] == titles_of(station) and off["strip"] == "last reading 18:42", off
     # a tile hidden: "reset preferences" in the strip as ever; still nothing drawn
     assert off["hidden"] == {"strip": "reset preferences · last reading 18:42", "frames": 0, "ink": 0, "running": False}, off["hidden"]
-    # MCP_DASHBOARD_ANIMATIONS low (low motion, for e-ink: the page as served then, data-animations="low"): nothing moves. Opened
-    # with nothing called for: nothing drawn, no frame asked for (the gauges at their readings at once, no rise); no transition
-    low = got["low"]
-    assert low["opened"] | {"levels": None} == {"effects": [], "levels": None, "running": False, "framed": [], "link": None, "frames": 0,
-                                                "drawn": 0, "stills": 0, "gust": 0, "ink": 0}, low["opened"]
-    assert low["transitions"] == 0, low["transitions"]
-    # every effect called for (but the heat: below 0 °C; a gust over 99 km/h too): one faint still frame, no loop, no frame asked for (the gauges and the UV's red
-    # hand put at their new readings at once), nothing blown across, no "stop" (nothing to stop)
-    assert low["called"] | {"levels": None, "ink": None} == {
-        "effects": [e for e in EVERY if e != "heat"], "levels": None, "running": False, "framed": low["called"]["framed"], "link": None, "frames": 0, "drawn": 0,
-        "stills": 1, "gust": 0, "ink": None, "hand": "rotate(-27.50 240 203)"}, low["called"]
-    assert low["called"]["ink"] > 0, low["called"]
-    # (humidity's still frame, some minutes in: its biggest beads set off again after pauses meanwhile, none ever elongating; seen
-    # over many still frames, the glass fresh for each (at the end): in one, its few biggest may never pause)
-    frames = [low["beads"], *low["again"]]
-    assert len(frames) == 40 and all(f["beads"] >= 20 for f in frames), frames
-    # (restarts in a good share of them: on the whole one in every other frame or more (a frame's own 0 to a dozen or more, about
-    # 1 to 2 a frame), so a frame without one is no matter)
-    assert sum(f["restarts"] for f in frames) >= len(frames) / 2 and all(f["stretches"] == f["stretched"] == 0 for f in frames), frames
-    # the data asked for again and again, the same conditions: fetched once more, no new frame; new conditions: one new still frame
-    assert low["same"] == {k: v for k, v in low["called"].items() if k != "hand"}, low["same"]
-    assert low["changed"]["stills"] == 2 and low["changed"]["effects"] == [e for e in EVERY if e not in ("heat", "uv")] and low["changed"]["frames"] == 0, low["changed"]
-    # the data applied at most once a minute (here every 1.2 s): the page's opening fetch and three more, each 1.2 s or more after the last
-    at = low["dataAt"]
-    assert len(at) == 4 and all(b - a >= 1200 - 20 for a, b in zip(at, at[1:])), at
-    # zoomed, paged and back, a tile hidden: each in one step, no animation, no tile moving; still no frame asked for
-    assert low["zoomed"] == {"zoomed": True, "animations": 0} and low["paged"] == {"animations": 0, "transition": "0s"}, low
-    assert low["back"] == {"zoomed": False, "animations": 0}, low["back"]
-    assert low["hidden"] == {"animations": 0, "moved": 0, "tiles": len(titles_of(station)) - 1} and low["frames"] == 0, low
+
+
+@needs_browser
+async def test_the_motion_setting_on_low_and_off_and_reduced_motion_as_off(server, station):
+    """MCP_DASHBOARD_ANIMATIONS, each page as served with it, and a browser asking for reduced motion (served with on): on, everything
+    animated; low, the gauges sweeping and the tiles reflowing but no weather at all and the zoom at once; off and reduced motion, no
+    weather and nothing animated."""
+    got = await weather(server, "motion")
+    tiles = len(titles_of(station)) - 1   # (Rain hidden)
+    called = [e for e in EVERY if e != "heat"]   # (every effect called for but the heat: below 0 °C)
+    for mode in ("on", "low", "off", "reduced"):
+        seen = got[mode]
+        weather_on, sweeps, zooms = mode == "on", mode in ("on", "low"), mode == "on"
+        # the gauges: Humidity's new reading (97 %) swept to, through the values between, or straight there, its one change
+        gauge = seen["gauge"]
+        assert gauge[-1].startswith("97"), (mode, gauge)
+        assert (len(gauge) > 3) if sweeps else (len(gauge) == 1), (mode, gauge)
+        # the weather: drawn and its loop running, "stop" and the test links shown, a gust sending something across; or none at all:
+        # no canvas shown, not one frame, nothing on it, nothing blown across, no "stop", no test links (asked for all the same)
+        w = seen["weather"]
+        assert [e for e in w["effects"] if e != "gust"] == called, (mode, w)   # (the gust on while one crosses)
+        if weather_on:
+            assert w["running"] and w["frames"] > 0 and w["ink"] > 0 and w["gust"] >= 1, (mode, w)
+            assert w["link"] == "stop" and w["shownLink"] and w["row"] and w["sky"] != "none" and w["corner"] != "none", (mode, w)
+        else:
+            assert w | {"effects": None, "levels": None, "framed": None} == {
+                "effects": None, "levels": None, "framed": None, "running": False, "frames": 0, "ink": 0, "gust": 0, "link": None,
+                "shownLink": False, "row": False, "sky": "none", "corner": "none"}, (mode, w)
+        # the zoom: animated (its animations running just after the click and after Esc, the gallery's step a transition), or at once
+        assert seen["zoomed"]["zoomed"] and not seen["back"]["zoomed"], (mode, seen)
+        if zooms:
+            assert seen["zoomed"]["animations"] > 0 and seen["back"]["animations"] > 0 and seen["paged"]["transition"] != "0s", (mode, seen)
+        else:
+            assert seen["zoomed"]["animations"] == seen["back"]["animations"] == 0 and seen["paged"]["transition"] == "0s", (mode, seen)
+        # a tile hidden: the others gliding to their places (on their way the next frame), or there at once
+        hidden = seen["hidden"]
+        assert hidden["tiles"] == tiles, (mode, hidden)
+        if sweeps:
+            assert hidden["moved"] > 0 and hidden["gliding"] > 0, (mode, hidden)
+        else:
+            assert hidden["moved"] == hidden["gliding"] == 0, (mode, hidden)
 
 
 EVERY = ["haze", "heat", "uv", "rain", "wind", "humidity", "ice"]
@@ -1590,7 +1607,7 @@ def _whole_streaks(looks):
 
 
 @needs_browser
-async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_reduced_motion(server, station):
+async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, station):
     got = await weather(server, "opened")
     # ?fx= when the page opens
     assert got["param"]["levels"] == {"gust": 0, "haze": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "flood": 0, "ice": 5}
@@ -2080,32 +2097,6 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert frost["grown"]["extent"] > 0 and frost["grown"]["ink"] > 0, frost["grown"]
     started_afresh(frost["restarted"], "ice")
     assert frost["restarted"]["frost"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["restarted"]
-    # reduced motion: no loop, one still, faint frame (the ice as it would be), the frames and the link as ever
-    still = got["still"]
-    assert still["effects"] == ["uv", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still
-    assert still["ink"] > 0 and sorted(still["framed"]) == ["Temperature", "UV index"] and still["link"] == "stop", still
-    assert still["hand"] == "rotate(-27.50 240 203)", still["hand"]                 # (the UV's limit mark at once at 9: no frames for it)
-    assert still["noHigh"] == {"marks": 1, "shown": False}, still["noHigh"]         # (no highest today: none shown)
-    # ... and humidity's still frame as it would be some minutes in: the fog formed, many beads on it, some that have run, their trails
-    beading = still["humidity"]
-    assert beading["fog"] == 1 and beading["beads"] >= 20 and beading["trails"] > 30 and beading["stray"] == 0, beading
-    assert not beading["running"] and beading["frames"] == 0, beading
-    # (its beads running meanwhile, and its biggest setting off again after pauses, none ever elongating: no stretch in reduced
-    # motion; seen over many still frames, the glass fresh for each: in one, its few biggest may never pause)
-    frames = [beading, *still["again"]]
-    assert len(frames) == 40 and all(f["beads"] >= 20 for f in frames), frames
-    # (on the whole one run, and one restart, in every other frame or more: a frame's own few (0 to 4 run, about 1 a frame; restarts
-    # 0 to a dozen or more, about 1 to 2) too few to bound one alone)
-    assert sum(f["ran"] for f in frames) >= len(frames) / 2 and sum(f["restarts"] for f in frames) >= len(frames) / 2, frames
-    assert all(f["stretches"] == f["stretched"] == 0 for f in frames), frames
-    # ... and a flash flood's: full at once, still, no frog
-    flood = still["flood"]
-    assert flood["depth"] == flood["full"] > 0 and flood["frog"] is None and not flood["running"] and flood["frames"] == 0, flood
-    # ... and a gust (the page's, the test link's, asked for by name): nothing blown across, no loop
-    assert still["gust"] == {"fling": None, "sent": 0, "running": False, "frames": 0}, still["gust"]
-    # ... and the heat's: its shafts, every one on (43 °C), still (no loop)
-    heat = still["heat"]
-    assert heat["shafts"] >= 4 and heat["on"] == heat["shafts"] and heat["drawn"] > 0 and not heat["running"] and heat["frames"] == 0, heat
     # the heat (?fx=heat): soft shafts of faint red light from the top, as the UV's: one in each gap between the UV's places (halfway
     # between two, one past the last), each 40 % longer than the UV's to its left; more of them and brighter the hotter
     hot = got["heat"]

@@ -508,7 +508,7 @@ def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "lo
     """The Streamable HTTP app (Starlette) at `path`: the Host header checked against `allowed_hosts`, and, with `tokens` (AUTH_TOKENS),
     every request's bearer token (TokenCheck). `issuer_url` is required by the SDK with auth but unused: no OAuth metadata is published
     (resource_server_url=None). With `dashboard` (MCP_DASHBOARD), the gauges' live page beside it at /dashboard (lib/web_dashboard.py):
-    read-only, no token, any Host, its weather behind the gauges unless `dashboard_animations` is off, nothing moving with "low" (MCP_DASHBOARD_ANIMATIONS);
+    read-only, no token, any Host, its weather behind the gauges only with `dashboard_animations` on, nothing animated with "off" (MCP_DASHBOARD_ANIMATIONS);
     with `dashboard_indoor` False (MCP_DASHBOARD_INDOOR off) no indoor reading on it, drawn or sent;
     `app.state.closing` ends its event streams at shutdown. Always, the chart links' pictures at
     /charts/<id>.png (EcobotServer.chart_picture): no token, any Host either."""

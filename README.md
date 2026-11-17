@@ -306,10 +306,10 @@ swipe, a drag on the gauge, or a two-finger sideways swipe on a trackpad; it sto
 Behind the gauges, the weather is drawn as faint pixel art while the readings call for it: rain while it rains, hazy clouds drifting across from the US
 AQI's Moderate band up, UV beams at a UV index of 11, the glass fogging over at 90 % humidity (heavier to 100 %), beads condensing in the fog and running down it, wiping clear tracks, leaves blowing past
 above 15 km/h of wind, faint red beams between the UV's from 35 °C (more and brighter to 43 °C) and ice below 0 °C. "stop" at the bottom left stops and clears them for that page view only, and ends any effect a temporary test link turned on;
-nothing is saved, so a reload brings them back. With reduced motion asked for, one still frame. To turn them off for good (for everyone),
-set `MCP_DASHBOARD_ANIMATIONS=off`. For an e-ink display, set `MCP_DASHBOARD_ANIMATIONS=low` (low motion, for everyone): nothing moves,
-the weather one faint still frame drawn again only when the conditions change, no transitions, the gauges jumping to each new reading,
-and new readings applied at most once a minute, all at once.
+nothing is saved, so a reload brings them back. `MCP_DASHBOARD_ANIMATIONS` sets how much moves, for everyone: `on` (the default)
+animates everything; `low` keeps the gauges sweeping and the tiles rearranging animated but draws no weather (no "stop" or test links)
+and zooms at once; `off` draws no weather and animates nothing (the gauges jump to each new reading, zooming and rearranging happen at
+once). A browser asking for reduced motion gets `off`'s.
 
 It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:

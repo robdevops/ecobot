@@ -16,13 +16,11 @@
      A click or tap on a gauge zooms its tile (title and gauge, no table) to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
      Behind everything, the weather as pixel art on one canvas (Sky): rain, haze, uv, humidity, wind, heat and ice, each while the
      readings call for it, its tile framed in red; "stop" at the bottom left stops and clears them for this page view only
-     (nothing saved: a reload brings them back; the link gone till then). With MCP_DASHBOARD_ANIMATIONS off
-     the server sends data-animations="off" on <html> (lib/web_dashboard.py): none of it, for every viewer (no canvas drawn, no loop,
-     no link, no test links), the rest of the page as ever. With "low" (low motion, for e-ink displays: data-animations="low"),
-     nothing moves: the weather one faint still frame, drawn again only as the conditions change; no transitions (the zoom, the
-     tiles' reflow, fades and the gallery's slide in one step); the gauges put at their new readings at once; the data's updates
-     applied at most once a minute, all at once; no "stop" (nothing to stop). Reduced motion asked for: as low, but for the
-     updates and the link. -->
+     (nothing saved: a reload brings them back; the link gone till then). MCP_DASHBOARD_ANIMATIONS: the server sends
+     data-animations="on", "low" or "off" on <html> (lib/web_dashboard.py), for every viewer. On: all of the above. Low: the gauges
+     sweep and the tiles reflow as on, but no weather (no canvas drawn, no loop, no "stop", no test links) and the zoom at once. Off:
+     no weather, and nothing animated: the gauges' needles and readings straight at their new place, the zoom and the reflow at once,
+     no transition. A browser asking for reduced motion: as off, whatever the setting. The data's updates as they come in each. -->
 <style>
   :root { --bg: #14191D; --ink: #E8EAED; --soft: #B8BDC2; }
   * { box-sizing: border-box; }
@@ -90,8 +88,9 @@
   #motion { flex: none; padding: 0 10px; font-size: 12px; line-height: var(--status, 18px); white-space: nowrap; color: var(--soft);
     background: rgba(20, 25, 29, 0.85); border-top-right-radius: 6px; }
   #motion:empty { display: none; }
-  /* MCP_DASHBOARD_ANIMATIONS off: no weather behind the tiles at all, nor its link or test links */
-  html[data-animations="off"] :is(#sky, #corner) { display: none; }
+  /* MCP_DASHBOARD_ANIMATIONS low or off, or reduced motion: no weather behind the tiles at all, nor its link or test links */
+  html:not([data-animations="on"]) :is(#sky, #corner) { display: none; }
+  @media (prefers-reduced-motion: reduce) { :is(#sky, #corner) { display: none; } }
   html.scroll { scroll-snap-type: y proximity; scroll-padding-top: var(--pad, 8px); }
   .tile { scroll-snap-align: start; }
   html.scroll:has(body.dragging) { scroll-snap-type: none; }   /* (a drag's own scrolling stops where it stops) */
@@ -138,9 +137,11 @@
     { opacity: 0; visibility: hidden; transition: none; }
   .tile.zooming { z-index: 2; }        /* (the tile zooming in or out, over the others) */
   body.paging, body.paging * { cursor: grabbing !important; -webkit-user-select: none !important; user-select: none !important; }
-  @media (prefers-reduced-motion: reduce) { .tile, .grip, .close, #remove, .tile :is(.unit, .chip, .figure, .tablearea) { transition: none !important; } }
-  /* Low motion (MCP_DASHBOARD_ANIMATIONS=low, for e-ink): no transition anywhere, each change in one step */
-  html[data-animations="low"] :is(*, *::before, *::after) { transition: none !important; }
+  /* MCP_DASHBOARD_ANIMATIONS low: the zoom at once, so the tables shown again at once too as it ends */
+  html[data-animations="low"] .tile :is(.unit, .chip, .figure, .tablearea) { transition: none !important; }
+  /* MCP_DASHBOARD_ANIMATIONS off, or reduced motion: no transition anywhere, each change in one step */
+  html[data-animations="off"] :is(*, *::before, *::after) { transition: none !important; }
+  @media (prefers-reduced-motion: reduce) { :is(*, *::before, *::after) { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -160,14 +161,14 @@
 // strength together, so several at once are no busier or brighter than one strong one; but the humidity's beads stay out of the
 // budget (OWN_BUDGET: their own limits bound them, so heavy rain keeps every drop beside them), and the rain out of the cap
 // (OWN_STRENGTH: drawn at its own strength whatever else is on). Nothing runs while no effect is on or fading
-// out; the tab hidden, it waits; with reduced motion, or low motion (MCP_DASHBOARD_ANIMATIONS=low), one still, faint frame and no loop
-// (low motion: drawn again only as the conditions change).
+// out; the tab hidden, it waits. Only with MCP_DASHBOARD_ANIMATIONS on and no reduced motion asked for: otherwise the page never
+// sets it going (animate false), and nothing is drawn, no loop, no frame.
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), haze: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
 //   100 %), uv, wind: 0 or 1, heat: 0-1 (35 °C to 43 °C), ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
-//   sooner)}; animate false (the page's "stop", or
-//   MCP_DASHBOARD_ANIMATIONS off): nothing drawn (and anything blown across gone).
+//   sooner)}; animate false (the page's "stop", MCP_DASHBOARD_ANIMATIONS low or off, or reduced motion): nothing drawn (and
+//   anything blown across gone).
 //   Sky.fling(kind): something big blown across far behind (a gust over 99 km/h): "cow", "barn" or "chicken", else one at random;
-//   its kind, or null (nothing drawn: stopped, reduced motion, the tab hidden). The gust effect is on while one is crossing.
+//   its kind, or null (nothing drawn: stopped, no weather, the tab hidden). The gust effect is on while one is crossing.
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), clock (the weather's time, s), size: [art width, art height,
 //   P], particles (each effect's
 //   now), budget (theirs together, at most: the humidity's (own) aside), drawn (each effect's strength as last drawn: the cap's,
@@ -209,7 +210,7 @@
 //   last row + 1, or null: not running, wet: its trail there, in its middle)},
 //   flood (a flash flood: its depth, its surface, its frog and its waves, as flood.probe() gives them; the wind's water, took, rested,
 //   floating, resting, wet, all, shows(): its leaves in it, as flood.leaves() gives them (the flood's too, as leaves), and flyers: the leaves
-//   flying, each [id, its lowest row over the water under it or null, x, y]; the rain's under: drops drawn below its surface), gust (what's blown across: gust.probe()), stills (how many still frames have been drawn: reduced or low motion), for the tests. Sky.timeScale(k): the
+//   flying, each [id, its lowest row over the water under it or null, x, y]; the rain's under: drops drawn below its surface), gust (what's blown across: gust.probe()), for the tests. Sky.timeScale(k): the
 //   weather's time k times as fast, each frame (test-only). Sky.advance(n) (test-only): n frames now (window.__skyTest: see the
 //   loop); Sky.clock() (test-only): {frames, clock, running}, as Sky.state() has them, cheaply. Sky.frost() (test-only):
 //   the ice now, {extent, target: where it's going (on its own measure), growing, frosted, crystals: the share of the window under
@@ -224,16 +225,11 @@
 //   target, sparkles}, cheap.
 const Sky = (() => {
   const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
-  // Low motion (MCP_DASHBOARD_ANIMATIONS=low: e-ink), as reduced motion: one still, faint frame and no loop; drawn again only as the
-  // conditions change (or the window's size)
-  const LOW = document.documentElement.dataset.animations === "low";
-  const STILL = LOW || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const FRAME_MS = 1000 / 30;          // the frame rate's cap: art moving a pixel at a time needs no more
   const FADE_S = 1.5;                  // an effect fades in, and out, over this long
   const ART_PX = 480;                  // the art's width (or height, if taller) about this many pixels: P = 3 on a laptop, 4 on 1920
   const BUDGET = 1 / 400;              // the particles of every effect together: this many per art pixel² (480 x 300: 360)
   const CAP = 1.5;                     // ... and their strengths together at most this (one strong effect: about 0.8)
-  const STILL_HINT = 0.5;              // reduced motion: the still frame this faint
   const ORDER = ["gust", "haze", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"];   // back to front
   const OWN_BUDGET = new Set(["humidity"]);   // (its beads outside the shared budget: their own limits keep their cost bounded)
   const OWN_STRENGTH = new Set(["rain"]);     // (drawn at its own strength whatever else is on: outside the cap)
@@ -358,7 +354,7 @@ const Sky = (() => {
   function effect(own) {
     const e = {level: 0, amount: 0, strength: () => 0.8, need: () => 0, count: () => 0, resize() {}, step() {}, draw() {}, forget() {},
                want(v) { e.level = v; },
-               fade(dt) { e.amount = STILL ? (e.level > 0 ? 1 : 0) : clamp(e.amount + (e.level > 0 ? dt : -dt) / FADE_S, 0, 1); },
+               fade(dt) { e.amount = clamp(e.amount + (e.level > 0 ? dt : -dt) / FADE_S, 0, 1); },
                alive: () => e.level > 0 || e.amount > 0};
     return Object.assign(e, own(e));
   }
@@ -661,14 +657,14 @@ const Sky = (() => {
           mine.splice(0, mine.length, ...mine.filter((c) => keep.has(c)));
         }
         for (let k = 0, more = want[depth] - mine.length; k < more; k++) {
-          const c = {depth, shown: fresh || STILL ? 1 : 0};
+          const c = {depth, shown: fresh ? 1 : 0};
           shape(c);
           // (spread across the window, the new ones among themselves, each at its own height)
           c.x = Math.round(-0.6 * c.w + (W + 0.2 * c.w) * (k + own()) / more);
           c.y = within(-0.3 * c.h, H - 0.7 * c.h);
           mine.push(c);
         }
-        kept.push(...mine, ...(STILL ? [] : leaving));
+        kept.push(...mine, ...leaving);
       });
       clouds = kept;
       for (const c of clouds) c.next = -1;   // (each lit in the band's shades as soon as can be: a few frames)
@@ -733,8 +729,7 @@ const Sky = (() => {
         if (built) {   // (those due lit again, the longest due first, about LIGHTS px of them a frame)
           const due = clouds.filter((c) => c.age >= c.next && c.x < W && c.x + c.w > 0).sort((a, b) => (a.next - a.age) - (b.next - b.age));
           let spent = 0;
-          const most = STILL ? Infinity : due.length && due[0].next < 0 ? 4 * LIGHTS : LIGHTS;   // (more while some on show are yet to be
-          // lit at all; reduced motion: every one, its one still frame)
+          const most = due.length && due[0].next < 0 ? 4 * LIGHTS : LIGHTS;   // (more while some on show are yet to be lit at all)
           for (const c of due) {
             if (spent && (spent + c.w * c.h > most || !textures[c.depth])) break;   // (a depth's noise made: that frame's share)
             light(c);
@@ -812,7 +807,6 @@ const Sky = (() => {
   // than the UV's shaft to its left, leaning as its two neighbours do (so never crossing them); its own width, breathing and sway.
   // Stronger the hotter (its level: 0.3 at 35 °C to 1 at 43 °C): brighter, and more of them (about that share of them on, the
   // others fading out), the first few on at 35 °C spread about at random. Drawn behind the flood (nothing below its water).
-  // Reduced or low motion: one still frame.
   const EMBER = ["#3A0503", "#6E0B05", "#B8160A", "#FF2A14", "#FF7A66"].map(rgb);   // scarlet, infrared imagery's red (no orange, hardly any blue), faint (the UV's violet's way)
   const HEAT_LONGER = 1.4;             // each this much longer than a UV shaft
   const heat = effect((e) => {
@@ -848,7 +842,7 @@ const Sky = (() => {
         flood.above(g, () => {
           for (const s of shafts) {
             const to = s.rank < want ? 1 : 0;
-            s.on = STILL || first ? to : clamp(s.on + (to ? dt : -dt) / FADE_S, 0, 1);
+            s.on = first ? to : clamp(s.on + (to ? dt : -dt) / FADE_S, 0, 1);
             s.at = s.on > 0 ? shaftDrawn(g, s, alpha * (0.55 + 0.45 * e.level) * s.on, t) : null;
           }
         });
@@ -1048,7 +1042,7 @@ const Sky = (() => {
       // A drop of rain layer `layer` going from (x0, y0) to (x1, y1) this frame (its head, on screen, art px), at vx across and vy down
       // (px/s): if it hits a leaf as far off as itself, the leaf knocked (`hard` 0-1: how heavy the rain) and true (the drop ends)
       knock(layer, x0, y0, x1, y1, vx, vy, hard) {
-        if (e.amount <= 0 || y1 <= y0) return false;   // (a drop that didn't fall this frame, a still frame redrawn: no hit)
+        if (e.amount <= 0 || y1 <= y0) return false;   // (a drop that didn't fall this frame: no hit)
         for (const f of flying) {
           if (f.layer !== layer || f.hw < 0 || f.y + f.hh < y0 || f.y - f.hh > y1) continue;
           const sx = W - f.x, k = clamp((f.y - f.hh - y0) / (y1 - y0), 0, 1), x = x0 + (x1 - x0) * k;   // (where it meets the top)
@@ -1229,7 +1223,7 @@ const Sky = (() => {
   // width, heavy rain's RAIN_MOST beside them), outside the effects' shared budget (another effect on takes none of it); over
   // that (the humidity falling): beads yet to show dropped, then the smallest dried away. The rain easing but still on, its streaks dry on their own time; gone all the way (no fog, no bead, the
   // rain over: the trails fading with it), or the animations stopped, every trail, stain and bead forgotten (its canvas cleared),
-  // so on again it starts on clean glass. Reduced motion: the still frame as it would be some seconds in.
+  // so on again it starts on clean glass.
   const WATER = ["#1A2E41", "#2C5573", "#5793BC", "#A6D7F2", "#EFFAFF"].map(rgb);
   const FOG = ["#323C43", "#4A555C", "#66717A", "#8995A0", "#AFBAC2"].map(rgb);   // the fog, thin to thick: pale grey, the page's
   const FOG_ALPHA = [56, 69, 81, 91, 101];                                            // ... cool dark palette (alpha 0-255)
@@ -1296,7 +1290,7 @@ const Sky = (() => {
     const STRETCH = 0.14;              // ... elongating a little along its path: this much taller at most (a touch narrower, its water
                                        // ... kept), its lower edge where it was ...
     const STRETCH_S = [0.15, 0.1, 0.5, 0.15];   // ... easing in over this long (a few frames, picking up speed), held, easing back to
-                                                // ... round over this long (or this, pausing again). Reduced or low motion: never
+                                                // ... round over this long (or this, pausing again)
     // The beads, smallest to largest (one a size, as SIZES): plump, rounded below and heaviest there, the top a little narrower and
     // round too. Glass, lit from the top left: a white glint (4), the body barely there (2), a crescent low inside where the light
     // comes through (3), a darker rim on the right and below (1: the deep blue, a shade under the body's)
@@ -1643,7 +1637,7 @@ const Sky = (() => {
       // faster and further, more of them left)
       const hard = clamp((rain.level - HEAVY_RAIN) / (1 - HEAVY_RAIN), 0, 1), more = (k, [lo, hi]) => lo + Math.floor(k * (hi - lo + 1) * (0.6 + 0.4 * hard));
       const squash = splash.between(...SQUASH) * (0.8 + 0.2 * hard);
-      if (!STILL) Object.assign(b, {impact: 0, squash, fresh: true});   // (squashed, from its first frame; reduced or low motion: never)
+      Object.assign(b, {impact: 0, squash, fresh: true});   // (squashed, from its first frame)
       // (its droplets: round it (evenly, a little jitter), each its speed; lopsided: bunched toward a direction of its own (lean, at
       // aim), faster that way, slower the other; some spray streaks)
       const cy = y + heightOf(r) / 2, n = more(splash(), THROWN), aim = splash.between(0, 2 * Math.PI), lean = splash.between(...LEAN);
@@ -1807,7 +1801,7 @@ const Sky = (() => {
           if (b.waited) {   // (setting off again after a pause: the biggest now and then elongating a little as they go)
             b.waited = false;
             if (b.r >= STRETCH_R) seen.restarts++;
-            if (!STILL && b.r >= STRETCH_R && own(b, "stretch")() < STRETCHES) { b.surge = 0; b.st = b.st || 0; seen.stretches++; }
+            if (b.r >= STRETCH_R && own(b, "stretch")() < STRETCHES) { b.surge = 0; b.st = b.st || 0; seen.stretches++; }
           }
           const v = speedFor(b.r, g) * b.base, dy = Math.min(v * time, 1, b.run + 1e-3), s = Math.min(time, dy / v);
           time -= s;
@@ -1928,11 +1922,11 @@ const Sky = (() => {
       need: () => (e.level > 0 ? PER_PX * W : Math.ceil(used())) + (heavy() ? RAIN_MOST : 0),   // (as many at light humidity as heavy: its tiny ones pile up; off,
                                                                                 // those there, whole: a tiny one a quarter, never rounded down to dry one)
       count: () => Math.round(used()),
-      want(v) {   // (on again after gone all the way: the glass fresh; reduced motion, off: gone at once)
-        if ((v > 0 && !present() && e.amount <= 0) || (STILL && v <= 0)) clear();
+      want(v) {   // (on again after gone all the way: the glass fresh)
+        if (v > 0 && !present() && e.amount <= 0) clear();
         e.level = v;
       },
-      fade(dt) { e.amount = present() ? 1 : STILL ? 0 : Math.max(0, e.amount - dt / FADE_S); },   // (the trails fading out last)
+      fade(dt) { e.amount = present() ? 1 : Math.max(0, e.amount - dt / FADE_S); },   // (the trails fading out last)
       alive: () => present() || e.amount > 0,
       forget: clear,   // (faded out all the way: fog, beads, trails and stains gone, its layer cleared)
       // (once every effect has stepped: a flood risen over a bead since it moved (the flood steps after it), joined there now, not
@@ -1955,16 +1949,10 @@ const Sky = (() => {
         clear();
       },
       step(dt, t, share) {
-        if (STILL && !seeded) {   // (reduced motion: the glass as it would be 2.5 minutes in, for its one still frame)
-          seeded = quiet = true;
-          for (let i = 0; i < 300; i++) this.step(0.5, t, share);
-          quiet = false;
-          paint();
-        }
         // The fog forming (or clearing), thickening or thinning to its level
-        cover = STILL ? (e.level > 0 ? 1 : 0) : clamp(cover + (e.level > 0 ? dt / FORM : -dt / CLEAR), 0, 1);
+        cover = clamp(cover + (e.level > 0 ? dt / FORM : -dt / CLEAR), 0, 1);
         const target = e.level > 0 ? thickness(e.level) : dense;
-        dense = STILL ? target : dense + clamp(target - dense, -dt / THICKEN, dt / THICKEN);
+        dense = dense + clamp(target - dense, -dt / THICKEN, dt / THICKEN);
         fresh += dt;
         const most = Math.max(2, Math.round(this.need() * share)), room = heavy() ? RAIN_MOST : 0;
         // Too many (the budget shrunk): those yet to show dropped, then the smallest dried away. The fog clearing: those yet to show
@@ -2037,7 +2025,7 @@ const Sky = (() => {
         age(dt);
         // The fog repainted whole as it forms, clears or thickens (a few times a second); else just the pixels changed
         painting += dt;
-        if ((cover !== drawn[0] || dense !== drawn[1]) && (painting >= REPAINT || STILL || cover === 0) && !quiet) { painting = 0; paint(); }
+        if ((cover !== drawn[0] || dense !== drawn[1]) && (painting >= REPAINT || cover === 0) && !quiet) { painting = 0; paint(); }
         else flush();
       },
       // (swept: the trail pixels the latest frame's sweep looked at again, SWEEP_MOST at most)
@@ -2236,7 +2224,7 @@ const Sky = (() => {
     let h = null, v = null, a = null, far = null, slap = null, depth = 0, full = 0, rows = 0, layer = null, img = null, px = null, body = null;
     let surfaceRow = null;   // (each column's surface row in its layer, as drawn)
     let chop = 0, nextSlosh = 0, since = 0, test = false, nextFrog = Infinity, frog = null, frogs = 0, splashes = [];
-    let hits = 0, sloshes = 0, drops = 0;
+    let hits = 0, sloshes = 0;
     // The leaves in it (the wind's, once they touch it: wind.wade()): its own from then on, the wind on or not. Each floats on the
     // surface ("float"), bobbing with the waves, drifting a little (more in the wind); after FLOATS s it sinks slowly ("sink"),
     // rocking side to side, to the bottom, and rests there ("rest"), on those already resting there: the pile under it a px higher
@@ -2340,8 +2328,8 @@ const Sky = (() => {
       strength: () => 0.6,
       surface: surfaceAt,
       waterline: () => (depth > 0 ? H - depth : H),   // (its level, its waves aside: the window's bottom with no water)
-      // (the row above its highest crest, however the waves go: nothing above it touches the water; reduced motion, where it will be)
-      clear: () => (STILL && e.level > 0 && full ? H - full - DIP : depth > 0 ? H - depth - DIP : H),
+      // (the row above its highest crest, however the waves go: nothing above it touches the water)
+      clear: () => (depth > 0 ? H - depth - DIP : H),
       // A leaf of the wind's touching it (wind.wade()), at x on screen: its own now, lying on the surface there, a ripple and splash
       take(f, x, alpha) {
         const l = {id: f.id, sx: clamp(x, 4, W - 4), y: 0, flat: f.flat, alpha, state: "float", left: between(...FLOATS),
@@ -2432,15 +2420,10 @@ const Sky = (() => {
         }
         since += dt;
         const target = e.level > 0 ? full : 0;
-        depth = STILL ? target : depth + clamp(target - depth, -dt * full / DRAIN, dt * full / RISE);
+        depth = depth + clamp(target - depth, -dt * full / DRAIN, dt * full / RISE);
         const pouring = e.level > 0 ? 1 : 0;
         chop += (pouring - chop) * (1 - Math.exp(-dt / (pouring > chop ? 3 : CALMS)));
         if (depth <= 0) { h.fill(0); v.fill(0); far.fill(0); frog = null; splashes = []; chop = 0; if (leaves.length || bed.length) emptied(); return; }
-        if (STILL && !drops) {   // (reduced motion: a still surface some seconds in, gently uneven)
-          drops = 1;
-          for (let x = 0; x < W; x++) h[x] = 1.6 * Math.sin(x * 0.09) + 0.9 * Math.sin(x * 0.23 + 1) + (x < 12 || x > W - 13 ? 1.5 : 0);
-          far.set(h);
-        }
         // the chop: pokes all across while it pours, and now and then a bigger slosh from one side
         const pokes = chop * 30 * dt * W / 300;
         for (let n = Math.floor(pokes) + (random() < pokes % 1 ? 1 : 0); n > 0; n--) poke(between(0, W - 1), between(-1.6, 1.6), between(2, 5));
@@ -2460,7 +2443,7 @@ const Sky = (() => {
         for (const s of splashes) s.age += dt;
         splashes = splashes.filter((s) => s.age < 0.2);
         // the frog: rarely, never at once; drifting across with the wind, bobbing on the waves
-        if (!STILL && !frog && since >= nextFrog && depth >= 0.6 * full) { frog = {x: W + 10, v: between(...FROG_SPEED), blink: between(2, 5)}; frogs++; }
+        if (!frog && since >= nextFrog && depth >= 0.6 * full) { frog = {x: W + 10, v: between(...FROG_SPEED), blink: between(2, 5)}; frogs++; }
         if (frog) {
           frog.x -= frog.v * (wind.amount > 0 ? 1.4 : 1) * dt;
           if ((frog.blink -= dt) < -0.18) frog.blink = between(2.5, 6);
@@ -2808,7 +2791,7 @@ const Sky = (() => {
     return {
       // (faint, and fainter as it spreads: the tiles read over it, even with the glass mostly frosted; the sparkles brighter)
       strength: () => 0.36 - 0.12 * Math.min(1, extent / (0.6 * big())),
-      want(v) { e.level = v; if (STILL) extent = reachFor(v); },
+      want(v) { e.level = v; },
       fade() { e.amount = extent > 0 ? 1 : 0; },
       alive: () => e.level > 0 || extent > 0,
       forget() {   // (melted away, or the animations stopped: no frost, no sparkle, its canvas clear)
@@ -2886,7 +2869,7 @@ const Sky = (() => {
   // sheds a few bits as it goes (hay and splinters, tufts of grass, a feather or two). The art: sculpted from a few shapes, lit from
   // the upper left and dithered into its own muted ramps, outlined in its darkest; turned (tumbling) by sampling each pixel's 3x3
   // points in the upright sprite and taking the most common colour, so its pixel lines stay crisp at every angle; each angle made
-  // once, when first needed. Reduced motion, or the animations stopped: none.
+  // once, when first needed. The animations stopped: none.
   const GUST_RAMPS = Object.fromEntries(Object.entries({   // [outline, shadow, mid, light]
     hide: ["#1D2024", "#454C53", "#6E767D", "#9AA1A6"], patch: ["#0E1013", "#1B1E22", "#292D32", "#3A3F45"],
     pink: ["#2A181C", "#56343B", "#7B525A", "#9C757C"], horn: ["#2C2719", "#5B5440", "#8A8166", "#B2A98B"],
@@ -3186,14 +3169,14 @@ const Sky = (() => {
     for (const k of ORDER) if (effects[k].alive()) effects[k].step(dt, clock, OWN_BUDGET.has(k) ? 1 : share);
     for (const k of ORDER) if (effects[k].settle && effects[k].alive()) effects[k].settle();   // (after them all: see humidity's)
   }
-  function draw(faint = 1) {
+  function draw() {
     ctx.globalAlpha = 1;
     ctx.clearRect(0, 0, W, H);
     let sum = 0;
     for (const k of ORDER) if (!OWN_STRENGTH.has(k)) sum += effects[k].strength() * effects[k].amount;
-    const cap = Math.min(1, CAP / Math.max(sum, 1e-6)) * faint;
+    const cap = Math.min(1, CAP / Math.max(sum, 1e-6));
     for (const k of ORDER) {
-      const fx = effects[k], a = fx.strength() * fx.amount * (OWN_STRENGTH.has(k) ? faint : cap);
+      const fx = effects[k], a = fx.strength() * fx.amount * (OWN_STRENGTH.has(k) ? 1 : cap);
       drawn[k] = fx.amount > 0 ? a : 0;
       if (fx.amount > 0) fx.draw(ctx, a, clock);
     }
@@ -3222,29 +3205,16 @@ const Sky = (() => {
   // make them, ending as it would once nothing is left; how many were made)
   function advance(n = 1) {
     let made = 0;
-    for (; made < n && animate && !STILL && alive(); made++) step((TEST.step || FRAME_MS / 1000) * scale);
+    for (; made < n && animate && alive(); made++) step((TEST.step || FRAME_MS / 1000) * scale);
     if (!alive()) ctx.clearRect(0, 0, W, H);
     return made;
   }
 
-  let stillKey = null, stills = 0;   // (the still frame's conditions and size; how many still frames were drawn)
   function start() {
     if (!animate || !alive()) {
       cancelAnimationFrame(frame);
       frame = 0;
-      if (LOW && stillKey === "") return;   // (low motion: cleared already, not again)
-      stillKey = "";
       ctx.clearRect(0, 0, W, H);
-      return;
-    }
-    if (STILL) {   // one still, faint frame: the particles where they'd be a few seconds in (low motion: only for new conditions)
-      const key = JSON.stringify([W, H, P, ORDER.map((k) => effects[k].level > 0 ? Math.max(1, Math.round(effects[k].level * 4)) : 0)]);   // (in quarters)
-      if (LOW && key === stillKey) return;
-      stillKey = key;
-      stills++;
-      clock = 4;
-      tick(0);
-      draw(STILL_HINT);
       return;
     }
     if (DRIVEN) return;   // (the tests' frames only: Sky.advance)
@@ -3272,16 +3242,16 @@ const Sky = (() => {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) start(); });
 
   // Something big blown across far behind (a gust over 99 km/h; `kind`: "cow", "barn" or "chicken", else one at random): its kind,
-  // or null when nothing is drawn (the animations stopped, reduced motion, the tab hidden)
+  // or null when nothing is drawn (the animations stopped or never on, the tab hidden)
   function fling(kind) {
-    if (!animate || STILL || document.hidden) return null;
+    if (!animate || document.hidden) return null;
     if (!W) resize();
     const sent = effects.gust.fling(kind);
     start();
     return sent;
   }
 
-  const running = () => DRIVEN ? animate && !STILL && alive() : !!frame;
+  const running = () => DRIVEN ? animate && alive() : !!frame;
   return {set, fling, timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
           advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
           clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
@@ -3291,7 +3261,7 @@ const Sky = (() => {
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
                               wind: effects.wind.probe(), rain: effects.rain.probe(), haze: effects.haze.probe(),
                               humidity: effects.humidity.probe(), flood: effects.flood.probe(), heat: effects.heat.probe(),
-                              gust: effects.gust.probe(), stills})};
+                              gust: effects.gust.probe()})};
 })();
 </script>
 <script>
@@ -3305,12 +3275,16 @@ const Sky = (() => {
   const MIN_SCROLL_TILE = 150;         // ... and then the narrowest a column may be (two on a 320-375 px phone, not one huge one)
   const MOVE_MS = 900;                 // how long a gauge takes to move to a new reading
   const RISE_MS = 1000;                // ... and, when the page opens, to rise from its floor (0) to its reading
-  // Low motion (MCP_DASHBOARD_ANIMATIONS=low, the page served with data-animations="low": e-ink): nothing moves, as with reduced
-  // motion (STILL: the gauges put at their readings at once, no zoom, reflow or slide), and the data's updates applied at most once
-  // every LOW_MS, all at once (fewer redraws of a slow screen)
-  const LOW = document.documentElement.dataset.animations === "low";
-  const STILL = LOW || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  const LOW_MS = (window.__lowTest || {}).every || 60000;   // (test-only: window.__lowTest {every: ms}, set before the page loads)
+  // MCP_DASHBOARD_ANIMATIONS (the page served with data-animations="on", "low" or "off" on its <html>), and a browser asking for
+  // reduced motion (as off, whatever the setting):
+  //   on: the gauges sweep to their readings, the weather drawn behind the tiles, the zoom (and the gallery's slide) and the tiles'
+  //     reflow animated;
+  //   low: the gauges sweep and the tiles reflow as on; no weather (nothing drawn, no loop, no "stop", no test links), the zoom at once;
+  //   off: the gauges (needles and readings) straight at their readings, no weather, the zoom and the tiles' reflow at once.
+  const MODE = document.documentElement.dataset.animations;
+  const REDUCED = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const FULL = MODE === "on" && !REDUCED;                // the weather drawn; the zoom and the gallery's slide animated
+  const MOVING = MODE !== "off" && !REDUCED;             // the gauges sweeping; the tiles' reflow animated
   const PAD = 8, STATUS = 18;
   const NS = "http://www.w3.org/2000/svg";
   const PREFS_KEY = "ecobot.dashboard.v1";   // the preferences (localStorage, one versioned key): {order, hidden} and later stages' own
@@ -3331,9 +3305,9 @@ const Sky = (() => {
   const EASE = "cubic-bezier(0.25, 0.8, 0.3, 1)";   // (quick, then gently to rest)
   const grid = document.getElementById("grid"), statusLine = document.getElementById("status"), message = document.getElementById("message");
   const corner = document.getElementById("corner"), motion = document.getElementById("motion"), units = document.getElementById("units");
-  // The weather behind the tiles allowed: MCP_DASHBOARD_ANIMATIONS off, the page is served with data-animations="off": never any, for
-  // every viewer (Sky never started, no link)
-  const ALLOWED = document.documentElement.dataset.animations !== "off";
+  // The weather behind the tiles allowed: MCP_DASHBOARD_ANIMATIONS on and no reduced motion asked for (FULL); otherwise never any
+  // (Sky never started, no link, no test links)
+  const ALLOWED = FULL;
   const removeZone = document.getElementById("remove");
   let L = null, raw = [], tiles = [], asOf = null, devices = {}, lost = false, opening = true, unavailable = "";
   const drawn = new Map();             // each tile drawn, by its id, to be moved in place (shown or hidden)
@@ -3636,7 +3610,7 @@ const Sky = (() => {
     const move = (from, to, ms) => {
       drawnTile.value = to;
       cancelAnimationFrame(drawnTile.frame);
-      if (from === to || STILL || document.hidden) return at(to);
+      if (from === to || !MOVING || document.hidden) return at(to);
       const start = performance.now();
       const step = (now) => {
         const p = Math.min(Math.max((now - start) / ms, 0), 1), eased = 1 - (1 - p) ** 3;   // (a frame stamped before the start: 0)
@@ -3645,12 +3619,12 @@ const Sky = (() => {
       };
       drawnTile.frame = requestAnimationFrame(step);
     };
-    // The red hand on its own clock (its value changes apart from the needle's): eased there, or put there at once with reduced motion,
+    // The red hand on its own clock (its value changes apart from the needle's): eased there, or put there at once with no motion,
     // a hidden page, or coming or going (null)
     const moveHand = (from, to, ms) => {
       drawnTile.high = to;
       cancelAnimationFrame(drawnTile.highFrame);
-      if (from === to || from === null || to === null || STILL || document.hidden) return at.hand(to);
+      if (from === to || from === null || to === null || !MOVING || document.hidden) return at.hand(to);
       const start = performance.now();
       const step = (now) => {
         const p = Math.min(Math.max((now - start) / ms, 0), 1), eased = 1 - (1 - p) ** 3;
@@ -3880,7 +3854,7 @@ const Sky = (() => {
   // A change to the tiles' places (`change`), animated: each tile glides (transform only) from where it was to where it lands, and
   // one newly shown grows in. The tiles are measured once before and once after.
   function reflow(change) {
-    if (STILL || zoom) return change();   // (zoomed: the gallery keeps the tile shown in place)
+    if (!MOVING || zoom) return change();   // (zoomed: the gallery keeps the tile shown in place)
     const before = new Map([...grid.children].map((b) => [b, b.getBoundingClientRect()]));
     change();
     const boxes = [...grid.children];
@@ -3934,7 +3908,7 @@ const Sky = (() => {
     const time = readingTime();
     parts.push(...[time].flat().filter(Boolean));
     statusLine.replaceChildren(...parts.flatMap((p, i) => i ? [" · ", p] : [p]));
-    motion.replaceChildren(...animated() && calling() && !LOW ? [link("stop", stopAnimations, "animations", STOP_TITLE, STOP_LABEL)] : []);   // (low motion: nothing to stop)
+    motion.replaceChildren(...animated() && calling() ? [link("stop", stopAnimations, "animations", STOP_TITLE, STOP_LABEL)] : []);
     placeCorner();
   }
   // The bottom left corner beside the strip, in the room it leaves; where that's too little for the corner at its narrowest (a phone),
@@ -3980,14 +3954,9 @@ const Sky = (() => {
     gusting(data);
   }
 
-  // The data fetched and drawn now; with low motion, at most once every LOW_MS: asked sooner, then (once, whatever asked meanwhile)
-  let fetching = null, fetchedAt = -Infinity, later = 0;
+  // The data fetched and drawn now
+  let fetching = null;
   async function refresh() {
-    if (LOW) {
-      const wait = fetchedAt + LOW_MS - performance.now();
-      if (wait > 0) { later = later || setTimeout(() => { later = 0; refresh(); }, wait); return; }
-      fetchedAt = performance.now();
-    }
     if (fetching) return fetching;
     fetching = (async () => {
       try {
@@ -4189,7 +4158,7 @@ const Sky = (() => {
     const boxes = [...grid.children];
     const before = new Map(boxes.map((b) => [b, b.getBoundingClientRect()]));
     zoom = {id: box.dataset.id, index: 0, pitch: 0, x: 0, scrollY: window.scrollY};
-    if (!STILL) for (const b of boxes) b.classList.toggle("fading", b !== box);   // (before `zoomed`: their tables never hidden meanwhile)
+    if (FULL) for (const b of boxes) b.classList.toggle("fading", b !== box);   // (before `zoomed`: their tables never hidden meanwhile)
     document.documentElement.classList.add("zoomed");
     document.body.classList.add("zoomed");
     layout();   // (the gallery's places, the strip at this tile)
@@ -4235,7 +4204,7 @@ const Sky = (() => {
       for (const a of running) a.cancel();
       if (out) b.classList.remove("fading");
     }
-    if (STILL) { box.classList.remove("zooming"); return; }
+    if (!FULL) { box.classList.remove("zooming"); return; }
     zoomUntil = performance.now() + ZOOM_MS;
     const timing = {duration: ZOOM_MS, easing: "ease-out", id: "zoom"};
     const shown = new Map([...before.keys()].map((b) => [b, getComputedStyle(b).opacity]));
@@ -4285,7 +4254,7 @@ const Sky = (() => {
   function slide(x, ms) {
     stopBounce();
     zoom.x = x;
-    grid.style.transition = ms && !STILL ? `transform ${ms}ms ${EASE}` : "none";
+    grid.style.transition = ms && FULL ? `transform ${ms}ms ${EASE}` : "none";
     grid.style.transform = translate(x);
   }
   // ... following a drag: past the first or the last tile it gives, ever less (a rubber band)
@@ -4318,7 +4287,7 @@ const Sky = (() => {
   function step(dir) {
     const to = zoom.index + dir;
     if (to >= 0 && to < grid.children.length) return goTo(to, STEP_MS);
-    if (STILL) return;
+    if (!FULL) return;
     const rest = -zoom.index * zoom.pitch, from = trackX();
     stopBounce();
     bounce = grid.animate([{transform: translate(from)}, {transform: translate(rest - dir * BOUNCE_PX), offset: 0.35}, {transform: translate(rest)}],

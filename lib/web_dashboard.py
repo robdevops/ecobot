@@ -29,11 +29,11 @@
     (EcobotServer.publish_changes: nothing is fetched for it), so the page fetches the data again and moves its gauges in place. A
     comment every HEARTBEAT_SECONDS keeps a proxy from closing it.
 
-The page's weather drawn behind the gauges (its canvas, "stop", the test links) is there for every viewer unless
-MCP_DASHBOARD_ANIMATIONS is off: then the page is served with data-animations="off" on its <html> (ANIMATIONS), and draws none of it.
-With "low" (low motion, for e-ink displays): data-animations="low", and nothing on the page moves: the weather one faint still frame
-(redrawn only as the conditions change), no transitions, the gauges put at their new readings at once, the data's updates applied at most
-once a minute, all at once; no "stop".
+MCP_DASHBOARD_ANIMATIONS: the page served with data-animations="on", "low" or "off" on its <html> (ANIMATIONS), for every viewer.
+On: the gauges sweep to their readings, the weather drawn behind them (its canvas, "stop", the test links), the zoom and the tiles'
+reflow animated. Low: the gauges sweep and the tiles reflow as on, but no weather at all (nothing drawn, no loop, no "stop" or test
+links) and the zoom at once. Off: no weather, and the gauges' needles and readings straight at their new place, the zoom and the reflow
+at once. A browser asking for reduced motion gets off's, whatever the setting.
 
 MCP_DASHBOARD_INDOOR off (privacy: the page needs no token): no indoor reading leaves the server through it. Its tiles (Indoor temperature,
 Indoor humidity: any gauge of the indoor sensor's group, gauge_sheet.INDOOR) are left out of /dashboard/data's sheet, as if the station had
@@ -145,7 +145,8 @@ class WebDashboard:
     """The page, its data and its event streams over an EcobotServer (its service's `current`, its bus and its context); `uris` the
     resources whose updates are the station's live reading's and the air sensor's (ecobot://now/weather, ecobot://now/air);
     `animations` (MCP_DASHBOARD_ANIMATIONS: "on", "off" or "low"; True and False are "on" and "off") off: the page draws no weather
-    behind its gauges; low: nothing on it moves. `indoor` (MCP_DASHBOARD_INDOOR) False: no indoor reading in its data or its events."""
+    behind its gauges and nothing moves on it; low: no weather and the zoom at once, the gauges and the tiles moving as on. `indoor`
+    (MCP_DASHBOARD_INDOOR) False: no indoor reading in its data or its events."""
 
     def __init__(self, server, uris: tuple[str, ...] = ("ecobot://now/weather", "ecobot://now/air"), animations: bool | str = "on",
                  indoor: bool = True):
