@@ -8,7 +8,7 @@ console error; the tiles rearranged (dragged with a mouse and with a touch's lon
 across reloads, reset), the strip's reading time with a device's reading over an hour old (greyed out), the drag's text left selectable, the fill of fewer tiles, and the tiles' clear backgrounds; a tile zoomed to
 fill the window and the gallery through the others (keys, mouse drags, a trackpad's swipe, touch swipes, both ends, the text still
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
-one canvas behind the tiles, "stop animation", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place
+one canvas behind the tiles, "stop", reduced motion, the temporary test links and ?fx=, uv's beams swaying slowly in place
 with no particles, the wind's leaves within the budget and blowing right to left, rain in the wind bunched into curtains, its drops
 knocking the leaves they hit, humidity's fog and its beads, heavy rain's drops sticking to the glass, a flash flood filling the window
 a quarter up, its waves, its leaves and its frog, a cow, a barn or a chicken blown across in a gust over 99 km/h), the data's rain
@@ -1368,7 +1368,7 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
         assert mark["below"] | {"levels": None} == {"effects": [], "levels": None, "running": mark["below"]["running"], "framed": [],
                                                      "link": None}, (name, mark)
         assert mark["at"]["effects"] == [effect] and mark["at"]["framed"] == [EFFECTS[effect]], (name, mark)
-        assert mark["at"]["link"] == "stop animation" and mark["at"]["running"], (name, mark)
+        assert mark["at"]["link"] == "stop" and mark["at"]["running"], (name, mark)
     assert got["hazeBands"] == [2, 3, 4, 5, 5]                                   # thicker with each band: USG to Hazardous
     assert got["rainStrength"][0] < 0.4 and got["rainStrength"][1:] == [1, 1]    # light at 0.5 mm/h, heavy from 8
     assert got["humidityStrength"] == pytest.approx([0.1, 0.5, 1])              # heavier from 90 % to 100 %
@@ -1405,9 +1405,10 @@ async def test_several_effects_share_one_canvas_behind_the_see_through_tiles_zoo
 @needs_browser
 async def test_stop_animation_stops_and_clears_for_this_page_view_only_nothing_saved_a_reload_or_a_test_link_runs_them_again(server, station):
     got = await weather(server, "stop")
-    # "stop animation" (a test link's wind on too), its tooltip naming the setting for good
-    assert got["simulating"]["effects"] == ["uv", "wind"] and got["simulating"]["link"] == "stop animation", got["simulating"]
+    # "stop" (a test link's wind on too), its tooltip naming the setting for good
+    assert got["simulating"]["effects"] == ["uv", "wind"] and got["simulating"]["link"] == "stop", got["simulating"]
     assert got["simulating"]["title"] == "stop until reload; set MCP_DASHBOARD_ANIMATIONS=off to turn off for good", got["simulating"]
+    assert got["simulating"]["label"] == "stop the animation until reload", got["simulating"]   # (it reads just "stop")
     # ... nothing drawn, no loop, the test link's effect ended (?fx= gone), the frame stays; the link gone (no "start animation");
     # nothing saved
     assert got["stopped"] | {"levels": None} == {"effects": ["uv"], "levels": None, "running": False, "framed": ["UV index"],
@@ -1419,11 +1420,11 @@ async def test_stop_animation_stops_and_clears_for_this_page_view_only_nothing_s
     assert set(reset["framed"]) == {"UV index", "Wind"}, reset
     # a reload: running as normal (an earlier version's saved {animations: false} ignored and dropped, the arrangement kept)
     reloaded = got["reloaded"]
-    assert reloaded["link"] == "stop animation" and reloaded["running"] and reloaded["frames"] > 10, reloaded
+    assert reloaded["link"] == "stop" and reloaded["running"] and reloaded["frames"] > 10, reloaded
     assert reloaded["stored"] == {"order": [], "hidden": ["Rain"]}, reloaded
     # stopped again, then a test link (heat): on again, its effect and the readings' with it, the link back
     resumed = got["resumed"]
-    assert resumed["link"] == "stop animation" and resumed["running"] and resumed["frames"] > 10, resumed
+    assert resumed["link"] == "stop" and resumed["running"] and resumed["frames"] > 10, resumed
     assert set(resumed["effects"]) == {"uv", "wind", "heat"} and resumed["url"] == "?fx=heat", resumed
     # from the keyboard: Enter on it stops them, the link gone (the focus not left on it)
     assert got["keyboard"]["link"] is None and not got["keyboard"]["running"] and got["keyboard"]["focused"] == "BODY", got["keyboard"]
@@ -1433,7 +1434,7 @@ async def test_stop_animation_stops_and_clears_for_this_page_view_only_nothing_s
 async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_ends_them_and_with_animations_off_nothing_is_drawn(server, station):
     got = await weather(server, "links")
     # the temporary test links: each its effect and frame (the gauges keep their readings), the URL following; haze steps through its
-    # bands, rain light then heavy; ice melts back; "stop animation" ends them all (no "clear"); no "all" link, but ?fx=all
+    # bands, rain light then heavy; ice melts back; "stop" ends them all (no "clear"); no "all" link, but ?fx=all
     links = got["links"]
     assert links["buttons"] == ["rain", "haze", "uv", "humidity", "wind", "heat", "ice", "gust"], links["buttons"]
     on = []
@@ -1442,10 +1443,10 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
         assert set(links[name]["effects"]) == set(on) and EFFECTS[name] in links[name]["framed"], (name, links[name])
         assert links[name]["url"] == "?fx=" + ",".join(on)
     assert links["label"] == "UV index 0.0"                                        # (the stand-in's reading, not the simulated one)
-    # "stop animation" at the bottom left, just right of the row's last link, beside the strip (at the window's bottom), clear of it;
+    # "stop" at the bottom left, just right of the row's last link, beside the strip (at the window's bottom), clear of it;
     # the row with its "test:", all of it in sight
     corner = links["corner"]
-    assert corner["link"] == "stop animation" and corner["apart"] and corner["onScreen"], corner
+    assert corner["link"] == "stop" and corner["apart"] and corner["onScreen"], corner
     just_right_of_the_row(corner)
     assert corner["tag"] and corner["fits"], corner
     assert corner["row"]["left"] == 0 and corner["motion"]["bottom"] == corner["window"][1] == corner["strip"]["bottom"], corner
@@ -1453,7 +1454,7 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
     assert links["rain"] == [[0.35, 0], [1, 0], [1, 2], [0, 0]]   # (light, heavy, heavy with a flash flood (the test's own), off)
     melting = links["melting"]
     assert melting["grown"] > 2 and 0 < melting["reach"] < melting["grown"] and "ice" not in melting["effects"] and melting["running"], melting
-    # "stop animation" with only test links on: every one off, ?fx= gone, the animations stopped (nothing saved), the link gone
+    # "stop" with only test links on: every one off, ?fx= gone, the animations stopped (nothing saved), the link gone
     assert links["cleared"] | {"levels": None, "running": None} == {"effects": [], "levels": None, "running": None, "framed": [],
                                                                      "link": None, "url": "", "pressed": 0, "stored": None}
     assert links["all"]["effects"] == EVERY and links["all"]["url"] == "?fx=rain2,haze3,uv,humidity2,wind,heat,ice"
@@ -1462,13 +1463,13 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
                                       {"level": 0, "url": "?fx=uv,wind,heat", "label": "humidity"}], links["humiditySteps"]
     assert links["role"] == "group" and links["pressed"] == {"rain": "false", "haze": "false", "uv": "true", "humidity": "true",
                                                              "wind": "true", "heat": "true", "ice": "false"}, links["pressed"]
-    # on a phone (360x740, 390x844), every effect on (its links' longest): no "test:", each link ("gust" too) and "stop animation" in sight,
+    # on a phone (360x740, 390x844), every effect on (its links' longest): no "test:", each link ("gust" too) and "stop" in sight,
     # unscrolled, with room for one more short link (some 30 px); a link's step a raised figure, its full words its label
     for phone in (got["phone360"], got["phone390"]):
         assert not phone["tag"] and phone["fits"] and phone["spare"] >= 30 and phone["apart"] and phone["onScreen"], phone
         just_right_of_the_row(phone)
     for phone in (got["phone360"], got["phone390"]):
-        assert phone["errors"] == [] and phone["link"] == "stop animation", phone
+        assert phone["errors"] == [] and phone["link"] == "stop", phone
         assert phone["buttons"] == ["rain²", "haze³", "uv", "humidity²", "wind", "heat", "ice", "gust"], phone["buttons"]
         assert phone["labels"] == ["rain: heavy", "haze 3", "uv", "humidity: heavy", "wind", "heat", "ice", "gust"], phone["labels"]
         assert phone["motion"]["bottom"] == pytest.approx(phone["strip"]["top"], abs=0.5), phone              # (above the strip)
@@ -1490,7 +1491,7 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
                                                 "drawn": 0, "stills": 0, "gust": 0, "ink": 0}, low["opened"]
     assert low["transitions"] == 0, low["transitions"]
     # every effect called for (but the heat: below 0 °C; a gust over 99 km/h too): one faint still frame, no loop, no frame asked for (the gauges and the UV's red
-    # hand put at their new readings at once), nothing blown across, no "stop animation" (nothing to stop)
+    # hand put at their new readings at once), nothing blown across, no "stop" (nothing to stop)
     assert low["called"] | {"levels": None, "ink": None} == {
         "effects": [e for e in EVERY if e != "heat"], "levels": None, "running": False, "framed": low["called"]["framed"], "link": None, "frames": 0, "drawn": 0,
         "stills": 1, "gust": 0, "ink": None, "hand": "rotate(-27.50 240 203)"}, low["called"]
@@ -1521,7 +1522,7 @@ BEAD_COLOURS = [[166, 215, 242, 34], [166, 215, 242, 105], [44, 85, 115, 110], [
 
 
 def just_right_of_the_row(corner):
-    """ "stop animation" right after the test row, on its line, a few pixels right of its last link (the row's end, in sight)."""
+    """ "stop" right after the test row, on its line, a few pixels right of its last link (the row's end, in sight)."""
     motion, row, last = corner["motion"], corner["row"], corner["last"]
     assert motion["left"] == pytest.approx(row["right"], abs=0.5) and -1 <= motion["left"] - last["right"] <= 10, corner
     assert row["left"] <= last["left"] and last["right"] <= row["right"] + 1, corner   # (-1, +1: the row scrolled to a whole px)
@@ -1823,7 +1824,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert again["before"] > 0 and again == {"before": again["before"], "trails": 0, "beads": 0, "stray": 0, "gone": again["gone"], "marks": again["marks"]}, again
     clean_glass(again["gone"])
     clean_glass(again["marks"])
-    # ... then its beads leaving trails, and "stop animation", humidity on again (as a test link after it): the glass fresh too
+    # ... then its beads leaving trails, and "stop", humidity on again (as a test link after it): the glass fresh too
     marked = got["humidity"]["alone"]["marked"]
     assert marked["trails"] > 30 and marked["ink"] > 0 and marked["cover"] > 0, marked
     started_afresh(got["humidity"]["alone"]["restarted"], "humidity")
@@ -2012,16 +2013,16 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     phone = got["phone"]
     assert phone["strip"] == "reset preferences · last reading 18:42" and phone["right"], phone
     assert phone["apart"] and phone["onScreen"], phone
-    # "stop animation" at the bottom left, just right of the test row's last link (with the row above the strip on a phone, both clear
+    # "stop" at the bottom left, just right of the test row's last link (with the row above the strip on a phone, both clear
     # of it); without the test row (the page as it will be), at the bottom left on its own, at 1024x768 and on a phone
     corner = got["phoneCorner"]
-    assert corner["link"] == "stop animation" and corner["apart"] and corner["onScreen"], corner
+    assert corner["link"] == "stop" and corner["apart"] and corner["onScreen"], corner
     just_right_of_the_row(corner)
     assert corner["motion"]["bottom"] == pytest.approx(corner["strip"]["top"], abs=0.5), corner                  # (above the strip)
     # (no "test:" there, all of it unscrolled, room for one more short link: as with every effect on, in the links' test)
     assert not corner["tag"] and corner["fits"] and corner["spare"] >= 30, corner
     for bare in (got["bare"], got["barePhone"]):
-        assert bare["errors"] == [] and bare["row"] is None and bare["link"] == "stop animation", bare
+        assert bare["errors"] == [] and bare["row"] is None and bare["link"] == "stop", bare
         assert bare["motion"]["left"] == 0 and bare["motion"]["bottom"] == bare["window"][1] and bare["apart"] and bare["onScreen"], bare
     # the frost: fern-like crystals from the window's edges, further in and faster the colder, over minutes; melting back from the
     # tips, the edges last. Just below 0 °C (-0.5) a fringe at the edges, grown in a minute or two; then gone again, the loop with it
@@ -2082,7 +2083,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     # reduced motion: no loop, one still, faint frame (the ice as it would be), the frames and the link as ever
     still = got["still"]
     assert still["effects"] == ["uv", "ice"] and not still["running"] and still["frames"] == 0 and still["stateFrames"] == 0, still
-    assert still["ink"] > 0 and sorted(still["framed"]) == ["Temperature", "UV index"] and still["link"] == "stop animation", still
+    assert still["ink"] > 0 and sorted(still["framed"]) == ["Temperature", "UV index"] and still["link"] == "stop", still
     assert still["hand"] == "rotate(-27.50 240 203)", still["hand"]                 # (the UV's limit mark at once at 9: no frames for it)
     assert still["noHigh"] == {"marks": 1, "shown": False}, still["noHigh"]         # (no highest today: none shown)
     # ... and humidity's still frame as it would be some minutes in: the fog formed, many beads on it, some that have run, their trails
@@ -2152,10 +2153,10 @@ def clean_glass(marks):
 
 
 def started_afresh(seen, effect):
-    """"stop animation", then `effect` on (as a test link after it: restarted() in the browser script): the loop stopped and the link
+    """"stop", then `effect` on (as a test link after it: restarted() in the browser script): the loop stopped and the link
     gone between, then running again with the link back, and nothing from before: the glass clean, no drop, no stray pixel"""
-    assert seen["link"] == "stop animation" and seen["stopped"]["link"] is None and not seen["stopped"]["running"], seen
-    assert seen["again"] == {"running": True, "link": "stop animation"}, seen
+    assert seen["link"] == "stop" and seen["stopped"]["link"] is None and not seen["stopped"]["running"], seen
+    assert seen["again"] == {"running": True, "link": "stop"}, seen
     clean_glass(seen["stopped"]["marks"])
     clean_glass(seen["marks"])
     assert seen["stray"] == 0 and seen["drops"] == 0 and effect in seen["effects"], seen
@@ -2305,7 +2306,7 @@ async def test_a_gust_over_99_kmh_blows_a_cow_a_barn_or_a_chicken_across_far_beh
     assert link["sent"] == 5 and set(link["kinds"]) == {"cow", "barn", "chicken"} and link["flying"] >= 1, link
     assert link["url"] == "" and link["afterWind"] == "?fx=wind", link
     assert link["pressed"] is None and "on" not in link["classes"].split(), link
-    # "stop animation": gone at once, nothing drawn, ?fx= gone; stopped, a live gust over 99 km/h sends none; the gust link after it
+    # "stop": gone at once, nothing drawn, ?fx= gone; stopped, a live gust over 99 km/h sends none; the gust link after it
     # starts them again, one sent
     assert got["stopped"] == {"flyers": 0, "running": False, "url": "", "ink": 0, "sent": 5}, got["stopped"]
     assert got["resumed"] == {"sent": 6, "running": True}, got["resumed"]
@@ -2314,7 +2315,7 @@ async def test_a_gust_over_99_kmh_blows_a_cow_a_barn_or_a_chicken_across_far_beh
     opened = got["opened"]
     assert opened["sent"] == 0 and opened["effects"] == [] and opened["url"] == "" and opened["errors"] == [], opened
     assert opened["beside"] == {"sent": 0, "effects": ["wind"], "url": "?fx=wind"}, opened["beside"]
-    # on a phone, every effect on and "gust" clicked: one sent; no "test:", every link ("gust" too) and "stop animation" in sight
+    # on a phone, every effect on and "gust" clicked: one sent; no "test:", every link ("gust" too) and "stop" in sight
     phone = got["phone"]
     assert phone["sent"] == 1 and phone["buttons"][-1] == "gust" and not phone["tag"] and phone["fits"] and phone["onScreen"], phone
     just_right_of_the_row(phone)

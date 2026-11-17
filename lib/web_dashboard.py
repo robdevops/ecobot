@@ -29,11 +29,11 @@
     (EcobotServer.publish_changes: nothing is fetched for it), so the page fetches the data again and moves its gauges in place. A
     comment every HEARTBEAT_SECONDS keeps a proxy from closing it.
 
-The page's weather drawn behind the gauges (its canvas, "stop animation", the test links) is there for every viewer unless
+The page's weather drawn behind the gauges (its canvas, "stop", the test links) is there for every viewer unless
 MCP_DASHBOARD_ANIMATIONS is off: then the page is served with data-animations="off" on its <html> (ANIMATIONS), and draws none of it.
 With "low" (low motion, for e-ink displays): data-animations="low", and nothing on the page moves: the weather one faint still frame
 (redrawn only as the conditions change), no transitions, the gauges put at their new readings at once, the data's updates applied at most
-once a minute, all at once; no "stop animation".
+once a minute, all at once; no "stop".
 
 MCP_DASHBOARD_INDOOR off (privacy: the page needs no token): no indoor reading leaves the server through it. Its tiles (Indoor temperature,
 Indoor humidity: any gauge of the indoor sensor's group, gauge_sheet.INDOOR) are left out of /dashboard/data's sheet, as if the station had

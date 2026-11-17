@@ -33,7 +33,7 @@
 //     in this one browser: a list of their reports, in that order.)
 //   node web_dashboard_browser.js URL --weather PART: the page at 1024x768, its data altered on the way, a part of the weather behind the
 //     tiles (WEATHER): each reading at, and just short of, the mark that calls up its effect; the canvas behind the tiles and the tiles'
-//     red frames; "stop animation"; the temporary test links (beside them, MCP_DASHBOARD_ANIMATIONS off and low); every effect at once (?fx=all: the frame time, the light, the particles);
+//     red frames; "stop"; the temporary test links (beside them, MCP_DASHBOARD_ANIMATIONS off and low); every effect at once (?fx=all: the frame time, the light, the particles);
 //     a flash flood;
 //     ?fx= as the page opens, a phone, reduced motion; prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --fill CASES: for each case {name: [width, height, hidden titles]}, the page with those hidden;
@@ -1282,7 +1282,7 @@ const weatherSeen = (page) => page.evaluate(() => {
            framed: [...document.querySelectorAll("#grid .tile.alert .title")].map((t) => t.textContent),
            link: link ? link.textContent : null };
 });
-// The bottom corners: "stop animation" (its words, its box), the test row's and its last link's boxes (null without them), the strip's;
+// The bottom corners: "stop" (its words, its box), the test row's and its last link's boxes (null without them), the strip's;
 // the row's links' words, whether its "test:" shows, whether all of it fits unscrolled, the room left right of the link; whether the
 // link is clear of the strip, and on the screen
 const cornerSeen = (page) => page.evaluate(() => {
@@ -1948,7 +1948,7 @@ const landingsWatched = (page, landings, most) => page.evaluate(([landings, most
   };
   __next(step);
 }), [landings, most]);
-// "stop animation" (an effect on: the link shows; it ends the test links' effects; the link gone), then `detail` on (as a test link
+// "stop" (an effect on: the link shows; it ends the test links' effects; the link gone), then `detail` on (as a test link
 // clicked after it: the animations on again), all at once (no frame between): the loop, the link and the glass (humidity's marks) as
 // stopped, and once started again, the glass, the frost and the rain's drops then
 const restarted = (page, detail) => page.evaluate((detail) => {
@@ -1995,7 +1995,7 @@ async function animationsOff(browser, url, out) {
 // MCP_DASHBOARD_ANIMATIONS low (low motion, for e-ink displays: data-animations="low" on its <html>): nothing moves. The weather one
 // faint still frame, drawn again only as the conditions change; no loop, no frames for the gauges (put at their readings at once), no
 // transition, no zoom animation or slide; the data applied at most once a minute (here LOW_EVERY ms: window.__lowTest), however often
-// it is asked for; no "stop animation"
+// it is asked for; no "stop"
 const LOW_EVERY = 1200;
 // Humidity's still frame (reduced or low motion) made again `times` times, the glass fresh each time (humidity off, then on again
 // at full, the other effects as they are: each another 2.5 minutes of its weather as it would be): each frame's beads, those that
@@ -2073,7 +2073,7 @@ async function lowMotion(browser, url, out) {
 
 // The weather in parts, each its own page (and process: the tests run them side by side): "marks" (nothing called for, each effect at
 // its mark and just short of it, haze's bands, rain's strength, the ice's depth), "several" (several at once, the canvas, the tiles see-
-// through, their look, zoomed), "stop" ("stop animation", the readings, a reload, a test link after it, the reset), "links" (the temporary test links;
+// through, their look, zoomed), "stop" ("stop", the readings, a reload, a test link after it, the reset), "links" (the temporary test links;
 // and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn, and low: nothing moving),
 // "all" (?fx=all: its frame time, its brightness against Hazardous haze alone, its particles), "opened" (?fx= when the page opens, uv
 // and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, humidity's beads running down the
@@ -2209,10 +2209,10 @@ const WEATHER = {
     await calm(page, 5000);   // (the gauges' rise)
     await reads({ "UV index": 11 });
     await calm(page, 5000);   // (the gauge's move: frames of its own)
-    // "stop animation" (a test link's effect on too): nothing drawn, no loop, the test link's effect ended, the frames stay, the link
+    // "stop" (a test link's effect on too): nothing drawn, no loop, the test link's effect ended, the frames stay, the link
     // gone (no "start animation"), nothing saved
     await page.locator("#fxtest button[data-fx='wind']").click();
-    out.simulating = { ...await weatherSeen(page), title: await page.evaluate(() => document.querySelector("#motion .animations").title) };
+    out.simulating = { ...await weatherSeen(page), ...await page.evaluate(() => { const a = document.querySelector("#motion .animations"); return { title: a.title, label: a.getAttribute("aria-label") }; }) };
     await page.locator("#motion .animations").click();
     await page.waitForTimeout(200);
     out.stopped = { ...await weatherSeen(page), frames: await framesIn(page, 600), ink: await canvasInk(page), stored: await stored(page),
@@ -2250,7 +2250,7 @@ const WEATHER = {
   async links(browser, url, out) {
     const off = animationsOff(browser, url, out.off = {});   // (beside the rest)
     const low = lowMotion(browser, url, out.low = {});        // (beside the rest too)
-    // phones (360x740, 390x844), every effect on (their links' longest): the row without "test:", all of it and "stop animation" in
+    // phones (360x740, 390x844), every effect on (their links' longest): the row without "test:", all of it and "stop" in
     // sight, unscrolled (beside the rest, as the off page)
     const phones = Promise.all([[360, 740], [390, 844]].map(async ([width, height]) => {
       const p = await weatherPage(browser, url, { query: "?fx=all", driven: true, context: { viewport: { width, height }, hasTouch: true, isMobile: true } });
@@ -2261,7 +2261,7 @@ const WEATHER = {
       await p.context.close();
       return seen;
     }));
-    // the temporary test links: each turns its effect and frame on (the gauges keep their readings), "stop animation" ends them (and
+    // the temporary test links: each turns its effect and frame on (the gauges keep their readings), "stop" ends them (and
     // stops the animations); the URL follows
     const { context, page, errors } = await weatherPage(browser, url);
     await calm(page, 5000);   // (the gauges' rise)
@@ -2632,7 +2632,7 @@ const WEATHER = {
       seen.melting = await frost();
       await until(() => !Sky.state().running);
       seen.gone = await frost();
-      // (on again: nothing from before, its canvas clear, no sparkle; then grown half a minute, and "stop animation", "start
+      // (on again: nothing from before, its canvas clear, no sparkle; then grown half a minute, and "stop", "start
       // animation" and on again: the same)
       seen.again = await p.page.evaluate(() => {
         document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { ice: 5 } }));
@@ -2708,7 +2708,7 @@ const WEATHER = {
           const h = Sky.state().humidity;
           return { before, trails: h.trails, beads: h.beads.length, stray: h.stray(), gone, marks: h.marks() };
         }, before);
-        // (then its beads running and leaving trails (the weather's time 30 times as fast), and "stop animation", then the effect on again
+        // (then its beads running and leaving trails (the weather's time 30 times as fast), and "stop", then the effect on again
         // and humidity on again: the glass fresh too)
         await p.page.evaluate(() => Sky.timeScale(30));
         await driveUntil(p.page, () => Sky.state().humidity.trails > 30);
@@ -2781,7 +2781,7 @@ const WEATHER = {
         const s = Sky.state();
         return { gone, again: s.humidity.marks(), stray: s.humidity.stray(), drops: s.particles.rain };
       });
-      // ... and the same with "stop animation" between, then the effect on again
+      // ... and the same with "stop" between, then the effect on again
       seen.streakedAgain = await heavyTill(30);
       seen.restarted = await restarted(p.page, { rain: 1 });
       seen.errors = p.errors;
@@ -2809,7 +2809,7 @@ const WEATHER = {
       await p.context.close();
       return seen;
     }));
-    // without the temporary test links (the page as it will be), at 1024x768 and on a phone with a tile hidden: "stop animation" at
+    // without the temporary test links (the page as it will be), at 1024x768 and on a phone with a tile hidden: "stop" at
     // the bottom left on its own
     const bare = Promise.all([{}, { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true }].map(async (context) => {
       const p = await weatherPage(browser, url, { bare: true, driven: true, context,
@@ -2842,7 +2842,7 @@ const WEATHER = {
       await alone.context.close();
     }));
     // a phone, a tile hidden, an effect on (the wind, its leaves looping there too): the strip (reset preferences · last reading) at
-    // the bottom right, the time last; the test row and "stop animation" not over it (beside the rest)
+    // the bottom right, the time last; the test row and "stop" not over it (beside the rest)
     const phoned = (async () => {
       const phone = await weatherPage(browser, url, { query: "?fx=wind", driven: true, context: { viewport: { width: 360, height: 740 }, hasTouch: true, isMobile: true },
         init: { fn: (key) => localStorage.setItem(key, JSON.stringify({ order: [], hidden: ["Rain"] })), arg: KEY } });
@@ -2908,10 +2908,10 @@ const WEATHER = {
   // A gust over 99 km/h: the live gust at 99 (nothing), just over (one sent), the same reading fetched again (no more), a new one over
   // (another), one under (none); then a cow, a barn and a chicken sent at once, watched every frame as they cross (the weather's time
   // 5 times as fast): where each is, its angle, the chicken's frames, the canvas's pixels while they cross (alone: theirs and their
-  // bits'), the loop ending once they're gone; the test link (five clicks, its URL, never pressed), "stop animation" (the wind's
+  // bits'), the loop ending once they're gone; the test link (five clicks, its URL, never pressed), "stop" (the wind's
 // link on too, so it shows: they're gone at once),
   // ?fx=gust as the page opens (ignored: nothing sent, the word dropped from the URL; and beside "wind"), and on a phone the row
-  // (every link, "gust" too, and "stop animation" in sight unscrolled). A frame
+  // (every link, "gust" too, and "stop" in sight unscrolled). A frame
   // sequence of the three crossing kept as screenshots (SHOTS, when given)
   async gust(browser, url, out) {
     const opened = (async () => {   // (beside the rest)
@@ -2986,14 +2986,14 @@ const WEATHER = {
     out.crossing.cost = await frameCost(page, 30);
     await driveUntil(page, () => !Sky.clock().running);
     // the test link: each click one, the three kinds in three clicks; the URL untouched (a reload sends none); never pressed; with
-    // an effect's link clicked after it, only that effect in the URL; "stop animation": gone at once
+    // an effect's link clicked after it, only that effect in the URL; "stop": gone at once
     const before = await sent();
     for (let i = 0; i < 5; i++) await page.locator("#fxtest button[data-gust]").click();
     out.link = { sent: await sent() - before, kinds: (await page.evaluate(() => Sky.state().gust.kinds)).slice(-5),
                  flying: await page.evaluate(() => Sky.state().gust.flyers.length), url: await page.evaluate(() => location.search),
                  pressed: await page.evaluate(() => document.querySelector("#fxtest button[data-gust]").getAttribute("aria-pressed")),
                  classes: await page.evaluate(() => document.querySelector("#fxtest button[data-gust]").className) };
-    await page.locator("#fxtest button[data-fx='wind']").click();   // (an effect on: "stop animation" shows)
+    await page.locator("#fxtest button[data-fx='wind']").click();   // (an effect on: "stop" shows)
     out.link.afterWind = await page.evaluate(() => location.search);
     await page.locator("#motion .animations").click();
     out.stopped = { ...await page.evaluate(() => ({ flyers: Sky.state().gust.flyers.length, running: Sky.state().running })),

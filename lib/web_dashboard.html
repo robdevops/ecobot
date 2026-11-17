@@ -15,13 +15,13 @@
      (the server sends metric), kept with the preferences, metric again on "reset preferences".
      A click or tap on a gauge zooms its tile (title and gauge, no table) to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
      Behind everything, the weather as pixel art on one canvas (Sky): rain, haze, uv, humidity, wind, heat and ice, each while the
-     readings call for it, its tile framed in red; "stop animation" at the bottom left stops and clears them for this page view only
+     readings call for it, its tile framed in red; "stop" at the bottom left stops and clears them for this page view only
      (nothing saved: a reload brings them back; the link gone till then). With MCP_DASHBOARD_ANIMATIONS off
      the server sends data-animations="off" on <html> (lib/web_dashboard.py): none of it, for every viewer (no canvas drawn, no loop,
      no link, no test links), the rest of the page as ever. With "low" (low motion, for e-ink displays: data-animations="low"),
      nothing moves: the weather one faint still frame, drawn again only as the conditions change; no transitions (the zoom, the
      tiles' reflow, fades and the gallery's slide in one step); the gauges put at their new readings at once; the data's updates
-     applied at most once a minute, all at once; no "stop animation" (nothing to stop). Reduced motion asked for: as low, but for the
+     applied at most once a minute, all at once; no "stop" (nothing to stop). Reduced motion asked for: as low, but for the
      updates and the link. -->
 <style>
   :root { --bg: #14191D; --ink: #E8EAED; --soft: #B8BDC2; }
@@ -84,7 +84,7 @@
   #status .link, #motion .link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
     text-decoration-color: #5A6670; text-underline-offset: 2px; }
   #status .link:hover, #status .link:focus-visible, #motion .link:hover, #motion .link:focus-visible { color: var(--ink); }
-  /* The bottom left corner: "stop animation" (while an effect is called for), as the strip; beside the strip, or just above it where
+  /* The bottom left corner: "stop" (while an effect is called for), as the strip; beside the strip, or just above it where
      there's too little room beside it (placeCorner()). Whatever else comes before it in the corner sits to its left. */
   #corner { position: fixed; left: 0; bottom: 0; z-index: 1; display: flex; height: var(--status, 18px); max-width: 100vw; }
   #motion { flex: none; padding: 0 10px; font-size: 12px; line-height: var(--status, 18px); white-space: nowrap; color: var(--soft);
@@ -164,7 +164,7 @@
 // (low motion: drawn again only as the conditions change).
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), haze: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
 //   100 %), uv, wind: 0 or 1, heat: 0-1 (35 °C to 43 °C), ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
-//   sooner)}; animate false (the page's "stop animation", or
+//   sooner)}; animate false (the page's "stop", or
 //   MCP_DASHBOARD_ANIMATIONS off): nothing drawn (and anything blown across gone).
 //   Sky.fling(kind): something big blown across far behind (a gust over 99 km/h): "cow", "barn" or "chicken", else one at random;
 //   its kind, or null (nothing drawn: stopped, reduced motion, the tab hidden). The gust effect is on while one is crossing.
@@ -3898,11 +3898,12 @@ const Sky = (() => {
 
   // ---------- the data ----------
   // The bottom strip, at the bottom right: its link (only while it does something), then the time of the reading at the far right; and
-  // at the bottom left, "stop animation" while an effect is called for
-  function link(words, action, name, title) {
+  // at the bottom left, "stop" while an effect is called for
+  function link(words, action, name, title, label) {
     const a = document.createElement("button");
     Object.assign(a, {type: "button", className: `link ${name}`, textContent: words});
     if (title) a.title = title;
+    if (label) a.setAttribute("aria-label", label);
     a.addEventListener("click", action);
     return a;
   }
@@ -3933,7 +3934,7 @@ const Sky = (() => {
     const time = readingTime();
     parts.push(...[time].flat().filter(Boolean));
     statusLine.replaceChildren(...parts.flatMap((p, i) => i ? [" · ", p] : [p]));
-    motion.replaceChildren(...animated() && calling() && !LOW ? [link("stop animation", stopAnimations, "animations", STOP_TITLE)] : []);   // (low motion: nothing to stop)
+    motion.replaceChildren(...animated() && calling() && !LOW ? [link("stop", stopAnimations, "animations", STOP_TITLE, STOP_LABEL)] : []);   // (low motion: nothing to stop)
     placeCorner();
   }
   // The bottom left corner beside the strip, in the room it leaves; where that's too little for the corner at its narrowest (a phone),
@@ -4431,7 +4432,7 @@ const Sky = (() => {
     }, WHEEL_IDLE_MS);
   }
 
-  // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animation" (bottom left) ----------
+  // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop" (bottom left) ----------
   // (And with each new live gust reading over 99 km/h, something big blown across once: gusting(), below.)
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
   // stronger to 8 mm/h), haze from the AQI tile's (the US AQI's) Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
@@ -4458,15 +4459,16 @@ const Sky = (() => {
             wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 0.3 + 0.7 * Math.min(1, (temperature - 35) / 8) : 0,
             ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: rate > 30 ? 1 : 0};
   }
-  const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop animation" shows)
-  // Stopped ("stop animation"): for this page view only, nothing saved (a reload runs them again); for good: MCP_DASHBOARD_ANIMATIONS=off.
+  const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop" shows)
+  // Stopped ("stop"): for this page view only, nothing saved (a reload runs them again); for good: MCP_DASHBOARD_ANIMATIONS=off.
   // A preference saved by an earlier version ({animations: false}) is ignored, and dropped.
   let stopped = false;
   const animated = () => ALLOWED && !stopped;
   const STOP_TITLE = "stop until reload; set MCP_DASHBOARD_ANIMATIONS=off to turn off for good";
+  const STOP_LABEL = "stop the animation until reload";   // (the link reads just "stop")
   if ("animations" in prefs) { delete prefs.animations; save(); }
 
-  // The effects called for, the readings' and the test links' together, to Sky and to the tiles' frames; "stop animation" as it changes
+  // The effects called for, the readings' and the test links' together, to Sky and to the tiles' frames; "stop" as it changes
   function weather() {
     const was = calling();
     conditions = Object.fromEntries(Object.keys(CALLED_BY).map((k) => [k, Math.max(real[k] || 0, simulated[k] || 0)]));
@@ -4476,7 +4478,7 @@ const Sky = (() => {
     if (calling() !== was) showStatus();
   }
 
-  // "stop animation": stops the animations and clears everything drawn, for this page view (not saved; no "start animation": the link
+  // "stop": stops the animations and clears everything drawn, for this page view (not saved; no "start animation": the link
   // goes, nothing left to stop, till a reload). It also ends every simulated effect (the test links' "ecobot-fx-stop": they turn off,
   // ?fx= gone). The real readings calling for an effect later don't start them again; a test link clicked afterwards does (its effect,
   // and the readings' with it): see resume()
@@ -4511,7 +4513,7 @@ const Sky = (() => {
 
   // The temporary test links (the block near the page's end) simulate conditions: {effect: level}, as conditionsOf's. Only the effects
   // and the frames: the gauges keep their readings; nothing kept.
-  // One with an effect on, after a stop, starts the animations again (resume()); "stop animation"'s own clearing ({}) doesn't.
+  // One with an effect on, after a stop, starts the animations again (resume()); "stop"'s own clearing ({}) doesn't.
   document.addEventListener("ecobot-fx", (e) => {
     simulated = e.detail || {};
     if (Object.values(simulated).some((v) => v > 0)) resume();
@@ -4545,7 +4547,7 @@ const Sky = (() => {
   listen();
 })();
 </script>
-<!-- TEMPORARY: effect test links. A "test:" row at the bottom left (in the corner, before "stop animation", which also ends them all: its
+<!-- TEMPORARY: effect test links. A "test:" row at the bottom left (in the corner, before "stop", which also ends them all: its
      "ecobot-fx-stop"; a link clicked after it starts the animations again, with its effect), one link per effect, simulating its condition (the effect and its
      tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
      ?fx=haze3,wind,ice, ?fx=all (rain light, rain2 heavy (now and then a drop sticking to the glass), rain3 heavy with a flash
@@ -4556,7 +4558,7 @@ const Sky = (() => {
   #fxtest { flex: 0 1 auto; min-width: 140px; overflow-x: auto; overflow-y: hidden;   /* (the corner's width set to fit by the page) */
     padding: 0 8px; font-size: 11px; line-height: var(--status, 18px); white-space: nowrap; scrollbar-width: none; color: var(--soft);
     background: rgba(20, 25, 29, 0.85); border-top-right-radius: 6px; opacity: 0.55; transition: opacity 0.15s ease; }
-  #fxtest:not(:has(+ #motion:empty)) { padding-right: 0; border-top-right-radius: 0; }   /* ("stop animation" right after it) */
+  #fxtest:not(:has(+ #motion:empty)) { padding-right: 0; border-top-right-radius: 0; }   /* ("stop" right after it) */
   #fxtest:hover, #fxtest:focus-within { opacity: 1; }
   #fxtest::-webkit-scrollbar { display: none; }
   #fxtest button { font: inherit; color: inherit; background: none; border: 0; padding: 0 0 0 6px; cursor: pointer; }
@@ -4578,9 +4580,9 @@ const Sky = (() => {
   const ALL = {rain: 1, haze: 3, uv: 1, humidity: 1, wind: 1, heat: 1, ice: 5};   // (?fx=all)
   const OLD = {leaves: "wind", radiation: "uv", drips: "humidity"};   // (their earlier names, in links saved before)
   const row = document.getElementById("fxtest");
-  document.getElementById("motion").before(row);   // (into the page's bottom left corner, just left of "stop animation")
-  // Too narrow for all of it (a phone, "stop animation" beside it): without its "test:", so every link fits; were it still too
-  // narrow, scrolled to its end, its last link just left of "stop animation"
+  document.getElementById("motion").before(row);   // (into the page's bottom left corner, just left of "stop")
+  // Too narrow for all of it (a phone, "stop" beside it): without its "test:", so every link fits; were it still too
+  // narrow, scrolled to its end, its last link just left of "stop"
   const tag = row.querySelector(".tag");
   function fit() {
     tag.hidden = PHONE.matches;
@@ -4592,7 +4594,7 @@ const Sky = (() => {
   const name = (k) => k === "rain" || k === "humidity" ? [k, `${k}2`, `${k}3`][on[k]] : k === "haze" ? `haze${on[k] + 1}` : k;   // (in the URL)
   const label = (k) => k in on ? (k === "rain" || k === "humidity" ? `${k}: ${["light", "heavy", "flood"][on[k]]}` : k === "haze" ? `haze ${on[k] + 1}` : k) : k;
   // On a phone (the row above the strip, across the window): no "test:", and a link's step as a small raised figure (rain¹ light, rain²
-  // heavy, haze³), so every link and "stop animation" fit, with room for one more
+  // heavy, haze³), so every link and "stop" fit, with room for one more
   const PHONE = matchMedia("(max-width: 480px)"), RAISED = "¹²³⁴⁵";
   const shown = (k) => !PHONE.matches || !(k in on) || STEPS[k].length === 1 ? label(k) : k + RAISED[on[k]];
 
@@ -4644,7 +4646,7 @@ const Sky = (() => {
   const gustLink = button("gust", null, () => document.dispatchEvent(new Event("ecobot-gust")));
   gustLink.dataset.gust = "";
   gustLink.setAttribute("aria-label", "gust");
-  document.addEventListener("ecobot-fx-stop", () => { on = {}; apply(); });   // ("stop animation": every one off)
+  document.addEventListener("ecobot-fx-stop", () => { on = {}; apply(); });   // ("stop": every one off)
   PHONE.addEventListener("change", apply);
   read(new URLSearchParams(location.search).get("fx"));
   apply();
