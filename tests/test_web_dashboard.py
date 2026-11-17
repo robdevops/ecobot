@@ -916,6 +916,7 @@ def pressure_day(n: int) -> list[tuple[float, float]]:
 
 TRACE = (140, 219, 340, 237)   # the pressure's trace (the page's): [left, top, right, bottom], the dial's own px
 TRACE_INK, TRACE_DOT = PRESSURE[2], PRESSURE[0]   # (the pressure's mid-band blue-violet, #8087F5; its palest, #C5CAFA)
+TRACE_CORE = "#E6E8FF"                            # (the neon core's pale, near-white centre)
 
 
 def trend_drawn(p: dict, readings: list[tuple[float, float]], name: str):
@@ -923,15 +924,25 @@ def trend_drawn(p: dict, readings: list[tuple[float, float]], name: str):
     line (a single path of cubic curves, one between each two readings, through the readings themselves) across the dial's whole
     inner width (TRACE: its ends just inside the coloured ring's inner edge; midnight at the left, the next at the right), each
     reading's x its time of day and its y its value on the day's own range (at least 2 hPa: the lowest at the bottom, the highest at
-    the top); in the pressure's mid-band blue-violet with a soft glow of it (a blur merged under the line), a small bright point at
-    the latest reading in the palette's palest; below the hub, clear of the unit ("hPa" or "inHg"), the reading and the tick numbers; under the
+    the top); lit like a neon tube: a crisp core, never blurred (the pressure's mid-band blue-violet with a thinner pale, near-white
+    centre along it), over a halo of the same blue-violet in layers (blurred copies of the line, each wider, more blurred and fainter
+    outward, the widest reaching several times the old glow's 5 px or so), a small bright point at the latest reading in the
+    palette's palest, its centre near-white, haloed the same way; below the hub, clear of the unit ("hPa" or "inHg"), the reading and the tick numbers; under the
     needle and the hub."""
     t = p["trend"]
     assert t["given"] == len(readings) and t["others"] == 0, (name, t)
     line, dot = t["line"], t["dot"]
     assert line["subpaths"] == 1 and line["curves"] == len(readings) - 1, (name, line["d"][:200])   # one continuous curve
     assert line["stroke"] == rgb(TRACE_INK) == "rgb(128, 135, 245)" and line["fill"] == "none" and 1 <= line["width"] <= 2.5, (name, line)
-    assert t["glow"] and t["glow"]["blur"] >= 1 and "SourceGraphic" in t["glow"]["merge"] and t["glow"]["merge"].count("glow") >= 1, (name, t)
+    neon, halo = t["neon"], t["halo"]
+    assert neon["filter"] in (None, "none") and neon["blurs"] == 0, (name, neon)                     # the core crisp: no blur on it
+    assert neon["core"]["stroke"] == rgb(TRACE_CORE) and neon["core"]["d"] == line["d"], (name, neon)  # its pale centre along it,
+    assert 0.4 <= neon["core"]["width"] <= line["width"] / 2, (name, neon, line["width"])               # thinner
+    assert 3 <= len(halo) <= 6 and all(h["d"] == line["d"] and h["stroke"] == rgb(TRACE_INK) for h in halo), (name, halo)
+    assert halo[0]["width"] > line["width"] and halo[0]["blur"] >= 1, (name, halo[0])
+    for a, b in zip(halo, halo[1:]):                                          # wider, more blurred and fainter outward
+        assert b["width"] > a["width"] and b["blur"] > a["blur"] and b["opacity"] < a["opacity"] and b["r"] > a["r"], (name, a, b)
+    assert halo[-1]["width"] / 2 + 2 * halo[-1]["blur"] >= 25 and halo[-1]["opacity"] <= 0.15 and halo[0]["opacity"] <= 0.8, (name, halo)
     left, top, right, bottom = TRACE
     values = [v for _, v in readings]
     lo, hi = min(values), max(values)
@@ -953,6 +964,8 @@ def trend_drawn(p: dict, readings: list[tuple[float, float]], name: str):
     for x in (left, right):
         assert 100 <= math.hypot(x - 240, mid - 203) < look()["ring_outer"] - look()["band_width"], (name, x)
     assert dot["centre"] == pytest.approx(list(want[-1]), abs=0.01) and dot["fill"] == rgb(TRACE_DOT) and 1.5 <= dot["r"] <= 3, (name, dot)
+    c = neon["centre"]
+    assert c["centre"] == dot["centre"] and c["fill"] == rgb(TRACE_CORE) and 0.5 <= c["r"] < dot["r"], (name, c, dot)
     # below the hub; clear of the unit's and the reading's boxes (the font's line boxes: the unit's centre 30 px or more above the
     # reading's, as before) and of the tick numbers'
     x0, y0, x1, y1 = line["box"]

@@ -205,8 +205,9 @@ const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
 // needle's pivot (a dial's: the midpoint of its polygon's two side corners; the compass's: the centre its turn is about). Its trend
 // (null without one: its group's absence), the pressure's trace: its line (the path's d, its subpaths' count, its stroke colour and
 // width, its box (getBBox, the gauge's px), points sampled along it (getPointAtLength, every 2 px of its length)), the latest's point
-// (centre, radius, fill), the glow (the filter on them: its blur and its merge's inputs), anything else drawn in the group (rect,
-// grid, unlit dots: others), the hub's bottom, the unit's, the reading's and the tick numbers' boxes, its parts' order in the gauge
+// (centre, radius, fill), its neon core (the crisp group's filter, if any; its pale centre stroke's colour and width, the point's
+// centre's fill and radius), the halo's layers inside out (each: its stroke width, its blur (its filter's stdDeviation), its
+// opacity, its line's colour, its point's radius), anything else drawn in the group (rect, grid, unlit dots: others), the hub's bottom, the unit's, the reading's and the tick numbers' boxes, its parts' order in the gauge
 // ([trend, needle, hub] indexes), its points' count as given (data-points), and the line's drawn width against the tile's (window px)
 const dialsLook = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#grid .tile")]
   .filter((t) => t.dataset.kind === "dial" || t.dataset.kind === "compass").map((t) => {
@@ -224,7 +225,13 @@ const dialsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
     if (g) {
       const lit = g.querySelector(":scope > g.lit"), line = g.querySelector("path.line"), dot = g.querySelector("circle.latest");
       const box = (e) => { const b = e.getBBox(); return [b.x, b.y, b.x + b.width, b.y + b.height]; };
-      const filter = lit && lit.getAttribute("filter") && g.querySelector(lit.getAttribute("filter").slice(4, -1));
+      const core = lit && lit.querySelector("path.core"), centre = lit && lit.querySelector("circle.core");
+      const layers = [...g.querySelectorAll(":scope > g.halo > g.layer")].map((l) => {
+        const f = l.getAttribute("filter") && g.querySelector(l.getAttribute("filter").slice(4, -1)), p = l.querySelector("path");
+        return { width: Number(p.getAttribute("stroke-width")), blur: f ? Number(f.querySelector("feGaussianBlur").getAttribute("stdDeviation")) : 0,
+                 opacity: Number(l.getAttribute("opacity")), stroke: getComputedStyle(p).stroke, d: p.getAttribute("d"),
+                 r: Number(l.querySelector("circle").getAttribute("r")) };
+      }).sort((a, b) => a.width - b.width);
       const ticks = parts.filter((e) => e.tagName === "text" && /^[\d.]+$/.test(e.textContent));
       const unit = parts.find((e) => e.tagName === "text" && /^(hPa|inHg)$/.test(e.textContent)), reading = gauge.querySelector(":scope > text.reading");
       const along = [];
@@ -234,9 +241,12 @@ const dialsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
                                 curves: (line.getAttribute("d").match(/C/g) || []).length, stroke: getComputedStyle(line).stroke,
                                 width: parseFloat(getComputedStyle(line).strokeWidth), fill: getComputedStyle(line).fill, box: box(line), along },
                 dot: dot && { centre: [n(dot, "cx"), n(dot, "cy")], r: n(dot, "r"), fill: getComputedStyle(dot).fill },
-                glow: filter ? { blur: Number(filter.querySelector("feGaussianBlur").getAttribute("stdDeviation")),
-                                 merge: [...filter.querySelectorAll("feMergeNode")].map((m) => m.getAttribute("in")) } : null,
-                others: [...g.querySelectorAll("rect, path:not(.line), circle:not(.latest), line, polyline, text")].length,
+                neon: lit && { filter: lit.getAttribute("filter") || getComputedStyle(lit).filter, blurs: lit.querySelectorAll("[filter]").length,
+                               core: core && { stroke: getComputedStyle(core).stroke, width: parseFloat(getComputedStyle(core).strokeWidth), d: core.getAttribute("d") },
+                               centre: centre && { centre: [n(centre, "cx"), n(centre, "cy")], r: n(centre, "r"), fill: getComputedStyle(centre).fill } },
+                halo: layers,
+                others: [...g.querySelectorAll("rect, path:not(.line):not(.core), circle:not(.latest):not(.core), line, polyline, text")]
+                  .filter((e) => !e.closest("g.halo")).length,
                 hubBottom: n(hub, "cy") + n(hub, "r"), unit: unit && box(unit), reading: reading && box(reading),
                 ticks: ticks.map(box), ring: [n(hub, "cx"), n(hub, "cy")],
                 order: [parts.indexOf(g), parts.indexOf(needle), parts.indexOf(hub)],

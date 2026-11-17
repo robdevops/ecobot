@@ -3455,17 +3455,22 @@ const Sky = (() => {
   const DIAL = [240, 203, 138];   // a dial's centre and its ring's radius (the compass's too: the same size, lined up)
   const HUB = 13;                 // a dial's hub, its needle's pivot: its radius (its outline as thin, lw(1.5)); the needle's tail under it
   // Today's trend (the pressure's: tile.trend, [[minutes since midnight, hPa], ...]) as a patient monitor's trace below the hub: no
-  // window, frame or grid, only a smooth, continuous glowing line (a Catmull-Rom spline through the readings themselves: curved
-  // between them) across the dial's whole inner width, from one side of its coloured ring to the other (midnight at
-  // the left, the next midnight at the right: it grows through the day), in the pressure's mid-band blue-violet (TRACE_INK, its
-  // palette's middle) with a soft glow of the same, and a small bright point at the latest reading in the palette's palest
-  // (TRACE_DOT). Its height the day's own range (the lowest reading at the bottom, the highest at the top, at least TREND_SPAN hPa
-  // apart, so a still day reads still). Under the needle and the hub; nothing drawn with fewer than two readings. TRACE: [left, top,
-  // right, bottom], the dial's own px (between the hub and the unit, clear of the tick numbers either side; its ends just inside the
-  // ring's inner edge, radius 108)
+  // window, frame or grid, only a smooth, continuous line (a Catmull-Rom spline through the readings themselves: curved between
+  // them) across the dial's whole inner width, from one side of its coloured ring to the other (midnight at the left, the next
+  // midnight at the right: it grows through the day), lit like a neon tube: a crisp core, never blurred (the pressure's mid-band
+  // blue-violet, TRACE_INK, its palette's middle, with a thinner pale, near-white centre, TRACE_CORE, along it), over a wide halo
+  // of the same blue-violet that fades out gradually (TRACE_HALO: blurred copies of the line, each wider and fainter than the one
+  // inside it, under the tick numbers and the unit, so they stay clear). The latest reading a small bright point the same way (the
+  // palette's palest, TRACE_DOT, a near-white centre, its own halo). Its height the day's own range (the lowest reading at the
+  // bottom, the highest at the top, at least TREND_SPAN hPa apart, so a still day reads still). Under the needle and the hub; nothing
+  // drawn with fewer than two readings; redrawn only when the readings change (the filters static). TRACE: [left, top, right,
+  // bottom], the dial's own px (between the hub and the unit, clear of the tick numbers either side; its ends just inside the ring's
+  // inner edge, radius 108)
   const TRACE = [140, 219, 340, 237], TREND_SPAN = 2, DAY_MINUTES = 1440;
-  const TRACE_INK = "#8087F5", TRACE_DOT = "#C5CAFA";
-  let traces = 0;   // (each trace's glow its own filter id)
+  const TRACE_INK = "#8087F5", TRACE_DOT = "#C5CAFA", TRACE_CORE = "#E6E8FF";
+  // the halo, inside out: [stroke width, blur (stdDeviation), opacity], the line's (the point's radius its width's half, plus 1)
+  const TRACE_HALO = [[3, 1.2, 0.75], [6, 3, 0.5], [11, 6, 0.32], [18, 10, 0.2], [28, 16, 0.12]];
+  let traces = 0;   // (each trace's halo its own filter ids)
   function traceAt(m, v, lo, hi) {   // a reading's place on the trace
     const [x0, y0, x1, y1] = TRACE;
     return [x0 + Math.min(Math.max(m / DAY_MINUTES, 0), 1) * (x1 - x0), y1 - (v - lo) / (hi - lo) * (y1 - y0)];
@@ -3481,29 +3486,37 @@ const Sky = (() => {
     }
     return path;
   }
-  function traceGlow(group, ink) {   // the glow and the trace's group, once; its line and point (trendLine's) drawn in it
-    const id = `trace-glow-${++traces}`, f = el("filter", {id, x: "-10%", y: "-60%", width: "120%", height: "220%"}, el("defs", {}, group));
-    el("feGaussianBlur", {stdDeviation: 1.6, result: "glow"}, f);
-    const merge = el("feMerge", {}, f);
-    el("feMergeNode", {in: "glow"}, merge);
-    el("feMergeNode", {in: "glow"}, merge);
-    el("feMergeNode", {in: "SourceGraphic"}, merge);
-    return el("g", {class: "lit", filter: `url(#${id})`}, group);
+  function traceGlow(group) {   // the halo's blurs (static, once: one per layer, over the dial's lower half, wide enough for the
+    const id = group.dataset.halo = `trace-halo-${++traces}`, defs = el("defs", {}, group);   // widest) and the trace's groups:
+    TRACE_HALO.forEach(([, blur], i) => {
+      const f = el("filter", {id: `${id}-${i}`, filterUnits: "userSpaceOnUse", x: 60, y: 150, width: 360, height: 150}, defs);
+      el("feGaussianBlur", {stdDeviation: blur}, f);
+    });
+    el("g", {class: "halo"}, group);               // halo, then the crisp core over it
+    return el("g", {class: "lit"}, group);
   }
   function trendLine(group, pts, ink) {
-    const lit = group.querySelector(":scope > g.lit") || traceGlow(group, ink);
+    const lit = group.querySelector(":scope > g.lit") || traceGlow(group), halo = group.querySelector(":scope > g.halo");
     lit.replaceChildren();
+    halo.replaceChildren();
     const got = (pts || []).filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
     group.dataset.points = String(got.length);
     if (got.length < 2) return;
     const values = got.map((p) => p[1]);
     let lo = Math.min(...values), hi = Math.max(...values);
     if (hi - lo < TREND_SPAN) { const mid = (hi + lo) / 2; lo = mid - TREND_SPAN / 2; hi = mid + TREND_SPAN / 2; }
-    const at = got.map(([m, v]) => traceAt(m, v, lo, hi));
-    el("path", {d: smooth(at), fill: "none", stroke: ink(TRACE_INK), "stroke-width": 1.8, "stroke-linecap": "round",
-                "stroke-linejoin": "round", class: "line"}, lit);
-    const [x, y] = at[at.length - 1];
-    el("circle", {cx: x.toFixed(2), cy: y.toFixed(2), r: 2.2, fill: ink(TRACE_DOT), class: "latest"}, lit);
+    const at = got.map(([m, v]) => traceAt(m, v, lo, hi)), d = smooth(at), [x, y] = at[at.length - 1];
+    const id = group.dataset.halo;
+    const round = {fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round"};
+    TRACE_HALO.slice().reverse().forEach(([w, , o], k) => {   // (outermost first: the brighter layers over the fainter)
+      const i = TRACE_HALO.length - 1 - k, layer = el("g", {class: "layer", filter: `url(#${id}-${i})`, opacity: o}, halo);
+      el("path", {d, stroke: ink(TRACE_INK), "stroke-width": w, ...round}, layer);
+      el("circle", {cx: x.toFixed(2), cy: y.toFixed(2), r: w / 2 + 1, fill: ink(TRACE_DOT)}, layer);
+    });
+    el("path", {d, stroke: ink(TRACE_INK), "stroke-width": 2.2, ...round, class: "line"}, lit);
+    el("path", {d, stroke: ink(TRACE_CORE), "stroke-width": 0.8, ...round, class: "core"}, lit);
+    el("circle", {cx: x.toFixed(2), cy: y.toFixed(2), r: 2.4, fill: ink(TRACE_DOT), class: "latest"}, lit);
+    el("circle", {cx: x.toFixed(2), cy: y.toFixed(2), r: 1.2, fill: ink(TRACE_CORE), class: "core"}, lit);
   }
   function dial(svg, tile, ink) {
     const [cx, cy] = DIAL, angle = (v) => L.start - L.sweep * share(tile, v);
@@ -3517,13 +3530,13 @@ const Sky = (() => {
       el("path", {d: `M${x0},${y0} A${outer},${outer} 0 ${big} 1 ${x1},${y1} L${x2},${y2} A${inner},${inner} 0 ${big} 0 ${x3},${y3} Z`,
                   fill: ink(colour)}, svg);
     });
+    const trend = tile.trend === undefined ? null : el("g", {class: "trend", "pointer-events": "none"}, svg);   // (the pressure's: under
+    if (trend) trendLine(trend, tile.trend, ink);                                   // the numbers, the unit, the needle and the hub)
     for (const tick of tile.ticks) {
       const [x, y] = polar(cx, cy, L.label_radius, angle(tick));
       text(svg, x, y, tickText(tick), 17, ink(L.soft));
     }
     text(svg, cx, cy + 64, tile.unit, 18, ink(L.soft));
-    const trend = tile.trend === undefined ? null : el("g", {class: "trend", "pointer-events": "none"}, svg);   // (the pressure's: under
-    if (trend) trendLine(trend, tile.trend, ink);                                                                // the needle and hub)
     const needle = el("polygon", {fill: ink(L.needle)}, svg);
     // Today's highest (the wind's gust, rain rate, sun, UV: tile.todayHigh, null with none): a gauge's limit mark, a small solid red
     // triangle, its base flush with the dial's outer edge and its tip reaching into the coloured band (clear of the numbers inside and
