@@ -2456,7 +2456,7 @@ const Sky = (() => {
   // the wind's leaves its surface reaches (its waves as they are, wherever a leaf meets them) sticks there, floats, then sinks and
   // rests on the bottom, every one, the flood's own from then on: there while it lasts, the wind gone or not, gone as it drains away; the haze
   // is drawn above it (above(): down to its surface, as low as its troughs go). Rarely (about every FROG_EVERY s on
-  // average, never in its first FROG_FIRST s) a bemused frog paddles across (head above the water, body and limbs under it, arms and legs kicking, toes and fingers spread), right to left with the wind, bobbing; the
+  // average, never in its first FROG_FIRST s) a bemused, gangly frog flails across (head above the water, a skinny kinked trunk and long one-pixel limbs under it, sharp elbows and knees, big spread hands and feet, one limb at a time, out of step), right to left with the wind, bobbing; the
   // test link's flood (level 2) sends its first one FROG_FIRST s after the water starts rising. Drawn after the drips and the
   // leaves (the sunken ones show through it, tinted and dimmed), before the ice.
   const FLOOD = ["#06161A", "#0A2226", "#0F2F31", "#163E3E", "#1F4F4B", "#2A625B"].map(rgb);   // the body, deep to shallow
@@ -2478,33 +2478,21 @@ const Sky = (() => {
     const DIP = Math.ceil(MOST * 1.8) + 1;   // px: its troughs at most this far below its level (lower at the sides)
     const pack = ([r, g, b], a) => ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;   // (a pixel of ImageData, as a 32-bit word)
     // The frog, paddling: its head as ever (one eye wide, the other half-lidded, both looking off to the side, a long flat mouth
-    // drooping at one end: unimpressed; now and then it blinks), its body, arms and legs under it kicking in turn (FROG_FRAMES, one
-    // per stroke, 31 x 22): fingers on the hands, big webbed feet with four toes. Rows from FROG_SITS down are under the water (drawn
-    // tinted and part clear), a few ripples and drops at the kicks; the head dips a pixel on every other stroke.
+    // drooping at one end: unimpressed; now and then it blinks), its skinny trunk (kinking between strokes) and spindly
+    // arms and legs under it flailing out of step (FROG_FRAMES, one per stroke, 37 x 28, each held for its FROG_BEATS s: uneven, hesitant):
+    // one-pixel limbs with the joints showing, oversized hands with three fingers, big webbed feet with four toes. Rows from FROG_SITS down are under the water (drawn
+    // tinted and part clear), a few ripples and drops at the kicks; the head dips on some strokes.
     const FROG_FRAMES = [
-      ["..........kkkk...kkkk..........", ".........klwwwk.kllggk.........", ".........kwwwwkkkkkkkk.........", ".........kwwwpk.kwwwpk.........", "........kkgkkkgkgkkkgkk...m....", ".......kgggggggggggggggk.....m.",
-       ".......kglllllllllllllgk.......", ".......kgkkkkkkkkkkkkkgkl.l.l.l", ".......kggggggggggggkdgkgdgdgdg", "........kgyyyyyyyyyyygkkggggggg", "...kkkkkkkyyyyyyyyyyykgkggggggk", "kkkgggggggkyyyyyyyyygkkggggkkk.",
-       "gggggggggkkgyyyyyyygk..kkkk....", "gdgdgdgkkkkkkyyyyykkkkk........", "l.lmlkkkgggggkgggkgggggkkk.....", "....kggggkkkkkgggkkkkkggggk....", ".....kgggk....kkk....kgggk.....", "......kkggkkkkk.kkkkkggkk......",
-       ".......kgggggggkgggggggk.......", "........gdgdgdg.gdgdgdg........", "........g.g.g.g.g.g.g.g........", "........l.l.l.l.l.l.l.l........"],
-      ["..........kkkk...kkkk..........", ".........klwwwk.kllggk.........", ".........kwwwwkkkkkkkk.........", ".........kwwwpk.kwwwpk.........", "........kkgkkkgkgkkkgkk........", ".......kgggggggggggggggk.......",
-       ".......kglllllllllllllgk.......", ".......kgkkkkkkkkkkkkkgk.......", ".......kggggggggggggkdgk.......", "........kgyyyyyyyyyyygk........", "......kkgkyyyyyyyyyyykkkkkkk...", "...kkkggkkgyyyyyyyyykgggggggkkk",
-       "..kggggggkkgyyyyyyygkkggggggggg", "...gdgdgdgkkkyyyyykkk.kkgdgdgdg", "...l.l.lkkgggkgggkgggkk.l.l.l.l", "......kkgggkkkgggkkkgggkk......", ".m...kgggkk...kkk...kkgggk.....", ".....kggk.............kggk.....",
-       "..kkkggkk.............kkggkkk..", ".kgggggggk...........kgggggggk.", "..gdgdgdg.............gdgdgdg..", "..l.l.l.l.............l.l.l.l.."],
-      ["..........kkkk...kkkk..........", ".........klwwwk.kllggk.........", ".........kwwwwkkkkkkkk.........", ".........kwwwpk.kwwwpk.........", "....m...kkgkkkgkgkkkgkk........", ".m.....kgggggggggggggggk.......",
-       ".......kglllllllllllllgk.......", "l.l.l.lkgkkkkkkkkkkkkkgk.......", "gdgdgdgkggggggggggggkdgk.......", "gggggggkkgyyyyyyyyyyygk........", "kggggggkgkyyyyyyyyyyykkkkkkk...", ".kkkggggkkgyyyyyyyyykgggggggkkk",
-       "....kkkk..kgyyyyyyygkkggggggggg", "...........kkyyyyykk..kkgdgdgdg", ".........kkggkgggkggkk..l.l.l.l", ".......kkgggkkgggkkgggkk.......", ".....kkgggkk..kkk..kkgggkk.....", "....kgggkk...........kkgggk....",
-       "kkkkggkk...............kkggkkkk", "gggggggk...............kggggggg", "gdgdgdg.................gdgdgdg", "l.l.l.l.................l.l.l.l"],
-      ["..........kkkk...kkkk..........", ".........klwwwk.kllggk.........", ".........kwwwwkkkkkkkk.........", ".........kwwwpk.kwwwpk.........", "........kkgkkkgkgkkkgkk........", ".......kgggggggggggggggk.......",
-       ".......kglllllllllllllgk.......", ".......kgkkkkkkkkkkkkkgk.......", ".......kggggggggggggkdgk.......", "........kgyyyyyyyyyyygk........", "...kkkkkkkyyyyyyyyyyykgkk......", "kkkgggggggkyyyyyyyyygkkggkkk...",
-       "gggggggggkkgyyyyyyygkkggggggk..", "gdgdgdgkk.kkkyyyyykkkgdgdgdg...", "l.l.l.l.kkgggkgggkgggkkl.l.l...", "......kkgggkkkgggkkkgggkk....m.", ".....kgggkk...kkk...kkgggk.....", ".....kggk.............kggk.....",
-       "..kkkggkk.............kkggkkk..", ".kgggggggk...........kgggggggk.", "..gdgdgdg.............gdgdgdg..", "..l.l.l.l.............l.l.l.l.."],
-      ["..........kkkk...kkkk..........", ".........klwwwk.kllggk.........", ".........kwwwwkkkkkkkk.........", ".........kwwwpk.kwwwpk.........", "........kkgkkkgkgkkkgkk..m.....", ".......kgggggggggggggggk....m..",
-       ".......kglllllllllllllgk.......", ".......kgkkkkkkkkkkkkkgkl.l.l.l", ".......kggggggggggggkdgkgdgdgdg", "........kgyyyyyyyyyyygkkggggggg", "......kkgkyyyyyyyyyyykgkggggggk", "...kkkggkkgyyyyyyyyygkkggggkkk.",
-       "..kggggggkkgyyyyyyygk..kkkk....", "...gdgdgdgkkkyyyyykkkkk........", "...l.l.lkkgggkgggkgggggkkk.....", "......kkgggkkkgggkkkkkggggk....", ".....kgggkk...kkk....kgggk.....", ".m...kggk.......kkkkkggkk......",
-       "..kkkggkk......kgggggggk.......", ".kgggggggk......gdgdgdg........", "..gdgdgdg.......g.g.g.g........", "..l.l.l.l.......l.l.l.l........"]];
-    const FROG_SITS = 11, FROG_FPS = 3.5, FROG_BOB = [0, 1, 0, 1, 0];   // (the surface's row in the sprite; strokes/s; the head's dip each)
-    const FROG_WET = 0.65;             // (how much of it shows under water)
-    const wet = (c) => c.map((v, i) => Math.round(v * 0.7 + SURFACE[i] * 0.3));   // (tinted toward the water's pale surface: seen through it)
+      [".............kkkk...kkkk.............", "............klwwwk.kllggk............", "............kwwwwkkkkkkkk............", "............kwwwpk.kwwwpk............", "...........kkgkkkgkgkkkgkk...........", "..........kgggggggggggggggk..........", "..........kglllllllllllllgk..........", "..........kgkkkkkkkkkkkkkgk..........", "..........kggggggggggggkdgk..........", "................kgggk................", "................kgggk................", "................kyyyk................", "....g...........gyyygg...............", "..ggggg.......ggkyyyk.gg.............", "..g.g.gg....gg.kyyyk....gy...........", "..g.g.g.g.gg...kyyyk......gg.........", "..l.l.l..y.....kyyyk........gg.......", ".........yg....kyyyk..........g......", "..........ggggggyyyk........ggggg....", "..........g.....ggkgggg.....g.g.g....", "...........g...........ggggyg.g.g....", "............g............g..l.l.l....", ".........ggggggg.......gg............", ".........gdgdgdg....ggggggg..........", ".........g.g.g.g....gdgdgdg..........", ".........g.g.g.g....g.g.g.g..........", ".........l.l.l.l....g.g.g.g..........", "....................l.l.l.l.........."],
+      [".............kkkk...kkkk.............", "............klwwwk.kllggk............", "............kwwwwkkkkkkkk............", "............kwwwpk.kwwwpk............", "...........kkgkkkgkgkkkgkk...........", "..........kgggggggggggggggk..........", "..........kglllllllllllllgk..........", "..........kgkkkkkkkkkkkkkgk..........", "..........kggggggggggggkdgk..........", "................kgggk................", "................kgggk................", "................kyyyk................", "................gyyygggg.............", "...............gkyyyk...gggy.........", "..............g.kyyyk......g.........", "..............g.kyyyk.......g........", ".............g...kyyyk......g........", "............y....kyyyk....ggggg......", ".............gg..kyyyk....g.g.g......", "............ggggggkgg.....g.g.g......", "............g.ggg....gygg.l.l.l......", "............ygg.g........ggggg.......", "..........ggl.l.l.............ggg....", ".......ggggggg...............ggggggg.", ".......gdgdgdg...............gdgdgdg.", ".......g.g.g.g...............g.g.g.g.", ".......g.g.g.g...............g.g.g.g.", ".......l.l.l.l...............l.l.l.l."],
+      [".............kkkk...kkkk.............", "............klwwwk.kllggk............", "............kwwwwkkkkkkkk............", "............kwwwpk.kwwwpk............", "...........kkgkkkgkgkkkgkk...........", "..........kgggggggggggggggk..........", "..........kglllllllllllllgk..........", "..........kgkkkkkkkkkkkkkgk..........", "..........kggggggggggggkdgk..........", "................kgggk................", "................kgggk................", "................kyyyk..........g.....", "..............gggyyyg........ggggg...", "...........ygg..kyyykgg......ggg.g...", "...........g....kyyyk..gg....ggg.g...", ".......yg..g....kyyyk....g...l.l.l...", "......g..ggg....kyyyk.....ggg........", "......g....ggg..kyyyk.......y........", "......g....g..ggkyyyk.ggy............", ".....g...ggggg..gggggg.g.............", "....g....g.g.g........g..............", "....g....g.g.g........g..............", ".ggggggg.l.l.l.......g...............", ".gdgdgdg..........ggggggg............", ".g.g.g.g..........gdgdgdg............", ".g.g.g.g..........g.g.g.g............", ".l.l.l.l..........g.g.g.g............", "..................l.l.l.l............"],
+      [".............kkkk...kkkk.............", "............klwwwk.kllggk............", "............kwwwwkkkkkkkk............", "............kwwwpk.kwwwpk............", "...........kkgkkkgkgkkkgkk...........", "..........kgggggggggggggggk..........", "..........kglllllllllllllgk..........", "..........kgkkkkkkkkkkkkkgk..........", "..........kggggggggggggkdgk..........", "................kgggk................", "................kgggk................", "................kyyyk................", "................gyyyg................", "...............gkyggk................", "...............gkgyyk................", "..............gggyyk.................", ".............gykyyyk.................", ".............g.gyyyk.................", "............y..kggyk.................", "............g.ggggggggggggy..........", "........gygggg.....g.......g.........", ".....ggg..g.........g.......g........", "...gg.....g.......ggggg......g.......", "ggggggg.ggggg.....g.g.g...ggggggg....", "gdgdgdg.g.g.g.....g.g.g...gdgdgdg....", "g.g.g.g.g.g.g.....l.l.l...g.g.g.g....", "g.g.g.g.l.l.l.............g.g.g.g....", "l.l.l.l...................l.l.l.l...."],
+      [".............kkkk...kkkk.............", "............klwwwk.kllggk............", "............kwwwwkkkkkkkk............", "............kwwwpk.kwwwpk............", "...........kkgkkkgkgkkkgkk...........", "..........kgggggggggggggggk..........", "..........kglllllllllllllgk..........", "..........kgkkkkkkkkkkkkkgk..........", "..........kggggggggggggkdgk..........", "................kgggk................", "................kgggk................", "................kyyyk................", "..............gggyyygg...........g...", "..........gggg..kyyyk.gg.......ggggg.", ".......ygg......kyyyk...gg.....ggg.g.", "........g.......kyyyk.....gg...ggg.g.", "........ygg.....kyyyk.......gg.l.l.l.", "........g.ggg....kyyyk........gy.....", ".......g....gggg.kyyyk...............", "......g......g..ggkgk................", "......g....ggggg....ggg..............", "......g....g.g.g.......g.............", ".....g.....g.g.g........ggg..........", "..ggggggg..l.l.l.....ggggggg.........", "..gdgdgdg............gdgdgdg.........", "..g.g.g.g............g.g.g.g.........", "..g.g.g.g............g.g.g.g.........", "..l.l.l.l............l.l.l.l........."]];
+    const FROG_SITS = 11, FROG_BEATS = [0.3, 0.2, 0.35, 0.22, 0.3], FROG_BOB = [0, 1, 0, 1, 1];   // (the surface's row in the sprite; how long each stroke lasts, s: hesitant, jerky; the head's dip each)
+    const FROG_LAP = FROG_BEATS.reduce((t, d) => t + d, 0);
+    const strokeAt = (clock) => { let t = clock % FROG_LAP, i = 0; while (t >= FROG_BEATS[i]) t -= FROG_BEATS[i++]; return i; };
+    const FROG_WET = 0.92;             // (how much of it shows under water)
+    const wet = (c) => c.map((v, i) => Math.round(Math.min(255, v * 0.4 + SURFACE[i] * 0.6 + 28)));   // (tinted toward the water's pale surface: seen through it)
     const FROG_UNDER = Object.fromEntries(Object.entries(FROG).map(([c, v]) => [c, wet(v)]));
     // each stroke, eyes open then blinking: its part above the surface, and under it
     const FROGS = FROG_FRAMES.map((rows) => [false, true].map((blink) => {
@@ -2737,7 +2725,7 @@ const Sky = (() => {
         for (const s of splashes) s.age += dt;
         splashes = splashes.filter((s) => s.age < 0.2);
         // the frog: rarely, never at once; drifting across with the wind, bobbing on the waves
-        if (!frog && since >= nextFrog && depth >= 0.6 * full) { frog = {x: W + 10, v: between(...FROG_SPEED), blink: between(2, 5), clock: between(0, FROG_FRAMES.length / FROG_FPS)}; frogs++; }
+        if (!frog && since >= nextFrog && depth >= 0.6 * full) { frog = {x: W + 10, v: between(...FROG_SPEED), blink: between(2, 5), clock: between(0, FROG_LAP)}; frogs++; }
         if (frog) {
           frog.x -= frog.v * (wind.amount > 0 ? 1.4 : 1) * dt;
           frog.clock += dt;
@@ -2788,7 +2776,7 @@ const Sky = (() => {
           g.drawImage(SPLASH[Math.min(3, Math.floor(s.age / 0.05))], s.x - 3, y - 3);
         }
         if (frog) {
-          const x = Math.round(frog.x), stroke = Math.floor(frog.clock * FROG_FPS) % FROG_FRAMES.length;
+          const x = Math.round(frog.x), stroke = strokeAt(frog.clock);
           const pic = FROGS[stroke][frog.blink < 0 ? 1 : 0];
           let y = 0;
           for (let dx = -6; dx <= 6; dx += 3) y += surfaceAt(x + dx);
@@ -2814,7 +2802,7 @@ const Sky = (() => {
                        for (let t = 0; t <= s + 1e-9; t += every) { out.push(Array.from(h)); waves(h, v, a, every); }
                        return out;
                      },
-                     frog: frog && {x: frog.x, y: frog.y || null, stroke: frog.stroke ?? null}, frogRows: FROG_FRAMES, strokes: FROG_FRAMES.length, fps: FROG_FPS, leaves: leafProbe(),
+                     frog: frog && {x: frog.x, y: frog.y || null, stroke: frog.stroke ?? null}, frogRows: FROG_FRAMES, strokes: FROG_FRAMES.length, beats: FROG_BEATS, leaves: leafProbe(),
                      surface: depth > 0 ? Array.from({length: W}, (_, x) => surfaceAt(x)) : []}),
     };
   });

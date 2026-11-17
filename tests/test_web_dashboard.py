@@ -2789,48 +2789,82 @@ async def test_a_bead_that_pooled_and_runs_again_lays_its_trail_at_once_from_its
         assert len(run) >= max(1, math.floor(r["along"]) - 1), r   # (and rows enough for the way it has gone: within 2 px of travel, at once)
 
 
-# The frog's head as it was on its lily pad (rows 0-8, 21 wide), pixel for pixel: the paddling frog keeps it
+# The frog's head as it was on its lily pad (rows 0-8, 21 wide), pixel for pixel: the gangly frog keeps it
 OLD_FROG_HEAD = [".....kkkk...kkkk.....", "....klwwwk.kllggk....", "....kwwwwkkkkkkkk....", "....kwwwpk.kwwwpk....",
                  "...kkgkkkgkgkkkgkk...", "..kgggggggggggggggk..", "..kglllllllllllllgk..", "..kgkkkkkkkkkkkkkgk..",
                  "..kggggggggggggkdgk.."]
+OLD_TORSO_WIDTH = 11   # (the old plump belly's widest row of pale pixels)
+HEAD_AT = 8            # (the head's first column in the 37 x 28 sprite)
 
 
 def frog_frames() -> list[list[str]]:
     html = (Path(__file__).parent.parent / "lib" / "web_dashboard.html").read_text()
     body = html.split("const FROG_FRAMES = [", 1)[1].split("];", 1)[0]
     rows = re.findall(r'"([^"]+)"', body)
-    return [rows[i:i + 22] for i in range(0, len(rows), 22)]
+    return [rows[i:i + 28] for i in range(0, len(rows), 28)]
 
 
 FROG_FRAMES = frog_frames()
 
 
-def test_the_frog_paddles_with_its_head_as_it_was_and_no_lily_pad():
-    assert len(FROG_FRAMES) >= 4 and all(len(f) == 22 and all(len(r) == 31 for r in f) for f in FROG_FRAMES)
+def test_the_frog_flails_with_its_head_as_it_was_and_no_lily_pad():
+    assert len(FROG_FRAMES) >= 4 and all(len(f) == 28 and all(len(r) == 37 for r in f) for f in FROG_FRAMES)
     for rows in FROG_FRAMES:
-        for y, old in enumerate(OLD_FROG_HEAD):   # (the head: every pixel of it, 5 in from the sprite's side; hands may reach beside it)
-            assert rows[y][5:26].replace("m", ".")[:21] == old or all(
-                a == b for a, b in zip(rows[y][5:26], old) if b != "."), (y, rows[y], old)
+        for y, old in enumerate(OLD_FROG_HEAD):   # (the head: every pixel of it; below row 7 limbs may reach beside it)
+            got = rows[y][HEAD_AT:HEAD_AT + 21]
             if y < 7:
-                assert rows[y][5:26].replace("m", ".") == old, (y, rows[y])
+                assert got.replace("m", ".") == old and rows[y][:HEAD_AT].strip(".m") == "", (y, rows[y])
+            else:
+                assert all(a == b for a, b in zip(got, old) if b != "."), (y, rows[y], old)
         assert not set("".join(rows)) & set("QPRS"), "no lily pad colours"
     assert len({tuple(f) for f in FROG_FRAMES}) == len(FROG_FRAMES)   # (every stroke its own)
     joined = "".join(open(Path(__file__).parent.parent / "lib" / "web_dashboard.html").read().split("const FROG = {", 1)[1].split("};", 1)[0])
     assert not re.search(r"\b[QPRS]:", joined)
 
 
-def test_every_limb_of_the_frog_shows_separate_toes_or_fingers():
-    def tips(rows, x0, x1, y0, y1):   # (light tips on a row, apart: the digits of a hand or foot; the tips' x, each 2+ px from the next)
-        best = 0
-        for y in range(y0, y1):
-            xs = [x for x in range(x0, x1) if rows[y][x] == "l"]
-            best = max(best, len([x for a, x in zip([-9] + xs, xs) if x - a >= 2]))
-        return best
+def test_the_frog_is_gangly_a_skinny_trunk_and_one_or_two_pixel_limbs():
+    def widest_belly(rows):   # (the longest run of pale belly pixels on a row below the head)
+        return max((len(m) for r in rows[9:] for m in re.findall(r"y+", r)), default=0)
     for rows in FROG_FRAMES:
-        feet = [tips(rows, 0, 15, 17, 22), tips(rows, 16, 31, 17, 22)]   # (each foot: its toes)
-        assert min(feet) >= 3, feet
-        hands = [tips(rows, 0, 12, 0, 17), tips(rows, 19, 31, 0, 17)]
-        assert min(hands) >= 3, hands
+        assert widest_belly(rows) < 0.6 * OLD_TORSO_WIDTH, widest_belly(rows)
+        # the limbs: away from the trunk and from every hand and foot (any light tip within 5 px), no pixel sits in more than
+        # 2 px of run both across and down
+        tips = [(x, y) for y in range(9, 28) for x in range(37) if rows[y][x] == "l"]
+        limb = thick = 0
+        for y in range(9, 28):
+            for x in range(37):
+                if rows[y][x] in ".mk" or abs(x - 18) <= 3 or any(abs(x - tx) <= 4 and -5 <= y - ty <= 1 for tx, ty in tips):
+                    continue
+                across = len(re.search(r"[^.m]*$", rows[y][:x + 1]).group()) + len(re.match(r"[^.m]*", rows[y][x + 1:]).group())
+                col = "".join(r[x] for r in rows)
+                top = y
+                while top > 9 and col[top - 1] not in ".m": top -= 1
+                bot = y
+                while bot < 27 and col[bot + 1] not in ".m": bot += 1
+                limb += 1
+                thick += min(across, bot - top + 1) > 2   # (only where limbs cross or meet)
+        assert limb > 5 and thick <= 0.25 * limb, (limb, thick)
+
+
+def test_the_frog_flails_out_of_step_each_stroke_held_for_a_different_time():
+    html = (Path(__file__).parent.parent / "lib" / "web_dashboard.html").read_text()
+    beats = [float(v) for v in re.search(r"FROG_BEATS = \[([\d., ]+)\]", html).group(1).split(",")]
+    assert len(beats) == len(FROG_FRAMES) and len(set(beats)) > 1 and all(0.2 <= b <= 0.35 for b in beats), beats
+
+
+def test_every_limb_of_the_frog_shows_separate_toes_or_fingers():
+    for rows in FROG_FRAMES:
+        groups = 0   # (a hand or foot: a row of 3+ light tips, each 2+ px from the next)
+        for y in range(9, 28):
+            xs = [x for x in range(37) if rows[y][x] == "l"]
+            run = []
+            for x in xs:
+                if run and x - run[-1] != 2:
+                    groups += len(run) >= 3
+                    run = []
+                run.append(x)
+            groups += len(run) >= 3
+        assert groups >= 4, (groups, rows)   # (two hands, two feet)
 
 
 def test_the_frog_blinks_over_the_same_head():
