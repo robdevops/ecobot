@@ -1960,6 +1960,20 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert snapped["snap"] == 1, snapped   # (a pixel's gap between their edges or less: the pair 1.6 across snapped, the two 2.5 across not)
     assert pair[1]["y"] >= snapped["at"][1]["y"] and len(snapped["near"]) == 1, snapped
     assert [(b["x"], b["y"], b["tiny"]) for b in apart] == [(b["x"], b["y"], True) for b in snapped["at"][2:]], snapped
+    # ... one of the largest (r 4.2) taking in a tiny one, beside it (its water added exactly): swelling a size (a px or two wider and taller than
+    # its own, its lower edge where it was) for a few tenths of a second at most, then round again; a smaller one (r 3.4) taking in the same: no swell
+    gulped = got["humidity"]["alone"]["gulped"]
+    assert gulped["spot"], gulped
+    big, smaller = gulped["pairs"]
+    first = big["frames"][0]
+    assert first["vol"] == pytest.approx(sum(big["before"]), rel=0.01) and first["r"] ** 3 == pytest.approx(first["vol"]), big
+    swollen = [f for f in big["frames"] if f["w"] > f["rw"] and f["h"] > f["rh"]]
+    assert swollen and all(f["w"] - f["rw"] <= 2 and f["h"] - f["rh"] <= 2 and f["low"] == f["bottom"] for f in swollen), big
+    lasted = [f["t"] for f in big["frames"] if f["gulp"] > 0]
+    assert 1 <= len(lasted) <= 6 and lasted == list(range(lasted[0], lasted[-1] + 1)) and max(f["gulp"] for f in big["frames"]) == 1, big   # (up, then back down, eased)
+    after = [f for f in big["frames"] if f["t"] > lasted[-1] + 1]
+    assert after and all((f["w"], f["h"]) == (f["rw"], f["rh"]) and f["gulp"] == 0 for f in after), big   # (settled: round again)
+    assert smaller["frames"] and all(f["gulp"] == 0 for f in smaller["frames"]), smaller
     # ... the fog: forming first (the first bead only once it has, there and on the glass at large), its trails wiped clear through it
     # about as wide as the bead was there (its edges soft: a px or so either way; a px more where another's beside it), clearer than the
     # fog beside them (where there is fog); the beads' colours as ever (the glass: the deep blue rim, a faint pale body, a crescent, a

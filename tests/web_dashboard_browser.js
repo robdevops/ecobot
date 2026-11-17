@@ -1926,6 +1926,33 @@ const snapped = (page) => page.evaluate(() => {
            near: h.beads.filter((b) => Math.hypot(b.x - x - 1, b.cy - y - 0.5) <= 3).map((b) => ({ id: b.id, r: b.r, vol: b.vol, tiny: b.tiny })),
            snap: h.snap, tinyR: h.tiny };
 });
+// A big bead (r 4.2) and a smaller one (r 3.4), each with a tiny one a px off its edge (placed on fog, 30 px apart), then 40 frames one
+// by one: for each pair, the big one's (the one left, the water of both) frames {gulp (0-1 swell), w, h (as drawn), rw, rh (its own
+// sprite's), bottom (its own lower edge), low (the drawn lower edge), vol, stretch}, and the two's water before
+const gulped = (page) => page.evaluate(() => {
+  const h0 = Sky.state().humidity, [W, H] = [h0.width, h0.height];
+  let spot = null;
+  for (let y = 12; y < H - 30 && !spot; y += 2) for (let x = 12; x < W - 50 && !spot; x += 2) {
+    if (h0.beads.every((b) => Math.hypot(b.x - x - 3, b.cy - y) > 11 && Math.hypot(b.x - x - 33, b.cy - y) > 11)) spot = [x, y];
+  }
+  if (!spot) return { spot, W, H, n: h0.beads.length };
+  const [x, y] = spot, out = { spot, pairs: [] };
+  for (const [i, r] of [4.2, 3.4].entries()) {
+    const ids = h0.place([{ x: x + 30 * i, y, r }, { x: x + 30 * i + r + 1.2, y, r: 0.55 }]);
+    out.pairs.push({ r, ids, before: Sky.state().humidity.beads.filter((b) => ids.includes(b.id)).map((b) => b.vol), frames: [] });
+  }
+  for (let n = 0; n < 40; n++) {
+    Sky.advance(1);
+    const h = Sky.state().humidity, byId = new Map(h.beads.map((b) => [b.id, b]));
+    for (const p of out.pairs) {
+      const b = byId.get(p.ids[0]);
+      if (!b || !b.drawn) continue;
+      p.frames.push({ gulp: b.gulp, w: b.drawn[2], h: b.drawn[3], rw: b.w, rh: b.bottom - Math.floor(b.y), bottom: b.bottom,
+                      low: b.drawn[1] + b.drawn[3], vol: b.vol, r: b.r, stretch: b.stretch, t: n });
+    }
+  }
+  return out;
+});
 // humidity off (the humidity below 90 %), every frame after till the fog has cleared and no bead is left (at most `frames`):
 // the fog's mean thickness in the window's middle and at its edges as it clears (the first frame each is gone, and the edges' then);
 // the slow beads (under 1 px/s) showing at the start; each slow one as it went (gone at a radius of 1 or more, not faded: popped;
@@ -2823,6 +2850,11 @@ const WEATHER = {
       }
       await p.page.evaluate((k) => Sky.timeScale(k), name === "humidity2,wind" ? 1 : 2);
       if (name === "humidity2") seen.snapped = await snapped(p.page);
+      if (name === "humidity2") {   // (a big bead swallowing a tiny one: its time as it is, a frame a 30th of a second)
+        await p.page.evaluate(() => Sky.timeScale(1));
+        seen.gulped = await gulped(p.page);
+        await p.page.evaluate(() => Sky.timeScale(2));
+      }
       if (name === "humidity2,wind") {   // (then its trails' time 60 times as fast, through the fog; then humidity off: the fog clearing)
         // (beads running only from about large, a few at a time: the fresh trails then, a few, and again after the beads have run on
         // a while (their weather's time 6 times as fast), till a dozen or so)

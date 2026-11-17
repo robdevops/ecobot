@@ -1196,7 +1196,7 @@ const Sky = (() => {
   // small ones are, below), or before that snaps together with
   // another close by (SNAP px between their edges or less, a pixel's gap, not only touching): the higher one pulled into the
   // lower quickly, quicker and quicker, merged there (their water adding up: two tiny, a small one) with a tiny jump (a size bigger
-  // for POP s). A bead not running (under 1 px/s) and a tiny one close below it the same; a running one takes in any tiny one
+  // for POP s; one of the largest (GULP_R up, the sprite sizes) taking in a tiny one swells a moment, GULP bigger, its own clock). A bead not running (under 1 px/s) and a tiny one close below it the same; a running one takes in any tiny one
   // beside or above it as it passes. Only large ones (RUN_R and up: about sixteen tiny ones' water) run (as below); smaller ones stay
   // put (snapping as tiny ones do), a small one growing on the fog till it's large enough. Heavy rain (HEAVY_RAIN or more, the humidity high or not): now and
   // then (LANDING a second, RAIN_MOST on the glass at most) a drop sticks, landing at once as a large bead (RAIN_R), hard: squashed
@@ -1266,6 +1266,9 @@ const Sky = (() => {
     const SNAP_V = [6, 30, 120];       // the one pulled in: px/s to start, at most, and how fast it gets quicker (px/s²): a px or two
                                        // ... in a few frames
     const POP = 0.12;                  // s a bead just snapped together bulges a size for (a tiny jump as they coalesce)
+    const GULP_R = 3.9;                // one of the largest beads (this radius up to the largest size) taking in a tiny one (water added exactly) ...
+    const GULP = 0.1;                  // ... swells this much bigger at most (a size, whole px) ...
+    const GULP_S = [0.1, 0.3];         // ... in this long, easing back to round over this long (its own clock: no draws, no random)
     const MISTING = 0.02;              // tiny beads condensing a s, for each px of the window's width (light 0.95 times this; heavy 1.35)
     const TINY_COST = 0.25;            // a tiny bead, a quarter of a particle of the budget (a px, still: cheap)
     const GRID = 4;                    // px: the cells the tiny beads are looked up in (the snaps' checks)
@@ -1736,6 +1739,21 @@ const Sky = (() => {
       if (!flattened.has(key)) flattened.set(key, mapped(rowsFor(w, h), GLASS));
       return flattened.get(key);
     }
+    // A big bead swallowing a tiny one: swollen g (0-1) of the most (GULP), both ways (as squashed() but the whole bead bigger, whole px)
+    const swollen = new Map();
+    function swelled(r, g) {
+      const base = sprite(r), w0 = base.width, h0 = base.height, f = 1 + GULP * g;
+      const w = Math.round(w0 * f), h = Math.round(h0 * f);
+      if (w === w0 && h === h0) return base;
+      const key = `${w}x${h}`;
+      if (!swollen.has(key)) swollen.set(key, mapped(rowsFor(w, h), GLASS));
+      return swollen.get(key);
+    }
+    const gulpOf = (b) => {   // how far swollen now (0-1): up fast, back slowly (eased)
+      if (!(b.gulp >= 0) || b.gulp >= GULP_S[0] + GULP_S[1]) return 0;
+      const u = b.gulp < GULP_S[0] ? b.gulp / GULP_S[0] : 1 - (b.gulp - GULP_S[0]) / GULP_S[1];
+      return u * u * (3 - 2 * u);
+    };
     const centre = (b) => b.y + heightOf(b.r) / 2;
     // Downhill (grav): where a bead is along it and across it (its middle), and the glass just past its leading edge as it runs
     const alongB = (b) => b.x * grav.x + centre(b) * grav.y;
@@ -1753,6 +1771,7 @@ const Sky = (() => {
     const touching = (a, b) => Math.abs(a.x - b.x) <= a.r + b.r + 0.5 && Math.abs(a.y - b.y) <= 2 * (a.r + b.r) + 2 && Math.hypot(a.x - b.x, centre(a) - centre(b)) <= a.r + b.r + 0.5;
     function merge(into, from) {   // `from`'s water into `into` (never higher on the glass than it was)
       const was = [into.vol, from.vol], radii = [into.r, from.r], k = from.vol / (into.vol + from.vol);
+      if (into.r >= GULP_R && into.r <= LARGEST && from.r <= TINY) into.gulp = 0;   // (a big one swallowing a tiny one: it swells a moment)
       into.vol += from.vol;
       into.r = Math.cbrt(into.vol);
       if (!grav.tilted) {
@@ -2145,6 +2164,7 @@ const Sky = (() => {
           if (b.impact !== undefined) { if (b.fresh) b.fresh = false; else b.impact = Math.min(9, b.impact + dt); }   // (its landing's
                                                                                                                      // first frame drawn as it struck)
           if (b.pop > 0) b.pop -= dt;
+          if (b.gulp !== undefined) { b.gulp += dt; if (b.gulp >= GULP_S[0] + GULP_S[1]) b.gulp = undefined; }
           if (b.state === "rest") {   // (showing once the fog has formed there, and shows: else not at all)
             const i = at(b.x, b.y + heightOf(b.r) / 2);
             if (front(i, cover) >= 1 && (b.wait -= dt) <= 0) {
@@ -2269,8 +2289,8 @@ const Sky = (() => {
                                laidW: b.laidW || null, bottom: top + h, glass: GLASSES[b.g], v: b.state === "on" ? b.v : 0, fading: b.state === "fade",
                                alpha: (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR), drawn: b.drawn || null,
                                age: b.shown, behind: top < b.y0 + 4 || !!trail, trail: trail || null, tiny: !!b.still, snapping: b.state === "snap",
-                               stretch: b.state === "on" && !squashOf(b) ? stretchOf(b) : 0, impact: b.impact === undefined ? null : b.impact,
-                               squash: b.state === "on" ? squashOf(b) : 0, thrown: b.thrown || null};
+                               stretch: b.state === "on" && !squashOf(b) && !gulpOf(b) ? stretchOf(b) : 0, impact: b.impact === undefined ? null : b.impact,
+                               squash: b.state === "on" ? squashOf(b) : 0, gulp: b.state === "on" ? gulpOf(b) : 0, thrown: b.thrown || null};
                      })}),
       draw(g, alpha) {
         const a0 = Math.min(1, alpha * 0.85 / strength());   // (heavy rain's beads alone: as bright as with the fog)
@@ -2296,7 +2316,8 @@ const Sky = (() => {
           if (b.state === "rest" || dotted.has(b)) continue;
           const q = b.state !== "on" ? 0 : squashOf(b), st = b.pop > 0 || b.state !== "on" || q ? 0 : stretchOf(b);   // (squashed: not
                                                                                                                       // its pop as well)
-          const round = sprite(b.r), pic = q ? squashed(b.r, q) : b.pop > 0 ? popped(b.r) : st > 0 ? elongated(b.r, st) : round;
+          const round = sprite(b.r), sw = b.state === "on" && !q && !(b.pop > 0) ? gulpOf(b) : 0;
+          const pic = q ? squashed(b.r, q) : b.pop > 0 ? popped(b.r) : sw > 0 ? swelled(b.r, sw) : st > 0 ? elongated(b.r, st) : round;
           const a = (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR);
           const left = Math.round(b.x) - (pic.width >> 1), top = (b.state === "fade" ? Math.round(b.y) : Math.floor(b.y)) - (q ? Math.round((pic.height - round.height) / 2) : pic.height - round.height);   // (elongated: its lower
                                                                                                     // edge where it is; squashed: its middle)
