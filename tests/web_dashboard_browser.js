@@ -3146,33 +3146,42 @@ const WEATHER = {
       return got;
     });
     out.pure = pure;
-    // end to end on an iPad (its user agent: the sign turned), the window shaped as the screen is, the user's cases in landscape: tilted left
-    // (the screen's left edge down), its top edge raised, its top edge lowered. NOTE: these encode the assumed iOS convention (the pull's own
-    // sign, device frame x right / y up, angle 90 = turned counter-clockwise); a real iPad is not verified to follow it (see ?tiltdebug=1)
+    // end to end on an iPad (its user agent: the sign turned), the window shaped as the screen is. iPadOS Safari's screen.orientation.angle
+    // is relative to the iPad's natural LANDSCAPE (0 for landscape-primary, as a real iPad's ?tiltdebug=1 showed), so the page must use
+    // window.orientation (0, 90, -90, 180: 90 is the device turned counter-clockwise) and ignore that angle; the readings are the pull itself
+    // in the PORTRAIT device frame (x to its right edge, y to its top, z out of the screen).
     const ipad = (w, h) => ({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true,
                               userAgent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" });
     const reported = (angle, extra) => ({ fn: ([angle, extra]) => {
       Object.defineProperty(window.screen.orientation, "angle", { configurable: true, get: () => angle });
-      if (extra.windowOrientation !== undefined) Object.defineProperty(window, "orientation", { configurable: true, value: extra.windowOrientation });
+      if ("windowOrientation" in extra) Object.defineProperty(window, "orientation", { configurable: true, value: extra.windowOrientation });
       if (extra.type) Object.defineProperty(window.screen.orientation, "type", { configurable: true, get: () => extra.type });
     }, arg: [angle, extra] });
-    // (iOS's readings: the pull itself, in the device's axes: x right, y up; angle 90 CCW: screen left = device top, screen top = device right edge)
-    const ipads = {
-      landscapeLeftDown:   { angle: 90,  w: 400, h: 300, reading: [0, 9.8, 0], edge: "left" },
-      landscapeTopRaised:  { angle: 90,  w: 400, h: 300, reading: [-9.8, 0, 0], edge: "bottom" },
-      landscapeTopLowered: { angle: 90,  w: 400, h: 300, reading: [9.8, 0, 0], edge: "top" },
-      landscapeRightDown:  { angle: 90,  w: 400, h: 300, reading: [0, -9.8, 0], edge: "right" },
-      flippedLeftDown:     { angle: 270, w: 400, h: 300, reading: [0, -9.8, 0], edge: "left" },
-      flippedTopRaised:    { angle: 270, w: 400, h: 300, reading: [9.8, 0, 0], edge: "bottom" },
-      flippedTopLowered:   { angle: 270, w: 400, h: 300, reading: [-9.8, 0, 0], edge: "top" },
-      portraitLeftDown:    { angle: 0,   w: 300, h: 400, reading: [-9.8, 0, 0], edge: "left" },
-      portraitTopRaised:   { angle: 0,   w: 300, h: 400, reading: [0, -9.8, 0], edge: "bottom" },
-      portraitTopLowered:  { angle: 0,   w: 300, h: 400, reading: [0, 9.8, 0], edge: "top" },
-      upsideDownLeftDown:  { angle: 180, w: 300, h: 400, reading: [9.8, 0, 0], edge: "left" },
+    // the iOS reading worked out from the physics: the iPad turned `wo` degrees counter-clockwise from upright (the device's x and y axes in
+    // the viewer's world (x right, y up): x = (cos, sin), y = (-sin, cos)); the screen's `edge` down, the pull that way; the reading is the
+    // pull's share along each device axis
+    const world = { left: [-1, 0], right: [1, 0], top: [0, 1], bottom: [0, -1] };
+    const iosReading = (wo, edge) => {
+      const t = wo * Math.PI / 180, [wx, wy] = world[edge], r = (v) => Math.round(v * 98) / 10 + 0;
+      return [r(Math.cos(t) * wx + Math.sin(t) * wy), r(-Math.sin(t) * wx + Math.cos(t) * wy), 0];
     };
+    const ipads = {};
+    for (const wo of [0, 90, -90, 180]) for (const edge of Object.keys(world)) {
+      // (what iPadOS likely reports: its angle 0 in landscape, 90 in portrait; the type from the way up)
+      ipads[`wo${wo}/${edge}`] = { sa: wo === 0 || wo === 180 ? 90 : 0, wo, type: { 0: "portrait-primary", 90: "landscape-primary", "-90": "landscape-secondary", 180: "portrait-secondary" }[wo],
+                                   w: wo === 0 || wo === 180 ? 300 : 400, h: wo === 0 || wo === 180 ? 400 : 300, reading: iosReading(wo, edge), edge };
+    }
+    // the user's three real readings (iPad, iPadOS 18.7, landscape: angle 0, landscape-primary, window.orientation 90)
+    const real = { flat: [-0.47, 0.44, -9.56], leftDown: [-0.18, 1.81, -9.48], topRaised: [-6.56, 0.06, -6.64] };
+    for (const [name, reading] of Object.entries(real)) ipads[`real/${name}`] = { sa: 0, wo: 90, type: "landscape-primary", w: 400, h: 300, reading, edge: { flat: "flat", leftDown: "left", topRaised: "bottom" }[name] };
+    // portrait with the angle iPadOS likely reports (90), window.orientation 0: the top raised must give down
+    ipads["portrait/topRaised"] = { sa: 90, wo: 0, type: "portrait-primary", w: 300, h: 400, reading: [0, -9.8, 0], edge: "bottom" };
+    // no window.orientation: the orientation type (landscape-primary is 90 here, whatever the angle says)
+    ipads["type/leftDown"] = { sa: 0, wo: null, type: "landscape-primary", w: 400, h: 300, reading: iosReading(90, "left"), edge: "left" };
+    ipads["type/secondaryLeftDown"] = { sa: 0, wo: null, type: "landscape-secondary", w: 400, h: 300, reading: iosReading(-90, "left"), edge: "left" };
     out.ipads = {};
     await Promise.all(Object.entries(ipads).map(async ([name, c]) => {
-      const p = await weatherPage(browser, url, { ...opts(c.angle), context: ipad(c.w, c.h), init: reported(c.angle, c.extra || {}) });
+      const p = await weatherPage(browser, url, { ...opts(c.sa), context: ipad(c.w, c.h), init: reported(c.sa, { windowOrientation: c.wo, type: c.type }) });
       await shake(p.page, ...c.reading);
       out.ipads[name] = { edge: c.edge, tilt: await p.page.evaluate(() => Sky.state().tilt) };
       out.errors.push(...p.errors);
@@ -3184,6 +3193,10 @@ const WEATHER = {
       const off = await weatherPage(browser, url, opts(90));
       await shake(dbg.page, 1.5, 9.5, 0.5); await shake(off.page, 1.5, 9.5, 0.5);
       out.debugText = await dbg.page.evaluate(() => (document.getElementById("tiltdebug") || {}).textContent || null);
+      const dbgIos = await weatherPage(browser, url, { ...opts(0), query: "?fx=humidity2&tiltdebug=1", context: ipad(400, 300), init: reported(0, { windowOrientation: 90, type: "landscape-primary" }) });
+      await shake(dbgIos.page, -0.18, 1.81, -9.48);
+      out.debugIos = await dbgIos.page.evaluate(() => (document.getElementById("tiltdebug") || {}).textContent || null);
+      await dbgIos.context.close();
       out.debugOff = await off.page.evaluate(() => !document.getElementById("tiltdebug"));
       await dbg.context.close(); await off.context.close();
     }
@@ -3227,6 +3240,7 @@ const WEATHER = {
     // asked from the tap, gone at once; granted, denied, an error; its sign the other way about (upright: y -9.8)
     const ios = (answer) => ({ fn: ([answer]) => {
       Object.defineProperty(window.screen.orientation, "angle", { configurable: true, get: () => 0 });
+      Object.defineProperty(window, "orientation", { configurable: true, value: 0 });   // (iOS's rotation is window.orientation: upright)
       const asked = window.__asked = [];
       DeviceMotionEvent.requestPermission = () => { asked.push(1); return answer === "error" ? Promise.reject(new Error("no")) : Promise.resolve(answer); };
     }, arg: [answer] });

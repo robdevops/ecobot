@@ -2631,11 +2631,18 @@ async def test_a_phones_gravity_turns_the_humidity_beads_downhill_by_the_screens
     for key, (x, y) in got["pure"].items():
         angle, sign, edge = key.split("/")
         assert (x, y) == pytest.approx(want[edge], abs=0.02), (key, x, y)
+    assert len(got["ipads"]) == 16 + 3 + 1 + 2
     for name, c in got["ipads"].items():
         t, edge = c["tilt"], c["edge"]
+        if edge == "flat":   # (flat on a table, screen up: pooling, no direction to run)
+            assert t["flat"] and t["pool"] and not t["tilted"] and t["steep"] == 0, (name, c)
+            continue
         ux, uy = {"left": (-1, 0), "right": (1, 0), "top": (0, -1), "bottom": (0, 1)}[edge]
-        assert t["tilted"] == (edge != "bottom") and t["x"] == pytest.approx(ux, abs=0.05)   # (the bottom: straight down, as ever)
-        assert t["y"] == pytest.approx(uy, abs=0.05), (name, c)
+        tol = 0.15 if name.startswith("real/") else 0.05   # (the real readings are a little off the axis: left-edge-down is (-1.81, 0.18))
+        assert t["tilted"] == (edge != "bottom") and t["x"] == pytest.approx(ux, abs=tol), (name, c)   # (the bottom: straight down, as ever)
+        assert t["y"] == pytest.approx(uy, abs=tol), (name, c)
+    assert "window.orientation 90" in got["debugIos"] and "used angle 90 (from window.orientation)" in got["debugIos"], got["debugIos"]
+    assert "screen.orientation.angle 0 type landscape-primary" in got["debugIos"] and "ios true" in got["debugIos"], got["debugIos"]
     assert got["debugOff"] and "raw x 1.50 y 9.50 z 0.50" in got["debugText"] and "window.orientation" in got["debugText"], got["debugText"]
     # (no sensor: straight down, no reading taken; an empty event (a desktop's) ignored)
     none = got["none"]

@@ -4839,7 +4839,7 @@ const Sky = (() => {
   // small "tilt" link in the corner asks, and goes once tapped. Nothing is listened to, and no link shown, with the animations off or
   // low or reduced motion, or where there's no sensor (a desktop browser sends no usable reading and has no touch screen). The reading (accelerationIncludingGravity, m/s²: the spec's, the force holding the phone up, x to the
   // device's right, y up its top; iOS's the other way about) is turned into the screen's own terms (x right, y down, z out of it) for the
-  // screen's rotation (screen.orientation.angle, else window.orientation), so downhill is the real one however the phone is held
+  // screen's rotation (screen.orientation.angle, else window.orientation; on iOS window.orientation, see screenAngle), so downhill is the real one however the phone is held
   const tiltLink = document.getElementById("tilt");
   // (iOS's readings the other way about: the sign of accelerationIncludingGravity there is gravity's own pull, where the spec's (and
   // Android's) is the force holding the phone up, its opposite: flat on a table, screen up, z is -9.8 on iOS, +9.8 by the spec.
@@ -4868,11 +4868,30 @@ const Sky = (() => {
       : [u * Math.cos(rad(angle)) + v * Math.sin(rad(angle)), -u * Math.sin(rad(angle)) + v * Math.cos(rad(angle))];
   }
   window.__screenGravity = screenGravity;   // (test-only: the pure turn, driven directly)
-  // The screen's rotation: screen.orientation.angle, else window.orientation (-90 is 270, as the table above has it)
-  const screenAngle = () => {
-    const a = window.screen && window.screen.orientation && typeof window.screen.orientation.angle === "number" ? window.screen.orientation.angle : window.orientation;
-    return typeof a === "number" && Number.isFinite(a) ? a : 0;
-  };
+  // The screen's rotation, and where it came from. Not iOS: screen.orientation.angle, else window.orientation (-90 is 270, as the table
+  // above has it). On iOS: window.orientation ONLY (0, 90, -90, 180: 90 is the device turned counter-clockwise, home button on the
+  // right), never screen.orientation.angle: iPadOS Safari's angle is relative to the iPad's natural LANDSCAPE orientation, so it says 0
+  // for landscape-primary (real iPad, iPadOS 18.7, landscape, ?tiltdebug=1: screen.orientation.angle 0, type landscape-primary,
+  // window.orientation 90). Where window.orientation is no number, the orientation type (portrait-primary 0, landscape-primary 90,
+  // landscape-secondary -90, portrait-secondary 180). The iOS device frame is always the portrait one (x to the right edge of the
+  // device held upright, y to its top, z out of the screen) and the reading is the pull itself, so with window.orientation w
+  // (screenGravity's table above with ios, checked against the user's real readings, raw x, y, z -> screen gravity x right, y down):
+  //   w 0:   (gx, gy) = ( rx, -ry)   w 90: (-ry, -rx)   w -90: ( ry,  rx)   w 180: (-rx,  ry)
+  //   flat, screen up  (-0.47,  0.44, -9.56): w 90 -> (-0.44, 0.47): near nothing; pools (z is all of it)
+  //   left edge down   (-0.18,  1.81, -9.48): w 90 -> (-1.81, 0.18): the beads go left
+  //   top edge raised  (-6.56,  0.06, -6.64): w 90 -> (-0.06, 6.56): the beads go down
+  const TYPE_ANGLE = { "portrait-primary": 0, "landscape-primary": 90, "landscape-secondary": -90, "portrait-secondary": 180 };
+  const finite = (a) => typeof a === "number" && Number.isFinite(a);
+  function screenAngle() {
+    const so = window.screen && window.screen.orientation;
+    if (IOS) {
+      if (finite(window.orientation)) return [window.orientation, "window.orientation"];
+      if (so && TYPE_ANGLE[so.type] !== undefined) return [TYPE_ANGLE[so.type], "orientation.type"];
+      return [0, "none"];
+    }
+    if (so && finite(so.angle)) return [so.angle, "screen angle"];
+    return finite(window.orientation) ? [window.orientation, "window.orientation"] : [0, "none"];
+  }
   let motionAt = null, heard = false;
   function moved(e) {
     const g = e && e.accelerationIncludingGravity;
@@ -4881,14 +4900,14 @@ const Sky = (() => {
     if (!animated()) return;
     const now = performance.now(), dt = motionAt === null ? Infinity : Math.min((now - motionAt) / 1000, 0.5);
     motionAt = now;
-    const angle = screenAngle(), [x, y] = screenGravity(g.x, g.y, angle, IOS);
-    if (TILT_DEBUG) tiltReadout(g, angle, x, y);
+    const [angle, source] = screenAngle(), [x, y] = screenGravity(g.x, g.y, angle, IOS);
+    if (TILT_DEBUG) tiltReadout(g, angle, source, x, y);
     Sky.tilt(x, y, g.z, dt);   // (z only for how level the phone lies: its magnitude)
   }
   // ?tiltdebug=1: a temporary readout of the raw numbers (to report from a real device: the iOS mapping has not been verified on one)
   const TILT_DEBUG = /[?&]tiltdebug=1(&|$)/.test(location.search);
   let tiltBox = null;
-  function tiltReadout(g, angle, x, y) {
+  function tiltReadout(g, angle, source, x, y) {
     if (!tiltBox) {
       tiltBox = document.createElement("pre");
       tiltBox.id = "tiltdebug";
@@ -4898,7 +4917,7 @@ const Sky = (() => {
     const f = (v) => typeof v === "number" ? v.toFixed(2) : String(v), so = window.screen && window.screen.orientation;
     tiltBox.textContent = [`raw x ${f(g.x)} y ${f(g.y)} z ${f(g.z)}`,
       `screen.orientation.angle ${so ? so.angle : "-"} type ${so ? so.type : "-"}`, `window.orientation ${window.orientation}`,
-      `window ${window.innerWidth}x${window.innerHeight}  used angle ${angle}  ios ${IOS}`,
+      `window ${window.innerWidth}x${window.innerHeight}  used angle ${angle} (from ${source})  ios ${IOS}`,
       `platform ${navigator.platform} touch ${navigator.maxTouchPoints}`, `ua ${navigator.userAgent}`,
       `screen gravity x ${f(x)} y ${f(y)} (x right, y down)`].join("\n");
   }
