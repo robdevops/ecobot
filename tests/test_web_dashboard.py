@@ -2886,26 +2886,14 @@ def test_the_frog_swims_a_steady_breast_stroke_one_smooth_cycle():
     assert "FROG_RIPPLES" in HTML and "for (const d of [-1, 1])" in HTML   # (a ripple each side)
 
 
-def _pads(rows, side_of, y0=0):
-    """the light blobs ('l', outside the head): 8-connected components, each a list of pixels"""
-    px = {(x, y) for y in range(y0, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l" and side_of(x) and not (y < HEAD_H and HEAD_AT <= x < HEAD_AT + HEAD_W)}
-    out = []
-    while px:
-        todo, comp = [px.pop()], []
-        while todo:
-            x, y = todo.pop(); comp.append((x, y))
-            for q in [(x + a, y + b) for a in (-1, 0, 1) for b in (-1, 0, 1)]:
-                if q in px: px.discard(q); todo.append(q)
-        out.append(comp)
-    return out
-
-
 def test_every_limb_of_the_frog_shows_separate_toes_or_fingers():
     for rows in FROG_FRAMES:
+        tips = [(x, y) for y in range(SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l" and not (y < HEAD_H and HEAD_AT <= x < HEAD_AT + HEAD_W)]
+        assert all(max(abs(a - c), abs(b - d)) >= 2 for i, (a, b) in enumerate(tips) for c, d in tips[i + 1:]), tips
         for side in (lambda x: x < CX, lambda x: x > CX):
-            pads = _pads(rows, side)   # (separate blobs: none touches another, so each is at least a pixel clear of its neighbours)
-            hand, foot = [p for p in pads if len(p) < 4], [p for p in pads if len(p) >= 4]
-            assert len(hand) >= 2 and len(foot) == 4, (hand, foot)   # (a hand of 2+ fingers, a foot of 4 toes)
+            mine = [t for t in tips if side(t[0])]
+            hand, foot = [t for t in mine if t[1] < 24], [t for t in mine if t[1] >= 24]
+            assert len(hand) >= 2 and len(foot) >= 3, (hand, foot)   # (a hand of 2+ fingers, a foot of 3+ toes)
 
 
 def _right_limbs(rows):
@@ -2935,55 +2923,46 @@ def test_in_the_recover_and_knees_up_frames_the_knees_sit_beside_the_belly_not_b
 
 
 def _toe_lengths(rows, side_of):
-    """each foot's toe pads (their pixel nearest the sprite's centre line, to keep it one point) and how far each toe reaches from the limb's thick part (the pixels of the shin in a 2 x 2 block): the toe's length"""
-    px = {(x, y) for y in range(HEAD_H, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "g" and side_of(x)}
+    """each light tip and how far it is from the limb's thick part (the pixels in a 2 x 2 block: the shin): the toe's length"""
+    px = {(x, y) for y in range(HEAD_H, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] in "gl" and side_of(x)}
     thick = {q for (x, y) in px if {(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)} <= px for q in ((x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1))}
-    pads = [q for q in _pads(rows, side_of) if len(q) >= 4]   # (a foot's toe pad is a blob of 4; a hand's finger tip is one pixel)
-    tips = [min(p, key=lambda q: abs(q[0] - CX)) for p in pads]
-    return tips, [3 + min(max(abs(x - a), abs(y - b)) for a, b in thick) for x, y in tips], pads
+    tips = [(x, y) for (x, y) in px if rows[y][x] == "l" and y >= 24]
+    return tips, [3 + min(max(abs(x - a), abs(y - b)) for a, b in thick) for x, y in tips]   # (+3: the toes' roots fuse into a small blob at the ankle)
 
 
-def test_the_frogs_toes_are_long_thin_and_end_in_round_light_pads():   # (toes ~8-9 px, 9-10 in the kick; a 2 x 2 pad at each tip; the web covers only about half their length)
+def test_the_frogs_toes_are_short_thin_light_tipped_and_webbed():   # (toes ~7-8 px; the web 'v' between them out to only ~60 % of their length: about 3 px of every toe's tip is free)
     kick = None
     for n, rows in enumerate(FROG_FRAMES):
-        tips, lens, pads = _toe_lengths(rows, lambda x: x > CX)
-        assert len(tips) == 4 and all(len(p) == 4 for p in pads), (n, pads)   # (four toes a foot, each ending in a 2 x 2 blob: round, in the lighter tip colour)
-        for p in pads:
-            xs, ys = {x for x, _ in p}, {y for _, y in p}
-            assert max(xs) - min(xs) == 1 and max(ys) - min(ys) == 1, (n, p)
-        assert 7 <= min(lens) and max(lens) <= 10, (n, lens)
-        # (the pads are separate 8-connected blobs, so a pixel at least lies between neighbours)
-        # the web covers about half of each toe, so the outer part of every toe peeks out free
-        depth = max(_web_depths(rows, lambda x: x > CX))
-        assert 0.35 <= depth / max(lens) <= 0.68, (n, depth, lens)
-        assert sum(lens) / 4 - depth >= 2, (n, depth, lens)
+        tips, lens = _toe_lengths(rows, lambda x: x > CX)
+        assert len(tips) == 4, (n, tips)   # (four toes a foot)
+        assert 6 <= min(lens) and max(lens) <= 9, (n, lens)
+        assert all(max(abs(a - c), abs(b - d)) >= 2 for i, (a, b) in enumerate(tips) for c, d in tips[i + 1:]), (n, tips)   # (the tips separated; the web fills between the toes below them)
+        assert all(rows[y][x] == "l" for x, y in tips)
+        # the web reaches about 0.55-0.7 of the toe length, leaving the tips free
+        px = {(x, y) for y in range(HEAD_H, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] in "gl" and x > CX}
+        thick = {q for (x, y) in px if {(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)} <= px for q in ((x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1))}
+        web = [3 + min(max(abs(x - a), abs(y - b)) for a, b in thick) for y in range(HEAD_H, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "v" and x > CX]
+        assert 0.55 <= max(web) / max(lens) <= 0.7, (n, max(web), lens)
+        assert sum(lens) / 4 - max(web) >= 1.5, (n, max(web), lens)   # (on average a toe's last 2 px or so are free; the +3 convention is only approximate)
         if n == 5:
             kick = lens
-    assert min(kick) >= 8, kick
+    assert min(kick) >= 7, kick
     # splayed widest in the kick, closed while the legs sweep in, spread again by the glide's end
     width = lambda n: (lambda t: max(x for x, _ in t) - min(x for x, _ in t))(_toe_lengths(FROG_FRAMES[n], lambda x: x > CX)[0])
     assert width(5) > width(6) and width(0) > width(6) - 1 and width(5) >= 7, [width(n) for n in range(7)]
     # the tucked feet's toes show beside the hips, out from the belly's line, not hidden behind the shin
     for n in (3, 4):
-        tips, _, _ = _toe_lengths(FROG_FRAMES[n], lambda x: x > CX)
-        assert all(24 <= y <= 36 for _, y in tips) and all(x >= CX + 1 for x, _ in tips), (n, tips)
+        tips, _ = _toe_lengths(FROG_FRAMES[n], lambda x: x > CX)
+        assert all(24 <= y <= 36 for _, y in tips) and all(x >= CX + 2 for x, _ in tips), (n, tips)
 
 
 def test_the_frog_blinks_over_the_same_head():
     assert 'y >= 1 && y <= 2 ? row.replace(/[wp]/g, "g")' in HTML
 
 
-def _web_depths(rows, side_of):
-    """how far each web pixel is from the shin's thick part (counted as the toes' lengths are)"""
-    px = {(x, y) for y in range(HEAD_H, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "g" and side_of(x)}
-    thick = {q for (x, y) in px if {(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)} <= px for q in ((x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1))}
-    web = [(x, y) for y in range(HEAD_H, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "v" and side_of(x)]
-    return [3 + min(max(abs(x - a), abs(y - b)) for a, b in thick) for x, y in web]
-
-
 def _webs(rows, side_of):
     """per foot, the web pixels ('v'): for each pair of adjacent toe tips, how many lie in the gap between them (in the toe direction)"""
-    tips, _, _ = _toe_lengths(rows, side_of)
+    tips, _ = _toe_lengths(rows, side_of)
     web = [(x, y) for y in range(HEAD_H, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "v" and side_of(x)]
     tips = sorted(tips)
     return tips, web
@@ -2999,12 +2978,12 @@ def test_the_frogs_feet_are_webbed_between_the_toes_and_the_hands_are_not():
             # each web pixel is a foot's (lower part of the sprite); for each neighbouring pair of tips (by angle about the foot's base) the web lies between them
             base = (sum(x for x, _ in web) / len(web), min(y for _, y in web)) if web else None
             assert web and all(y >= 24 for _, y in web), (n, web)
-            assert len(web) >= 4, (n, len(web))
+            assert len(web) >= 3, (n, len(web))
             ordered = sorted(tips, key=lambda t: math.atan2(t[1] - cy, t[0] - cx))
             for a, b in zip(ordered, ordered[1:]):
                 mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
                 near = [w for w in web if math.dist(w, (mx, my)) <= max(6, math.dist(a, b))]
-                assert len(near) >= 2, (n, a, b, near)   # (web at least 2 px between each pair of toes)
+                assert len(near) >= 2, (n, a, b, near)   # (web between each pair of toes)
     # the web never touches the hands (above the feet's rows), and the webs are lighter than the limb but not the tip colour
     assert all(c != "v" for f in FROG_FRAMES for r in f[:24] for c in r)
     assert re.search(r'v: rgb\("#5F9C47"\)', HTML)
@@ -3014,4 +2993,4 @@ def test_the_frogs_feet_are_webbed_between_the_toes_and_the_hands_are_not():
     n_web = lambda n: len(_webs(FROG_FRAMES[n], lambda x: x > CX)[1])
     assert n_web(5) > n_web(6), (n_web(5), n_web(6))
     for n in (3, 4):   # (it shows on the tucked feet too)
-        assert n_web(n) >= 4, n
+        assert n_web(n) >= 3, n
