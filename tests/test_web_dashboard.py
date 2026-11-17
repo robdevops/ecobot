@@ -43,7 +43,7 @@ from lib.mcp_server import AIR_URI, EcobotServer, WEATHER_URI, http_app
 from lib.service.context import Context
 from lib.service.names import Catalogue
 from lib.ecowitt.reads import directions_on
-from lib.gauge_look import START, SWEEP
+from lib.gauge_look import CHIPS, GUST_CHIP, MAX_CHIP, START, SWEEP
 from lib.web_dashboard import (DESCRIPTION, ICON, ICON_URL, PAGE, RED_HANDS, WebDashboard, air_readings_of, rain_rate_of, readings_of,
                                today_highs)
 from tests.chart_samples import _air, _station
@@ -723,12 +723,12 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         tile, glass = got["zoomed"]["box"], got["zoomed"]["glass"]                # (the first tile, Temperature) zoomed: the glass with it
         assert len(glass) == 1 and all(g["height"] > 0 and tile["left"] <= g["left"] and g["right"] <= tile["right"] for g in glass)
         assert glass[0]["height"] > tile["width"] * 0.2 and glass[0]["width"] < glass[0]["height"] * 0.06, (glass, tile)
-        # the wind's direction, a compass: N, E, S and W named (N in its accent), its needle's head turned to where the wind comes
+        # the wind's direction, a compass: N, E, S and W named (all four alike: no red N), its needle's head turned to where the wind comes
         # from (99°, east), its reading "99° E" (the service's compass point); no table, the same size as its neighbours
         c, rects = got["compass"], got["rects"]
         assert (c["label"], c["reading"], c["turn"], c["faded"]) == ("Wind direction 99° E", "99° E", "rotate(99.00 240 203)", False), c
         assert c["points"] == ["N", "E", "S", "W"] and c["table"] == 0, c
-        assert c["pointColours"] == [look()["compass_north"], *[look()["soft"]] * 3], c
+        assert c["pointColours"] == [look()["soft"]] * 4 and "compass_north" not in look(), c
         assert any(near(c["box"], r, 0.5) for r in rects) and len({(round(r["width"]), round(r["height"])) for r in rects}) == 1, c
         compass_as_a_dial(c)
         ring, head = c["ring"], c["head"]
@@ -759,6 +759,13 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
             assert h["colour"] == look()["high_hand"] and h["width"] <= 1.5 and h["needleWidth"] > 10 * h["width"], (name, title, h)
             assert h["order"][0] < h["order"][1] < h["order"][2], (name, title, h)
         assert hands["Wind"]["heads"] == ["▲ Max", "» Gust"] and wind.columns == ("Max", "Gust"), hands["Wind"]
+        # ... its heads: Max grey, Gust in the red hand's very red (the hand and its column go together); every other tile's Max red
+        assert hands["Wind"]["headColours"] == [rgb(GUST_CHIP), rgb(look()["high_hand"])], hands["Wind"]
+        others = got["headColours"]
+        assert others["Wind"] == [["▲ Max", rgb(GUST_CHIP)], ["» Gust", rgb(look()["high_hand"])]], others
+        assert any(t != "Wind" and heads for t, heads in others.items()), others
+        assert all(c == rgb(CHIPS[n.split()[-1]]) for t, heads in others.items() if t != "Wind" for n, c in heads), others
+        assert all(c == rgb(MAX_CHIP) for t, heads in others.items() if t != "Wind" for n, c in heads if n.endswith("Max")), others
         assert hands["Wind"]["daily"] == [f"{v:.0f}" for v in wind.rows["Daily"]] and wind.rows["Daily"][1] >= 12, (hands["Wind"], wind)
     for name in ("tablet-landscape", "tablet-portrait", "desktop"):            # these fit every tile without scrolling
         got = report[name]
@@ -913,6 +920,8 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     assert got["errors"] == [] and got["initial"] == default, got["errors"]
     # mouseover: the grip and the × on the tile under the mouse only
     assert got["hover"] == [{"grip": "0", "close": "0"}, {"grip": "1", "close": "1"}, {"grip": "0", "close": "0"}]
+    # the grip: 15 by 30 px (dots 5 px apart: three across, six down), in the tile's top left corner
+    assert got["grip"] == {"width": 15, "height": 30, "left": 8, "top": 6, "dots": "5px 5px"}, got["grip"]
     # dragged from its gauge: the others make room as it goes (transforms), the remove zone shows; the order kept
     assert got["during"] == {"zone": "none", "over": False, "dragging": True, "moved": ["Humidity", "Atmospheric pressure"]}
     reordered = moved(default, "Temperature", "Atmospheric pressure")
@@ -950,9 +959,10 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     assert look_["background"] == "rgba(0, 0, 0, 0)" and look_["image"] == "none" and look_["grid"] == "rgba(0, 0, 0, 0)"
     assert look_["opacity"] == "1" and look_["body"] == "rgb(20, 25, 29)"
     assert all(look_[k].startswith("rgb(") for k in ("title", "reading")) and look_["frameWidth"] == "1px", look_
-    # the frame unseen until the mouse is over its tile, then on that tile only
+    # the frame unseen, the mouse over its tile too; shown while it is picked up, and with the keyboard's focus
     assert look_["frame"] == "rgba(0, 0, 0, 0)", look_
-    assert got["hoverFrames"] == ["rgba(0, 0, 0, 0)", "rgb(38, 46, 52)", "rgba(0, 0, 0, 0)"], got["hoverFrames"]
+    assert got["hoverFrames"] == ["rgba(0, 0, 0, 0)"] * 3, got["hoverFrames"]
+    assert got["shownFrames"] == {"lifted": "rgb(90, 102, 112)", "focused": rgb(look()["soft"]), "after": "rgba(0, 0, 0, 0)"}, got["shownFrames"]
     # the strip's reading time with a device's reading over an hour old ("stale", its data's devices altered on the way): both fresh,
     # as ever; one stale, its name and own time first, greyed out, then the fresh one's; both stale (or the only device), all greyed out
     stale = got["stale"]

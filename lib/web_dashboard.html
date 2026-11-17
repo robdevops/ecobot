@@ -31,13 +31,12 @@
   #grid { display: grid; justify-content: center; align-content: center; padding: var(--pad, 8px);
     padding-bottom: calc(var(--pad, 8px) + var(--status, 18px)); min-height: 100%; }   /* (room under the tiles for the status line) */
   /* A tile: its own background clear (whatever is behind the page shows through it), its foreground opaque; a thin opaque frame
-     (::before, inset, so neighbours don't share a line), seen only on mouseover, picked up, focused or red. Its gauge can be dragged (user-select none), its
+     (::before, inset, so neighbours don't share a line), seen only picked up, focused or red (not on mouseover). Its gauge can be dragged (user-select none), its
      title, reading and table keep their text selectable. transform-origin 0 0: the reflow animations' scale is from the corner.
      Its contents are placed by its width alone (cqw), so the zoomed view, its box only their top (the title and gauge), shows them alike. */
   .tile { position: relative; container-type: inline-size; overflow: hidden; background: transparent; transform-origin: 0 0;
     transition: opacity 0.9s ease, transform 0.22s ease; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   .tile::before { content: ""; position: absolute; inset: 0.9cqw; border: 1px solid transparent; border-radius: 2.5cqw; pointer-events: none; }
-  @media (hover: hover) { .tile:hover::before { border-color: #262E34; } }   /* (its frame unseen until the mouse is over it) */
   .tile.faded { opacity: var(--fade, 0.4); }   /* no reading now: dimmed towards the card (as the PNG blends its colours) */
   .tile svg { position: absolute; left: 0; top: 0; width: 100%; display: block; }   /* (its height: by the width, drawTile()) */
   .tile svg text { font-family: inherit; }
@@ -47,7 +46,7 @@
   .chip { border-radius: 1.875cqw; }
   /* The grip and the × (hide), shown only on mouseover, on a tile picked up, or (touch) on one long-pressed and let go in place */
   .grip, .close { position: absolute; top: 6px; z-index: 1; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; }
-  .grip { left: 8px; width: 10px; height: 15px; cursor: grab;
+  .grip { left: 8px; width: 15px; height: 30px; cursor: grab;   /* (dots 5px apart: three across, six down) */
     background: radial-gradient(circle, var(--soft) 1.1px, transparent 1.5px) 0 0 / 5px 5px; }
   .close { right: 5px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--soft);
     font: 18px/22px system-ui, sans-serif; cursor: pointer; }
@@ -3533,7 +3532,7 @@ const Sky = (() => {
   // neighbours, grid or zoomed). Layers, bottom to top: today's wind rose (rose: 16 soft petals in the needles' colour, each as long as
   // its compass point's share of today's readings, the longest ROSE_REACH of the radius; none with no data), the reading inside the
   // ring, below the hub ("99° E": the compass point the service gives, or, while the needle swings to it, the point it is passing), then
-  // the face (one thin ring, fine ticks every 10 degrees and longer ones every 45, N, E, S and W, N in an accent colour) and the needle
+  // the face (one thin ring, fine ticks every 10 degrees and longer ones every 45, N, E, S and W, all four alike) and the needle
   // (pointing where the wind comes from, in degrees clockwise from north: a slim blade with a sharp head in the red hands' red, over
   // the blue rose, and a short, dim, tapered tail) on a small hub ringed in the same red. No table.
   const ROSE_REACH = 0.8, ROSE_HALF = 9;   // the longest petal's reach (of the radius) and each petal's half-width (degrees)
@@ -3561,7 +3560,7 @@ const Sky = (() => {
     el("path", {d: long, stroke: ink(L.soft), "stroke-width": lw(1.8), "stroke-linecap": "round", class: "ticks long"}, face);
     ["N", "E", "S", "W"].forEach((name, i) => {
       const [x, y] = polar(cx, cy, r - 34, 90 - 90 * i);
-      text(face, x, y, name, 22, ink(i ? L.soft : L.compass_north), "middle", "600").classList.add("point");
+      text(face, x, y, name, 22, ink(L.soft), "middle", "600").classList.add("point");
     });
     const needle = el("g", {class: "needle"}, svg);
     el("polygon", {points: points(stub(cx, cy, reach)), fill: ink(L.soft), "fill-opacity": 0.45, class: "tail"}, needle);
@@ -3621,8 +3620,9 @@ const Sky = (() => {
     const left = 60, top = 378, w = 128, h = 38, gap = 4;
     const xs = tile.columns.map((_, i) => left + (w + gap) * (i + 1));
     place(box, left, top, w, h, 17, tile.unit, "unit", {color: ink(L.ink), fontWeight: 700});
+    const chips = tile.columns.includes("Gust") ? L.wind_chips : L.chips;   // (the Wind's: its Max grey, its Gust its red hand's red)
     tile.columns.forEach((name, i) =>
-      place(box, xs[i], top, w, h, 19, `${L.marks[name]} ${name}`, "chip head", {background: ink(L.chips[name]), color: ink("#FFFFFF"), fontWeight: 700}));
+      place(box, xs[i], top, w, h, 19, `${L.marks[name]} ${name}`, "chip head", {background: ink(chips[name]), color: ink("#FFFFFF"), fontWeight: 700}));
     L.rows.forEach((name, r) => {
       const y = top + (r + 1) * (h + 10);
       place(box, left, y, w, h, 19, name, "chip row", {background: ink(L.chip), color: ink(L.soft)});

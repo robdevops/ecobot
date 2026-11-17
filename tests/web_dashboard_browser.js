@@ -103,6 +103,8 @@ async function sizes(browser, url, shots, wanted) {
     })), errors };
     await handsSettled(page);
     report[name].hands = await handsLook(page);   // the dials' thin red hands: today's highest
+    report[name].headColours = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#grid .tile")].map((t) =>   // every
+      [t.querySelector(".title").textContent, [...t.querySelectorAll(".chip.head")].map((e) => [e.textContent, getComputedStyle(e).backgroundColor])])));   // table's heads
     await compassSettled(page);
     report[name].compass = await compassLook(page);   // the wind's direction in the grid: its compass, no table
     // zoomed (Enter on the first tile): its look (box, title, text, table) and a screenshot (SHOTS/dashboard-NAME-zoomed.png)
@@ -142,6 +144,7 @@ const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
                    width: Number(line.getAttribute("stroke-width")), needleWidth: needle.getBBox().width,
                    order: [parts.indexOf(needle), parts.indexOf(hand), parts.indexOf(hub)],
                    heads: title === "Wind" ? [...t.querySelectorAll(".chip.head")].map((e) => e.textContent) : undefined,
+                   headColours: title === "Wind" ? [...t.querySelectorAll(".chip.head")].map((e) => getComputedStyle(e).backgroundColor) : undefined,
                    daily: title === "Wind" ? [...t.querySelectorAll(".figure")].slice(0, 2).map((e) => e.textContent) : undefined }];
 })));
 // The red hands at rest (the opening's rise or a move over): none turned since the last look, 150 ms before, rather than a fixed wait
@@ -341,10 +344,30 @@ async function arranged(browser, url, out, allErrors) {
   // mouseover: the grip and the × show on the tile under the mouse only
   await page.mouse.move(...await at(page, "Humidity", 0.5, 0.4));
   await calm(page);
-  // mouseover: the frame too, on the tile under the mouse only (unseen otherwise)
+  // mouseover: no frame, the tile under the mouse too (shown only picked up, or with the keyboard's focus)
   out.hoverFrames = await page.evaluate(() => [...document.querySelectorAll(".tile")].slice(0, 3).map((t) => getComputedStyle(t, "::before").borderTopColor));
   out.hover = await page.evaluate(() => [...document.querySelectorAll(".tile")].slice(0, 3).map((t) => ({
     grip: getComputedStyle(t.querySelector(".grip")).opacity, close: getComputedStyle(t.querySelector(".close")).opacity })));
+  // the grip under the mouse: its size and place in its tile (px), its dots' spacing
+  out.grip = await page.evaluate(() => {
+    const t = [...document.querySelectorAll(".tile")][1], g = t.querySelector(".grip"), r = g.getBoundingClientRect(), b = t.getBoundingClientRect();
+    return { width: r.width, height: r.height, left: r.left - b.left, top: r.top - b.top, dots: getComputedStyle(g).backgroundSize };
+  });
+  // the frame shown on the tile under the mouse picked up, then (the mouse gone) with the keyboard's focus, then neither
+  const frameOf = (title) => page.evaluate((title) => getComputedStyle([...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === title), "::before").borderTopColor, title);
+  const humidity = (how) => page.evaluate((how) => [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === "Humidity").classList[how]("lifted"), how);
+  out.shownFrames = {};
+  await humidity("add");
+  out.shownFrames.lifted = await frameOf("Humidity");
+  await humidity("remove");
+  await page.mouse.move(1, 1);
+  await page.keyboard.press("Shift");   // (the keyboard in use: the focus seen)
+  await page.evaluate(() => [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === "Humidity").focus());
+  out.shownFrames.focused = await frameOf("Humidity");
+  await page.evaluate(() => document.activeElement.blur());
+  out.shownFrames.after = await frameOf("Humidity");
+  await page.mouse.move(...await at(page, "Humidity", 0.5, 0.4));
+  await calm(page);
   // a drag from the gauge: Temperature to Atmospheric pressure's place, the others making room meanwhile
   out.during = await mouseDrag(page, await at(page, "Temperature", 0.85, 0.3), await at(page, "Atmospheric pressure", 0.5, 0.4), () => midDrag(page));
   out.dragged = await titles(page);
