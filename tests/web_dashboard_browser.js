@@ -2618,7 +2618,7 @@ const WEATHER = {
       // every frame, until the first frog has crossed (or 100 s of the page's time): the frog, the leaves in the water, the drips
       Object.assign(seen, await page.evaluate(() => new Promise((resolve) => {
         const r = { before: null, first: null, track: [], leaves: { float: 0, sink: 0, rest: 0 }, gaps: [], resting: [], wet: 0, most: 0,
-                    over: 0, under: 0, joined: 0, joins: [], frogs: 0, fullAt: null, fewest: Infinity, flown: [],
+                    over: 0, under: 0, strokes: [], joined: 0, joins: [], frogs: 0, fullAt: null, fewest: Infinity, flown: [],
                     // (every leaf it took, by id: still in it at the end, or not; its count of them, those come to rest, those resting
                     // shown on the bottom (and its px) each 5 frames (each 5 s of its time here): any not shown, any look with fewer px than the last)
                     kept: { ids: new Set(), missing: [], took: 0, rested: 0, float: 0, sink: 0, looks: [], hidden: 0, shrank: 0 },
@@ -2665,6 +2665,7 @@ const WEATHER = {
           if (f.frog) {
             if (!r.first) r.first = f.since;
             const x = Math.round(f.frog.x), under = [-6, -3, 0, 3, 6].map((dx) => f.surface[Math.min(Math.max(x + dx, 0), f.width - 1)]);
+            if (f.frog.stroke !== null && !r.strokes.includes(f.frog.stroke)) r.strokes.push(f.frog.stroke);
             if (f.frog.y !== null && x >= 0 && x < f.width) r.track.push([f.frog.x, f.frog.y, under.reduce((a, b) => a + b) / 5]);   // (the surface under its pad)
           }
           for (const k of ["float", "sink", "rest"]) r.leaves[k] = Math.max(r.leaves[k], w.water[k]);
