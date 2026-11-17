@@ -920,8 +920,8 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     assert got["errors"] == [] and got["initial"] == default, got["errors"]
     # mouseover: the grip and the × on the tile under the mouse only
     assert got["hover"] == [{"grip": "0", "close": "0"}, {"grip": "1", "close": "1"}, {"grip": "0", "close": "0"}]
-    # the grip: 15 by 30 px (dots 5 px apart: three across, six down), in the tile's top left corner
-    assert got["grip"] == {"width": 15, "height": 30, "left": 8, "top": 6, "dots": "5px 5px"}, got["grip"]
+    # the grip: 20 by 20 px (dots 5 px apart: four across, four down), in the tile's top left corner
+    assert got["grip"] == {"width": 20, "height": 20, "left": 8, "top": 6, "dots": "5px 5px"}, got["grip"]
     # dragged from its gauge: the others make room as it goes (transforms), the remove zone shows; the order kept
     assert got["during"] == {"zone": "none", "over": False, "dragging": True, "moved": ["Humidity", "Atmospheric pressure"]}
     reordered = moved(default, "Temperature", "Atmospheric pressure")
@@ -1443,7 +1443,7 @@ def just_right_of_the_row(corner):
 async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alone_and_within_the_particle_budget(server, station):
     got = await weather(server, "all")
     # (the cost: the script's own time a frame, the main thread's CPU time, however busy the machine: about 1.5 ms)
-    assert got["cost"] < 8 and got["flying"] == 1, (got["cost"], got["flying"])   # (something blown across too: ?fx=all,gust)
+    assert got["cost"] < 8 and got["flying"] == 1, (got["cost"], got["flying"])   # (something blown across too: the gust link)
     # ... the ice grown all the way in too, its frost across much of the glass: as cheap
     assert got["costFrosted"]["cost"] < 8 and got["costFrosted"]["crystals"] > 0.15, got["costFrosted"]
     # ... after minutes of the weather's time (over 200 s, the humidity's trails and beads built up: tens of thousands of trail
@@ -2207,17 +2207,21 @@ async def test_a_gust_over_99_kmh_blows_a_cow_a_barn_or_a_chicken_across_far_beh
     assert crossing["cost"] < 8, crossing["cost"]
     # once they're gone: nothing left, nothing drawn, the loop ended
     assert crossing["after"]["flyers"] == [] and crossing["after"]["bits"] == 0 and crossing["ink"] == 0 and not crossing["running"], crossing
-    # the test link: each click one more, at random (all three kinds in five clicks), ?fx=gust; not a switch: never pressed
+    # the test link: each click one more, at random (all three kinds in five clicks); a one-off, never in the URL (so a reload
+    # sends none), "wind" clicked after it: only ?fx=wind; not a switch: never pressed
     link = got["link"]
     assert link["sent"] == 5 and set(link["kinds"]) == {"cow", "barn", "chicken"} and link["flying"] >= 1, link
-    assert link["url"] == "?fx=gust" and link["pressed"] is None and "on" not in link["classes"].split(), link
+    assert link["url"] == "" and link["afterWind"] == "?fx=wind", link
+    assert link["pressed"] is None and "on" not in link["classes"].split(), link
     # "stop animation": gone at once, nothing drawn, ?fx= gone; stopped, a live gust over 99 km/h sends none; the gust link after it
     # starts them again, one sent
     assert got["stopped"] == {"flyers": 0, "running": False, "url": "", "ink": 0, "sent": 5}, got["stopped"]
     assert got["resumed"] == {"sent": 6, "running": True}, got["resumed"]
-    # ?fx=gust as the page opens: one sent
+    # ?fx=gust as the page opens: ignored, nothing sent (a reload after a click on "gust" no chicken), the word gone from the URL;
+    # beside an effect (?fx=wind,gust): that effect on, nothing sent, ?fx=wind
     opened = got["opened"]
-    assert opened["sent"] == 1 and opened["effects"] == ["gust"] and opened["url"] == "?fx=gust" and opened["errors"] == [], opened
+    assert opened["sent"] == 0 and opened["effects"] == [] and opened["url"] == "" and opened["errors"] == [], opened
+    assert opened["beside"] == {"sent": 0, "effects": ["wind"], "url": "?fx=wind"}, opened["beside"]
     # on a phone, every effect on and "gust" clicked: one sent; no "test:", every link ("gust" too) and "stop animation" in sight
     phone = got["phone"]
     assert phone["sent"] == 1 and phone["buttons"][-1] == "gust" and not phone["tag"] and phone["fits"] and phone["onScreen"], phone

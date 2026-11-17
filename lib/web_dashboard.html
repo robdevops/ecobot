@@ -46,7 +46,7 @@
   .chip { border-radius: 1.875cqw; }
   /* The grip and the × (hide), shown only on mouseover, on a tile picked up, or (touch) on one long-pressed and let go in place */
   .grip, .close { position: absolute; top: 6px; z-index: 1; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; }
-  .grip { left: 8px; width: 15px; height: 30px; cursor: grab;   /* (dots 5px apart: three across, six down) */
+  .grip { left: 8px; width: 20px; height: 20px; cursor: grab;   /* (dots 5px apart: four across, four down) */
     background: radial-gradient(circle, var(--soft) 1.1px, transparent 1.5px) 0 0 / 5px 5px; }
   .close { right: 5px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--soft);
     font: 18px/22px system-ui, sans-serif; cursor: pointer; }
@@ -4442,8 +4442,8 @@ const Sky = (() => {
      "ecobot-fx-stop"; a link clicked after it starts the animations again, with its effect), one link per effect, simulating its condition (the effect and its
      tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
      ?fx=haze3,wind,ice, ?fx=all (rain light, rain2 heavy (now and then a drop sticking to the glass), rain3 heavy with a flash
-     flood (its first frog 30 s after the water starts rising; off: it drains), haze1-haze5 (or smog1-smog5, its earlier name), uv, humidity light (91 %), humidity2 heavy (100 %), wind, heat, ice; ?fx=all every one, no link of its own); and "gust" (?fx=gust), not
-     on or off: each click (and ?fx=gust as the page opens) sends one cow, barn or chicken across, as a gust over 99 km/h does. To remove: delete
+     flood (its first frog 30 s after the water starts rising; off: it drains), haze1-haze5 (or smog1-smog5, its earlier name), uv, humidity light (91 %), humidity2 heavy (100 %), wind, heat, ice; ?fx=all every one, no link of its own); and "gust", not
+     on or off and never in the URL (?fx=gust is ignored): each click sends one cow, barn or chicken across, as a gust over 99 km/h does. To remove: delete
      from here to "END TEMPORARY" (this style, the row and its script). The page's own listener for "ecobot-fx" then simply hears nothing. -->
 <style>
   #fxtest { flex: 0 1 auto; min-width: 140px; overflow-x: auto; overflow-y: hidden;   /* (the corner's width set to fit by the page) */
@@ -4481,7 +4481,7 @@ const Sky = (() => {
     row.scrollLeft = row.scrollWidth;
   }
   new ResizeObserver(fit).observe(row);
-  let on = {}, gusted = false;   // {effect: its step's index}; whether "gust" has been asked for (?fx=gust, its link), until stopped
+  let on = {};   // {effect: its step's index}
   const name = (k) => k === "rain" || k === "humidity" ? [k, `${k}2`, `${k}3`][on[k]] : k === "haze" ? `haze${on[k] + 1}` : k;   // (in the URL)
   const label = (k) => k in on ? (k === "rain" || k === "humidity" ? `${k}: ${["light", "heavy", "flood"][on[k]]}` : k === "haze" ? `haze ${on[k] + 1}` : k) : k;
   // On a phone (the row above the strip, across the window): no "test:", and a link's step as a small raised figure (rain¹ light, rain²
@@ -4501,14 +4501,13 @@ const Sky = (() => {
       else if (/^(haze|smog)[1-5]?$/.test(word)) on.haze = Number(word.slice(4) || 1) - 1;   // (smog: its earlier name)
       else if (word in STEPS) on[word] = 0;
       else if (word in OLD) on[OLD[word]] = 0;
-      else if (word === "gust") gusted = true;
     }
   }
   function apply() {
     const detail = Object.fromEntries(Object.entries(on).map(([k, i]) => [k, STEPS[k][i]]));
     if (on.rain === 2) detail.flood = FLOOD;
     document.dispatchEvent(new CustomEvent("ecobot-fx", {detail}));
-    const url = new URL(location.href), words = [...Object.keys(on).map(name), ...(gusted ? ["gust"] : [])];
+    const url = new URL(location.href), words = Object.keys(on).map(name);
     if (words.length) url.searchParams.set("fx", words.join(",")); else url.searchParams.delete("fx");
     history.replaceState(history.state, "", url.pathname + url.search.replace(/%2C/g, ",") + url.hash);   // (no reload)
     for (const b of row.querySelectorAll("button[data-fx]")) {
@@ -4533,16 +4532,15 @@ const Sky = (() => {
     if (next < STEPS[k].length) on[k] = next; else delete on[k];
     apply();
   });
-  // "gust": each click sends something big across (a cow, a barn or a chicken, at random), as a gust over 99 km/h does; not on or off
-  const gust = () => document.dispatchEvent(new Event("ecobot-gust"));
-  const gustLink = button("gust", null, () => { gusted = true; apply(); gust(); });
+  // "gust": each click sends something big across (a cow, a barn or a chicken, at random), as a gust over 99 km/h does; not on or
+  // off, a one-off: never in the URL (so a reload sends nothing), and ?fx=gust as the page opens is ignored (read(): an unknown word)
+  const gustLink = button("gust", null, () => document.dispatchEvent(new Event("ecobot-gust")));
   gustLink.dataset.gust = "";
   gustLink.setAttribute("aria-label", "gust");
-  document.addEventListener("ecobot-fx-stop", () => { on = {}; gusted = false; apply(); });   // ("stop animation": every one off)
+  document.addEventListener("ecobot-fx-stop", () => { on = {}; apply(); });   // ("stop animation": every one off)
   PHONE.addEventListener("change", apply);
   read(new URLSearchParams(location.search).get("fx"));
   apply();
-  if (gusted) gust();
   window.dispatchEvent(new Event("resize"));   // (the page places its corner again, the row in it)
 })();
 </script>

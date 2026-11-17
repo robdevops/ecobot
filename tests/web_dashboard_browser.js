@@ -2200,7 +2200,8 @@ const WEATHER = {
   },
   async all(browser, url, out) {
     const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
-    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=all,gust", driven: true });
+    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=all", driven: true });
+    await page.locator("#fxtest button[data-gust]").click();   // (something blown across too: the gust link, never in the URL)
     await drive(page, 90);   // (3 s of the weather's time)
     out.cost = await frameCost(page, 60);   // (ms of script a frame, with every effect on, and something blown across)
     out.flying = await page.evaluate(() => Sky.state().gust.flyers.length);
@@ -2792,13 +2793,22 @@ const WEATHER = {
   // 5 times as fast): where each is, its angle, the chicken's frames, the canvas's pixels while they cross (alone: theirs and their
   // bits'), the loop ending once they're gone; the test link (five clicks, its URL, never pressed), "stop animation" (the wind's
 // link on too, so it shows: they're gone at once),
-  // ?fx=gust as the page opens, and on a phone the row (every link, "gust" too, and "stop animation" in sight unscrolled). A frame
+  // ?fx=gust as the page opens (ignored: nothing sent, the word dropped from the URL; and beside "wind"), and on a phone the row
+  // (every link, "gust" too, and "stop animation" in sight unscrolled). A frame
   // sequence of the three crossing kept as screenshots (SHOTS, when given)
   async gust(browser, url, out) {
     const opened = (async () => {   // (beside the rest)
       const p = await weatherPage(browser, url, { query: "?fx=gust", driven: true });
+      await drive(p.page, 30);
       const seen = { ...await p.page.evaluate(() => ({ sent: Sky.state().gust.sent, kinds: Sky.state().gust.kinds, effects: Sky.state().effects })),
                      url: await p.page.evaluate(() => location.search), errors: p.errors };
+      // ... and with an effect beside it (?fx=wind,gust): the wind on, nothing sent, only "wind" left in the URL
+      const q = await weatherPage(browser, url, { query: "?fx=wind,gust", driven: true });
+      await drive(q.page, 30);
+      seen.beside = { ...await q.page.evaluate(() => ({ sent: Sky.state().gust.sent, effects: Sky.state().effects })),
+                      url: await q.page.evaluate(() => location.search) };
+      seen.errors = [...seen.errors, ...q.errors];
+      await q.context.close();
       await p.context.close();
       return seen;
     })();
@@ -2858,7 +2868,8 @@ const WEATHER = {
     await drive(page, 30);
     out.crossing.cost = await frameCost(page, 30);
     await driveUntil(page, () => !Sky.clock().running);
-    // the test link: each click one, the three kinds in three clicks; ?fx=gust; never pressed; "stop animation": gone at once
+    // the test link: each click one, the three kinds in three clicks; the URL untouched (a reload sends none); never pressed; with
+    // an effect's link clicked after it, only that effect in the URL; "stop animation": gone at once
     const before = await sent();
     for (let i = 0; i < 5; i++) await page.locator("#fxtest button[data-gust]").click();
     out.link = { sent: await sent() - before, kinds: (await page.evaluate(() => Sky.state().gust.kinds)).slice(-5),
@@ -2866,6 +2877,7 @@ const WEATHER = {
                  pressed: await page.evaluate(() => document.querySelector("#fxtest button[data-gust]").getAttribute("aria-pressed")),
                  classes: await page.evaluate(() => document.querySelector("#fxtest button[data-gust]").className) };
     await page.locator("#fxtest button[data-fx='wind']").click();   // (an effect on: "stop animation" shows)
+    out.link.afterWind = await page.evaluate(() => location.search);
     await page.locator("#motion .animations").click();
     out.stopped = { ...await page.evaluate(() => ({ flyers: Sky.state().gust.flyers.length, running: Sky.state().running })),
                     url: await page.evaluate(() => location.search), ink: await canvasInk(page) };
