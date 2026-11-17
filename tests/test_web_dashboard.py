@@ -45,7 +45,6 @@ from lib.service.context import Context
 from lib.service.names import Catalogue
 from lib.ecowitt.reads import directions_on, pressure_on
 from lib.gauge_look import CHIPS, MAX_CHIP, START, SWEEP
-from lib.ecowitt.dashboard import PRESSURE
 from lib.web_dashboard import (DESCRIPTION, ICON, ICON_URL, PAGE, RED_HANDS, WebDashboard, air_readings_of, rain_rate_of, readings_of,
                                today_highs)
 from tests.chart_samples import _air, _station
@@ -93,15 +92,17 @@ class Station:
 
     def held(self, rose: list[int] | None = None, pressure: list[tuple[float, float]] | None = None):
         """The station's file holds today's wind directions (directions_on's: minutes from each of the 16 compass points; none: all
-        0) and today's pressure (pressure_on's, given as [(minutes since midnight, hPa)]; none: no reading), as the dashboard reads
-        them (nothing else: the red hands' highs are the sheet's)."""
+        0) and the past hour and a half's pressure (pressure_on's, given as [(minutes before now, hPa)], oldest first; none: no
+        reading), as the dashboard reads them (nothing else: the red hands' highs are the sheet's)."""
         async def read(fn, mac, *args):
-            assert mac == "fake" and fn in (directions_on, pressure_on)           # (today's: from the station's midnight to now)
+            assert mac == "fake" and fn in (directions_on, pressure_on)
             start, end = args
-            assert datetime.fromtimestamp(start, TZ).time() == datetime.min.time() and abs(end - 60 - time.time()) < 5
+            assert abs(end - 60 - time.time()) < 5
+            if fn is pressure_on:                                                # (the past 90 minutes: TENDENCY_READ)
+                assert end - 60 - start == web_dashboard.TENDENCY_READ == 90 * 60, (start, end)
+                return [(int(end - 60 - m * 60), v) for m, v in (pressure or [])]
+            assert datetime.fromtimestamp(start, TZ).time() == datetime.min.time()   # (today's: from the station's midnight to now)
             assert datetime.fromtimestamp(start, TZ).date() == datetime.now(TZ).date()
-            if fn is pressure_on:
-                return [(int(start + m * 60), v) for m, v in (pressure or [])]
             return list(rose or [0] * 16)
         self.eco.storage, self.eco.mac = NS(read=read), "fake"
 
@@ -159,7 +160,7 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     got = data.json()
     sheet = gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False}))
     assert got["tiles"] == [{**tile_json(t), **({"rose": []} if t.kind == "compass" else {}),             # (no file: no rose, no
-                             **({"trend": []} if t.title == "Atmospheric pressure" else {})} for t in sheet.tiles]   # trend)
+                             **({"tendency": None} if t.title == "Atmospheric pressure" else {})} for t in sheet.tiles]   # arrow)
     assert got["as_of"] == AS_OF and got["look"] == look()
     titles = [t["title"] for t in got["tiles"]]
     assert titles[:6] == ["Temperature", "Humidity", "Atmospheric pressure", "Rain", "UV index", "AQI"]   # gauge_sheet.FIRST
@@ -233,7 +234,7 @@ async def test_the_data_carries_todays_wind_rose_on_the_wind_direction_tile_read
     compass = lambda got: next(t for t in got["tiles"] if t["kind"] == "compass")
     got = await page.data()
     assert compass(got)["rose"] == [] and all("rose" not in t for t in got["tiles"] if t["kind"] != "compass")   # (no file)
-    assert [{k: v for k, v in t.items() if k not in ("rose", "trend")} for t in got["tiles"]] == [tile_json(t) for t in gauge_sheet.sheet(
+    assert [{k: v for k, v in t.items() if k not in ("rose", "tendency")} for t in got["tiles"]] == [tile_json(t) for t in gauge_sheet.sheet(
         station.current(gauge_sheet.call(), {"fetch": False})).tiles]
     minutes = [10, 4, 2, 0, 30, 12, 6, 0, 0, 0, 3, 0, 0, 0, 5, 8]
     station.held(minutes)
@@ -278,47 +279,62 @@ async def test_todays_wind_directions_are_counted_from_the_5_minute_readings_and
     storage.close()
 
 
-async def test_the_data_carries_todays_pressure_trend_on_the_pressure_tile_only_read_from_the_file_and_kept_a_minute(server, station,
-                                                                                                                     monkeypatch, caplog):
-    """The Atmospheric pressure tile's `trend`: today's pressure since the station's midnight, [[minutes since midnight, hPa], ...],
-    oldest first (the file's: pressure_on); [] with no file, no reading today, or the file not read. Read at most every TREND_SECONDS,
-    else kept; no other tile has one; its figures in whole hPa (the dashboard's: the bot's and the tools' keep the catalogue's)."""
+async def test_the_data_carries_the_pressures_change_over_the_past_hour_on_its_tile_only_read_from_the_file_and_kept_a_minute(
+        server, station, monkeypatch, caplog):
+    """The Atmospheric pressure tile's `tendency`: its change over the past hour, {"change": hPa, "way"} (tendency_of: the file's newest
+    reading less the one nearest an hour before it, in hPa, from the past 90 minutes' 5-minute readings and minutes: pressure_on); null
+    with no file, too little history, or the file not read. Read at most every TENDENCY_SECONDS, else kept; no other tile has one."""
     page = WebDashboard(server)
     pressure = lambda got: next(t for t in got["tiles"] if t["title"] == "Atmospheric pressure")
     got = await page.data()
-    assert pressure(got)["trend"] == [] and [t["title"] for t in got["tiles"] if "trend" in t] == ["Atmospheric pressure"]   # (no file)
+    assert pressure(got)["tendency"] is None and [t["title"] for t in got["tiles"] if "tendency" in t] == ["Atmospheric pressure"]   # (no file)
     assert pressure(got)["decimals"] == 0 and next(g for g in web_dashboard.GAUGES if g.title == "Atmospheric pressure").decimals == 0
-    readings = [(5.0, 1015.04), (10.0, 1015.2), (15.0, 1014.96)]
-    station.held(pressure=readings)
-    assert pressure(await page.data())["trend"] == [] and web_dashboard.TREND_SECONDS == 60   # (kept: read under a minute ago)
-    page._trend = None
-    assert pressure(await page.data())["trend"] == [[5.0, 1015.0], [10.0, 1015.2], [15.0, 1015.0]]
-    station.held(pressure=[])                                                # read again a minute on: none today
-    page._trend = (page._trend[0] - 61, *page._trend[1:])
-    assert pressure(await page.data())["trend"] == []
+    station.held(pressure=pressure_hour(-1.4))
+    assert pressure(await page.data())["tendency"] is None and web_dashboard.TENDENCY_SECONDS == 60   # (kept: read under a minute ago)
+    page._tendency = None
+    assert pressure(await page.data())["tendency"] == {"change": -1.4, "way": "down"}
+    station.held(pressure=pressure_hour(0.8))                                # read again a minute on: risen
+    page._tendency = (page._tendency[0] - 61, page._tendency[1])
+    assert pressure(await page.data())["tendency"] == {"change": 0.8, "way": "up"}
+    station.held(pressure=[(m, 1012.0) for m in range(40, -1, -5)])          # only 40 minutes held: none
+    page._tendency = None
+    assert pressure(await page.data())["tendency"] is None
 
     async def broken(*a):
         raise OSError("disk")
     station.eco.storage = NS(read=broken)
-    monkeypatch.setattr(web_dashboard, "TREND_SECONDS", 0)
-    assert pressure(await page.data())["trend"] == [] and "couldn't read today's pressure: OSError: disk" in caplog.text
+    monkeypatch.setattr(web_dashboard, "TENDENCY_SECONDS", 0)
+    assert pressure(await page.data())["tendency"] is None and "couldn't read the past hour's pressure: OSError: disk" in caplog.text
 
 
-def test_a_days_readings_are_thinned_to_at_most_100_points_each_a_stretch_of_the_day_so_far_averaged():
-    """thinned: [(epoch, value)] as [[minutes since the start, value]] to a tenth; up to TREND_POINTS as they are; more, averaged in that
-    many equal stretches from the start to now (each its readings' mean time and value, an empty one left out), still oldest first."""
-    start = 1_794_200_000
-    few = [(start + 300, 1013.04), (start + 600, 1013.26)]
-    assert web_dashboard.thinned(few, start, start + 900) == [[5.0, 1013.0], [10.0, 1013.3]] and web_dashboard.thinned([], start, start) == []
-    now = start + 12 * 3600
-    minutes = [(start + 60 * m, 1000 + m / 100) for m in range(12 * 60)]                 # (a reading a minute for 12 hours: 720)
-    got = web_dashboard.thinned(minutes, start, now)
-    assert len(got) == web_dashboard.TREND_POINTS == 100, len(got)
-    assert all(a[0] < b[0] for a, b in zip(got, got[1:])) and 0 <= got[0][0] < 7.2 and 712 < got[-1][0] <= 720, got
-    assert got[0] == [3.5, 1000.0] and got[-1][1] == pytest.approx(1007.16, abs=0.05), (got[0], got[-1])   # (the stretches' means)
-    sparse = [(start + 60, 1010.0), *((start + 600 * 60 + 60 * m, 1011.0) for m in range(200))]     # (a gap: no empty stretch sent)
-    got = web_dashboard.thinned(sparse, start, start + 800 * 60)
-    assert got[0] == [1.0, 1010.0] and got[1][0] >= 600 and len(got) <= 100, got[:3]
+def test_the_pressures_change_over_the_past_hour_is_its_newest_reading_less_the_one_nearest_an_hour_before():
+    """tendency_of: [(epoch, hPa)] oldest first: the newest less the reading nearest 60 minutes before it (45 to 75 minutes before it;
+    none there: None), to a tenth; up 0.3 hPa or more: "up", down as much: "down", less either way: "steady"."""
+    t = 1_794_200_000
+    hour = lambda *pairs: [(t - m * 60, v) for m, v in pairs]                 # ((minutes before the newest, hPa), ...), oldest first
+    assert web_dashboard.tendency_of(hour((60, 1010.0), (30, 1010.9), (0, 1011.2))) == {"change": 1.2, "way": "up"}       # rising
+    assert web_dashboard.tendency_of(hour((60, 1012.0), (0, 1010.5))) == {"change": -1.5, "way": "down"}                  # falling
+    assert web_dashboard.tendency_of(hour((60, 1012.0), (0, 1012.2))) == {"change": 0.2, "way": "steady"}                 # steady
+    assert web_dashboard.tendency_of(hour((60, 1012.0), (0, 1011.8))) == {"change": -0.2, "way": "steady"}
+    assert web_dashboard.tendency_of(hour((60, 1012.0), (0, 1012.3)))["way"] == "up"                                      # (0.3: the mark)
+    assert web_dashboard.tendency_of(hour((60, 1013.3), (0, 1013.0)))["way"] == "down"
+    assert web_dashboard.tendency_of(hour((60, 1012.0), (0, 1012.29)))["way"] == "steady"
+    # the reading nearest an hour before the newest: 63 minutes (3 off) rather than 55 (5 off), or 80 (out of reach) and 50 (10 off)
+    assert web_dashboard.tendency_of(hour((80, 1000.0), (63, 1011.0), (55, 1013.0), (0, 1012.0))) == {"change": 1.0, "way": "up"}
+    assert web_dashboard.tendency_of(hour((80, 1000.0), (50, 1013.0), (0, 1012.0))) == {"change": -1.0, "way": "down"}
+    assert web_dashboard.tendency_of(hour((60, 1012.0), *((m, 1013.0) for m in range(59, -1, -1)))) == {"change": 1.0, "way": "up"}
+    # too little history: none about an hour old (only 40 minutes; nothing between 45 and 75 minutes before the newest; none at all)
+    assert web_dashboard.tendency_of(hour((40, 1012.0), (20, 1011.0), (0, 1010.0))) is None
+    assert web_dashboard.tendency_of(hour((90, 1012.0), (76, 1012.0), (44, 1011.0), (0, 1010.0))) is None
+    assert web_dashboard.tendency_of(hour((75, 1012.0), (0, 1011.0))) == {"change": -1.0, "way": "down"}                  # (75: still)
+    assert web_dashboard.tendency_of(hour((0, 1012.0))) is None and web_dashboard.tendency_of([]) is None
+
+
+@functools.cache
+def pressure_hour(change: float) -> list[tuple[float, float]]:
+    """The past 90 minutes' pressure, a reading every 5 minutes ([(minutes before now, hPa)], oldest first), changing `change` hPa
+    over the last hour, steadily."""
+    return [(m, round(1013.2 - change * m / 60, 2)) for m in range(90, -1, -5)]
 
 
 async def test_todays_pressure_is_read_from_the_5_minute_readings_and_the_minutes_they_dont_cover(tmp_path):
@@ -737,8 +753,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     monkeypatch.setattr(web_dashboard, "ROSE_SECONDS", 0)                  # (today's rose read again with each data: it changes below)
     station.reads("wind", "wind_gust", "12")
     station.highs_today({"wind_gust": 37.0, "rain_rate_max": 4.2, "solar_max": 820.0, "uv_max": 6.5})   # (today's highest: above the
-    station.held(ROSE, pressure_day(60))                                 # readings now, all but 0; today's rose and pressure)
-    monkeypatch.setattr(web_dashboard, "TREND_SECONDS", 0)                 # (today's pressure too: it grows below)
+    station.held(ROSE, pressure_hour(1.2))                               # readings now, all but 0; today's rose, and the pressure
+    monkeypatch.setattr(web_dashboard, "TENDENCY_SECONDS", 0)              # risen over the past hour; read again: it falls below)
     wind = next(t for t in gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False})).tiles if t.title == "Wind")
     station.reads("indoor", "temperature", "23.7")                       # an indoor sensor, served with MCP_DASHBOARD_INDOOR off:
     station.reads("indoor", "humidity", "47")                            # its tiles never drawn (the same tiles as with none)
@@ -756,7 +772,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         station.reads("wind", "wind_direction", "300")                           # (and the wind backs from the east to WNW)
         station.highs_today({"wind_gust": 60.0, "uv_max": 9.0, "rain_rate_max": 0.0})   # (and today's highest gust and UV rise, rain
                                                                                  # rate's a dry day's 0, and today's
-        station.held(ROSE_LATER, pressure_day(90))                                # rose turns to the west; the pressure's line grows)
+        station.held(ROSE_LATER, pressure_hour(-1.5))                             # rose turns to the west; the pressure falls)
         await server.publish_changes()
         live.stdin.write(b"go\n")
         await live.stdin.drain()
@@ -846,7 +862,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert all(c == rgb(MAX_CHIP) for t, heads in others.items() if t != "Wind" for n, c in heads if n.endswith("Max")), others
         assert hands["Wind"]["daily"] == [f"{v:.0f}" for v in wind.rows["Daily"]] and wind.rows["Daily"][1] >= 12, (hands["Wind"], wind)
         # every round dial's hub small (about half the old 25), its outline as thin, its needle pivoting on its centre; the compass's
-        # smaller still; the pressure in whole hPa, its reading and its table; today's trend as a glowing trace below its hub, no other's
+        # smaller still; the pressure in whole hPa, its reading and its table; its arrow after its reading (risen over the past hour: up, blue), no other's
         dials = got["dials"]
         assert {d["kind"] for d in dials.values()} == {"dial", "compass"} and len(dials) >= 6, dials
         for title, d in dials.items():
@@ -855,21 +871,20 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
                 assert d["hub"][2] == 13 and d["hub"][3] == pytest.approx(1.5 * 100 / 72), (name, title, d)
             else:
                 assert d["hub"][2] <= 13, (name, title, d)
-            assert (d["trend"] is not None) == (title == "Atmospheric pressure"), (name, title, d)
+            assert (d["arrow"] is not None) == (title == "Atmospheric pressure"), (name, title, d)
         p = dials["Atmospheric pressure"]
         assert re.fullmatch(r"\d{3,4}", p["reading"]) and p["figures"] and all(re.fullmatch(r"\d{3,4}|-|", f) for f in p["figures"]), p
-        trend_drawn(p, pressure_day(60), name)
-        z = got["pressureZoomed"]
-        assert z["zoomed"] and z["trend"]["line"]["d"] == p["trend"]["line"]["d"] and z["trend"]["dot"] == p["trend"]["dot"] and z["hub"] == p["hub"], (name, z)
-        assert z["trend"]["drawnWidth"] / z["trend"]["tileWidth"] == pytest.approx(p["trend"]["drawnWidth"] / p["trend"]["tileWidth"], rel=0.05)
-        assert z["trend"]["tileWidth"] > p["trend"]["tileWidth"], (name, z)
+        arrow_drawn(p, "up", name)
+        z = got["pressureZoomed"]                                             # ... zoomed: the same, scaled with the tile
+        assert z["zoomed"] and z["arrow"]["d"] == p["arrow"]["d"] and z["hub"] == p["hub"], (name, z)
+        arrow_drawn(z, "up", f"{name}, zoomed")
+        drawn = lambda d: (d["arrow"]["rect"][3] - d["arrow"]["rect"][1]) / d["arrow"]["tileWidth"]
+        assert drawn(z) == pytest.approx(drawn(p), rel=0.05) and z["arrow"]["tileWidth"] > p["arrow"]["tileWidth"], (name, z)
         assert (shots / f"dashboard-{name}-pressure.png").exists()
-        # ... in inHg (zoomed, its switch pressed): its reading in inHg, its trend's trace the same shape, in the same place, clear of
-        # the unit and the new tick numbers
+        # ... in inHg (zoomed, its switch pressed): its reading in inHg, wider: the arrow the same way, kept just after it
         h = got["pressureInHg"]
-        trend_drawn(h, pressure_day(60), f"{name}, inHg")
-        assert re.fullmatch(r"\d\d\.\d\d", h["reading"]) and h["trend"]["line"]["d"] == z["trend"]["line"]["d"], (name, h)
-        assert h["trend"]["dot"] == z["trend"]["dot"] and h["trend"]["given"] == z["trend"]["given"], (name, h)
+        assert re.fullmatch(r"\d\d\.\d\d", h["reading"]) and h["arrow"]["box"][0] > z["arrow"]["box"][0] + 5, (name, h)
+        arrow_drawn(h, "up", f"{name}, inHg")
     for name in ("tablet-landscape", "tablet-portrait", "desktop"):            # these fit every tile without scrolling
         got = report[name]
         assert got["scroll"] == "no" and got["scrollHeight"] <= SIZES[name][1], (name, got)
@@ -884,8 +899,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     c = after["compass"]
     assert (c["label"], c["reading"], c["turn"]) == ("Wind direction 300° WNW", "300° WNW", "rotate(300.00 240 203)"), c
     rose_drawn(c, ROSE_LATER)                                                     # (today's rose redrawn in place with it)
-    trend_drawn(before["pressure"], pressure_day(60), "live, before")              # ... and the pressure's trace grown, in place
-    trend_drawn(after["pressure"], pressure_day(90), "live, after")
+    arrow_drawn(before["pressure"], "up", "live, before")                         # ... and the pressure's arrow turned down, in place
+    arrow_drawn(after["pressure"], "down", "live, after")
     assert after["pressure"]["same"], after["pressure"]
     turns = c["turns"]
     assert all(t <= 99.01 or t >= 299.99 for t in turns) and any(t < 30 for t in turns) and any(t > 330 for t in turns), turns
@@ -905,74 +920,49 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     assert after["hands"]["Rain rate"]["kind"] == "limit" and not after["hands"]["Rain rate"]["shown"], after["hands"]["Rain rate"]
 
 
-@functools.cache
-def pressure_day(n: int) -> list[tuple[float, float]]:
-    """Today's pressure so far, n readings ([(minutes since midnight, hPa)]) evenly from midnight to now (as first asked for: the same
-    readings every time): falling, then rising again."""
-    now = datetime.now(TZ)
-    so_far = max((now - now.replace(hour=0, minute=0, second=0, microsecond=0)).total_seconds() / 60 - 1, n / 10)
-    return [(round(so_far * i / (n - 1), 1), round(1015 - 6 * math.sin(math.pi * i / (n - 1)) + (i % 3) * 0.1, 1)) for i in range(n)]
-
-
-TRACE = (140, 219, 340, 237)   # the pressure's trace (the page's): [left, top, right, bottom], the dial's own px
-TRACE_INK, TRACE_DOT = PRESSURE[2], PRESSURE[0]   # (the pressure's mid-band blue-violet, #8087F5; its palest, #C5CAFA)
-TRACE_CORE = "#E6E8FF"                            # (the neon core's pale, near-white centre)
-
-
-def trend_drawn(p: dict, readings: list[tuple[float, float]], name: str):
-    """The pressure's trend as a monitor's trace (dialsLook's): no window, frame, grid or unlit dots, only one smooth, continuous
-    line (a single path of cubic curves, one between each two readings, through the readings themselves) across the dial's whole
-    inner width (TRACE: its ends just inside the coloured ring's inner edge; midnight at the left, the next at the right), each
-    reading's x its time of day and its y its value on the day's own range (at least 2 hPa: the lowest at the bottom, the highest at
-    the top); lit like a neon tube: a crisp core, never blurred (the pressure's mid-band blue-violet with a thinner pale, near-white
-    centre along it), over a halo of the same blue-violet in layers (blurred copies of the line, each wider, more blurred and fainter
-    outward, the widest reaching several times the old glow's 5 px or so), a small bright point at the latest reading in the
-    palette's palest, its centre near-white, haloed the same way; below the hub, clear of the unit ("hPa" or "inHg"), the reading and the tick numbers; under the
-    needle and the hub."""
-    t = p["trend"]
-    assert t["given"] == len(readings) and t["others"] == 0, (name, t)
-    line, dot = t["line"], t["dot"]
-    assert line["subpaths"] == 1 and line["curves"] == len(readings) - 1, (name, line["d"][:200])   # one continuous curve
-    assert line["stroke"] == rgb(TRACE_INK) == "rgb(128, 135, 245)" and line["fill"] == "none" and 1 <= line["width"] <= 2.5, (name, line)
-    neon, halo = t["neon"], t["halo"]
-    assert neon["filter"] in (None, "none") and neon["blurs"] == 0, (name, neon)                     # the core crisp: no blur on it
-    assert neon["core"]["stroke"] == rgb(TRACE_CORE) and neon["core"]["d"] == line["d"], (name, neon)  # its pale centre along it,
-    assert 0.4 <= neon["core"]["width"] <= line["width"] / 2, (name, neon, line["width"])               # thinner
-    assert 3 <= len(halo) <= 6 and all(h["d"] == line["d"] and h["stroke"] == rgb(TRACE_INK) for h in halo), (name, halo)
-    assert halo[0]["width"] > line["width"] and halo[0]["blur"] >= 1, (name, halo[0])
-    for a, b in zip(halo, halo[1:]):                                          # wider, more blurred and fainter outward
-        assert b["width"] > a["width"] and b["blur"] > a["blur"] and b["opacity"] < a["opacity"] and b["r"] > a["r"], (name, a, b)
-    assert halo[-1]["width"] / 2 + 2 * halo[-1]["blur"] >= 25 and halo[-1]["opacity"] <= 0.15 and halo[0]["opacity"] <= 0.8, (name, halo)
-    left, top, right, bottom = TRACE
-    values = [v for _, v in readings]
-    lo, hi = min(values), max(values)
-    if hi - lo < 2:
-        lo, hi = (lo + hi) / 2 - 1, (lo + hi) / 2 + 1
-    want = [(left + m / 1440 * (right - left), bottom - (v - lo) / (hi - lo) * (bottom - top)) for m, v in readings]
-    numbers = [float(v) for v in re.findall(r"-?[\d.]+", line["d"])]
-    anchors = [numbers[:2]] + [numbers[k + 4:k + 6] for k in range(2, len(numbers), 6)]   # (M x,y; each C's end point)
-    assert len(anchors) == len(want) and sum(anchors, []) == pytest.approx(sum(map(list, want), []), abs=0.01), (name, anchors[:5], want[:5])
-    assert line["box"][0] == pytest.approx(left, abs=0.01) if readings[0][0] == 0 else line["box"][0] > left, (name, line["box"])
-    along = line["along"]                                                     # (smooth and unbroken, in its band, left to right)
-    assert len(along) > 20 and all(math.dist(a, b) <= 2.01 for a, b in zip(along, along[1:])), (name, along[:5])
-    assert all(left - 0.5 <= x <= right + 0.5 and top - 0.5 <= y <= bottom + 0.5 for x, y in along), (name, line["box"])
-    turns = [math.atan2(b[1] - a[1], b[0] - a[0]) for a, b in zip(along, along[1:])]   # (curved: its direction changing gradually)
-    assert max(abs(b - a) for a, b in zip(turns, turns[1:])) < 1.2, (name, max(abs(b - a) for a, b in zip(turns, turns[1:])))
-    # the whole inner width: its ends (midnight and the next) just inside the ring's coloured band's inner edge (radius 108), at the
-    # trace's middle height
-    mid = (top + bottom) / 2
-    for x in (left, right):
-        assert 100 <= math.hypot(x - 240, mid - 203) < look()["ring_outer"] - look()["band_width"], (name, x)
-    assert dot["centre"] == pytest.approx(list(want[-1]), abs=0.01) and dot["fill"] == rgb(TRACE_DOT) and 1.5 <= dot["r"] <= 3, (name, dot)
-    c = neon["centre"]
-    assert c["centre"] == dot["centre"] and c["fill"] == rgb(TRACE_CORE) and 0.5 <= c["r"] < dot["r"], (name, c, dot)
-    # below the hub; clear of the unit's and the reading's boxes (the font's line boxes: the unit's centre 30 px or more above the
-    # reading's, as before) and of the tick numbers'
-    x0, y0, x1, y1 = line["box"]
-    assert t["hubBottom"] < y0 and y1 + 1 < t["unit"][1] and y1 + 1 < t["reading"][1], (name, t["hubBottom"], line["box"], t["unit"])
-    assert (t["reading"][1] + t["reading"][3]) / 2 - (t["unit"][1] + t["unit"][3]) / 2 >= 30, (name, t)
-    assert all(tx1 < left or tx0 > right or ty1 < top - 1 or ty0 > bottom + 1 for tx0, ty0, tx1, ty1 in t["ticks"]), (name, t["ticks"])
-    assert t["order"][0] < t["order"][1] < t["order"][2], (name, t)                        # under the needle, then the hub
+def arrow_drawn(p: dict, way: str | None, name: str):
+    """The pressure's arrow after its reading (dialsLook's), its way over the past hour: none (`way` None: hidden), or a thin, simple
+    arrow: one straight shaft and a small open head (two short strokes from its tip, back at 45 degrees either side), no fill, as thin
+    as the dial's thin text (about lw(1.5)), with an edge in the tile's background under it; up and blue (the needle's) when rising,
+    down and red (the red hands') when falling, pointing right and grey (L.soft) when steady, about the digits' height (the steady
+    one shorter); just after the reading (a small gap after its advance width), vertically centred on its digits' ink; clear of the
+    hub, the unit, the tick numbers, the title and the table, and inside the dial's outline (beside a reading in hPa; inHg's wider
+    reading reaches the outline itself, and the arrow's edge parts it there)."""
+    a = p["arrow"]
+    if way is None:
+        assert a is not None and not a["shown"] and a["way"] == "", (name, a)
+        return
+    assert a["shown"] and a["way"] == way and a["fill"] == "none", (name, a)
+    assert a["stroke"] == rgb({"up": look()["needle"], "down": look()["high_hand"], "steady": look()["soft"]}[way]), (name, a)
+    assert look()["rising"] == look()["needle"] == "#3E86C0" and look()["falling"] == look()["high_hand"] == "#FF3B30", look()
+    assert 1.5 <= a["width"] <= 2.5 and a["edge"]["stroke"] == rgb(look()["bg"]) and a["edge"]["d"] == a["d"], (name, a)
+    assert 2 <= a["edge"]["width"] - a["width"] <= 4, (name, a["edge"])
+    assert re.fullmatch(r"M[\d.]+,[\d.]+ L[\d.]+,[\d.]+ M[\d.]+,[\d.]+ L[\d.]+,[\d.]+ L[\d.]+,[\d.]+", a["d"]), (name, a["d"])
+    x0, y0, x1, y1, hx0, hy0, tx, ty, hx1, hy1 = map(float, re.findall(r"[\d.]+", a["d"]))   # (the shaft, then the head)
+    assert (tx, ty) == (x1, y1), (name, a["d"])                                  # the head at the shaft's tip
+    k = abs(hx0 - tx)
+    assert 3 <= k <= 8 and abs(hy0 - ty) == pytest.approx(k) and (hx1, hy1) in {(hx0, 2 * ty - hy0), (2 * tx - hx0, hy0)}, (name, a["d"])
+    ink_top, ink_bottom = a["ink"]
+    tall = ink_bottom - ink_top                                                  # (the digits' height: about 38 px at 50 px)
+    if way == "steady":
+        assert y0 == y1 and x1 > x0 and hx0 == hx1 == pytest.approx(tx - k) and 12 <= x1 - x0 <= 0.8 * tall, (name, a["d"])
+    else:
+        assert x0 == x1 and hy0 == hy1 == pytest.approx(ty + k if way == "up" else ty - k), (name, a["d"])
+        assert (y1 < y0) == (way == "up") and 0.7 * tall <= abs(y1 - y0) <= tall, (name, a["d"], tall)
+    bx0, by0, bx1, by1 = a["box"]
+    assert 3 <= bx0 - a["reading"][2] <= 10, (name, a["box"], a["reading"])      # just after the reading, a small gap
+    assert (by0 + by1) / 2 == pytest.approx((ink_top + ink_bottom) / 2, abs=1), (name, a["box"], a["ink"])   # centred on its digits
+    pad = a["edge"]["width"] / 2
+    clear = lambda b: b[2] < bx0 - pad or b[0] > bx1 + pad or b[3] < by0 - pad or b[1] > by1 + pad
+    assert clear(a["hub"]) and clear(a["unit"]) and all(map(clear, a["ticks"])), (name, a)
+    rx0, ry0, rx1, ry1 = a["rect"]
+    assert all(r[2] <= rx0 or r[0] >= rx1 or r[3] <= ry0 or r[1] >= ry1 for r in a["words"]), (name, a["rect"], a["words"])   # (window px)
+    cx, cy, r, w = a["ring"]
+    reach = max(math.hypot(x - cx, y - cy) for x, y in a["along"]) + a["width"] / 2
+    if "inHg" not in name:
+        assert reach < r - w / 2 - 1, (name, reach, a["ring"])                  # inside the outline, clear of it
+    else:
+        assert reach < r + w / 2 + 6, (name, reach, a["ring"])                  # (inHg: at most across it, parted by the edge)
 
 
 def limit_mark(h, name, title):
@@ -1006,8 +996,8 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
     reading going away (the VOC index): it dims and drops to its floor; the wind's direction gone with it, its compass dims, its needle
     back at north and no figure claimed."""
     title, column, value = ("NOx index", "nox_index", 60) if comes else ("VOC index", "voc_index", None)
-    if comes:                                                                    # (today's pressure: a single reading, no line)
-        station.held(pressure=[(600.0, 1013.2)])
+    station.held(pressure=pressure_hour(0.1) if comes else [(m, 1012.0) for m in range(40, -1, -5)])   # (the pressure steady over
+                                                                                 # the past hour; or only 40 minutes of it: no arrow)
     port = free_port()
     async with Serving(http_app(server, tokens=(TOKEN,)), port):   # (no weather: as run_page's weather=False)
         page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", "--arrive", title,
@@ -1024,8 +1014,7 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
     got = json.loads(out)
     after, frames = got["after"], got["frames"]
     assert got["errors"] == [] and got["same_tile"], got                         # moved in place: the same tile, not drawn again
-    trend = got["pressure"]["trend"]                                             # (the pressure's trend: one reading or none, no line)
-    assert trend["given"] == (1 if comes else 0) and trend["line"] is None and trend["dot"] is None and trend["others"] == 0, trend   # (nothing)
+    arrow_drawn(got["pressure"], "steady" if comes else None, f"arrive, {comes}")   # (the pressure's arrow: steady, or none)
     numbers = [float(f["number"]) for f in frames]
     opacities = [f["opacity"] for f in frames]
     if comes:
@@ -1128,7 +1117,7 @@ def in_units(figure: str, convert, decimals: int) -> str:
 
 def units_switched(seen: dict):
     """The units' switches (unitsSwitched's): °F converts every temperature tile (its reading, scale, ticks, figures and unit), mph the
-    Wind's (its reading, dial, ticks, figures, unit and gust hand), inHg Atmospheric pressure's (its trend's shape as it was), in the
+    Wind's (its reading, dial, ticks, figures, unit and gust hand), inHg Atmospheric pressure's (its arrow's way as it was), in the
     Rain's and the Rain rate's (its limit mark too), the same decimals (two in inHg and inches), the rest untouched; the gauges eased
     there; kept across a reload; km/h again from the keyboard; "reset preferences" metric again, nothing kept."""
     f, mph, inhg, inch = (lambda c: c * 9 / 5 + 32), (lambda k: k / 1.609344), (lambda h: h / 33.8639), (lambda m: m / 25.4)
@@ -1161,14 +1150,14 @@ def units_switched(seen: dict):
     assert both["tiles"]["Humidity"] == metric["tiles"]["Humidity"] and both["pressed"] == switch(True, True)
     assert both["stored"] == {"order": [], "hidden": [], "temperature": "°F", "wind": "mph"}, both["stored"]
     assert {t: fahrenheit["tiles"][t] for t in RAINS} == {t: both["tiles"][t] for t in RAINS} == {t: metric["tiles"][t] for t in RAINS}
-    # inHg: Atmospheric pressure's reading, dial (950-1050 hPa: 28-31 inHg, every 0.5), figures (two decimals) and unit; its trend's
-    # shape the same; the rest as they were
+    # inHg: Atmospheric pressure's reading, dial (950-1050 hPa: 28-31 inHg, every 0.5), figures (two decimals) and unit; its arrow's
+    # way the same; the rest as they were
     was, now = metric["tiles"]["Atmospheric pressure"], seen["inHg"]["tiles"]["Atmospheric pressure"]
     assert was["words"] == ["950", "970", "990", "1010", "1030", "1050", "hPa"], was
     assert now["words"] == ["28", "28.5", "29", "29.5", "30", "30.5", "31", "inHg"], now
     assert (was["reading"], now["reading"]) == ("1026", "30.30") and now["label"] == "Atmospheric pressure 30.30 inHg", now
     assert now["figures"] == [in_units(x, inhg, 2) for x in was["figures"]] and now["figures"][-1] == "29.47", (was, now)   # (998 hPa)
-    assert (was["unit"], now["unit"]) == ("hPa", "inHg") and now["trend"] == was["trend"], now   # (its trace: the sizes' test's)
+    assert (was["unit"], now["unit"]) == ("hPa", "inHg") and now["arrow"] == was["arrow"], now   # (its arrow: the sizes' test's)
     assert {t: v for t, v in seen["inHg"]["tiles"].items() if t != "Atmospheric pressure"} == \
         {t: v for t, v in both["tiles"].items() if t != "Atmospheric pressure"}
     assert seen["inHg"]["pressed"] == switch(True, True, True)

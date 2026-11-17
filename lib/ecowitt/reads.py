@@ -91,7 +91,7 @@ def directions_on(r: Reader, mac: str, start: int, end: int) -> list[int]:
 def pressure_on(r: Reader, mac: str, start: int, end: int) -> list[tuple[int, float]]:
     """The relative pressure (hPa) from start to end, oldest first, [(epoch, hPa)]: its 5-minute readings and its minutes where no 5-minute
     reading covers them (300 s either side, as directions_on), in one query; [] with none, or no pressure sensor (the web page's pressure
-    trend: today's)."""
+    arrow: its change over the past hour)."""
     sensor, place = r.sensor(mac, "pressure"), column_of("pressure", "relative")
     if sensor is None or sensor.kind not in KINDS or place is None:
         return []

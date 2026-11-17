@@ -31,6 +31,8 @@ COMPASS_LABEL_Y = 346       # ... its reading ("99° E") under it
 COMPASS_BAND = "#262E34"    # ... its ring, under the ticks and the letters N, E, S and W
 WATER = "#4FB3F6"           # the rain beaker's water
 NEEDLE = "#3E86C0"
+RISING, FALLING = NEEDLE, HIGH_HAND   # the web page's pressure arrow after its reading (its way over the past hour): up, in the
+                                     # needle's blue; down, in the red hands' red (steady: sideways, in SOFT)
 WIND_CHIPS = {**CHIPS, "Max": NEEDLE, "Gust": HIGH_HAND}   # the web page's Wind table: its Max the needle's colour (the speed
                                                            # it shows), its Gust its limit mark's red (today's highest gust)
 CELL_W, CELL_H, MARGIN = 480, 575, 20
@@ -72,7 +74,7 @@ def share(tile: Tile, value: float) -> float:
 def look() -> dict:
     """The figures above as JSON, for the web page to draw with."""
     return {"bg": BG, "ink": INK, "soft": SOFT, "chip": CHIP, "chips": CHIPS, "wind_chips": WIND_CHIPS, "marks": MARKS, "fill": FILL, "water": WATER,
-            "needle": NEEDLE, "high_hand": HIGH_HAND, "high_hand_width": HIGH_HAND_WIDTH, "limit_mark": list(LIMIT_MARK), "tube_half": TUBE_HALF, "bulb_radius": BULB_RADIUS, "mercury_gap": MERCURY_GAP, "bar_width": BAR_WIDTH,
+            "needle": NEEDLE, "rising": RISING, "falling": FALLING, "high_hand": HIGH_HAND, "high_hand_width": HIGH_HAND_WIDTH, "limit_mark": list(LIMIT_MARK), "tube_half": TUBE_HALF, "bulb_radius": BULB_RADIUS, "mercury_gap": MERCURY_GAP, "bar_width": BAR_WIDTH,
             "bar_gap": BAR_GAP, "ring_outer": RING_OUTER, "band_width": BAND_WIDTH, "label_radius": LABEL_RADIUS,
             "cell": [CELL_W, CELL_H], "compass": list(COMPASS),
             "compass_label_y": COMPASS_LABEL_Y, "compass_band": COMPASS_BAND, "points": list(POINTS),

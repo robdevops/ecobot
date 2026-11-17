@@ -3468,69 +3468,58 @@ const Sky = (() => {
 
   const DIAL = [240, 203, 138];   // a dial's centre and its ring's radius (the compass's too: the same size, lined up)
   const HUB = 13;                 // a dial's hub, its needle's pivot: its radius (its outline as thin, lw(1.5)); the needle's tail under it
-  // Today's trend (the pressure's: tile.trend, [[minutes since midnight, hPa], ...]) as a patient monitor's trace below the hub: no
-  // window, frame or grid, only a smooth, continuous line (a Catmull-Rom spline through the readings themselves: curved between
-  // them) across the dial's whole inner width, from one side of its coloured ring to the other (midnight at the left, the next
-  // midnight at the right: it grows through the day), lit like a neon tube: a crisp core, never blurred (the pressure's mid-band
-  // blue-violet, TRACE_INK, its palette's middle, with a thinner pale, near-white centre, TRACE_CORE, along it), over a wide halo
-  // of the same blue-violet that fades out gradually (TRACE_HALO: blurred copies of the line, each wider and fainter than the one
-  // inside it, under the tick numbers and the unit, so they stay clear). The latest reading a small bright point the same way (the
-  // palette's palest, TRACE_DOT, a near-white centre, its own halo). Its height the day's own range (the lowest reading at the
-  // bottom, the highest at the top, at least TREND_SPAN hPa apart, so a still day reads still). Under the needle and the hub; nothing
-  // drawn with fewer than two readings; redrawn only when the readings change (the filters static). TRACE: [left, top, right,
-  // bottom], the dial's own px (between the hub and the unit, clear of the tick numbers either side; its ends just inside the ring's
-  // inner edge, radius 108)
-  const TRACE = [140, 219, 340, 237], TREND_SPAN = 2, DAY_MINUTES = 1440;
-  const TRACE_INK = "#8087F5", TRACE_DOT = "#C5CAFA", TRACE_CORE = "#E6E8FF";
-  // the halo, inside out: [stroke width, blur (stdDeviation), opacity], the line's (the point's radius its width's half, plus 1)
-  const TRACE_HALO = [[3, 1.2, 0.75], [6, 3, 0.5], [11, 6, 0.32], [18, 10, 0.2], [28, 16, 0.12]];
-  let traces = 0;   // (each trace's halo its own filter ids)
-  function traceAt(m, v, lo, hi) {   // a reading's place on the trace
-    const [x0, y0, x1, y1] = TRACE;
-    return [x0 + Math.min(Math.max(m / DAY_MINUTES, 0), 1) * (x1 - x0), y1 - (v - lo) / (hi - lo) * (y1 - y0)];
-  }
-  function smooth(pts) {   // a path through the points (x rising): a Catmull-Rom spline, as a C segment between each two, its
-    const n = pts.length, f = (v) => v.toFixed(2);   // control points kept to the trace's height (so the curve never leaves it)
-    const y = (v) => Math.min(Math.max(v, TRACE[1]), TRACE[3]);
-    let path = `M${f(pts[0][0])},${f(pts[0][1])}`;
-    for (let i = 0; i < n - 1; i++) {
-      const p0 = pts[Math.max(i - 1, 0)], [xa, ya] = pts[i], [xb, yb] = pts[i + 1], p3 = pts[Math.min(i + 2, n - 1)];
-      const c1 = [xa + (xb - p0[0]) / 6, y(ya + (yb - p0[1]) / 6)], c2 = [xb - (p3[0] - xa) / 6, y(yb - (p3[1] - ya) / 6)];
-      path += `C${f(Math.min(c1[0], xb))},${f(c1[1])} ${f(Math.max(c2[0], xa))},${f(c2[1])} ${f(xb)},${f(yb)}`;
+  // The pressure's way over the past hour (tile.tendency: {change, way}, the server's: its newest reading less the one nearest an hour
+  // before; null with none about an hour old): a thin, simple arrow just after the reading under the dial, a small gap after its last
+  // digit whatever its width (hPa or inHg; the reading stays centred), vertically centred on its digits: a straight shaft with a small
+  // open head, as thin as the dial's thin text (lw(1.5)), about the digits' height. Rising: pointing up, in L.rising (the needle's
+  // blue); falling: pointing down, in L.falling (the red hands' red); steady (under 0.3 hPa either way): pointing right, shorter, in
+  // L.soft. None with no tendency or no reading. Clear of the ring's outline beside a reading in hPa; a wide one (inHg's "29.92")
+  // reaches it, as the reading itself does: there the arrow's thin edge in the tile's background parts the outline round it. No
+  // motion: it is only put in place as the reading changes. The reading's width and its digits' ink are measured on a canvas (no
+  // layout asked of the page), once for each text.
+  // ARROW: the gap after the number and the head's half-width (px), the arrow's height (of the digits'), the steady one's length (of
+  // that height), the stroke's width, and its edge's (in the background: each side)
+  const ARROW = {gap: 6, head: 5, tall: 0.8, steady: 0.62, width: lw(1.5), edge: 1.5};
+  const digits = new Map();   // ({size/text: [its width, its digits' ink centre below the em box's middle, their height]})
+  let measuring = null;
+  function measure(words, size) {
+    const key = `${size}/${words}`;
+    if (!digits.has(key)) {
+      if (!measuring) measuring = document.createElement("canvas").getContext("2d");
+      measuring.font = `${size}px ${getComputedStyle(document.body).fontFamily}`;
+      measuring.textBaseline = "middle";   // (the em box's middle: the SVG text's "central")
+      const ink = measuring.measureText("0123456789");
+      digits.set(key, [measuring.measureText(words).width, (ink.actualBoundingBoxDescent - ink.actualBoundingBoxAscent) / 2,
+                       ink.actualBoundingBoxAscent + ink.actualBoundingBoxDescent]);
     }
-    return path;
+    return digits.get(key);
   }
-  function traceGlow(group) {   // the halo's blurs (static, once: one per layer, over the dial's lower half, wide enough for the
-    const id = group.dataset.halo = `trace-halo-${++traces}`, defs = el("defs", {}, group);   // widest) and the trace's groups:
-    TRACE_HALO.forEach(([, blur], i) => {
-      const f = el("filter", {id: `${id}-${i}`, filterUnits: "userSpaceOnUse", x: 60, y: 150, width: 360, height: 150}, defs);
-      el("feGaussianBlur", {stdDeviation: blur}, f);
-    });
-    el("g", {class: "halo"}, group);               // halo, then the crisp core over it
-    return el("g", {class: "lit"}, group);
-  }
-  function trendLine(group, pts, ink) {
-    const lit = group.querySelector(":scope > g.lit") || traceGlow(group), halo = group.querySelector(":scope > g.halo");
-    lit.replaceChildren();
-    halo.replaceChildren();
-    const got = (pts || []).filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
-    group.dataset.points = String(got.length);
-    if (got.length < 2) return;
-    const values = got.map((p) => p[1]);
-    let lo = Math.min(...values), hi = Math.max(...values);
-    if (hi - lo < TREND_SPAN) { const mid = (hi + lo) / 2; lo = mid - TREND_SPAN / 2; hi = mid + TREND_SPAN / 2; }
-    const at = got.map(([m, v]) => traceAt(m, v, lo, hi)), d = smooth(at), [x, y] = at[at.length - 1];
-    const id = group.dataset.halo;
-    const round = {fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round"};
-    TRACE_HALO.slice().reverse().forEach(([w, , o], k) => {   // (outermost first: the brighter layers over the fainter)
-      const i = TRACE_HALO.length - 1 - k, layer = el("g", {class: "layer", filter: `url(#${id}-${i})`, opacity: o}, halo);
-      el("path", {d, stroke: ink(TRACE_INK), "stroke-width": w, ...round}, layer);
-      el("circle", {cx: x.toFixed(2), cy: y.toFixed(2), r: w / 2 + 1, fill: ink(TRACE_DOT)}, layer);
-    });
-    el("path", {d, stroke: ink(TRACE_INK), "stroke-width": 2.2, ...round, class: "line"}, lit);
-    el("path", {d, stroke: ink(TRACE_CORE), "stroke-width": 0.8, ...round, class: "core"}, lit);
-    el("circle", {cx: x.toFixed(2), cy: y.toFixed(2), r: 2.4, fill: ink(TRACE_DOT), class: "latest"}, lit);
-    el("circle", {cx: x.toFixed(2), cy: y.toFixed(2), r: 1.2, fill: ink(TRACE_CORE), class: "core"}, lit);
+  function tendencyArrow(svg, label, x, y, size, ink) {
+    const group = el("g", {class: "tendency", fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round", "pointer-events": "none"}, svg);
+    const edge = el("path", {stroke: L.bg, "stroke-width": ARROW.width + 2 * ARROW.edge, class: "edge"}, group);
+    const arrow = el("path", {"stroke-width": ARROW.width, class: "arrow"}, group);
+    let shown = null, words = null;
+    return (way) => {   // the arrow at the reading as it reads now, this way ("up", "down" or "steady"; anything else: none)
+      if (way !== "up" && way !== "down" && way !== "steady") way = null;
+      group.style.display = way ? "" : "none";
+      group.dataset.way = way || "";
+      if (!way || (way === shown && label.textContent === words)) return;
+      shown = way;
+      words = label.textContent;
+      const [width, middle, high] = measure(words, size), h = high * ARROW.tall, k = ARROW.head, f = (v) => v.toFixed(2);
+      const left = x + width / 2 + ARROW.gap, cy = y + middle;
+      let d;
+      if (way === "steady") {
+        const tip = left + h * ARROW.steady;
+        d = `M${f(left)},${f(cy)} L${f(tip)},${f(cy)} M${f(tip - k)},${f(cy - k)} L${f(tip)},${f(cy)} L${f(tip - k)},${f(cy + k)}`;
+      } else {
+        const sx = left + k, sign = way === "up" ? -1 : 1, tip = cy + sign * h / 2;
+        d = `M${f(sx)},${f(cy - sign * h / 2)} L${f(sx)},${f(tip)} M${f(sx - k)},${f(tip - sign * k)} L${f(sx)},${f(tip)} L${f(sx + k)},${f(tip - sign * k)}`;
+      }
+      edge.setAttribute("d", d);
+      arrow.setAttribute("d", d);
+      arrow.setAttribute("stroke", ink(way === "up" ? L.rising : way === "down" ? L.falling : L.soft));
+    };
   }
   function dial(svg, tile, ink) {
     const [cx, cy] = DIAL, angle = (v) => L.start - L.sweep * share(tile, v);
@@ -3544,8 +3533,6 @@ const Sky = (() => {
       el("path", {d: `M${x0},${y0} A${outer},${outer} 0 ${big} 1 ${x1},${y1} L${x2},${y2} A${inner},${inner} 0 ${big} 0 ${x3},${y3} Z`,
                   fill: ink(colour)}, svg);
     });
-    const trend = tile.trend === undefined ? null : el("g", {class: "trend", "pointer-events": "none"}, svg);   // (the pressure's: under
-    if (trend) trendLine(trend, tile.trend, ink);                                   // the numbers, the unit, the needle and the hub)
     for (const tick of tile.ticks) {
       const [x, y] = polar(cx, cy, L.label_radius, angle(tick));
       text(svg, x, y, tickText(tick), 17, ink(L.soft));
@@ -3563,19 +3550,23 @@ const Sky = (() => {
     }
     const label = text(svg, cx, cy + 102, "", 50, ink(L.ink));   // (the reading alone: no band word ("Moderate") under the dial, its
     label.classList.add("reading");                                // colours say it)
+    const arrow = tile.tendency === undefined ? null : tendencyArrow(svg, label, cx, cy + 102, 50, ink);   // (the pressure's)
+    let way = null;
     el("circle", {cx, cy, r: HUB, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(1.5), class: "hub"}, svg);
     const at = (v) => {
       const a = angle(v);
       const pts = [polar(cx, cy, outer - L.band_width - 6, a), polar(cx, cy, 10, a + 90), polar(cx, cy, -(HUB - 1), a), polar(cx, cy, 10, a - 90)];
       needle.setAttribute("points", pts.map((p) => p.map((n) => n.toFixed(2)).join(",")).join(" "));
       label.textContent = figure(v, tile.decimals);
+      if (arrow) arrow(way);   // (kept just after the number as it changes)
     };
-    let drawnTrend = JSON.stringify(tile.trend || []);
-    if (trend) at.band = (t) => {   // (the tile as given again: today's trend redrawn in place if it changed)
-      const next = JSON.stringify(t.trend || []);
-      if (next !== drawnTrend) trendLine(trend, t.trend, ink);
-      drawnTrend = next;
-    };
+    if (arrow) {
+      at.band = (t) => {   // (the tile as given again: its arrow turned, shown or hidden)
+        way = t.value === null || !t.tendency ? null : t.tendency.way;
+        arrow(way);
+      };
+      at.band(tile);
+    }
     if (hand) at.hand = (v) => {   // the red hand at v (moved in place, frame by frame); null: none to show
       hand.style.display = v === null ? "none" : "";
       if (v !== null) hand.setAttribute("transform", `rotate(${(-angle(v)).toFixed(2)} ${cx} ${cy})`);
@@ -3694,7 +3685,7 @@ const Sky = (() => {
   // What can't change in place (a tile so different is drawn again): its kind and scale. A reading coming or going doesn't: the tile
   // brightens or dims (its opacity, eased) and the gauge moves from or to its floor.
   const shape = (t) => JSON.stringify([t.kind, t.title, t.unit, t.low, t.high, t.colours, t.ticks, t.bounds, t.columns, t.decimals,
-                                       t.todayHigh !== undefined, t.trend !== undefined]);
+                                       t.todayHigh !== undefined, t.tendency !== undefined]);
   const label = (t) => t.value === null ? `${t.title}: no reading` : t.kind === "compass" ? `${t.title} ${figure(t.value, t.decimals)}° ${t.band || ""}`.trim()
                                                                      : `${t.title} ${figure(t.value, t.decimals)} ${t.unit}`.trim();
   let clips = 0;
@@ -3894,8 +3885,8 @@ const Sky = (() => {
   // and red hand, with the same decimals (inHg and inches with two). Its scale's ends converted (a thermometer's 0 to 40 °C: 32 to 104
   // °F, its coloured bands as they were), its ticks every round step (0.5, 1, 2, 5, 10 ...) that gives no more of them than it had; a
   // dial's (the wind's 0 to 100 km/h), and a scale `round` (the rain's beaker), ending on its ticks (0 to 60 mph, every 10; 950 to 1050
-  // hPa: 28 to 31 inHg, every 0.5; 0 to 100 mm: 0 to 4 in, every 1; 0 to 50 mm/h: 0 to 2 in/h, every 0.5). The pressure's trend (no
-  // numbers on it) as it was: its shape the same in either. The weather's marks (heat from 35 °C, leaves from 15 km/h, flood above 30
+  // hPa: 28 to 31 inHg, every 0.5; 0 to 100 mm: 0 to 4 in, every 1; 0 to 50 mm/h: 0 to 2 in/h, every 0.5). The pressure's arrow (its
+  // way over the past hour, told in hPa) as it was: the same way in either, just after the reading whatever its width. The weather's marks (heat from 35 °C, leaves from 15 km/h, flood above 30
   // mm/h) read the server's own figures: unchanged by these.
   const UNITS = {temperature: {metric: "°C", other: "°F", name: "Temperature unit", convert: (c) => c * 9 / 5 + 32},
                  wind: {metric: "km/h", other: "mph", name: "Wind speed unit", convert: (k) => k / 1.609344},

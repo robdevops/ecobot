@@ -296,8 +296,9 @@ temperature tile (Temperature, Dew point, Feels like, Indoor temperature), "km/h
 pressure and "mm | in" for Rain and Rain rate (mm/h becomes in/h), the one in use lit (buttons, so Tab and Enter or Space work too).
 The tile's reading, its scale and the numbers on it (0-40 °C becomes 32-104 °F, 0-100 km/h 0-60 mph, 950-1050 hPa 28-31 inHg, the
 rain's 0-100 mm 0-4 in and its rate's 0-50 mm/h 0-2 in/h), its Daily, Monthly and Yearly figures, its unit and the red hand (the
-Wind's gust, the rain rate's high) all change in place, with the same decimals (two in inHg and inches); the pressure's trend keeps
-its shape. ecobot-mcp still sends metric and the browser converts. The wind's direction stays in degrees. Each browser keeps its
+Wind's gust, the rain rate's high) all change in place, with the same decimals (two in inHg and inches); the pressure's arrow (after
+its reading: up and blue when it rose 0.3 hPa or more over the past hour, down and red when it fell as much, sideways and grey when
+steady, none with less than about an hour of readings) points the same way. ecobot-mcp still sends metric and the browser converts. The wind's direction stays in degrees. Each browser keeps its
 choice with the arrangement, and "reset preferences" (shown while any is not metric) puts all four back to metric. The weather
 behind the gauges goes by the metric readings whatever is shown (heat from 35 °C, leaves above 15 km/h, a flood above 30 mm/h).
 

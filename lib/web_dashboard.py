@@ -22,8 +22,9 @@
     the station's day in its zone: Wind's gust, Rain rate's, Solar radiation's, UV index's: their tiles' Daily Max, the Wind's its
     Daily Gust, the reading now counted in: today_highs()), the Wind direction tile's `rose` (today's
     share of the wind's direction from each of the 16 compass points, N first, clockwise, from the file's readings, calm ones left out;
-    [] with none: rose()), the Atmospheric pressure tile's `trend` (today's pressure since the station's midnight: [[minutes since
-    midnight, hPa], ...] oldest first, at most TREND_POINTS, from the file's 5-minute readings and minutes; [] with none: trend()), and
+    [] with none: rose()), the Atmospheric pressure tile's `tendency` (its change over the past hour, for the arrow after its reading:
+    {"change": hPa, "way": "up", "down" or "steady"}, the file's newest reading less its reading nearest an hour before it; null with
+    no reading about an hour old: tendency()), and
     the gust now (`gust`, km/h: over 99, a new
     reading sends a cow, a barn or a chicken across behind the tiles);
   - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading or the
@@ -85,9 +86,11 @@ NOT_ANSWERING = "The weather station isn't answering right now."
 RAIN_RATES = ("rainfall", "rainfall_piezo")   # where the station's rain rate is (current's groups): its rain gauge's first, then the piezo's
 ROSE_SECONDS = 60           # the wind rose (today's directions) read from the file at most this often (the data asked for again sooner: the same)
 ROSE_DECIMALS = 4           # its shares rounded so
-TREND_TITLE = "Atmospheric pressure"   # the tile with today's trend in an LCD window below its hub (its `trend`: trend())
-TREND_SECONDS = 60          # today's pressure read from the file at most this often (as the rose)
-TREND_POINTS = 100          # ... at most this many points sent: more, averaged in as many equal stretches of the day so far
+TENDENCY_TITLE = "Atmospheric pressure"   # the tile with an arrow after its reading: its change over the past hour (`tendency`: tendency())
+TENDENCY_SECONDS = 60       # the past hour's pressure read from the file at most this often (as the rose)
+TENDENCY_AGO = (45 * 60, 60 * 60, 75 * 60)   # ... the reading it is told from: the one nearest an hour before the newest, 45 to 75 min before it
+TENDENCY_READ = 90 * 60     # ... read from this long before now (the newest more than 45 min old: no reading about an hour before it read)
+TENDENCY_STEADY = 0.3       # ... a change under this (hPa) either way: steady (a sideways arrow)
 RED_HANDS = {g.title: "Gust" if g.gust else "Max" for g in GAUGES if g.high_hand}   # the dials with a red hand at today's highest,
 # and the column of their table whose Daily figure it is (the Wind's: its highest gust)
 
@@ -138,16 +141,20 @@ def today_highs(tiles) -> dict[str, float | None]:
     return out
 
 
-def thinned(readings: list[tuple[int, float]], start: int, now: float, most: int = TREND_POINTS) -> list[list[float]]:
-    """Readings ([(epoch, value)], oldest first) as [[minutes since `start`, value], ...] (to a tenth), at most `most` of them: more,
-    averaged in `most` equal stretches from `start` to `now` (each its readings' mean time and mean value; an empty one left out)."""
-    if len(readings) > most:
-        width = max(now - start, 1) / most
-        groups: dict[int, list[tuple[int, float]]] = {}
-        for t, v in readings:
-            groups.setdefault(min(max(int((t - start) // width), 0), most - 1), []).append((t, v))
-        readings = [(sum(t for t, _ in g) / len(g), sum(v for _, v in g) / len(g)) for _, g in sorted(groups.items())]
-    return [[round((t - start) / 60, 1), round(v, 1)] for t, v in readings]
+def tendency_of(readings: list[tuple[int, float]]) -> dict | None:
+    """The pressure's change over the past hour from readings ([(epoch, hPa)], oldest first): {"change": the newest less the reading
+    nearest an hour (TENDENCY_AGO) before it, hPa to a tenth, "way": "up" (risen TENDENCY_STEADY or more), "down" (fallen as much) or
+    "steady"}; None with no reading 45 to 75 minutes before the newest."""
+    if not readings:
+        return None
+    newest, now = readings[-1]
+    lo, mid, hi = TENDENCY_AGO
+    then = [(abs(newest - mid - t), v) for t, v in readings if lo <= newest - t <= hi]
+    if not then:
+        return None
+    change = now - min(then, key=lambda p: p[0])[1]
+    way = "up" if change >= TENDENCY_STEADY - 1e-9 else "down" if change <= -TENDENCY_STEADY + 1e-9 else "steady"
+    return {"change": round(change, 1), "way": way}
 
 
 def air_readings_of(row: dict | None) -> tuple | None:
@@ -173,7 +180,7 @@ class WebDashboard:
             raise ValueError(f"animations: {animations!r} is not one of {', '.join(MOTIONS)}")
         self._streams: set[asyncio.Queue] = set()
         self._rose: tuple[float, int, list[float]] | None = None   # (when read, the day's start, its shares): rose()'s, kept ROSE_SECONDS
-        self._trend: tuple[float, int, list[list[float]]] | None = None   # (when read, the day's start, its points): trend()'s, kept TREND_SECONDS
+        self._tendency: tuple[float, dict | None] | None = None   # (when read, the past hour's change): tendency()'s, kept TENDENCY_SECONDS
         self._shown = self._readings()
         self.closed = False
         server.bus.subscribe(self._on_event)
@@ -190,8 +197,8 @@ class WebDashboard:
         for tile in tiles:
             if tile["kind"] == "compass":   # (the wind's direction: today's rose under its needle)
                 tile["rose"] = await self.rose()
-            elif tile["title"] == TREND_TITLE:   # (the pressure: today's line across its dial, above the hub)
-                tile["trend"] = await self.trend()
+            elif tile["title"] == TENDENCY_TITLE:   # (the pressure: an arrow after its reading, its past hour's way)
+                tile["tendency"] = await self.tendency()
         out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": tiles, "look": look(),
                "rain_rate": rain_rate_of(result, live), "gust": now_of(result, live, GUST),
                "today_highs": today_highs(sheet.tiles if sheet else [])}
@@ -218,23 +225,21 @@ class WebDashboard:
         self._rose = (now, start, shares)
         return shares
 
-    async def trend(self) -> list[list[float]]:
-        """Today's pressure (the station's day, in its zone): [[minutes since its midnight, hPa], ...], oldest first, from the file's
-        5-minute readings and the minutes they don't cover (pressure_on); more than TREND_POINTS averaged in as many equal stretches of
-        the day so far (each its readings' mean time and mean pressure); [] with none (or no file, or an error reading it). Read at most
-        every TREND_SECONDS (and again as the day turns), else kept."""
+    async def tendency(self) -> dict | None:
+        """The pressure's change over the past hour (tendency_of): the file's newest reading (its 5-minute readings and the minutes they
+        don't cover: pressure_on, as the station keeps it, in hPa) less its reading nearest an hour before that; None with none about an
+        hour old (or no file, or an error reading it). Read at most every TENDENCY_SECONDS, else kept."""
         eco, now = self.server.ctx.eco, time.time()
-        start = day_bounds(local_date(int(now), self.server.ctx.zone), self.server.ctx.zone)[0]
-        if self._trend and self._trend[1] == start and now - self._trend[0] < TREND_SECONDS:
-            return self._trend[2]
-        points: list[list[float]] = []
+        if self._tendency and now - self._tendency[0] < TENDENCY_SECONDS:
+            return self._tendency[1]
+        got = None
         if getattr(eco, "storage", None) is not None and getattr(eco, "mac", None):
             try:
-                points = thinned(await eco.storage.read(pressure_on, eco.mac, start, int(now) + 60), start, now)
-            except Exception as e:   # (no line drawn)
-                log.warning("Dashboard: couldn't read today's pressure: %s: %s", type(e).__name__, e)
-        self._trend = (now, start, points)
-        return points
+                got = tendency_of(await eco.storage.read(pressure_on, eco.mac, int(now) - TENDENCY_READ, int(now) + 60))
+            except Exception as e:   # (no arrow drawn)
+                log.warning("Dashboard: couldn't read the past hour's pressure: %s: %s", type(e).__name__, e)
+        self._tendency = (now, got)
+        return got
 
     def device_times(self) -> dict[str, str | None]:
         """{"station", "air"}: the time of each configured device's reading as it is held (the station's: its newest reading's own time
@@ -357,5 +362,5 @@ class WebDashboard:
                 Route(f"{path}/events", self.events, methods=["GET"])]
 
 
-__all__ = ["RED_HANDS", "ROSE_SECONDS", "WebDashboard", "air_readings_of", "now_of", "rain_rate_of", "readings_of", "thinned",
+__all__ = ["RED_HANDS", "ROSE_SECONDS", "WebDashboard", "air_readings_of", "now_of", "rain_rate_of", "readings_of", "tendency_of",
            "today_highs"]
