@@ -845,7 +845,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert all(c == rgb(MAX_CHIP) for t, heads in others.items() if t != "Wind" for n, c in heads if n.endswith("Max")), others
         assert hands["Wind"]["daily"] == [f"{v:.0f}" for v in wind.rows["Daily"]] and wind.rows["Daily"][1] >= 12, (hands["Wind"], wind)
         # every round dial's hub small (about half the old 25), its outline as thin, its needle pivoting on its centre; the compass's
-        # smaller still; the pressure in whole hPa, its reading and its table; today's trend line across its dial, and no other's
+        # smaller still; the pressure in whole hPa, its reading and its table; today's trend in an LCD window below its hub, no other's
         dials = got["dials"]
         assert {d["kind"] for d in dials.values()} == {"dial", "compass"} and len(dials) >= 6, dials
         for title, d in dials.items():
@@ -859,7 +859,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert re.fullmatch(r"\d{3,4}", p["reading"]) and p["figures"] and all(re.fullmatch(r"\d{3,4}|-|", f) for f in p["figures"]), p
         trend_drawn(p, pressure_day(60), name)
         z = got["pressureZoomed"]
-        assert z["zoomed"] and z["trend"]["points"] == p["trend"]["points"] and z["hub"] == p["hub"], (name, z)
+        assert z["zoomed"] and z["trend"]["dots"] == p["trend"]["dots"] and z["hub"] == p["hub"], (name, z)
         assert z["trend"]["drawnWidth"] / z["trend"]["tileWidth"] == pytest.approx(p["trend"]["drawnWidth"] / p["trend"]["tileWidth"], rel=0.05)
         assert z["trend"]["tileWidth"] > p["trend"]["tileWidth"], (name, z)
         assert (shots / f"dashboard-{name}-pressure.png").exists()
@@ -877,7 +877,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     c = after["compass"]
     assert (c["label"], c["reading"], c["turn"]) == ("Wind direction 300° WNW", "300° WNW", "rotate(300.00 240 203)"), c
     rose_drawn(c, ROSE_LATER)                                                     # (today's rose redrawn in place with it)
-    trend_drawn(before["pressure"], pressure_day(60), "live, before")              # ... and the pressure's line grown, in place
+    trend_drawn(before["pressure"], pressure_day(60), "live, before")              # ... and the pressure's LCD grown, in place
     trend_drawn(after["pressure"], pressure_day(90), "live, after")
     assert after["pressure"]["same"], after["pressure"]
     turns = c["turns"]
@@ -907,25 +907,48 @@ def pressure_day(n: int) -> list[tuple[float, float]]:
     return [(round(so_far * i / (n - 1), 1), round(1015 - 6 * math.sin(math.pi * i / (n - 1)) + (i % 3) * 0.1, 1)) for i in range(n)]
 
 
+LCD, LCD_PAD, LCD_COLS, LCD_ROWS = (194, 221, 286, 253), 4, 24, 7   # the pressure's LCD window (the page's): [left, top, right, bottom]
+
+
 def trend_drawn(p: dict, readings: list[tuple[float, float]], name: str):
-    """The pressure's trend line (dialsLook's): every reading drawn, oldest first, left to right; its x the time of day (midnight at the
-    left of its box, the next at its right: its span the day so far); its height the day's own range, the lowest lowest; all of it under
-    the tick numbers and above the hub, inside the ring; under the needle and the hub; a thin, see-through line in the soft grey (not the
-    needle's blue), a small dot at its latest."""
+    """The pressure's trend in its LCD window (dialsLook's): a small dark rectangle (darker than the dial's face, L.bg), a thin frame,
+    slightly rounded corners, below the hub and clear of the unit ("hPa"), the reading and the tick numbers, inside the ring; a coarse
+    grid of LCD_COLS by LCD_ROWS faint unlit dots; one lit, glowing dot per hour with readings, its column the hour (midnight at the left,
+    the next at the right), its row the hour's mean on the day's own range (at least 2 hPa: the lowest reading the bottom row, the
+    highest the top); the latest hour's dot the brightest; under the needle and the hub."""
     t = p["trend"]
-    assert t["given"] == len(readings) == len(t["points"]), (name, t)
-    xs, ys = [x for x, _ in t["points"]], [y for _, y in t["points"]]
-    assert all(a < b for a, b in zip(xs, xs[1:])), (name, xs)
-    left, right = 182, 298
-    for (x, _), (m, _) in zip(t["points"], readings):
-        assert x == pytest.approx(left + m / 1440 * (right - left), abs=0.02), (name, x, m)
-    lowest, highest = min(v for _, v in readings), max(v for _, v in readings)
-    assert ys[[v for _, v in readings].index(lowest)] == max(ys) and ys[[v for _, v in readings].index(highest)] == min(ys), (name, t)
-    assert t["ticksBottom"] < min(ys) - 2 and max(ys) + 2 < t["hubTop"], (name, t)
-    assert all(math.hypot(x - 240, y - 203) < 138 - 22 - 20 for x, y in t["points"]), (name, t)   # (inside the band and the numbers)
+    assert t["given"] == len(readings), (name, t)
+    w = t["window"]
+    assert w["box"] == pytest.approx(list(LCD)) and 2 <= w["rx"] <= 4 and w["strokeWidth"] <= 1.5, (name, w)
+    assert sum(int(c) for c in re.findall(r"\d+", w["fill"])) < sum(int(look()["bg"][i:i + 2], 16) for i in (1, 3, 5)), (name, w)
+    assert w["stroke"] == rgb(look()["soft"]) and t["unlit"] == LCD_COLS * LCD_ROWS and t["glow"], (name, t)
+    left, top, right, bottom = LCD
+    # below the hub; clear of the unit's and the reading's boxes (the font's line boxes: the unit's centre 30 px or more above the
+    # reading's, as before) and of the tick numbers'
+    assert t["hubBottom"] < top and bottom < t["unit"][1] and bottom < t["reading"][1], (name, t)
+    assert (t["reading"][1] + t["reading"][3]) / 2 - (t["unit"][1] + t["unit"][3]) / 2 >= 30, (name, t)
+    assert all(x1 < left or x0 > right or y1 < top or y0 > bottom for x0, y0, x1, y1 in t["ticks"]), (name, t)
+    assert all(math.hypot(x - 240, y - 203) < 138 - 4 for x in (left, right) for y in (top, bottom)), (name, t)   # (inside the ring)
+    values = [v for _, v in readings]
+    lo, hi = min(values), max(values)
+    if hi - lo < 2:
+        lo, hi = (lo + hi) / 2 - 1, (lo + hi) / 2 + 1
+    hours: dict[int, list[float]] = {}
+    for m, v in readings:
+        hours.setdefault(min(int(m / 1440 * LCD_COLS), LCD_COLS - 1), []).append(v)
+    want = [(c, round((sum(vs) / len(vs) - lo) / (hi - lo) * (LCD_ROWS - 1))) for c, vs in hours.items()]
+    assert [(d["col"], d["row"]) for d in t["dots"]] == want, (name, t["dots"], want)
+    cw, rh = (right - left - 2 * LCD_PAD) / LCD_COLS, (bottom - top - 2 * LCD_PAD) / LCD_ROWS
+    for d in t["dots"]:                                                       # each where its hour and value put it, in the window
+        assert d["centre"] == pytest.approx([left + LCD_PAD + (d["col"] + 0.5) * cw, bottom - LCD_PAD - (d["row"] + 0.5) * rh], abs=0.02), d
+        assert left < d["centre"][0] - d["size"] / 2 and d["centre"][0] + d["size"] / 2 < right, d
+        assert top < d["centre"][1] - d["size"] / 2 and d["centre"][1] + d["size"] / 2 < bottom, d
+    latest = [d for d in t["dots"] if d["latest"]]
+    assert len(latest) == 1 and latest[0]["col"] == want[-1][0] == min(int(readings[-1][0] / 1440 * LCD_COLS), LCD_COLS - 1), (name, t)
+    assert all(d["opacity"] < latest[0]["opacity"] for d in t["dots"] if not d["latest"]), (name, t)            # the brightest
+    assert t["dot"] == latest[0]["centre"] and t["points"] == [d["centre"] for d in t["dots"]], (name, t)
     assert t["order"][0] < t["order"][1] < t["order"][2], (name, t)                        # under the needle, then the hub
-    assert t["colour"] == rgb(look()["soft"]) != rgb(look()["needle"]) and t["width"] <= 2 and t["opacity"] <= 0.7, (name, t)
-    assert t["dot"][:2] == pytest.approx(t["points"][-1], abs=0.01) and t["dot"][2] <= 4, (name, t)
+    assert len({d["fill"] for d in t["dots"] if not d["latest"]}) == 1 and t["dots"][0]["fill"] != rgb(look()["needle"]), (name, t)
 
 
 def limit_mark(h, name, title):
@@ -978,7 +1001,8 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
     after, frames = got["after"], got["frames"]
     assert got["errors"] == [] and got["same_tile"], got                         # moved in place: the same tile, not drawn again
     trend = got["pressure"]["trend"]                                             # (the pressure's trend: one reading or none, no line)
-    assert trend["given"] == (1 if comes else 0) and trend["points"] == [] and trend["dot"] is None, trend
+    assert trend["given"] == (1 if comes else 0) and trend["points"] == [] and trend["dot"] is None, trend   # (its window there, dark)
+    assert trend["window"]["box"] == pytest.approx(list(LCD)) and trend["unlit"] == LCD_COLS * LCD_ROWS, trend
     numbers = [float(f["number"]) for f in frames]
     opacities = [f["opacity"] for f in frames]
     if comes:

@@ -124,7 +124,7 @@ async function sizes(browser, url, shots, wanted) {
       [t.querySelector(".title").textContent, [...t.querySelectorAll(".chip.head")].map((e) => [e.textContent, getComputedStyle(e).backgroundColor])])));   // table's heads
     await compassSettled(page);
     report[name].compass = await compassLook(page);   // the wind's direction in the grid: its compass, no table
-    report[name].dials = await dialsLook(page);       // every round dial's hub and pivot, and the pressure's trend line
+    report[name].dials = await dialsLook(page);       // every round dial's hub and pivot, and the pressure's LCD trend
     // zoomed (Enter on the first tile): its look (box, title, text, table) and a screenshot (SHOTS/dashboard-NAME-zoomed.png)
     await page.focus(".tile");
     await page.keyboard.press("Enter");
@@ -154,7 +154,7 @@ async function sizes(browser, url, shots, wanted) {
     await calm(page, 400);
     await page.screenshot({ path: `${shots}/dashboard-${name}-uv.png` });
     report[name].uvZoomed = { zoomed: await page.evaluate(() => document.body.classList.contains("zoomed")), ...(await handsLook(page))["UV index"] };
-    // back, then the pressure zoomed: its hub and trend line as in the grid, scaled with it (SHOTS/dashboard-NAME-pressure.png)
+    // back, then the pressure zoomed: its hub and LCD trend as in the grid, scaled with it (SHOTS/dashboard-NAME-pressure.png)
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.body.classList.contains("zoomed") && !document.querySelector(".tile.zooming, .tile.fading"));
     await page.evaluate(() => [...document.querySelectorAll("#grid .tile")].find((t) => t.querySelector(".title").textContent === "Atmospheric pressure").focus());
@@ -199,10 +199,12 @@ const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
                    daily: title === "Wind" ? [...t.querySelectorAll(".figure")].slice(0, 2).map((e) => e.textContent) : undefined }];
 })));
 // Every round dial's (and the compass's) hub and its needle's pivot, in its own px: the hub's centre, radius and outline width; the
-// needle's pivot (a dial's: the midpoint of its polygon's two side corners; the compass's: the centre its turn is about). Its trend line
-// (null without one: its group's absence): its points as drawn ([x, y] each, the path's), its latest dot's centre and radius, the hub's
-// top, the tick numbers' lowest bottom, its parts' order in the gauge ([trend, needle, hub] indexes), its stroke's colour, width and
-// opacity, its points' count as given (data-points), and its drawn width against the tile's (window px)
+// needle's pivot (a dial's: the midpoint of its polygon's two side corners; the compass's: the centre its turn is about). Its trend
+// (null without one: its group's absence), the pressure's LCD window: its lit dots (column, row, centre, size, opacity, colour, the
+// latest), their centres (points) and the latest's (dot), the window's rectangle, corners, fill and frame, its unlit dots' count and
+// whether the lit ones glow, the hub's bottom, the unit's, the reading's and the tick numbers' boxes (getBBox, the gauge's px), its
+// parts' order in the gauge ([trend, needle, hub] indexes), its points' count as given (data-points), and the window's drawn width
+// against the tile's (window px)
 const dialsLook = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#grid .tile")]
   .filter((t) => t.dataset.kind === "dial" || t.dataset.kind === "compass").map((t) => {
     const title = t.querySelector(".title").textContent, gauge = t.querySelector("svg > g.gauge"), parts = [...gauge.children];
@@ -217,14 +219,22 @@ const dialsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
     const g = gauge.querySelector(":scope > g.trend"), needle = gauge.querySelector(":scope > polygon, :scope > g.needle");
     let trend = null;
     if (g) {
-      const line = g.querySelector(".line"), dot = g.querySelector(".latest"), c = line && getComputedStyle(line);
+      const frame = g.querySelector(":scope > rect.window"), lit = g.querySelector(":scope > g.lit"), unlit = g.querySelector(":scope > path.unlit");
+      const box = (e) => { const b = e.getBBox(); return [b.x, b.y, b.x + b.width, b.y + b.height]; };
+      const dots = [...g.querySelectorAll(".dot")].map((d) => ({ col: Number(d.dataset.col), row: Number(d.dataset.row),
+        centre: [n(d, "x") + n(d, "width") / 2, n(d, "y") + n(d, "height") / 2], size: n(d, "width"), opacity: Number(d.getAttribute("fill-opacity")),
+        fill: getComputedStyle(d).fill, latest: d.classList.contains("latest") }));
       const ticks = parts.filter((e) => e.tagName === "text" && /^[\d.]+$/.test(e.textContent));
-      trend = { given: Number(g.dataset.points), points: line ? line.getAttribute("d").slice(1).split(" L").map((p) => p.split(",").map(Number)) : [],
-                dot: dot ? [n(dot, "cx"), n(dot, "cy"), n(dot, "r")] : null, hubTop: n(hub, "cy") - n(hub, "r"),
-                ticksBottom: Math.max(...ticks.filter((e) => n(e, "y") < n(hub, "cy") - 40).map((e) => e.getBBox().y + e.getBBox().height)),
+      const unit = parts.find((e) => e.tagName === "text" && e.textContent === "hPa"), reading = gauge.querySelector(":scope > text.reading");
+      trend = { given: Number(g.dataset.points), dots, points: dots.map((d) => d.centre), dot: (dots.find((d) => d.latest) || {}).centre || null,
+                window: frame && { box: [n(frame, "x"), n(frame, "y"), n(frame, "x") + n(frame, "width"), n(frame, "y") + n(frame, "height")],
+                                   rx: n(frame, "rx"), fill: getComputedStyle(frame).fill, stroke: getComputedStyle(frame).stroke,
+                                   strokeWidth: parseFloat(getComputedStyle(frame).strokeWidth) },
+                unlit: unlit ? (unlit.getAttribute("d").match(/M/g) || []).length : 0, glow: !!(lit && lit.getAttribute("filter")),
+                hubBottom: n(hub, "cy") + n(hub, "r"), unit: unit && box(unit), reading: reading && box(reading),
+                ticks: ticks.map(box), ring: [n(hub, "cx"), n(hub, "cy")],
                 order: [parts.indexOf(g), parts.indexOf(needle), parts.indexOf(hub)],
-                colour: c && c.stroke, width: c && parseFloat(c.strokeWidth), opacity: c && Number(c.strokeOpacity),
-                tileWidth: t.getBoundingClientRect().width, drawnWidth: line ? line.getBoundingClientRect().width : 0 };
+                tileWidth: t.getBoundingClientRect().width, drawnWidth: frame ? frame.getBoundingClientRect().width : 0 };
     }
     return [title, { kind: t.dataset.kind, hub: [n(hub, "cx"), n(hub, "cy"), n(hub, "r"), n(hub, "stroke-width")], pivot, trend,
                      reading: (gauge.querySelector(":scope > text.reading") || {}).textContent,
@@ -283,7 +293,7 @@ async function live(browser, url) {
   await page.evaluate(() => {
     window.__mark = 1; document.querySelector(".tile").__mark = 1;
     window.__pressureTile = () => [...document.querySelectorAll(".tile")].find((t) => t.querySelector(".title").textContent === "Atmospheric pressure");
-    window.__pressure = window.__pressureTile().querySelector("g.trend");   // (the pressure's trend line: the same group after)
+    window.__pressure = window.__pressureTile().querySelector("g.trend");   // (the pressure's LCD trend: the same group after)
   });
   const pressureBefore = (await dialsLook(page))["Atmospheric pressure"];
   // (the compass's needle, every frame from now, the opening's rise over: the wind's direction changes with the temperature)

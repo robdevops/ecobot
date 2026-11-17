@@ -3397,26 +3397,60 @@ const Sky = (() => {
 
   const DIAL = [240, 203, 138];   // a dial's centre and its ring's radius (the compass's too: the same size, lined up)
   const HUB = 13;                 // a dial's hub, its needle's pivot: its radius (its outline as thin, lw(1.5)); the needle's tail under it
-  // Today's trend (the pressure's: tile.trend, [[minutes since midnight, hPa], ...]): a thin, quiet line across the dial's face, between
-  // its numbers and its hub, the day's midnight at its left and the next at its right (so it grows through the day), its height the
-  // day's own lowest to highest (at least TREND_SPAN hPa, so a still day reads still), a little padding; a small dot at its latest.
-  // Under the needle and the hub; nothing with fewer than two points. [left, top, right, bottom], the dial's own px
-  const TREND_BOX = [182, 148, 298, 180], TREND_SPAN = 2, TREND_PAD = 0.1, DAY_MINUTES = 1440;
+  // Today's trend (the pressure's: tile.trend, [[minutes since midnight, hPa], ...]) in a little LCD window below the hub, as a cheap
+  // barometer's dot-matrix display: a simple dark rectangle (a shade darker than the dial's face), a thin frame, slightly rounded corners;
+  // inside, a coarse grid of LCD_COLS by LCD_ROWS dots, the unlit ones faint, and one lit dot per hour that has readings (LCD_COLS
+  // columns across the whole day, midnight to midnight: it fills through the day), soft LED blue with a little glow, at the hour's
+  // mean on the day's own scale (its lowest reading the bottom row, its highest the top, at least TREND_SPAN hPa apart, so a still day
+  // reads still); the latest hour's dot the brightest. Under the needle and the hub; no dots with fewer than two readings (the window
+  // stays, dark). LCD: [left, top, right, bottom], the dial's own px, and the dots' inset from the frame
+  const LCD = [194, 221, 286, 253], LCD_PAD = 4, LCD_COLS = 24, LCD_ROWS = 7, TREND_SPAN = 2, DAY_MINUTES = 1440;
+  const LCD_FACE = "#0A0E11", LCD_LED = "#7CD3FF";
+  let lcds = 0;   // (each window's glow its own filter id)
+  function lcdCell(col, row) {   // a dot's centre (col 0 at the left, row 0 at the bottom)
+    const [x0, y0, x1, y1] = LCD, w = (x1 - x0 - 2 * LCD_PAD) / LCD_COLS, h = (y1 - y0 - 2 * LCD_PAD) / LCD_ROWS;
+    return [x0 + LCD_PAD + (col + 0.5) * w, y1 - LCD_PAD - (row + 0.5) * h, Math.min(w, h) * 0.74];
+  }
+  function trendWindow(group, ink) {   // the window and its unlit dots, once; the lit ones (trendLine's) drawn over them
+    const [x0, y0, x1, y1] = LCD;
+    el("rect", {x: x0, y: y0, width: x1 - x0, height: y1 - y0, rx: 3, fill: LCD_FACE, stroke: ink(L.soft), "stroke-width": 1.2,
+                "stroke-opacity": 0.55, class: "window"}, group);
+    let d = "";
+    for (let c = 0; c < LCD_COLS; c++) for (let r = 0; r < LCD_ROWS; r++) {
+      const [x, y, s] = lcdCell(c, r);
+      d += `M${(x - s / 2).toFixed(2)},${(y - s / 2).toFixed(2)}h${s.toFixed(2)}v${s.toFixed(2)}h${(-s).toFixed(2)}z`;
+    }
+    el("path", {d, fill: ink(LCD_LED), "fill-opacity": 0.07, class: "unlit"}, group);
+    const id = `lcd-glow-${++lcds}`, f = el("filter", {id, x: "-50%", y: "-50%", width: "200%", height: "200%"}, el("defs", {}, group));
+    el("feGaussianBlur", {stdDeviation: 0.9, result: "glow"}, f);
+    const merge = el("feMerge", {}, f);
+    el("feMergeNode", {in: "glow"}, merge);
+    el("feMergeNode", {in: "SourceGraphic"}, merge);
+    return el("g", {class: "lit", filter: `url(#${id})`}, group);
+  }
   function trendLine(group, pts, ink) {
-    group.replaceChildren();
+    const lit = group.querySelector(":scope > g.lit") || trendWindow(group, ink);
+    lit.replaceChildren();
     const got = (pts || []).filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
     group.dataset.points = String(got.length);
     if (got.length < 2) return;
-    const [x0, y0, x1, y1] = TREND_BOX, values = got.map((p) => p[1]);
+    const values = got.map((p) => p[1]);
     let lo = Math.min(...values), hi = Math.max(...values);
     if (hi - lo < TREND_SPAN) { const mid = (hi + lo) / 2; lo = mid - TREND_SPAN / 2; hi = mid + TREND_SPAN / 2; }
-    const pad = (hi - lo) * TREND_PAD;
-    lo -= pad; hi += pad;
-    const xy = got.map(([m, v]) => [x0 + Math.min(Math.max(m / DAY_MINUTES, 0), 1) * (x1 - x0), y1 - (v - lo) / (hi - lo) * (y1 - y0)]);
-    el("path", {d: "M" + xy.map((p) => p.map((n) => n.toFixed(2)).join(",")).join(" L"), fill: "none", stroke: ink(L.soft),
-                "stroke-width": 1.6, "stroke-opacity": 0.55, "stroke-linejoin": "round", "stroke-linecap": "round", class: "line"}, group);
-    const [x, y] = xy[xy.length - 1];
-    el("circle", {cx: x.toFixed(2), cy: y.toFixed(2), r: 2.8, fill: ink(L.soft), "fill-opacity": 0.85, class: "latest"}, group);
+    const hours = new Map();   // column: [sum, count], in the order they come (oldest first)
+    for (const [m, v] of got) {
+      const col = Math.min(Math.max(Math.floor(m / DAY_MINUTES * LCD_COLS), 0), LCD_COLS - 1), h = hours.get(col) || [0, 0];
+      h[0] += v; h[1] += 1;
+      hours.set(col, h);
+    }
+    const latest = Math.min(Math.max(Math.floor(got[got.length - 1][0] / DAY_MINUTES * LCD_COLS), 0), LCD_COLS - 1);
+    for (const [col, [sum, count]] of hours) {
+      const row = Math.min(Math.max(Math.round((sum / count - lo) / (hi - lo) * (LCD_ROWS - 1)), 0), LCD_ROWS - 1);
+      const [x, y, s] = lcdCell(col, row), last = col === latest;
+      el("rect", {x: (x - s / 2).toFixed(2), y: (y - s / 2).toFixed(2), width: s.toFixed(2), height: s.toFixed(2), rx: 0.4,
+                  fill: ink(last ? "#E6F7FF" : LCD_LED), "fill-opacity": last ? 1 : 0.72, class: last ? "dot latest" : "dot",
+                  "data-col": col, "data-row": row}, lit);
+    }
   }
   function dial(svg, tile, ink) {
     const [cx, cy] = DIAL, angle = (v) => L.start - L.sweep * share(tile, v);
@@ -3434,7 +3468,7 @@ const Sky = (() => {
       const [x, y] = polar(cx, cy, L.label_radius, angle(tick));
       text(svg, x, y, tickText(tick), 17, ink(L.soft));
     }
-    text(svg, cx, cy + 64, tile.unit, 18, ink(L.soft));
+    text(svg, cx, cy + (tile.trend === undefined ? 64 : 68), tile.unit, 18, ink(L.soft));   // (the pressure's a little lower: its LCD above)
     const trend = tile.trend === undefined ? null : el("g", {class: "trend", "pointer-events": "none"}, svg);   // (the pressure's: under
     if (trend) trendLine(trend, tile.trend, ink);                                                                // the needle and hub)
     const needle = el("polygon", {fill: ink(L.needle)}, svg);
