@@ -124,6 +124,15 @@ class EcowittError(Exception):
         self.transient = transient
 
 
+class NotInYet(EcowittError):
+    """The station isn't known yet: ecobot-mcp started with nothing kept of it (a first start) and its device list hasn't answered yet
+    (Ecowitt.refresh_device keeps asking). Nothing is asked of its readings until it has."""
+
+    def __init__(self):
+        super().__init__("the weather station's readings aren't in yet: ecobot-mcp has just started and is still finding the station "
+                         "(it keeps trying)", transient=True)
+
+
 def _body(res: httpx.Response) -> dict | None:
     """The JSON object Ecowitt answered with ({"code": ..., "msg": ...}), or None if the reply isn't one."""
     try:

@@ -10,6 +10,8 @@ from lib.ecowitt.fallback import FallbackAPI, newest
 from lib.ecowitt.hass_api import HomeAssistantAPI, live_data
 from tests.fakes import HA_PREFIX, MAC, TZ, config, ecowitt_transport, home_assistant_transport
 
+pytestmark = pytest.mark.usefixtures("ha_states_unshared")   # (its fake Home Assistant changes between requests)
+
 
 def local_now() -> datetime:
     return datetime.now(TZ).replace(tzinfo=None, microsecond=0)
@@ -24,8 +26,17 @@ async def test_the_station_is_found_by_its_entities_names_and_says_when_it_began
     api, fake = api_for(history_days=10)
     (device,) = await api.devices()
     assert device["mac"] == "MAC" and device["name"] == "WS2900" and device["date_zone_id"] == "Australia/Melbourne"
-    assert abs(device["createtime"] - fake.begins) < 70 and device["latitude"] == -37.8
+    assert "createtime" not in device and device["latitude"] == -37.8 and not any(c["path"].startswith("/api/history") for c in fake.calls)
+    assert [c["path"] for c in fake.calls] == ["/api/config", "/api/states"]          # (asked together)
+    assert abs(await api.look() - fake.begins) < 70 and api.looked                   # looked for when asked: a long history query, once
+    (device,) = await api.devices()
+    assert abs(device["createtime"] - fake.begins) < 70 and await api.look() == api.earliest
+    assert len([c for c in fake.calls if c["path"].startswith("/api/history")]) == 1
+    kept = HomeAssistantAPI("http://ha", "tok", TZ, "MAC", home_assistant_transport(fake)[0])
+    kept.known_earliest(fake.begins)                                                   # known from the file: never looked for
+    assert await kept.look() == fake.begins and len([c for c in fake.calls if c["path"].startswith("/api/history")]) == 1
     await api.close()
+    await kept.close()
 
 
 async def test_a_home_assistant_that_cannot_be_used_says_why_as_the_clouds_errors_do():
@@ -96,7 +107,7 @@ async def test_a_history_is_cut_in_the_clouds_buckets_and_asks_home_assistant_a_
 
 async def test_nothing_is_asked_of_home_assistant_for_a_time_before_it_began_recording():
     api, fake = api_for(history_days=2)
-    await api.devices()
+    await api.look()
     fake.calls.clear()
     now = local_now()
     assert await api.history("x", "5min", now - timedelta(days=60), now - timedelta(days=30), "outdoor") == {}

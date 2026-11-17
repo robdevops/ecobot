@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 
 from ..airgradient.metrics import EXTRA as AIR_OWN_METRICS
-from ..ecowitt.api import MINUTE, unit_text
+from ..ecowitt.api import MINUTE, NotInYet, unit_text
 from ..ecowitt.dashboard import GAUGES, GUST, Gauge, figures, live_value, periods_of
 from ..ecowitt.days import FIELDS, PARTS, day_values_on
 from ..ecowitt.direction import point
@@ -52,6 +52,7 @@ ANOTHER_TIME = ("period", "start", "end")   # a call about another time than now
 HEADINGS = {STATION: "Weather station", AIR_DEVICE: "Air quality"}       # the report's sections (the old lib/report.py SECTIONS)
 NOT_AVAILABLE = "• not available right now"                              # ... and a section whose device didn't answer
 UNAVAILABLE = {STATION: "The weather station isn't answering right now.", AIR_DEVICE: "The air sensor isn't answering right now."}
+NOT_IN_YET = "The weather station's reading isn't in yet: ecobot-mcp has just started and is still finding the station."
 NOTHING_HELD = {STATION: "No reading of the weather station is held (and `fetch` is off).",
                 AIR_DEVICE: "No reading of the air sensor is held (and `fetch` is off)."}
 PERIODS = (("Daily", "today"), ("Monthly", "month"), ("Yearly", "year"))   # a gauge's rows, as the result names them
@@ -495,6 +496,8 @@ class CurrentTool:
             live = await self._live(station, named, meta)
         except NothingHeld:
             return Part.down(STATION, NOTHING_HELD[STATION], today)
+        except NotInYet:
+            return Part.down(STATION, NOT_IN_YET, today)
         except Exception as e:
             log.warning("current: the weather station's reading failed: %s", e)
             return Part.down(STATION, UNAVAILABLE[STATION], today)
@@ -588,7 +591,7 @@ class CurrentTool:
             if getattr(self.ctx.air, "_current", None) is None:
                 raise NothingHeld()
             return await self.ctx.air.latest(extras, held=True)
-        return await self.ctx.air.latest(extras)
+        return await self.ctx.air.latest(extras, kept=True)   # (just after a start, the reading kept from before it: as of its time)
 
     async def _context(self, station: list[Reading]) -> tuple[dict, dict]:
         """The gauges' figures for the readings that have a gauge (context_on): their day rows of the year so far, in one read."""

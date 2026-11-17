@@ -29,11 +29,9 @@ class AlertRules:
         self.pollen = PollenAndAsthmaMonitor(sources["Pollen"], store, alerts) if "Pollen" in sources else None
 
     def start(self, tasks) -> list[str]:
-        """Start every rule but the weather's (start_weather, once the station has been read): the alert types now running."""
+        """Start every rule but the station's and the air sensor's (start_weather, start_air: once each has been read): the alert types now
+        running."""
         running = []
-        if self.particulates:
-            tasks.start(every(CHECK_SECONDS, self.particulates.check))
-            running += ParticulatesMonitor.KINDS
         if self.forecast:
             self.sources["Forecast"].warmer.after.append(self.forecast.check)   # after each refresh (in the day)
             running += ForecastMonitor.KINDS
@@ -41,6 +39,13 @@ class AlertRules:
             self.sources["Pollen"].warmer.after.append(self.pollen.check)       # after each refresh (in the day)
             running += PollenAndAsthmaMonitor.KINDS
         return running
+
+    def start_air(self, tasks, running: list[str]):
+        """The particulates rule, once the air sensor has been read (its start in the warm-up): checked every CHECK_SECONDS; its alert
+        types added to `running`."""
+        if self.particulates:
+            tasks.start(every(CHECK_SECONDS, self.particulates.check))
+            running += ParticulatesMonitor.KINDS
 
     async def start_weather(self, running: list[str]):
         """The weather rules, once the station has been read: their state from the recent readings (first run), a first check, then one

@@ -1,9 +1,11 @@
 """The forecast source: the daily forecast from Open-Meteo (open-meteo.com), kept warm and cached; fetched only from 6 am to 6 pm
-local time (lib/warm.py SYNC_HOURS), every 15 minutes, and once at the start (or the first question) when nothing is cached."""
+local time (lib/warm.py SYNC_HOURS), every 15 minutes, and once just after the start (ecobot-mcp's warm-up, or the first question) when
+nothing is cached."""
 
 import logging
 import math
 import time
+from collections.abc import Callable
 from datetime import date
 
 import httpx
@@ -65,13 +67,14 @@ def day_label(day: date, today: date) -> str:
 class Forecast(Source):
     name = "Forecast"
 
-    def __init__(self, cfg: Config, location: tuple[float, float] | None = None, transport=None):
-        """location: (lat, lon), used when the config has none (the weather station's own)."""
+    def __init__(self, cfg: Config, location: tuple[float, float] | Callable[[], tuple[float, float] | None] | None = None, transport=None):
+        """location: (lat, lon), used when the config has none (the weather station's own); or what gives it when asked (the station's,
+        which a first start learns only once its device list answers)."""
         self.tz, self.place = cfg.tz, cfg.place
         configured = (cfg.forecast_lat, cfg.forecast_lon)
         if configured != (None, None) and None in configured:
             log.warning("MCP_FORECAST_LAT and MCP_FORECAST_LON go together: with only one set, the weather station's location is used")
-        self.location = configured if None not in configured else location if location and None not in location else None
+        self._location = configured if None not in configured else location
         self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport, verify=ssl_context())
         self.days: list[dict] | None = None
         self.fetched_at = 0.0
@@ -80,14 +83,23 @@ class Forecast(Source):
         self._load()
         self.warmer = Warmer(self.warm, FORECAST_REFRESH_SECONDS)
 
-    async def start(self):
-        if not self.location:
+    @property
+    def location(self) -> tuple[float, float] | None:
+        """(lat, lon): the configured one, else the weather station's (None while it has none)."""
+        found = self._location() if callable(self._location) else self._location
+        return tuple(found) if found and None not in found else None
+
+    async def start(self, wait: bool = True):
+        """From the last forecast fetched (kept in the file), nothing asked: the first fetch, if that one is due again, is the warm-up's
+        (ecobot_mcp/core.py Core.warm_up). Without a location, nor a station that may yet give one, it can't start."""
+        if not self.location and not callable(self._location):
             raise RuntimeError("no location: set MCP_FORECAST_LAT and MCP_FORECAST_LON (or the weather station supplies one)")
-        try:
-            await self.warm(True)
-            self.summary = f"{SOURCE}: {len(self.days or [])} days (every {self.warmer.interval:g}s)"
-        except Exception as e:
-            log.warning("Forecast not readable yet: %s", e)
+        self.summary = self.describe()
+
+    def describe(self) -> str:
+        """The start-up line: how many days it holds, and how often it is fetched."""
+        held = f"{len(self.days)} days" if self.days is not None else "none kept yet"
+        return f"{SOURCE}: {held} (every {self.warmer.interval:g}s)"
 
     # ---------- kept on disk ----------
     def _load(self):
@@ -153,6 +165,8 @@ class Forecast(Source):
         if self.days is not None and (not in_sync_hours(self.now()) or age < FRESH_SECONDS and not fresh):
             return "Forecast cached"
         before = self.requests
+        if not self.location:   # (the station's, not given yet: a first start whose device list hasn't answered)
+            raise RuntimeError("no location yet: the weather station hasn't given one (or set MCP_FORECAST_LAT and MCP_FORECAST_LON)")
         self.days = await self._open_meteo()   # a failure raises: the warmer logs it
         self.days = await self._with_chance(self.days)
         self.fetched_at = time.time()

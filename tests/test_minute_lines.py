@@ -97,6 +97,8 @@ async def test_home_assistant_alone_is_kept_warm_and_backfilled_like_the_cloud(t
     asked = len(ha.calls)
     await eco.warm(False)
     assert len(ha.calls) - asked <= 1                                                          # warm: the newest is in memory (at most the one tail that a new day or hour opens)
+    await eco.keep_earliest()                                                                   # (as the warm-up does before the archive starts)
+    assert eco.created is not None and abs(eco.created.timestamp() - ha.begins) < 70            # Home Assistant's first state: the archive starts there
     fetched, failed = await Archive(eco, eco.archive_pace).run_once()
     assert fetched > 10 and not failed                                                          # a day at a time, 5-minute, then the coarser
     for cycle in ("5min", "30min", "1day"):

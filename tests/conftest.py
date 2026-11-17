@@ -120,6 +120,14 @@ def the_log_levels_as_they_were():
 
 
 @pytest.fixture
+def ha_states_unshared(monkeypatch):
+    """Home Assistant's /api/states asked afresh each time (lib/ecowitt/homeassistant.py STATES_SHARE_SECONDS 0; a request already out
+    is still shared): for the tests whose fake Home Assistant changes what it says from one request to the next, a few ms apart."""
+    from lib.ecowitt import homeassistant
+    monkeypatch.setattr(homeassistant, "STATES_SHARE_SECONDS", 0)
+
+
+@pytest.fixture
 def alert_state(tmp_path):
     """The bot's chats and settings (an AlertState) in a file of the test's own: what a Bot is given, as in the running bot."""
     from lib.alerts.notify import AlertState

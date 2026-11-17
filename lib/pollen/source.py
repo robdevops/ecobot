@@ -51,15 +51,18 @@ class Pollen(Source):
         self._load()
         self.warmer = Warmer(self.warm, POLLEN_REFRESH_SECONDS)
 
-    async def start(self):
+    async def start(self, wait: bool = True):
+        """From the last page fetched (kept in the file), nothing asked: the first fetch, if that one is due again, is the warm-up's
+        (ecobot_mcp/core.py Core.warm_up)."""
+        self.summary = self.describe()
+
+    def describe(self) -> str:
+        """The start-up line: the levels on the page it holds, and how often it is fetched."""
         if not self.in_season():
-            self.summary = "Melbourne Pollen: out of season (October to December)"
-            return
-        try:
-            await self.warm(True)
-            self.summary = f"Melbourne Pollen: {'/'.join(l.split(' forecast')[0] for l in self.lines()) or 'no levels on the page'} ({self.warmer.interval:g}s)"
-        except Exception as e:  # the site may just be briefly unreachable
-            log.warning("Pollen not readable yet: %s", e)
+            return "Melbourne Pollen: out of season (October to December)"
+        if self.page is None:
+            return f"Melbourne Pollen: no page of this season kept yet ({self.warmer.interval:g}s)"
+        return f"Melbourne Pollen: {'/'.join(l.split(' forecast')[0] for l in self.lines()) or 'no levels on the page'} ({self.warmer.interval:g}s)"
 
     # ---------- kept on disk ----------
     def _load(self):

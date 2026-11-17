@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, tzinfo
 from ..storage import Storage
 from ..storage.coverage import merge as merge_intervals
 from ..timeutil import local_epoch, naive_local
-from .api import CYCLES, EcowittError
+from .api import CYCLES, EcowittError, NotInYet
 from .reads import rows_on
 
 log = logging.getLogger(__name__)
@@ -141,6 +141,8 @@ class Fetcher:
             return None
         self.calls += 1
         try:
+            if not self.mac:   # (the station not found yet: a first start, its device list still to answer)
+                raise NotInYet()
             return await self.api.history(self.mac, cycle, start, end, ",".join(groups), urgent=self.urgent)
         except EcowittError as e:
             label = f"{cycle} {start:%d %b %Y} - {end:%d %b %Y}"

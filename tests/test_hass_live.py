@@ -2,8 +2,12 @@ import asyncio
 import logging
 import time
 
+import pytest
+
 from lib.ecowitt import Ecowitt, source
 from tests.fakes import config, ecowitt_transport, home_assistant_transport
+
+pytestmark = pytest.mark.usefixtures("ha_states_unshared")   # (its fake Home Assistant changes between requests)
 
 
 async def home_station(tmp_path, monkeypatch, both=False):

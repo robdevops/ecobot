@@ -6,7 +6,7 @@ from lib.snapshots import KEEP_SECONDS, Snapshots
 from lib.warm import safely
 from tests.fakes import TZ, config
 from tests.test_forecast import transport as forecast_transport
-from tests.test_pollen import SEASON_DAY, make as make_pollen, page
+from tests.test_pollen import SEASON_DAY, make as make_pollen, page, started
 
 
 def rows(store, kind: str) -> int:
@@ -41,11 +41,11 @@ def test_each_source_has_its_own_connection_to_the_one_file(tmp_path):
 
 async def test_a_restart_in_the_evening_starts_from_the_saved_pollen_page_without_fetching(tmp_path):
     first, calls = make_pollen(tmp_path, lambda: page(grass="High", asthma="High"))
-    await first.start()
+    await started(first)
     assert len(calls) == 1
     await first.close()
     again, more = make_pollen(tmp_path, lambda: page(grass="Low"), hour=22)
-    await again.start()
+    await started(again)
     assert more == [] and again.lines() == ["Grass pollen forecast: 🔴 High", "Thunderstorm asthma forecast: 🔴 High"]
     assert again.current()["fetched_at"] == first.fetched_at
     again.now = lambda: datetime.combine(SEASON_DAY, dtime(9, 0))
@@ -58,7 +58,7 @@ async def test_a_restart_in_the_evening_starts_from_the_saved_pollen_page_withou
 async def test_the_pollen_history_keeps_one_row_per_change(tmp_path):
     level = {"now": "Low"}
     pollen, _ = make_pollen(tmp_path, lambda: page(grass=level["now"]).replace('<span id="pdate">', f'<span data-v="{level["now"]}" id="pdate">'))
-    await pollen.start()
+    await started(pollen)
     await pollen.warm(True)
     assert rows(pollen.store, "pollen") == 1
     level["now"] = "High"
@@ -72,13 +72,13 @@ async def test_the_forecast_survives_a_restart_and_a_night_start_needs_no_reques
     calls = []
     first = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
     first.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(12, 0))
-    await first.start()
+    await started(first)
     lines = first.lines(3)
     await first.close()
     calls.clear()
     again = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
     again.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(22, 0))
-    await again.start()
+    await started(again)
     assert calls == [] and again.lines(3) == lines and rows(again.store, "forecast") == 1
     await again.close()
 
@@ -109,7 +109,7 @@ async def test_a_forecast_saved_by_the_older_bom_version_still_loads(tmp_path):
                             "days": [{"date": str(today), "min_c": 11, "max_c": 17, "summary": "Rain.", "rain_chance_pct": 90}]})
     forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport([]))
     forecast.now = lambda: datetime.combine(today, dtime(22, 0))
-    await forecast.start()
+    await started(forecast)
     assert forecast.lines() == ["Today: Rain. 11–17°C, 90% chance of rain"]
     await forecast.close()
     store.close()

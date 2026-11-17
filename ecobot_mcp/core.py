@@ -2,12 +2,16 @@
 bot is only ever its client (step 6b):
 
   1. `configure(cfg)`: the settings the engines read as module values (the anti-spike rule, what "all" draws, what `about` says);
-  2. `start_sources(cfg)`: every configured source that starts, the weather station first (its time zone wins);
+  2. `start_sources(cfg)`: every configured source that starts, the weather station first (its time zone wins), none of them asking the
+     network for anything: each starts from what the data folder kept of it (the port opens without waiting on any server);
   3. `Core.open(cfg, sources, stack, tasks)`: the alert log, the tools' Context and the ten tools (lib/service);
   4. `core.log_startup()`: each source's startup line;
   5. `core.start_alerts()`: the alert rules (lib/service/alerts.py), writing the alert log; `core.start_warmers()`: the keep-warm;
-  6. `core.warm_up(running)`: the first fetch, then the weather alerts, the live poll, the archive, Home Assistant's imports, the air
-     sensor's history and backfill.
+  6. `core.warm_up(running)`, once the port is open: the first fetch (the station's device list in the background, and on a first start
+     the station found by it; then its live reading first; the air sensor's reading and the rest of its start, then its line; the
+     forecast and the pollen page if due), then the alerts of each device once it has been read, the live poll, the archive, Home
+     Assistant's imports, the air sensor's history and backfill. Until then the tools and the dashboard answer from what was kept, as of
+     its time; the MCP resources and the dashboard's events tell the clients when the fresh readings come in.
 
 `Health` records each loop's last success and failure (ecobot://health)."""
 
@@ -57,9 +61,11 @@ def configure(cfg: Config):
 
 async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     """Every configured data source that starts, and the settings in the time zone they run in. The weather station starts
-    first: it names its own time zone, which wins over TZ, so the air sensor and the optional website sources (pollen,
-    forecast, off unless switched on), and everything built after, use the station's; those three start side by side (each
-    waits on its own server). The forecast uses the station's location unless one is configured."""
+    first: it names its own time zone (as the data folder kept it), which wins over TZ, so the air sensor and the optional website
+    sources (pollen, forecast, off unless switched on), and everything built after, use the station's; those three start side by side.
+    The forecast uses the station's location unless one is configured (on a first start, once its device list has given it). No start
+    asks the network for anything: each source starts from what the data folder kept (the station's device and its last live reading,
+    the air sensor's last reading, the last forecast and pollen page), and Core.warm_up fetches once the port is open."""
     sources: list[Source] = []
     took: dict[str, float] = {}
 
@@ -68,7 +74,7 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
         source, started = None, time.monotonic()
         try:
             source = kind(*args, **kwargs)
-            await source.start()
+            await source.start(wait=False)
             return source
         except Exception as e:
             log.error("%s couldn't start (%s: %s) - continuing without it", kind.name, type(e).__name__, e, exc_info=isinstance(e, BUGS))
@@ -100,7 +106,7 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     if cfg.pollen:
         starts.append(start(Pollen, cfg))
     if cfg.forecast:
-        starts.append(start(Forecast, cfg, (eco.latitude, eco.longitude) if eco and None not in (eco.latitude, eco.longitude) else None))
+        starts.append(start(Forecast, cfg, eco.location or (lambda: eco.location) if eco else None))
     sources += [s for s in await asyncio.gather(*starts) if s is not None]   # (in this order, whichever answers first)
     if storage is not None and not sources:
         storage.close()
@@ -221,9 +227,16 @@ class Core:
 
         async def ecowitt_part():
             # One request at a time (Ecowitt rate-limits): the live reading first (the dashboard's tiles and the first "weather now"
-            # wait on it), then warm, so the alerts' own look at the last 3 hours is answered from what was just fetched. A failed
-            # first refresh must not stop the alerts or the archive: safely() logs it
-            await eco.first_live()
+            # wait on it), then the device list in the background (the start took the station from the file; on a first start it goes
+            # first, as nothing is asked of the station until it has answered), then warm, so the alerts' own look at the last 3 hours
+            # is answered from what was just fetched. A failed first refresh must not stop the alerts or the archive: safely() logs it
+            if not eco.listed.is_set():
+                tasks.start(eco.refresh_device())
+                await eco.listed.wait()
+                await eco.first_live()
+            else:
+                await eco.first_live()
+                tasks.start(eco.refresh_device())
             await safely(health.track("Ecowitt refresh", eco.warm), True)
             try:
                 if self.rules is not None:
@@ -232,6 +245,7 @@ class Core:
                 log.error("Weather alerts couldn't start (%s: %s)", type(e).__name__, e, exc_info=isinstance(e, BUGS))
             if eco.fast is not None:
                 tasks.start(eco.watch_live())
+            await safely(eco.keep_earliest)   # (Home Assistant's first state, the archive's start when no device list gave one)
             # The full history is copied into the cache in the background (a few minutes the first time), so questions rarely
             # need Ecowitt inline
             archive = Archive(eco, eco.archive_pace)
@@ -241,6 +255,11 @@ class Core:
                 tasks.start(every(HA_IMPORT_SECONDS, health.track("Ecowitt Home Assistant import", eco.import_ranges)))
 
         async def air_part():
+            await safely(air.settle)   # its reading, and the rest of its start: Home Assistant's entities of it, the cloud's name for it
+            for line in air.startup_lines():
+                log.info("%s", line)
+            if self.rules is not None:   # (once it has been read)
+                self.rules.start_air(tasks, running)
             await safely(health.track("AirGradient refresh", air.warm), True)
             tasks.start(air_history())   # even if the sensor was unreachable just now
 
@@ -260,8 +279,17 @@ class Core:
             fetched, failed, total = await air.backfill()
             log.info("Backfill AirGradient: %d days fetched, %d failed, %d days held, %.0fs", fetched, failed, total, time.monotonic() - started)
 
+        async def website_part(source: Source):
+            """The forecast or the pollen page fetched if its last fetch (what it started from) is due again; its line again if that
+            changed it."""
+            await safely(source.warmer.refresh, False)   # (recorded as its timed refreshes are)
+            if (line := source.describe()) != source.summary:
+                source.summary = line
+                log.info("%s", line)
+
+        websites = [s for s in (self.by_name.get("Forecast"), self.by_name.get("Pollen")) if s is not None]
         try:
-            await asyncio.gather(*([ecowitt_part()] if eco else []), *([air_part()] if air else []))
+            await asyncio.gather(*([ecowitt_part()] if eco else []), *([air_part()] if air else []), *map(website_part, websites))
         except Exception as e:
             log.error("Startup fetch failed (%s: %s); the regular refreshes will catch up", type(e).__name__, e, exc_info=isinstance(e, BUGS))
 

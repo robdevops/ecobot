@@ -4,10 +4,17 @@ from datetime import date, datetime, time as dtime, timedelta
 import httpx
 
 from lib.pollen import LEVEL_EMOJI, LEVELS, Pollen, parse_melbourne_pollen
-from lib.warm import in_sync_hours
+from lib.warm import in_sync_hours, safely
 from tests.fakes import TZ, config
 
 SEASON_DAY = date(2026, 11, 10)   # a day in the pollen season (October to December), whatever day the tests run
+
+
+async def started(source):
+    """Started as ecobot-mcp starts it, from what the file kept (nothing asked), then its first fetch if that is due, as the warm-up
+    makes it (a failure logged, not raised)."""
+    await source.start(wait=False)
+    await safely(source.warm, False)
 
 
 def page(grass="Low", day=None, asthma="Low", season=True, district_extra=""):
@@ -53,7 +60,7 @@ def test_outside_the_asthma_season_there_is_no_asthma_forecast_and_an_unknown_pa
 
 async def test_the_lines_have_a_level_emoji_and_never_name_the_district(tmp_path):
     pollen, _ = make(tmp_path, lambda: page(grass="High", asthma="High"))
-    await pollen.start()
+    await started(pollen)
     assert pollen.lines() == ["Grass pollen forecast: 🔴 High", "Thunderstorm asthma forecast: 🔴 High"]
     assert "Central" not in json.dumps(pollen.lines()) and pollen.current()["asthma"]["updated"] == "1 Oct 2026 4:00pm"
     await pollen.close()
@@ -62,7 +69,7 @@ async def test_the_lines_have_a_level_emoji_and_never_name_the_district(tmp_path
 async def test_a_forecast_for_another_day_and_a_missing_asthma_forecast_are_said_so(tmp_path, caplog):
     pollen, _ = make(tmp_path, lambda: page(grass="Moderate", day=SEASON_DAY + timedelta(days=1), season=False))
     with caplog.at_level("WARNING"):
-        await pollen.start()
+        await started(pollen)
     assert pollen.lines() == ["Grass pollen forecast: 🟠 Moderate (forecast for Wed 11 Nov)"]
     assert pollen.current()["asthma"] is None                                                # (no asthma level to show)
     assert "no thunderstorm asthma level for Central on the page" in caplog.text            # in season the page should have one
@@ -89,7 +96,7 @@ async def test_the_district_is_the_sites_whatever_its_case_and_one_it_lacks_is_w
 
 async def test_the_page_is_fetched_conditionally_and_not_again_while_fresh(tmp_path):
     pollen, calls = make(tmp_path)
-    await pollen.start()
+    await started(pollen)
     assert len(calls) == 1 and "if-none-match" not in calls[0].headers and "ecobot" in calls[0].headers["user-agent"]
     await pollen.warm(False)                               # a question: the data is young, no request
     assert len(calls) == 1
@@ -101,7 +108,7 @@ async def test_the_page_is_fetched_conditionally_and_not_again_while_fresh(tmp_p
 
 async def test_nothing_is_fetched_outside_6am_to_6pm_except_once_when_nothing_is_cached(tmp_path):
     pollen, calls = make(tmp_path, hour=22)
-    await pollen.start()
+    await started(pollen)
     assert len(calls) == 1                                 # empty cache: one fetch, even at night
     await pollen.warm(True)
     await pollen.warm(False)
@@ -122,7 +129,7 @@ async def test_a_page_that_cannot_be_fetched_does_not_stop_the_source_starting(t
         return httpx.Response(500)
     pollen = Pollen(config(tmp_path, pollen=True), httpx.MockTransport(handler))
     pollen.now = lambda: datetime.combine(SEASON_DAY, dtime(12, 0))
-    await pollen.start()
+    await started(pollen)
     assert pollen.lines() == []
     await pollen.close()
 
@@ -144,7 +151,7 @@ def test_the_season_is_october_to_december(tmp_path):
 
 async def test_out_of_season_nothing_is_fetched_not_even_at_start_with_an_empty_cache(tmp_path):
     pollen, calls = make_on(tmp_path, date(2027, 2, 10))
-    await pollen.start()
+    await started(pollen)
     assert await pollen.warm(True) == "Pollen out of season" and await pollen.warm(False) == "Pollen out of season"
     assert calls == [] and pollen.lines() == [] and not pollen.in_season()
     await pollen.close()
@@ -152,12 +159,12 @@ async def test_out_of_season_nothing_is_fetched_not_even_at_start_with_an_empty_
 
 async def test_last_seasons_page_is_not_shown(tmp_path):
     pollen, _ = make_on(tmp_path, date(2026, 12, 20), html=lambda: page(grass="High", day=date(2026, 12, 20)))
-    await pollen.start()
+    await started(pollen)
     assert pollen.lines()[0].startswith("Grass pollen forecast: 🔴 High")
     assert pollen.current()["fetched_at"]                                  # when the page was fetched, for the text's heading
     await pollen.close()
     january, calls = make_on(tmp_path, date(2027, 1, 5))                # the saved page is still in the database
-    await january.start()
+    await started(january)
     assert january.data is not None and january.lines() == [] and january.current()["grass"] is None and calls == []
     await january.close()
 
@@ -165,7 +172,7 @@ async def test_last_seasons_page_is_not_shown(tmp_path):
 async def test_last_seasons_page_is_never_shown_on_the_first_of_october_and_is_fetched_again_even_at_night(tmp_path):
     december = lambda: page(grass="High", asthma="High", day=date(2025, 12, 31))
     pollen, _ = make_on(tmp_path, date(2025, 12, 31), html=december)
-    await pollen.start()
+    await started(pollen)
     await pollen.close()
     october, calls = make_on(tmp_path, date(2026, 10, 1), hour=3, html=december)   # a restart at 3 am, the saved page December's
     assert october.data is not None and october.current()["grass"] is None and october.current()["asthma"] is None
@@ -180,7 +187,7 @@ async def test_the_first_warm_on_the_first_of_october_fetches_without_a_restart(
     clock = {"day": date(2026, 9, 30)}
     pollen, calls = make(tmp_path)
     pollen.now = lambda: datetime.combine(clock["day"], dtime(12, 0))
-    await pollen.start()
+    await started(pollen)
     await pollen.warm(True)
     assert calls == []
     clock["day"] = date(2026, 10, 1)

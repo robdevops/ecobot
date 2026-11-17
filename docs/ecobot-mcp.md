@@ -631,8 +631,8 @@ Each step ships on its own, with the tests and evals green and the bot working t
      `ToolsListChanged` when the file's catalogue gains a reading (read every minute; the tools and instructions are then built again).
      `http_app`: `streamable_http_app` with `TransportSecuritySettings` over `MCP_ALLOWED_HOSTS` and the `TokenCheck` verifier over
      `AUTH_TOKENS` (`AuthSettings(issuer_url=…, resource_server_url=None)`). `ecobot_mcp/`: `core.py` is the service's startup
-     (`start_sources`, `Core`: the alert log, the tools, the alert rules, the keep-warm, and `warm_up`, the first fetch (the station's live reading first, then its history), the weather
-     rules, the live poll, the archive, the backfill and Home Assistant's imports, each loop's last success and failure kept for
+     (`start_sources`, each source started from what the data folder kept, nothing asked of the network before the port opens; `Core`: the alert log, the tools, the alert rules, the keep-warm, and `warm_up`, the first fetch (the station's device list in the background, its live reading first, then its history; the air sensor's reading and the rest of its start; the forecast and pollen page if due), the weather
+     and particulates rules once their device has been read, the live poll, the archive, the backfill and Home Assistant's imports, each loop's last success and failure kept for
      `ecobot://health`), which `ecobot.py` now calls in-process, its behaviour unchanged; `__main__.py` runs it with the server under
      uvicorn (`MCP_BIND`; at first it refused a non-loopback address without tokens, and now it always has one, `AUTH_TOKENS` or the generated one); `lib/upstream.py` is the bot's one supervised
      client, pinned to 2026-07-28, that discovers by hand, listens and re-listens after a backoff (a stdio bridge was built on it and later removed). The image ships `ecobot_mcp/` and

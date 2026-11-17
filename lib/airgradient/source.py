@@ -20,6 +20,7 @@ where available, plus a US EPA AQI and band for PM2.5 and for PM10 (the US AQI i
 """
 
 import asyncio
+import json
 import statistics
 import logging
 import time
@@ -58,7 +59,9 @@ MAX_DAYS = 400                    # longest history period per question
 MAX_REQUEST_DAYS = 9              # the API allows 10 days per request; a day of margin for clock changes
 MAX_INLINE_DAYS = 30              # missing days fetched while answering; more are left to the backfill
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
-JUST_FETCHED_SECONDS = 30         # a refresh (warm) leaves a current reading this new as it is: start() has just fetched it
+JUST_FETCHED_SECONDS = 30         # a refresh (warm) leaves a current reading this new as it is: settle() has just fetched it
+KEEP_SECONDS = 60                 # the current reading is kept in the file at most this often (a restart starts from it)
+KEPT_KEY = "air_current:{loc}"    # ... under this name (the file's meta): {"at", "row"}
 HA_RECENT_SECONDS = 3 * 3600      # Home Assistant's ranges are read back for the last few hours each time (RANGE_KEEP_DAYS the first time)
 SAMPLE_SECONDS = 60               # with the monitor's own server, or Home Assistant's states of it: how often it is read (the keep-warm interval)
 MIN_SAMPLES = 3                   # a 5-minute average of fewer readings than this is not kept (the cloud fills that gap)
@@ -123,16 +126,49 @@ class AirGradient(Source):
         self._ha_said: set[str] = set()                       # what was said once about it: no sensor, a metric that is another variant
         self._verdict: dict[int, dict[str, tuple[int, int]]] = {HOME_ASSISTANT: {}, CLOUD: {}}   # per source, per metric: (five minutes compared, agreed)
         self._correction: str | None = None                   # how the monitor corrects its PM2.5, from its own configuration
+        self._settled = False                                 # settle() has run: the rest of the start, its line
+        self._fresh = False                                   # this run has read the sensor (until then a question is answered from the kept reading)
+        self._kept_at = 0.0                                   # when the current reading was last kept in the file
 
-    async def start(self):
+    async def start(self, wait: bool = True):
+        """The reading the file kept (the last before the restart), which questions and the dashboard are answered from, as of its time,
+        until this run's first comes in; then (wait) settle(): reading the sensor and the rest. ecobot-mcp's start doesn't wait (nothing
+        asked of the network: the port opens at once), and settles in the warm-up."""
+        try:
+            kept = await self.store.storage.read(lambda r: r.meta(KEPT_KEY.format(loc=self.loc)))
+            kept = json.loads(kept) if kept else None
+            if isinstance(kept, dict) and isinstance(kept.get("row"), dict) and isinstance(kept.get("at"), (int, float)):
+                self._current = (kept["row"], float(kept["at"]))
+        except Exception as e:   # (then it starts with none, as at a first start)
+            log.warning("AirGradient: the reading kept in the history file couldn't be read (%s: %s)", type(e).__name__, e)
+        if wait:
+            await self.settle()
+
+    async def _keep(self, now: bool = False):
+        """The current reading kept in the file for the next start, at most every KEEP_SECONDS (unless `now`)."""
+        row, at = self._current
+        if at - self._kept_at < KEEP_SECONDS and not now:
+            return
+        self._kept_at, text = at, json.dumps({"at": at, "row": row})
+        try:
+            await self.store.storage.write(lambda w: w.set_meta(KEPT_KEY.format(loc=self.loc), text))
+        except Exception as e:   # (only the next start's)
+            log.warning("AirGradient: couldn't keep the reading in the history file (%s: %s)", type(e).__name__, e)
+
+    async def settle(self):
+        """Its start, in the warm-up (after the port opens): its reading now, Home Assistant's entities of the monitor (so its line says
+        whether Home Assistant has it), the cloud asked once (it names the sensor, and its token and location are checked) or, with
+        nothing to check its readings against, the monitor's own correction; today's gaps asked of the cloud (its check against what the
+        bot holds); then its line (startup_lines)."""
         try:
             row = await self._current_row(refresh=True)
             if self.ha is not None:
-                await self._ha_entities()   # (found now, so the line below says whether Home Assistant has the monitor)
-            if self.cloud and (self.local or self._ha_ids):   # the cloud is still asked once: it names the sensor, and its token and location are checked
+                await self._ha_entities()
+            if self.cloud and (self.local or self._ha_ids):
                 self._names = {k: v for k, v in (await self._get("current")).items() if k in ("locationName", "locationType")}
                 row = {**row, **self._names}
                 self._current = (row, self._current[1])
+                await self._keep(now=True)   # (with the sensor's name)
             elif self.local and not self.cloud and not self._ha_ids:   # nothing to check its readings against: say how it corrects them
                 self._correction = self._correction_of(await self.local.config())
             if self.cloud and self._sampled:   # today's gaps asked of the cloud now (warm would in a moment): its check against what the bot holds, for the line
@@ -140,6 +176,12 @@ class AirGradient(Source):
             self.summary = f"AirGradient: {self._summary(row)}"
         except Exception as e:  # keep going: the sensor may just be briefly unreachable
             log.warning("AirGradient %s not readable yet: %s", f"location {self.loc}" if self.cloud else "sensor", e)
+        finally:
+            self._settled = True
+
+    def startup_lines(self) -> list[str]:
+        """Its line once settle() has run (Core.warm_up logs it then)."""
+        return super().startup_lines() if self._settled else []
 
     @staticmethod
     def _correction_of(config: dict | None) -> str | None:
@@ -300,7 +342,8 @@ class AirGradient(Source):
     async def _current_row(self, refresh: bool = False) -> dict:
         async with self._lock("current"):
             if refresh or not self._current or time.time() - self._current[1] > FRESH_SECONDS:
-                self._current = (await self._fetch_current(), time.time())
+                self._current, self._fresh = (await self._fetch_current(), time.time()), True
+                await self._keep()
             return self._current[0]
 
     async def _fetch_current(self) -> dict:
@@ -404,7 +447,8 @@ class AirGradient(Source):
         if row is None:
             return False
         now = time.time()
-        self._current = (row, now)
+        self._current, self._fresh = (row, now), True
+        await self._keep()
         bucket = int(now) // BUCKET * BUCKET
         if self._bucket and (self._bucket[0] != bucket or self._bucket_src != src):
             await self._flush_bucket()
@@ -564,11 +608,13 @@ class AirGradient(Source):
             after = r["ts"]
         return got
 
-    async def latest(self, extras: list[str] = (), held: bool = False) -> Latest:
+    async def latest(self, extras: list[str] = (), held: bool = False, kept: bool = False) -> Latest:
         """The latest reading. A rating (and PM2.5's and PM10's AQI band) is the level the last two readings both reached, so a passing
         spike is not called poor until the next reading agrees; the value shown is always the latest one. The readings before it
         come from today's history: when that can't be read, the latest is rated alone. held: nothing fetched, the reading it keeps
-        whatever its age and the readings before it it already has (LookupError when it keeps none)."""
+        whatever its age and the readings before it it already has (LookupError when it keeps none). kept (a question's): until this run
+        has read the sensor (just after a start), the reading kept from before it, as with held (the warm-up is reading it)."""
+        held = held or kept and not self._fresh and self._current is not None
         if held:
             if not self._current:
                 raise LookupError("no reading held")

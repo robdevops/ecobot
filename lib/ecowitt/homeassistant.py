@@ -10,6 +10,7 @@ counts in that stretch too. A stretch where it did not change has a range of not
 Entities are found by their names: the Ecowitt integration calls them sensor.<station>_outdoor_temperature, sensor.<station>_humidity ...
 """
 
+import asyncio
 import logging
 import math
 import time
@@ -28,6 +29,8 @@ from .live import BUCKET
 log = logging.getLogger(__name__)
 
 HALF = BUCKET // 2
+STATES_SHARE_SECONDS = 5.0   # one /api/states answer serves every caller this long (the station's and the air monitor's finding their entities
+                             # and their live readings at start ask for it at about the same moment)
 RANGE_SERIES = [e.series for e in ENTITIES.values() if e.group != "rainfall" and e.series not in NO_RANGE and derives_range(e.field)]   # what a chart shades
 
 
@@ -97,14 +100,19 @@ class Trouble:
 class HomeAssistant:
     """Home Assistant's REST API: the station's entities (found by name), their states now and their history."""
 
-    def __init__(self, url: str, token: str, transport=None):
+    def __init__(self, url: str, token: str, transport=None, clock=time.monotonic):
         self.client = httpx.AsyncClient(base_url=url.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=60, transport=transport,
                                         verify=ssl_context())
         self.trouble = Trouble(url)
         self.prefix: str | None = None
         self.units: dict[str, str] = {}   # entity id -> the unit Home Assistant shows it in (read with its states)
+        self.clock = clock
+        self._states: tuple[float, list[dict]] | None = None   # (when it came, the last /api/states answer), shared STATES_SHARE_SECONDS
+        self._states_flight: asyncio.Future | None = None       # the /api/states request out now, which every caller awaits
 
     async def close(self):
+        if self._states_flight is not None and not self._states_flight.done():
+            self._states_flight.cancel()
         await self.client.aclose()
 
     async def _get(self, path: str, **params):
@@ -114,11 +122,21 @@ class HomeAssistant:
 
     async def states(self) -> list[dict]:
         """Every entity's state now ({"entity_id", "state", "attributes", "last_changed", "last_updated" ...}); the units of the station's
-        are kept for converting what its history says."""
+        are kept for converting what its history says. One answer is shared: a request already out is awaited rather than sent again,
+        and an answer under STATES_SHARE_SECONDS old is used as it is (callers only read it)."""
+        if self._states is not None and self.clock() - self._states[0] < STATES_SHARE_SECONDS:
+            return self._states[1]
+        if self._states_flight is None or self._states_flight.done():
+            self._states_flight = asyncio.ensure_future(self._fetch_states())
+            self._states_flight.add_done_callback(lambda t: t.cancelled() or t.exception())   # (its failure is its callers')
+        return await asyncio.shield(self._states_flight)
+
+    async def _fetch_states(self) -> list[dict]:
         found = await self._get("/api/states")
         for s in found:
             if isinstance(s, dict) and (unit := (s.get("attributes") or {}).get("unit_of_measurement")):
                 self.units[s.get("entity_id", "")] = unit
+        self._states = (self.clock(), found)
         return found
 
     async def config(self) -> dict:
