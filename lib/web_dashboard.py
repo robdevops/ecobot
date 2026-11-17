@@ -19,7 +19,9 @@
     configured is not there), for the strip's stalled device greyed out, the look, and the station's rain rate now
     (`rain_rate`, mm/h: its rain gauge's, or its piezo gauge's where that's the one reporting, which no tile shows; null with
     neither), for the page's rain behind the tiles; the past hour's highest of the dials with a thin red hand (`hour_highs`, by
-    title: Wind's gust, Rain rate's, Solar radiation's, UV index's: hour_highs()), and the gust now (`gust`, km/h: over 99, a new
+    title: Wind's gust, Rain rate's, Solar radiation's, UV index's: hour_highs()), the Wind direction tile's `rose` (today's
+    share of the wind's direction from each of the 16 compass points, N first, clockwise, from the file's readings, calm ones left out;
+    [] with none: rose()), and the gust now (`gust`, km/h: over 99, a new
     reading sends a cow, a barn or a chicken across behind the tiles);
   - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading or the
     air sensor's latest change, told by the server's own change detection for ecobot://now/weather and ecobot://now/air
@@ -58,8 +60,9 @@ from .airgradient.dashboard import AIR_GAUGES
 from .airgradient.metrics import value_of
 from .service.common import iso
 from .ecowitt.dashboard import GAUGES, GUST, live_value
-from .ecowitt.reads import highest_on
+from .ecowitt.reads import directions_on, highest_on
 from .gauge_look import look, tile_json
+from .timeutil import day_bounds, local_date
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +81,8 @@ QUEUED = 4                   # events waiting on a stream that isn't read: more 
 NOT_ANSWERING = "The weather station isn't answering right now."
 RAIN_RATES = ("rainfall", "rainfall_piezo")   # where the station's rain rate is (current's groups): its rain gauge's first, then the piezo's
 HOUR_SECONDS = 3600          # a red hand's reach back: the highest of the past hour, rolling (a peak held until it is an hour old)
+ROSE_SECONDS = 60           # the wind rose (today's directions) read from the file at most this often (the data asked for again sooner: the same)
+ROSE_DECIMALS = 4           # its shares rounded so
 HOURLY = {g.title: g.hourly for g in GAUGES if g.hourly}   # the dials with a red hand, and the reading whose past hour it shows
 
 
@@ -136,6 +141,7 @@ class WebDashboard:
         if self.animations not in MOTIONS:
             raise ValueError(f"animations: {animations!r} is not one of {', '.join(MOTIONS)}")
         self._streams: set[asyncio.Queue] = set()
+        self._rose: tuple[float, int, list[float]] | None = None   # (when read, the day's start, its shares): rose()'s, kept ROSE_SECONDS
         self._shown = self._readings()
         self.closed = False
         server.bus.subscribe(self._on_event)
@@ -148,7 +154,11 @@ class WebDashboard:
         result = json.loads(await tool.call(gauge_sheet.call(), {"fetch": False})) if tool else {"error": "no current"}
         sheet = gauge_sheet.sheet(result, indoor=self.indoor)   # (indoor off: no indoor tile, nothing indoor sent)
         live = self._kept_live()
-        out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": [tile_json(t) for t in sheet.tiles] if sheet else [], "look": look(),
+        tiles = [tile_json(t) for t in sheet.tiles] if sheet else []
+        for tile in tiles:
+            if tile["kind"] == "compass":   # (the wind's direction: today's rose under its needle)
+                tile["rose"] = await self.rose()
+        out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": tiles, "look": look(),
                "rain_rate": rain_rate_of(result, live), "gust": now_of(result, live, GUST),
                "hour_highs": await self.hour_highs(result, live, [t.title for t in sheet.tiles] if sheet else [])}
         if sheet is None:
@@ -176,6 +186,25 @@ class WebDashboard:
             found = [v for v in (held.get(where), now_of(result, live, where) if self._recent(live, where) else None) if v is not None]
             out[title] = max(found) if found else None
         return out
+
+    async def rose(self) -> list[float]:
+        """Today's wind rose (the station's day, in its zone): the share of today's readings of the wind's direction (its 5-minute
+        readings and minutes in the file, calm ones left out: directions_on) from each of the 16 compass points, N first, clockwise;
+        [] with none (or no file, or an error reading it). Read at most every ROSE_SECONDS (and again as the day turns), else kept."""
+        eco, now = self.server.ctx.eco, time.time()
+        start = day_bounds(local_date(int(now), self.server.ctx.zone), self.server.ctx.zone)[0]
+        if self._rose and self._rose[1] == start and now - self._rose[0] < ROSE_SECONDS:
+            return self._rose[2]
+        shares: list[float] = []
+        if getattr(eco, "storage", None) is not None and getattr(eco, "mac", None):
+            try:
+                counts = await eco.storage.read(directions_on, eco.mac, start, int(now) + 60)
+                total = sum(counts)
+                shares = [round(n / total, ROSE_DECIMALS) for n in counts] if total else []
+            except Exception as e:   # (no rose drawn)
+                log.warning("Dashboard: couldn't read today's wind directions: %s: %s", type(e).__name__, e)
+        self._rose = (now, start, shares)
+        return shares
 
     @staticmethod
     def _recent(live: dict | None, where: tuple[str, str]) -> bool:
@@ -308,4 +337,4 @@ class WebDashboard:
                 Route(f"{path}/events", self.events, methods=["GET"])]
 
 
-__all__ = ["HOURLY", "WebDashboard", "air_readings_of", "now_of", "rain_rate_of", "readings_of"]
+__all__ = ["HOURLY", "ROSE_SECONDS", "WebDashboard", "air_readings_of", "now_of", "rain_rate_of", "readings_of"]

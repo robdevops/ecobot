@@ -36,13 +36,14 @@ from types import SimpleNamespace as NS
 import httpx
 import pytest
 
-from lib import gauge_sheet
+from lib import gauge_sheet, web_dashboard
+from lib.ecowitt.direction import POINTS
 from lib.gauge_look import look, tile_json
 from lib.mcp_server import AIR_URI, EcobotServer, WEATHER_URI, http_app
 from lib.service.context import Context
 from lib.service.names import Catalogue
 from lib.ecowitt.dashboard import GUST
-from lib.ecowitt.reads import highest_on
+from lib.ecowitt.reads import directions_on, highest_on
 from lib.gauge_look import START, SWEEP
 from lib.web_dashboard import (DESCRIPTION, HOUR_SECONDS, HOURLY, ICON, ICON_URL, PAGE, WebDashboard, air_readings_of, rain_rate_of,
                                readings_of)
@@ -89,10 +90,18 @@ class Station:
         self.air_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
         self._keep_air()
 
-    def held(self, highs: dict):
-        """The station's file holds these highest of the past hour ({(group, field): value}, highest_on's), as the dashboard reads it."""
-        async def read(fn, mac, wheres, start, end):
-            assert fn is highest_on and mac == "fake" and end - start == HOUR_SECONDS + 60 and abs(end - 60 - time.time()) < 5
+    def held(self, highs: dict, rose: list[int] | None = None):
+        """The station's file holds these highest of the past hour ({(group, field): value}, highest_on's), as the dashboard reads it,
+        and today's wind directions (directions_on's: minutes from each of the 16 compass points; none: all 0)."""
+        async def read(fn, mac, *args):
+            assert mac == "fake"
+            if fn is directions_on:                                              # (today's: from the station's midnight to now)
+                start, end = args
+                assert datetime.fromtimestamp(start, TZ).time() == datetime.min.time() and abs(end - 60 - time.time()) < 5
+                assert datetime.fromtimestamp(start, TZ).date() == datetime.now(TZ).date()
+                return list(rose or [0] * 16)
+            wheres, start, end = args
+            assert fn is highest_on and end - start == HOUR_SECONDS + 60 and abs(end - 60 - time.time()) < 5
             return {w: v for w, v in highs.items() if w in wheres}
         self.eco.storage, self.eco.mac = NS(read=read), "fake"
 
@@ -143,7 +152,8 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     assert data.status_code == 200
     got = data.json()
     sheet = gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False}))
-    assert got["tiles"] == [tile_json(t) for t in sheet.tiles] and got["as_of"] == AS_OF and got["look"] == look()
+    assert got["tiles"] == [{**tile_json(t), **({"rose": []} if t.kind == "compass" else {})} for t in sheet.tiles]   # (no file: no rose)
+    assert got["as_of"] == AS_OF and got["look"] == look()
     titles = [t["title"] for t in got["tiles"]]
     assert titles[:6] == ["Temperature", "Humidity", "Atmospheric pressure", "Rain", "UV index", "US AQI"]   # gauge_sheet.FIRST
     assert titles[-6:] == ["PM2.5", "PM10", "PM1", "CO₂", "VOC index", "NOx index"]       # the rest in their order: the air sensor's after
@@ -225,6 +235,60 @@ async def test_the_past_hours_highest_is_read_from_the_minutes_and_the_5_minute_
     got = await storage.read(highest_on, mac, [GUST, SOLAR, UVI, RATE], now - 3600, now)
     assert got == {GUST: 45.0, SOLAR: 610.0, UVI: 3.0}
     assert await storage.read(highest_on, mac, [GUST], now - 600, now) == {GUST: 21.0}
+    storage.close()
+
+
+async def test_the_data_carries_todays_wind_rose_on_the_wind_direction_tile_read_from_the_file_and_kept_a_minute(server, station,
+                                                                                                                  monkeypatch, caplog):
+    """The Wind direction tile's `rose`: the share of today's readings of the wind's direction (the station's day, in its zone; the
+    file's: directions_on) from each of the 16 compass points, N first; [] with no file, no reading today, or the file not read. Read at
+    most every ROSE_SECONDS, else kept; no other tile has one, and the sheet's tiles are as ever."""
+    page = WebDashboard(server)
+    compass = lambda got: next(t for t in got["tiles"] if t["kind"] == "compass")
+    got = await page.data()
+    assert compass(got)["rose"] == [] and all("rose" not in t for t in got["tiles"] if t["kind"] != "compass")   # (no file)
+    assert [{k: v for k, v in t.items() if k != "rose"} for t in got["tiles"]] == [tile_json(t) for t in gauge_sheet.sheet(
+        station.current(gauge_sheet.call(), {"fetch": False})).tiles]
+    minutes = [10, 4, 2, 0, 30, 12, 6, 0, 0, 0, 3, 0, 0, 0, 5, 8]
+    station.held({}, minutes)
+    assert compass(await page.data())["rose"] == [] and web_dashboard.ROSE_SECONDS == 60   # (kept: read under a minute ago)
+    page._rose = None
+    got = compass(await page.data())["rose"]
+    assert len(got) == 16 and got == [round(n / 80, 4) for n in minutes] and got[4] == 0.375, got
+    station.held({}, [0] * 16)                                                   # read again a minute on: none today
+    page._rose = (page._rose[0] - 61, *page._rose[1:])
+    assert compass(await page.data())["rose"] == []
+
+    async def broken(*a):
+        raise OSError("disk")
+    station.eco.storage = NS(read=broken)
+    monkeypatch.setattr(web_dashboard, "ROSE_SECONDS", 0)
+    assert compass(await page.data())["rose"] == [] and "couldn't read today's wind directions: OSError: disk" in caplog.text
+
+
+async def test_todays_wind_directions_are_counted_from_the_5_minute_readings_and_the_minutes_they_dont_cover_calm_left_out(tmp_path):
+    """directions_on: minutes from each of the 16 compass points from start to end: a 5-minute reading counts 5, a minute 1 where no
+    5-minute reading is within 300 s of it (never counted twice); a calm one (its speed 0) left out, one with no speed counted; nothing
+    older or newer, nor a 30-minute reading; all 0 with none, or no wind sensor."""
+    from lib.storage import Storage
+    storage = Storage(tmp_path / "s.sqlite", TZ)
+    mac, now = "AA:BB", 1_794_279_900
+    start = now - 6 * 3600
+    assert await storage.read(directions_on, mac, start, now) == [0] * 16
+    fives = {now - 3600: ("90", "5"), now - 3300: ("95", "0"), now - 3000: ("180", "3"), now - 7 * 3600: ("0", "4")}   # (calm; too old)
+    wind = lambda rows: {"wind": {"wind_direction": {"unit": "º", "list": {str(t): d for t, (d, _) in rows.items()}},
+                                  "wind_speed": {"unit": "km/h", "list": {str(t): v for t, (_, v) in rows.items()}}}}
+    with storage.writer.transaction() as w:
+        w.put_ecowitt(mac, "5min", ["wind"], wind(fives), now - 8 * 3600, now - 2000, now=now)
+        w.put_ecowitt(mac, "30min", ["wind"], wind({now - 1800: ("270", "4")}), now - 1800, now - 1800, now=now)
+        w.put_minutes(mac, wind({now - 3060: ("200", "2"),                                       # (within the 5-minute readings: theirs)
+                                 now - 600: ("350", "6"), now - 540: ("5", "6"), now - 480: ("22", "1"), now - 420: ("300", "0"),
+                                 now + 120: ("90", "9")}), now)                                     # (newer than `end`)
+        w.put_minutes(mac, {"wind": {"wind_direction": {"unit": "º", "list": {str(now - 360): "135"}}}}, now)   # (no speed: counted)
+    got = await storage.read(directions_on, mac, start, now)
+    want = [0] * 16
+    want[4] += 5; want[8] += 5; want[0] += 2; want[1] += 1; want[6] += 1   # (E, S; N twice, NNE, SE)
+    assert got == want, got
     storage.close()
 
 
@@ -569,23 +633,59 @@ def chromium():
 needs_browser = pytest.mark.usefixtures("chromium")
 
 
+def rgb(colour: str) -> str:
+    return "rgb({}, {}, {})".format(*(int(colour[i:i + 2], 16) for i in (1, 3, 5)))
+
+
 def one_end_to_read(compass: dict):
-    """The compass's needle (compassLook's): its head a bold arrow in the needles' colour, its tail a short, thin, dim stub of another
-    colour; never two ends alike."""
+    """The compass's needle (compassLook's, in its own px): its head a slim blade to a sharp tip in the needles' colour, solid; its tail
+    a short, dim taper of another colour; never two ends alike."""
     head, tail = compass["ends"]
-    needle = "rgb({}, {}, {})".format(*(int(look()["needle"][i:i + 2], 16) for i in (1, 3, 5)))
-    assert head["colour"] == needle and tail["colour"] != needle and head["opacity"] == 1 and tail["opacity"] <= 0.6, compass
-    assert head["area"] > 6 * tail["area"] and head["length"] > 2.5 * tail["length"], compass
+    assert head["colour"] == rgb(look()["needle"]) and tail["colour"] != head["colour"], compass
+    assert head["opacity"] == 1 and tail["opacity"] <= 0.6, compass
+    assert head["length"] > 4 * tail["length"] and head["area"] > 3 * tail["area"] and head["width"] <= 12, compass   # (slim)
+
+
+ROSE = [10, 4, 2, 0, 30, 12, 6, 0, 0, 0, 3, 0, 0, 0, 5, 8]   # today's minutes from each compass point (N first): mostly from the east
+ROSE_LATER = [0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 10, 0, 40, 20, 0, 0]   # ... later: from the west
+
+
+def compass_as_a_dial(c: dict):
+    """The compass (compassLook's) the size of a dial, lined up with them: its ring a dial's (centre and radius in the tile's own px, its
+    line as thin), as wide drawn; the layers from the bottom: the rose, the reading, the face (its ring, ticks and N, E, S and W), the
+    needle, its hub; the reading inside the ring, in its lower half, centred."""
+    assert c["circle"] == c["dialCircle"] == [240, 203, 138] and c["ringStroke"] == pytest.approx(3 * 100 / 72), c
+    if not c["zoomed"]:                                                          # (in the grid: as large as its neighbours' drawn)
+        assert c["ring"]["width"] == pytest.approx(c["dialRing"]["width"], abs=0.5), c
+    assert c["layers"] == ["rose", "reading", "face", "needle", "hub"], c
+    reading = next(r for r in c["texts"] if r["width"] and abs((r["left"] + r["right"]) / 2 - (c["ring"]["left"] + c["ring"]["right"]) / 2) < 1
+                   and r["top"] > (c["ring"]["top"] + c["ring"]["bottom"]) / 2)
+    assert c["readingBelow"] > 30 and c["readingAt"] + 20 < 138 and c["ring"]["left"] < reading["left"] and reading["right"] < c["ring"]["right"], c
+    assert reading["bottom"] < c["ring"]["bottom"] - c["ring"]["height"] * 0.1, (reading, c)
+
+
+def rose_drawn(c: dict, minutes: list[int]):
+    """Today's rose as drawn (compassLook's petals): a petal for each compass point with any share, in the needles' colour, see-through,
+    its reach from the centre in proportion to its share, the longest 80% of the radius."""
+    total, most = sum(minutes), max(minutes)
+    want = {POINTS[i]: n / total for i, n in enumerate(minutes) if n}
+    petals = c["petals"]
+    assert {p["point"]: p["share"] for p in petals} == pytest.approx(want, abs=1e-4), petals
+    for p in petals:
+        assert p["reach"] == pytest.approx(138 * 0.8 * minutes[POINTS.index(p["point"])] / most, abs=0.05), p
+        assert p["colour"] == rgb(look()["needle"]) and 0.15 <= p["opacity"] <= 0.5, p
 
 
 @needs_browser
-async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overflow_and_no_console_error(server, station, tmp_path):
+async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overflow_and_no_console_error(server, station, tmp_path,
+                                                                                                         monkeypatch):
     shots = Path(os.getenv("ECOBOT_SCREENSHOTS") or tmp_path)
     shots.mkdir(parents=True, exist_ok=True)
     port = free_port()
     url = f"http://127.0.0.1:{port}/dashboard"
+    monkeypatch.setattr(web_dashboard, "ROSE_SECONDS", 0)                  # (today's rose read again with each data: it changes below)
     station.reads("wind", "wind_gust", "12")
-    station.held({GUST: 37.0, RATE: 4.2, SOLAR: 820.0, UVI: 6.5})        # (the past hour: higher than the readings now, all but 0)
+    station.held({GUST: 37.0, RATE: 4.2, SOLAR: 820.0, UVI: 6.5}, ROSE)  # (the past hour: higher than the readings now, all but 0; today's rose)
     station.reads("indoor", "temperature", "23.7")                       # an indoor sensor, served with MCP_DASHBOARD_INDOOR off:
     station.reads("indoor", "humidity", "47")                            # its tiles never drawn (the same tiles as with none)
     async with Serving(http_app(server, tokens=(TOKEN,), dashboard_indoor=False), port):
@@ -600,7 +700,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         before = json.loads(await asyncio.wait_for(live.stdout.readline(), 60))
         station.reads("outdoor", "temperature", "21.5")
         station.reads("wind", "wind_direction", "300")                           # (and the wind backs from the east to WNW)
-        station.held({GUST: 60.0, RATE: 4.2, SOLAR: 820.0, UVI: 6.5})            # (and the past hour's highest gust rises)
+        station.held({GUST: 60.0, RATE: 4.2, SOLAR: 820.0, UVI: 6.5}, ROSE_LATER)  # (and the past hour's highest gust rises, and
+                                                                                     # today's rose turns to the west)
         await server.publish_changes()
         live.stdin.write(b"go\n")
         await live.stdin.drain()
@@ -640,16 +741,20 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         tile, glass = got["zoomed"]["box"], got["zoomed"]["glass"]                # (the first tile, Temperature) zoomed: the glass with it
         assert len(glass) == 1 and all(g["height"] > 0 and tile["left"] <= g["left"] and g["right"] <= tile["right"] for g in glass)
         assert glass[0]["height"] > tile["width"] * 0.2 and glass[0]["width"] < glass[0]["height"] * 0.06, (glass, tile)
-        # the wind's direction, a compass: N, E, S, W and the points between named, its needle's head turned to where the wind comes
+        # the wind's direction, a compass: N, E, S and W named (N in its accent), its needle's head turned to where the wind comes
         # from (99°, east), its reading "99° E" (the service's compass point); no table, the same size as its neighbours
         c, rects = got["compass"], got["rects"]
-        assert (c["label"], c["reading"], c["turn"], c["faded"]) == ("Wind direction 99° E", "99° E", "rotate(99.00 240 188)", False), c
-        assert c["points"] == ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] and c["table"] == 0, c
+        assert (c["label"], c["reading"], c["turn"], c["faded"]) == ("Wind direction 99° E", "99° E", "rotate(99.00 240 203)", False), c
+        assert c["points"] == ["N", "E", "S", "W"] and c["table"] == 0, c
+        assert c["pointColours"] == [look()["compass_north"], *[look()["soft"]] * 3], c
         assert any(near(c["box"], r, 0.5) for r in rects) and len({(round(r["width"]), round(r["height"])) for r in rects}) == 1, c
+        compass_as_a_dial(c)
         ring, head = c["ring"], c["head"]
         assert (head["left"] + head["right"]) / 2 > (ring["left"] + ring["right"]) / 2 + ring["width"] * 0.1 and abs((head["top"] + head["bottom"]) / 2 - (ring["top"] + ring["bottom"]) / 2) < ring["height"] * 0.1, c
-        # ... the end to read unmistakable: the head a bold arrow in the needles' colour, the tail a short, thin, dim stub of another
+        # ... the end to read unmistakable: the head a slim sharp blade in the needles' colour, the tail a short, dim taper of another
         one_end_to_read(c)
+        # ... today's rose under it all, a petal per compass point blown from, as long as its share (the longest 80% of the radius)
+        rose_drawn(c, ROSE)
         assert all(c["box"]["left"] <= r["left"] and r["right"] <= c["box"]["right"] and r["bottom"] <= c["box"]["top"] + c["box"]["width"] * TABLE_TOP / look()["cell"][0]
                    for r in c["texts"]), c                                         # (all of it above where a table would start)
         # zoomed: the compass and its reading fill the zoomed place, as any tile's title and gauge
@@ -659,6 +764,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
             assert z["box"]["left"] - 1 <= r["left"] and r["right"] <= z["box"]["right"] + 1 and z["box"]["top"] - 1 <= r["top"] and r["bottom"] <= z["box"]["bottom"] + 1, (r, z)
         assert z["ring"]["width"] > z["box"]["width"] * 0.45, z
         one_end_to_read(z)                                                        # (zoomed too)
+        compass_as_a_dial(z)
+        rose_drawn(z, ROSE)
         assert (shots / f"dashboard-{name}-compass.png").exists()
         # the dials with a thin red hand at the past hour's highest (Wind's gust, Rain rate's, Solar radiation's, UV's), over the dial
         # and the needle, under the hub; none on any other tile; the Wind's table: its highest speed, and its highest gust beside it
@@ -683,7 +790,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     assert after["same_tile"] and "21.5 °C" in after["shown"], after                 # the gauge moved in place to the new reading
     # the compass's needle swung from 99° to 300° the short way round, through north (never through the south), the reading WNW
     c = after["compass"]
-    assert (c["label"], c["reading"], c["turn"]) == ("Wind direction 300° WNW", "300° WNW", "rotate(300.00 240 188)"), c
+    assert (c["label"], c["reading"], c["turn"]) == ("Wind direction 300° WNW", "300° WNW", "rotate(300.00 240 203)"), c
+    rose_drawn(c, ROSE_LATER)                                                     # (today's rose redrawn in place with it)
     turns = c["turns"]
     assert all(t <= 99.01 or t >= 299.99 for t in turns) and any(t < 30 for t in turns) and any(t > 330 for t in turns), turns
     # the Wind's red hand moved smoothly, frame by frame, from the past hour's highest gust before (37) to the new one (60)
@@ -746,7 +854,8 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
         # the compass with no reading: dimmed, its needle back at north, no figure or point claimed
         was, now = got["compass"]
         assert not was["faded"] and was["reading"] == "99° E", was
-        assert now["faded"] and (now["label"], now["reading"], now["turn"]) == ("Wind direction: no reading", "–", "rotate(0.00 240 188)"), now
+        assert now["faded"] and (now["label"], now["reading"], now["turn"]) == ("Wind direction: no reading", "–", "rotate(0.00 240 203)"), now
+        assert was["petals"] == [] == now["petals"] and was["layers"][0] == "rose", was   # (no file: no rose drawn, nothing else in its place)
 
 
 async def test_an_event_is_sent_when_the_air_sensors_gauges_readings_change(server, station):
@@ -937,7 +1046,7 @@ async def test_fewer_tiles_grow_evenly_to_fill_the_window_and_never_shrink_below
 
 # ---------- the zoomed view and its gallery ----------
 ZOOM_MS = 200
-GAPS_BEFORE = {"dial": 2, "thermometer": 21.7, "beaker": 16.7, "compass": -5}   # (the gap under the title, each kind, before the gauges
+GAPS_BEFORE = {"dial": 2, "thermometer": 21.7, "beaker": 16.7, "compass": 2}   # (the gap under the title, each kind, before the gauges
                                                                                   # were moved down: the tile's own px)
 TABLE_TOP = 372     # (the web page's: where a tile's table starts, in its own pixels; above it the title and gauge, all a zoomed tile shows)
 

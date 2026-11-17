@@ -25,6 +25,7 @@ LABEL_RADIUS = 84           # where a dial's numbers sit, just inside its scale
 COMPASS = (240, 188, 130)   # the wind's direction, a compass: its centre and outline's radius (above the table's place: it has none)
 COMPASS_LABEL_Y = 346       # ... its reading ("99° E") under it
 COMPASS_BAND = "#262E34"    # ... its ring, under the ticks and the letters N, E, S and W
+COMPASS_NORTH = "#E5534B"   # the web page's compass: its N, a small accent
 WATER = "#4FB3F6"           # the rain beaker's water
 NEEDLE = "#3E86C0"
 CELL_W, CELL_H, MARGIN = 480, 575, 20
@@ -69,7 +70,7 @@ def look() -> dict:
             "needle": NEEDLE, "hour_hand": HOUR_HAND, "hour_hand_width": HOUR_HAND_WIDTH, "tube_half": TUBE_HALF, "bulb_radius": BULB_RADIUS, "mercury_gap": MERCURY_GAP, "bar_width": BAR_WIDTH,
             "bar_gap": BAR_GAP, "ring_outer": RING_OUTER, "band_width": BAND_WIDTH, "label_radius": LABEL_RADIUS,
             "cell": [CELL_W, CELL_H], "compass": list(COMPASS),
-            "compass_label_y": COMPASS_LABEL_Y, "compass_band": COMPASS_BAND, "points": list(POINTS),
+            "compass_label_y": COMPASS_LABEL_Y, "compass_band": COMPASS_BAND, "compass_north": COMPASS_NORTH, "points": list(POINTS),
             "fade": FADE, "sweep": SWEEP, "start": START, "rows": list(ROWS)}
 
 

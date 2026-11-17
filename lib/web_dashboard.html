@@ -3485,9 +3485,10 @@ const Sky = (() => {
     };
   }
 
+  const DIAL = [240, 203, 138];   // a dial's centre and its ring's radius (the compass's too: the same size, lined up)
   function dial(svg, tile, ink) {
-    const cx = 240, cy = 203, angle = (v) => L.start - L.sweep * share(tile, v);
-    el("circle", {cx, cy, r: 138, fill: "none", stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
+    const [cx, cy] = DIAL, angle = (v) => L.start - L.sweep * share(tile, v);
+    el("circle", {cx, cy, r: DIAL[2], fill: "none", stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
     const n = tile.colours.length, step = L.sweep / n, outer = L.ring_outer, inner = L.ring_outer - L.band_width;
     tile.colours.forEach((colour, i) => {
       const a0 = L.start - i * step - 0.8, a1 = a0 - step + 1.6;
@@ -3528,48 +3529,60 @@ const Sky = (() => {
     return at;
   }
 
-  // The wind's direction, a compass (as the Status picture's: lib/gauges.py _compass): a ring with fine ticks and the points named, the
-  // needle an arrow (the needles' colour) pointing where the wind comes from, in degrees clockwise from north, its tail a short dim
-  // stub; the reading under it
-  // ("99° E": the compass point the service gives, or, while the needle swings to it, the point it is passing). No table.
+  // The wind's direction, a compass, flat like the dials and the same size (DIAL: its ring where theirs is, so it lines up with its
+  // neighbours, grid or zoomed). Layers, bottom to top: today's wind rose (rose: 16 soft petals in the needles' colour, each as long as
+  // its compass point's share of today's readings, the longest ROSE_REACH of the radius; none with no data), the reading inside the
+  // ring, below the hub ("99° E": the compass point the service gives, or, while the needle swings to it, the point it is passing), then
+  // the face (one thin ring, fine ticks every 10 degrees and longer ones every 45, N, E, S and W, N in an accent colour) and the needle
+  // (pointing where the wind comes from, in degrees clockwise from north: a slim blade with a sharp head in the needles' colour and a
+  // short, dim, tapered tail) on a small hub. No table.
+  const ROSE_REACH = 0.8, ROSE_HALF = 9;   // the longest petal's reach (of the radius) and each petal's half-width (degrees)
   const pointOf = (deg) => L.points[Math.floor(((deg % 360) + 360 + 11.25) / 22.5) % 16];   // (direction.py sector())
-  // The compass's arrow pointing north from (cx, cy), its tip `reach` out: a broad barbed head on a shaft down to the hub ([x, y], ...;
-  // as lib/gauges.py _arrow)
-  const arrow = (cx, cy, reach) => [[0, reach], [17, reach - 30], [5.5, reach - 23], [5.5, 0], [-5.5, 0], [-5.5, reach - 23], [-17, reach - 30]]
-    .map(([x, y]) => [cx + x, cy - y]);
+  // The needle pointing north from (cx, cy), its tip `reach` out ([x, y], ...): the head a slim blade to a sharp tip, widest at the hub;
+  // the tail a short taper behind it
+  const blade = (cx, cy, reach) => [[0, reach], [5, 0], [-5, 0]].map(([x, y]) => [cx + x, cy - y]);
+  const stub = (cx, cy, reach) => [[3.5, 0], [0, -reach * 0.2], [-3.5, 0]].map(([x, y]) => [cx + x, cy - y]);
+  const points = (pts) => pts.map((p) => p.map((n) => n.toFixed(2)).join(",")).join(" ");
   function compass(svg, tile, ink) {
-    // (its ring a little smaller than the Status picture's and its reading a little smaller, not dropped: room above the table's place)
-    const [cx, cy] = L.compass, r = L.compass[2] - 10, outer = r - 8, inner = outer - L.band_width, mid = (outer + inner) / 2, reach = inner - 8;
-    el("circle", {cx, cy, r, fill: "none", stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
-    el("circle", {cx, cy, r: mid, fill: "none", stroke: ink(L.compass_band), "stroke-width": L.band_width}, svg);
-    let ticks = "";   // (fine ticks every 10 degrees, longer every 30; none where a point is named: one path)
-    for (let b = 0; b < 360; b += 10) {
-      if (Math.min(b % 45, 45 - b % 45) <= 5 || b % 30 === 0) continue;
-      const [x0, y0] = polar(cx, cy, outer - 4, 90 - b), [x1, y1] = polar(cx, cy, outer - 7, 90 - b);
-      ticks += `M${x0.toFixed(1)},${y0.toFixed(1)}L${x1.toFixed(1)},${y1.toFixed(1)}`;
-    }
-    el("path", {d: ticks, stroke: ink(L.soft), "stroke-width": lw(1.5), "stroke-linecap": "round"}, svg);
-    ticks = "";
-    for (let b = 30; b < 360; b += 30) {
-      if (Math.min(b % 45, 45 - b % 45) <= 5) continue;
-      const [x0, y0] = polar(cx, cy, outer - 4, 90 - b), [x1, y1] = polar(cx, cy, outer - 12, 90 - b);
-      ticks += `M${x0.toFixed(1)},${y0.toFixed(1)}L${x1.toFixed(1)},${y1.toFixed(1)}`;
-    }
-    el("path", {d: ticks, stroke: ink(L.soft), "stroke-width": lw(2.2), "stroke-linecap": "round"}, svg);
-    L.points.filter((_, i) => i % 2 === 0).forEach((name, i) => {   // N, NE, E...: the cardinal points large, the others small
-      const [x, y] = polar(cx, cy, mid, 90 - 45 * i);
-      text(svg, x, y, name, i % 2 ? 13 : 20, ink(i % 2 ? L.soft : L.ink), "middle", i % 2 ? "normal" : "bold").classList.add("point");
-    });
-    // The needle (drawn pointing north, turned to the reading): an arrow, its bold head and shaft in the needles' colour pointing where
-    // the wind comes from, and behind the hub only a short, thin, dim tail: one end to read, never two alike
-    const needle = el("g", {class: "needle"}, svg);
-    el("path", {d: `M${cx},${cy} L${cx},${cy + reach * 0.3}`, stroke: ink(L.soft), "stroke-width": lw(2), "stroke-opacity": 0.5,
-                "stroke-linecap": "round", class: "tail"}, needle);
-    el("polygon", {points: arrow(cx, cy, reach).map((p) => p.join(",")).join(" "), fill: ink(L.needle), "stroke-linejoin": "round",
-                   stroke: ink(L.needle), "stroke-width": 1.5, class: "head"}, needle);
-    el("circle", {cx, cy, r: 11, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(2.5)}, svg);
-    const label = text(svg, cx, L.compass_label_y + 2 - DROP, "", 36, ink(L.ink));
+    const [cx, cy, r] = DIAL, reach = r - 22;
+    const rose = el("g", {class: "rose", "pointer-events": "none"}, svg);
+    const label = text(svg, cx, cy + 66, "", 34, ink(L.ink));
     label.classList.add("reading");
+    const face = el("g", {class: "face"}, svg);
+    el("circle", {cx, cy, r, fill: "none", stroke: ink(L.soft), "stroke-width": lw(3), class: "ring"}, face);
+    const tick = (b, length) => {
+      const [x0, y0] = polar(cx, cy, r - 5, 90 - b), [x1, y1] = polar(cx, cy, r - 5 - length, 90 - b);
+      return `M${x0.toFixed(1)},${y0.toFixed(1)}L${x1.toFixed(1)},${y1.toFixed(1)}`;
+    };
+    let fine = "", long = "";   // (fine ticks every 10 degrees, longer ones every 45: one path each)
+    for (let b = 0; b < 360; b += 10) if (b % 45) fine += tick(b, 6);
+    for (let b = 0; b < 360; b += 45) long += tick(b, 12);
+    el("path", {d: fine, stroke: ink(L.soft), "stroke-width": lw(1), "stroke-opacity": 0.7, "stroke-linecap": "round", class: "ticks"}, face);
+    el("path", {d: long, stroke: ink(L.soft), "stroke-width": lw(1.8), "stroke-linecap": "round", class: "ticks long"}, face);
+    ["N", "E", "S", "W"].forEach((name, i) => {
+      const [x, y] = polar(cx, cy, r - 34, 90 - 90 * i);
+      text(face, x, y, name, 22, ink(i ? L.soft : L.compass_north), "middle", "600").classList.add("point");
+    });
+    const needle = el("g", {class: "needle"}, svg);
+    el("polygon", {points: points(stub(cx, cy, reach)), fill: ink(L.soft), "fill-opacity": 0.45, class: "tail"}, needle);
+    el("polygon", {points: points(blade(cx, cy, reach)), fill: ink(L.needle), stroke: L.bg, "stroke-width": 1.2, "paint-order": "stroke",
+                   "stroke-linejoin": "miter", class: "head"}, needle);
+    el("circle", {cx, cy, r: 6.5, fill: L.bg, stroke: ink(L.needle), "stroke-width": 2.5, class: "hub"}, svg);
+    // the rose: a petal per compass point with any share, a slim wedge from the centre to its share of the longest's reach
+    const petals = (shares) => {
+      rose.replaceChildren();
+      const most = Math.max(0, ...(shares || []));
+      if (!(most > 0)) return;
+      shares.forEach((v, i) => {
+        if (!(v > 0)) return;
+        const out = r * ROSE_REACH * v / most, b = 22.5 * i;
+        const [x0, y0] = polar(cx, cy, out, 90 - b + ROSE_HALF), [x1, y1] = polar(cx, cy, out, 90 - b - ROSE_HALF);
+        el("path", {d: `M${cx},${cy} L${x0.toFixed(2)},${y0.toFixed(2)} A${out.toFixed(2)},${out.toFixed(2)} 0 0 1 ${x1.toFixed(2)},${y1.toFixed(2)} Z`,
+                    fill: ink(L.needle), "fill-opacity": 0.32, stroke: ink(L.needle), "stroke-opacity": 0.55, "stroke-width": 1,
+                    "stroke-linejoin": "round", class: "petal", "data-point": L.points[i], "data-share": v}, rose);
+      });
+    };
+    petals(tile.rose);
     let now = tile;   // (the tile as last given: its reading and the service's compass point)
     const at = (v) => {
       const deg = ((v % 360) + 360) % 360;
@@ -3577,7 +3590,13 @@ const Sky = (() => {
       const whole = Math.round(deg) % 360, still = now.value !== null && Math.abs(deg - now.value) < 1e-6;
       label.textContent = now.value === null ? "–" : `${whole}° ${still && now.band ? now.band : pointOf(deg)}`;
     };
-    at.band = (t) => { now = t; };
+    let drawnRose = JSON.stringify(tile.rose || []);
+    at.band = (t) => {   // (the tile as given again: its reading's compass point, and today's rose, redrawn if it changed)
+      now = t;
+      const next = JSON.stringify(t.rose || []);
+      if (next !== drawnRose) petals(t.rose);
+      drawnRose = next;
+    };
     at.toward = (from, to) => from + ((((to - from) % 360) + 540) % 360) - 180;   // (the short way round: 350° to 10° through north)
     return at;
   }

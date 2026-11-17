@@ -153,19 +153,34 @@ const handsSettled = (page) => page.waitForFunction(() => {
 }, null, { timeout: 5000, polling: 150 }).catch(() => { /* reported as it is */ });
 
 // The compass tile's look: its label, reading, needle's turn, the points named, any table, where its parts are (the window's px) and
-// its needle's head and tail
+// its needle's head and tail; its ring's centre and radius in its own px beside a dial's (the first dial tile's ring); its layers, bottom
+// to top (the gauge's children's classes); its rose's petals (compass point, share, reach in its own px, colour, opacity); its reading's
+// centre's distance from the ring's centre, in its own px
 const compassLook = (page) => page.evaluate(() => {
   const t = document.querySelector('.tile[data-kind="compass"]'), rect = (e) => e.getBoundingClientRect().toJSON();
-  return { label: t.getAttribute("aria-label"), reading: t.querySelector("svg text.reading").textContent, faded: t.classList.contains("faded"),
+  const ring = t.querySelector("svg .ring"), dialRing = document.querySelector('.tile[data-kind="dial"] svg g.gauge > circle');
+  const circle = (c) => c && ["cx", "cy", "r"].map((k) => Number(c.getAttribute(k)));
+  const [cx, cy] = circle(ring), reading = t.querySelector("svg text.reading");
+  return { label: t.getAttribute("aria-label"), reading: reading.textContent, faded: t.classList.contains("faded"),
            turn: t.querySelector(".needle").getAttribute("transform"), points: [...t.querySelectorAll("svg text.point")].map((e) => e.textContent),
+           pointColours: [...t.querySelectorAll("svg text.point")].map((e) => e.getAttribute("fill")),
            table: t.querySelectorAll(".unit, .chip, .figure, .tablearea").length, zoomed: document.body.classList.contains("zoomed"),
            shown: !t.inert, box: rect(t), title: rect(t.querySelector(".title")), texts: [...t.querySelectorAll("svg text")].map(rect),
-           ring: rect(t.querySelector("svg circle")), head: rect(t.querySelector(".needle .head")),
-           // (its needle's two ends: the head's and the tail's colour, how opaque, their size (the drawn box's area, the window's px²))
+           ring: rect(ring), head: rect(t.querySelector(".needle .head")), circle: circle(ring), dialCircle: circle(dialRing),
+           dialRing: dialRing && rect(dialRing), ringStroke: Number(ring.getAttribute("stroke-width")),
+           layers: [...t.querySelector("svg g.gauge").children].map((e) => e.getAttribute("class") || e.tagName),
+           readingAt: Math.hypot(Number(reading.getAttribute("x")) - cx, Number(reading.getAttribute("y")) - cy),
+           readingBelow: Number(reading.getAttribute("y")) - cy,
+           petals: [...t.querySelectorAll("svg .rose .petal")].map((e) => {
+             const [x, y] = e.getAttribute("d").match(/L([-\d.]+),([-\d.]+)/).slice(1).map(Number), c = getComputedStyle(e);
+             return { point: e.dataset.point, share: Number(e.dataset.share), reach: Math.hypot(x - cx, y - cy), colour: c.fill,
+                      opacity: Number(c.fillOpacity) };
+           }),
+           // (its needle's two ends: their fill and how opaque, their size in its own px (the shape's box, not turned) and on the window)
            ends: [".head", ".tail"].map((k) => {
-             const e = t.querySelector(`.needle ${k}`), c = getComputedStyle(e), r = rect(e);
-             return { colour: k === ".head" ? c.fill : c.stroke, opacity: Number(k === ".head" ? c.fillOpacity : c.strokeOpacity) * Number(c.opacity),
-                      area: r.width * r.height, length: Math.hypot(r.width, r.height) };
+             const e = t.querySelector(`.needle ${k}`), c = getComputedStyle(e), b = e.getBBox();
+             return { colour: c.fill, opacity: Number(c.fillOpacity) * Number(c.opacity), area: b.width * b.height, length: b.height,
+                      width: b.width };
            }) };
 });
 
