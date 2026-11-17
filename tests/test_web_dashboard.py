@@ -1947,6 +1947,10 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # together, a hundred restarts or more, so a watch's handful more or fewer is no matter)
     restarts, stretches = (sum(beads["since"][k] for beads in got["humidity"].values()) for k in ("restarts", "stretches"))
     assert restarts >= 20 * len(got["humidity"]) and 0.15 * restarts <= stretches <= 0.55 * restarts, {n: b["since"] for n, b in got["humidity"].items()}
+    # (the biggest sprites (r 3.6 and up) never stop-start on fog or in a trail: no paused time there, however long they run; on dry glass
+    # they may pause (here or there), and the others still do)
+    big = {k: [sum(beads["since"]["big"][k][i] for beads in got["humidity"].values()) for i in (0, 1)] for k in ("fog", "trail", "dry")}
+    assert big["fog"][0] > 0 and big["fog"][1] == 0 and big["trail"][1] == 0, big
     # ... nothing at all drawn in the canvas's top two rows (humidity alone: no water along the top edge)
     assert got["humidity"]["alone"]["top"] == 0, got["humidity"]["alone"]
     # ... two tiny beads put close together (not touching, within the snap): snapped into one small bead (not tiny) in a few frames,

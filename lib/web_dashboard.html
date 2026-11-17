@@ -1212,7 +1212,7 @@ const Sky = (() => {
   //   first, larger ones faster and faster: no fastest); on a trail, never slower than a freshly landed rain bead (RAIN_R's least)
   //   would go there, however small (from RUN_R: a condensed one as quick as a rain one down a track), each
   //   stretch of a run a little quicker or slower than that, stop-start (a pause after a stretch now and then, most often on dry
-  //   glass), wandering a little (a kink here, a slant there, kept a while; never more than MEANDER px from where it began); on dry
+  //   glass; none for the biggest beads, r from STEADY_R, on fog or in a trail: they run on), wandering a little (a kink here, a slant there, kept a while; never more than MEANDER px from where it began); on dry
   //   glass it steers into a trail close beside it, on a trail it follows it. Once it has locked on to another's run (steered into it
   //   and reached it) it keeps to it all the way down, row by row on the run's middle wherever that wanders (a break of up to LOCK_GAP
   //   rows, or the bead ahead on it, held straight across), no wandering back off, till it merges, runs off the bottom, or the run ends (then on as it was).
@@ -1311,6 +1311,8 @@ const Sky = (() => {
     const PER_PX = 0.45;               // beads at most, for each px of the window's width (at the lightest humidity) ...
     const HEAVIER = 0.38;               // ... and this much more of it, at the heaviest (grown beads cost a particle each, a tiny one a quarter:
                                        // ... heavy's glass, mostly grown beads, would else show fewer than light's, mostly tiny ones)
+    const STEADY_R = 3.6;              // a bead this big or bigger (the largest sprites) runs steadily on fog or in a trail: no random pauses, no stop-start
+                                       // (a pause it has when it gets there ends at once); on dry glass it still pauses and sets off again as any
     const STRETCH_R = 2.5;             // a bead this big or bigger (the biggest that run) setting off again after a pause: now and then ...
     const STRETCHES = 1 / 3;           // ... (about one restart in three, at random) ...
     const STRETCH = 0.14;              // ... elongating a little along its path: this much taller at most (a touch narrower, its water
@@ -1421,7 +1423,7 @@ const Sky = (() => {
     let dirty = null, painting = 0, fresh = 0, quiet = false;
     // (for the tests, as Sky.state() gives them)
     const seen = {merges: 0, merged: [], absorbed: [], left: [], ranOff: 0, shrunk: 0, faded: 0, largest: 0, born: [], first: null,
-                  dried: 0, landed: 0, rainMost: 0, snaps: 0, splashes: [], joined: 0, joins: [], restarts: 0, stretches: 0, swelled: 0, swells: [],
+                  dried: 0, landed: 0, rainMost: 0, snaps: 0, splashes: [], joined: 0, joins: [], restarts: 0, stretches: 0, big: {fog: [0, 0], trail: [0, 0], dry: [0, 0]}, swelled: 0, swells: [],
                   glass: [0, 1, 2].map(() => ({px: 0, s: 0, band: 0, gained: 0, lost: 0, moves: 0, all: 0, norm: 0, pace: 0})),   // (px, s, band: r 1.8-3.2)
                   sizes: [0, 1, 2, 3, 4].map(() => [0, 0])};                                     // (on fog: px and s, by size)
     const BANDS = [1, 1.6, 2.4, 3.2];
@@ -1898,6 +1900,8 @@ const Sky = (() => {
         const f = g === FOGGY ? feltOf(at(cx, below)) : 0;
         b.g = g;
         const sits = speedFor(b.r, g) <= 0, ran = b.pause <= 0 && !sits;   // (sits: under RUN_R, staying put the while)
+        if (b.pause > 0 && b.r >= STEADY_R && g !== DRY) b.pause = 0;   // (big, on fog or a trail: no pausing)
+        if (b.r >= STEADY_R && !sits) seen.big[GLASSES[g]][b.pause > 0 ? 1 : 0] += b.pause > 0 ? Math.min(b.pause, time) : time;   // (for the tests)
         if (sits) { b.v = 0; account(b, g, f, 0, time); time = 0; }
         else if (b.pause > 0) { const p = Math.min(b.pause, time); b.pause -= p; time -= p; b.v = 0; b.rested = (b.rested || 0) + p; account(b, g, f, 0, p); b.waited = true; }
         else {
@@ -1929,7 +1933,7 @@ const Sky = (() => {
           if (b.run <= 0) {   // (the stretch's end: the next, and perhaps a pause, as the glass is here)
             pace(b);
             const pauses = own(b, "pauses");
-            if (pauses() < PAUSES[g][0]) b.pause = pauses.between(PAUSES[g][1], PAUSES[g][2]);
+            if (pauses() < PAUSES[g][0] && !(b.r >= STEADY_R && g !== DRY)) b.pause = pauses.between(PAUSES[g][1], PAUSES[g][2]);
           }
         }
         if (b.vol <= GONE) { b.gone = true; seen.shrunk++; return; }   // (shrunk to nothing)
@@ -2225,7 +2229,7 @@ const Sky = (() => {
                      merges: seen.merges, merged: seen.merged.slice(), absorbed: seen.absorbed.slice(), left: seen.left.slice(),
                      ranOff: seen.ranOff, shrunk: seen.shrunk, faded: seen.faded, largest: seen.largest, born: seen.born.slice(),
                      first: seen.first, landed: seen.landed, rainMost: seen.rainMost, splashes: seen.splashes.slice(), joined: seen.joined,
-                     joins: seen.joins.slice(), restarts: seen.restarts, stretches: seen.stretches,
+                     joins: seen.joins.slice(), restarts: seen.restarts, stretches: seen.stretches, big: JSON.parse(JSON.stringify(seen.big)),
                      glass: Object.fromEntries(GLASSES.map((name, g) => [name, {...seen.glass[g]}])), sizes: seen.sizes.map((s) => s.slice()),
                      bands: BANDS,
                      // (the physics as the beads run by it: a bead's mean speed, px/s, of radius r on glass g ("dry", "trail", "fog"),

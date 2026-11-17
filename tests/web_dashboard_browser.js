@@ -1929,7 +1929,7 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
               fog: h.fog(true), first: h.first, colours: h.colours(), aged: h.beads.filter((b) => !b.fading).map((b) => b.age),
               landed: h.landed, looks, crept, tinies, snaps: h.snaps - snaps, tiny: h.tiny,
               restarts: h.restarts - from.restarts, stretches: h.stretches - from.stretches, watched: watch && watch.result(),
-              since: { restarts: h.restarts, stretches: h.stretches },   // (since the page opened: its beading up first too)
+              since: { restarts: h.restarts, stretches: h.stretches, big: h.big },   // (since the page opened: its beading up first too)
               swelled: h.swelled, swells: h.swells, swell: h.swell });
   };
   __next(step);
