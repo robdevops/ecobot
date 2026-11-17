@@ -2789,11 +2789,10 @@ async def test_a_bead_that_pooled_and_runs_again_lays_its_trail_at_once_from_its
         assert len(run) >= max(1, math.floor(r["along"]) - 1), r   # (and rows enough for the way it has gone: within 2 px of travel, at once)
 
 
-# The frog's head as it was on its lily pad (rows 0-8, 21 wide), pixel for pixel: the gangly frog keeps it
+# The frog's head as it was on its lily pad (rows 0-8, 21 wide), pixel for pixel: the long-bodied frog keeps it
 OLD_FROG_HEAD = [".....kkkk...kkkk.....", "....klwwwk.kllggk....", "....kwwwwkkkkkkkk....", "....kwwwpk.kwwwpk....",
                  "...kkgkkkgkgkkkgkk...", "..kgggggggggggggggk..", "..kglllllllllllllgk..", "..kgkkkkkkkkkkkkkgk..",
                  "..kggggggggggggkdgk.."]
-OLD_TORSO_WIDTH = 11   # (the old plump belly's widest row of pale pixels)
 HEAD_AT = 22           # (the head's first column in the 65 x 52 sprite)
 OLD_SPRITE = (37, 28)  # (the previous sprite: width, height)
 OLD_TRUNK_ROWS = 10    # (rows of its trunk between the head and the hips: `git show 0801f16:lib/web_dashboard.html`, rows 9-18, kgggk / kyyyk)
@@ -2812,7 +2811,7 @@ FROG_FRAMES = frog_frames()
 
 def test_the_frog_flails_with_its_head_as_it_was_and_no_lily_pad():
     assert len(FROG_FRAMES) >= 4 and all(len(f) == SPRITE_H and all(len(r) == SPRITE_W for r in f) for f in FROG_FRAMES)
-    assert SPRITE_H >= 1.6 * OLD_SPRITE[1] and SPRITE_W > OLD_SPRITE[0]
+    assert SPRITE_H >= 1.2 * OLD_SPRITE[1] and SPRITE_W > OLD_SPRITE[0]
     for rows in FROG_FRAMES:
         for y, old in enumerate(OLD_FROG_HEAD):   # (the head: every pixel of it; below row 7 limbs may reach beside it)
             got = rows[y][HEAD_AT:HEAD_AT + 21]
@@ -2826,38 +2825,38 @@ def test_the_frog_flails_with_its_head_as_it_was_and_no_lily_pad():
     assert not re.search(r"\b[QPRS]:", joined)
 
 
-def test_the_frog_is_gangly_a_skinny_trunk_and_one_or_two_pixel_limbs():
-    def widest_belly(rows):   # (the longest run of pale belly pixels on a row below the head)
-        return max((len(m) for r in rows[9:] for m in re.findall(r"y+", r)), default=0)
+def test_the_frog_has_a_long_soft_teardrop_belly_wide_under_the_head_narrow_at_the_hips():
     for rows in FROG_FRAMES:
-        assert widest_belly(rows) < 0.6 * OLD_TORSO_WIDTH, widest_belly(rows)
-        # the limbs: away from the trunk and from every hand and foot (any light tip within 5 px), no pixel sits in more than
-        # 2 px of run both across and down
-        tips = [(x, y) for y in range(9, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l"]
+        trunk = sum(1 for r in rows[9:] if "k" in r[CX - 9:CX + 10])   # (rows with a wall of the trunk)
+        assert trunk >= 1.8 * OLD_TRUNK_ROWS, trunk   # (twice the old trunk, 0801f16's)
+        belly = [max((len(m) for m in re.findall(r"y+", r)), default=0) for r in rows[9:32]]
+        belly = belly[next(i for i, n in enumerate(belly) if n):]   # (from where the pale belly starts)
+        assert 10 <= max(belly) <= 14 and belly.index(max(belly)) <= 6, belly   # (widest just under the head, as the references' chests)
+        assert all(a >= b - 2 for a, b in zip(belly, belly[1:])) and belly[-3] <= 5, belly   # (tapering, soft)
+
+
+def test_the_frogs_limbs_are_short_tapering_and_curved_as_in_the_references():
+    for rows in FROG_FRAMES:
+        px = {(x, y) for y in range(9, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] in "gl"}
+        # no leg or arm pixel reaches further from its joint than the references' lengths (legs about 1.2 head widths, arms 0.8)
+        assert all(math.dist((x, y), (CX + (2 if x > CX else -2), 29)) <= 27 for x, y in px if y > 29), rows
+        assert all(math.dist((x, y), (CX + (8 if x > CX else -8), 12)) <= 26 for x, y in px if abs(x - CX) > 9 and y < 28), rows
+        # mostly 1-2 px thick, 3 only at the thigh
         limb = thick = 0
-        for y in range(9, SPRITE_H):
-            for x in range(SPRITE_W):
-                if rows[y][x] in ".mk" or abs(x - CX) <= 3 or any(abs(x - tx) <= 4 and -5 <= y - ty <= 1 for tx, ty in tips):
-                    continue
-                across = len(re.search(r"[^.m]*$", rows[y][:x + 1]).group()) + len(re.match(r"[^.m]*", rows[y][x + 1:]).group())
-                col = "".join(r[x] for r in rows)
-                top = y
-                while top > 9 and col[top - 1] not in ".m": top -= 1
-                bot = y
-                while bot < SPRITE_H - 1 and col[bot + 1] not in ".m": bot += 1
-                limb += 1
-                thick += min(across, bot - top + 1) > 2   # (only where limbs cross or meet)
-        assert limb > 5 and thick <= 0.25 * limb, (limb, thick)
-
-
-def test_the_frog_is_twice_as_long_below_the_head_a_trunk_of_twice_the_rows_and_limbs_reaching_far():
-    for rows in FROG_FRAMES:
-        trunk = sum(1 for r in rows[9:] if "k" in r[CX - 4:CX + 5])   # (rows with a wall of the trunk)
-        assert trunk >= 1.8 * OLD_TRUNK_ROWS, trunk
-        reach = max(y for y, r in enumerate(rows) if "l" in r)   # (the lowest toe tip: well below the old sprite's rows)
-        assert reach >= 40 and any(r.strip(".") for r in rows[-4:]), reach
-    wide = max(max(i for r in f for i, c in enumerate(r) if c != ".") - min(i for r in f for i, c in enumerate(r) if c != ".") for f in FROG_FRAMES)
-    assert wide >= 1.5 * 31, wide   # (the old sprite's reach sideways was 31 px at most)
+        tips = [(x, y) for y in range(9, SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l"]
+        for x, y in px:
+            if abs(x - CX) <= 9 and y < 30 or any(abs(x - tx) <= 6 and abs(y - ty) <= 6 for tx, ty in tips):
+                continue
+            across = len(re.search(r"[gl]*$", rows[y][:x + 1]).group()) + len(re.match(r"[gl]*", rows[y][x + 1:]).group()) - 1
+            col = "".join(r[x] for r in rows)
+            top = y
+            while top > 9 and col[top - 1] in "gl": top -= 1
+            bot = y
+            while bot < SPRITE_H - 1 and col[bot + 1] in "gl": bot += 1
+            limb += 1
+            thick += min(across, bot - top + 1) > 3
+        assert limb > 20 and thick <= 0.2 * limb, (limb, thick)
+    assert 1.2 * OLD_SPRITE[1] <= SPRITE_H <= 1.9 * OLD_SPRITE[1]
 
 
 def test_the_frog_is_drawn_only_within_the_flood_and_only_when_it_is_nearly_full():
@@ -2874,17 +2873,9 @@ def test_the_frog_flails_out_of_step_each_stroke_held_for_a_different_time():
 
 def test_every_limb_of_the_frog_shows_separate_toes_or_fingers():
     for rows in FROG_FRAMES:
-        groups = 0   # (a hand or foot: a row of 3+ light tips, each 2+ px from the next)
-        for y in range(9, SPRITE_H):
-            xs = [x for x in range(SPRITE_W) if rows[y][x] == "l"]
-            run = []
-            for x in xs:
-                if run and x - run[-1] != 2:
-                    groups += len(run) >= 3
-                    run = []
-                run.append(x)
-            groups += len(run) >= 3
-        assert groups >= 4, (groups, rows)   # (two hands, two feet)
+        tips = [(x, y) for y in range(SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l" and not (y < 9 and HEAD_AT <= x < HEAD_AT + 21)]
+        assert all(max(abs(a - c), abs(b - d)) >= 2 for i, (a, b) in enumerate(tips) for c, d in tips[i + 1:]), tips   # (tips separated)
+        assert len(tips) >= 14, len(tips)   # (two feet of 4 separate toe tips, two hands of 3 finger tips)
 
 
 def test_the_frog_blinks_over_the_same_head():
