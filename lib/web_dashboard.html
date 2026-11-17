@@ -76,8 +76,11 @@
   #remove.on { transform: none; }
   #remove.over { color: #FFFFFF; background: rgba(150, 34, 42, 0.95); }
   /* The weather behind everything (Sky, below): one canvas, the window's size, fixed, first in the page; its pixels scaled up crisply */
-  #sky { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
-  #sky canvas { position: absolute; left: 0; top: 0; image-rendering: crisp-edges; image-rendering: pixelated; }
+  /* (Past the window's top and bottom by --over: a phone's address bar sliding away shows more page than the layout viewport was when
+     the weather was sized, for a moment or on some browsers for good. The first canvas is the window's own size, the other two the
+     margins above and below it (Sky mirrors the first's top and bottom rows into them), placed by Sky's resize().) */
+  #sky { --over: 100px; position: fixed; left: 0; right: 0; top: calc(-1 * var(--over)); bottom: calc(-1 * var(--over)); z-index: 0; overflow: hidden; pointer-events: none; }
+  #sky canvas { position: absolute; left: 0; top: var(--over); image-rendering: crisp-edges; image-rendering: pixelated; }
   #status { position: fixed; right: 0; bottom: 0; height: var(--status, 18px); padding: 0 10px; font-size: 12px;
     line-height: var(--status, 18px); color: var(--soft); background: rgba(20, 25, 29, 0.85); border-top-left-radius: 6px; z-index: 1; }
   #status .link, #motion .link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
@@ -153,7 +156,7 @@
 </style>
 </head>
 <body>
-<div id="sky" aria-hidden="true"><canvas></canvas></div>
+<div id="sky" aria-hidden="true"><canvas></canvas><canvas></canvas><canvas></canvas></div>
 <main id="grid" aria-live="polite"></main>
 <div id="message"></div>
 <div id="remove" aria-hidden="true">× remove</div>
@@ -245,6 +248,10 @@ const Sky = (() => {
   const OWN_BUDGET = new Set(["humidity"]);   // (its beads outside the shared budget: their own limits keep their cost bounded)
   const OWN_STRENGTH = new Set(["rain"]);     // (drawn at its own strength whatever else is on: outside the cap)
   let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
+  const OVER = 100;                    // CSS px: the weather's margin past the window's top and bottom (the page's --over, in #sky's rule)
+  const [above, below] = [...holder.querySelectorAll("canvas")].slice(1);   // the margins' canvases: the window's rows mirrored into them
+  const aboveG = above.getContext("2d"), belowG = below.getContext("2d");
+  let M = 0;                           // a margin's height (art px): OVER or more in CSS px
 
   // ---------- tools: seeded randomness, colours, dithering, noise, little canvases ----------
   const seeded = (seed) => () => {     // (mulberry32: the same art every time)
@@ -3395,9 +3402,14 @@ const Sky = (() => {
     P = p;
     W = Math.ceil(w / P);
     H = Math.ceil(h / P);
-    canvas.width = W;
+    M = Math.ceil(OVER / P);
+    canvas.width = above.width = below.width = W;
     canvas.height = H;
+    above.height = below.height = M;
     Object.assign(canvas.style, {width: `${W * P}px`, height: `${H * P}px`});
+    // (the window's top is OVER px down in #sky, which starts that far above the window: the margins end where the window's does)
+    Object.assign(above.style, {width: `${W * P}px`, height: `${M * P}px`, top: `${OVER - M * P}px`});
+    Object.assign(below.style, {width: `${W * P}px`, height: `${M * P}px`, top: `${OVER + H * P}px`});
     for (const k of ORDER) effects[k].sized = false;   // (each made to the new size when it's next on: none made for nothing)
   }
 
@@ -3415,6 +3427,20 @@ const Sky = (() => {
     for (const k of ORDER) if (effects[k].alive()) effects[k].step(dt, clock, OWN_BUDGET.has(k) ? 1 : share);
     for (const k of ORDER) if (effects[k].settle && effects[k].alive()) effects[k].settle();   // (after them all: see humidity's)
   }
+  function wipe() { ctx.clearRect(0, 0, W, H); aboveG.clearRect(0, 0, W, M); belowG.clearRect(0, 0, W, M); }
+  // The weather carried on past the window's top and bottom: its first and last rows mirrored into the margins (the fog, the haze,
+  // the frost's edge and the flood's water all go on; whatever is drawn at the edge only mirrors, never moves or acts there)
+  function margins() {
+    const n = Math.min(M, H);
+    for (const [g, from, to] of [[aboveG, 0, 0], [belowG, H - n, M - n]]) {
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, W, M);
+      g.setTransform(1, 0, 0, -1, 0, M);
+      g.drawImage(canvas, 0, from, W, n, 0, to, W, n);
+    }
+    aboveG.setTransform(1, 0, 0, 1, 0, 0);
+    belowG.setTransform(1, 0, 0, 1, 0, 0);
+  }
   function draw() {
     ctx.globalAlpha = 1;
     ctx.clearRect(0, 0, W, H);
@@ -3427,6 +3453,7 @@ const Sky = (() => {
       if (fx.amount > 0) fx.draw(ctx, a, clock);
     }
     ctx.globalAlpha = 1;
+    margins();
   }
 
   function step(dt) {   // one frame, dt s of the weather's time on
@@ -3445,14 +3472,14 @@ const Sky = (() => {
       last = now;
     }
     if (alive()) frame = requestAnimationFrame(loop);
-    else ctx.clearRect(0, 0, W, H);
+    else wipe();
   }
   // (test-only: n frames now, one after another, each TEST.step (or a 30th of a second) times timeScale on, as the loop would
   // make them, ending as it would once nothing is left; how many were made)
   function advance(n = 1) {
     let made = 0;
     for (; made < n && animate && alive(); made++) step((TEST.step || FRAME_MS / 1000) * scale);
-    if (!alive()) ctx.clearRect(0, 0, W, H);
+    if (!alive()) wipe();
     return made;
   }
 
@@ -3460,7 +3487,7 @@ const Sky = (() => {
     if (!animate || !alive()) {
       cancelAnimationFrame(frame);
       frame = 0;
-      ctx.clearRect(0, 0, W, H);
+      wipe();
       return;
     }
     if (DRIVEN) return;   // (the tests' frames only: Sky.advance)

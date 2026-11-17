@@ -2551,6 +2551,39 @@ const WEATHER = {
   // clock, leaves landing on it, floating, sinking and resting on the bottom; the drips joining it (each as it did), and where the
   // surface is down in a trough, what's drawn just under its level against what's just above; its first frog 30 s after the water
   // starts rising, drifting right to left on the waves; off, draining.
+  // The weather past the window's top and bottom (a phone's address bar sliding away shows more than the layout viewport was): the
+  // canvas and its two margins reach at least OVER (100 px) past each edge; the viewport made taller (the bar hidden), with the
+  // window's resize event or without, still covered before any relayout; the weather's own world (the flood's level, the gust's
+  // height) is still the window's size, not the margins' too; the margins carry on the first and last rows, mirrored
+  async over(browser, url, out) {
+    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=haze3,humidity2,ice,heat,uv", driven: true,
+                                                                       context: { viewport: { width: 390, height: 700 }, hasTouch: true, isMobile: true } });
+    await drive(page, 40);
+    const look = () => page.evaluate(() => {
+      const rect = (e) => { const r = e.getBoundingClientRect(); return [r.top, r.bottom, r.left, r.right]; };
+      const [c, a, b] = document.querySelectorAll("#sky canvas"), s = Sky.state(), h = document.documentElement.clientHeight;
+      const rows = (cv, ys) => { const g = cv.getContext("2d"); return ys.map((y) => [...g.getImageData(0, y, cv.width, 1).data]); };
+      const same = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);
+      const ink = (cv) => { const d = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; return n; };
+      return { inner: [innerWidth, innerHeight], client: [document.documentElement.clientWidth, h], canvas: rect(c), above: rect(a), below: rect(b),
+               sky: rect(document.getElementById("sky")), size: s.size, canvases: document.querySelectorAll("canvas").length,
+               mirrored: { top: same(rows(a, [a.height - 1])[0], rows(c, [0])[0]), bottom: same(rows(b, [0])[0], rows(c, [c.height - 1])[0]),
+                           top2: same(rows(a, [a.height - 2])[0], rows(c, [1])[0]) },
+               ink: [ink(a), ink(c), ink(b)], flood: s.flood.height, gustFrom: s.gust ? null : null,
+               bg: [getComputedStyle(document.documentElement).backgroundColor, getComputedStyle(document.body).backgroundColor],
+               theme: document.querySelector("meta[name=theme-color]").content };
+    });
+    out.first = await look();
+    await page.setViewportSize({ width: 390, height: 790 });   // (the bar hidden: 90 px more, no event, no relayout yet)
+    await page.evaluate(() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))));
+    out.grown = await look();
+    await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+    await page.waitForTimeout(500);
+    await drive(page, 5);
+    out.relaid = await look();
+    out.errors = errors;
+    await context.close();
+  },
   async flood(browser, url, out) {
     const linked = (async () => {
       const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=haze3,uv,humidity2,wind,heat,ice", driven: true });

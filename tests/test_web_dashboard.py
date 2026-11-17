@@ -1560,7 +1560,7 @@ EFFECTS = {"rain": "Rain", "haze": "AQI", "uv": "UV index", "humidity": "Humidit
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"all", "flood", "opened", "gust"}
+DRIVEN = {"all", "flood", "opened", "gust", "over"}
 
 
 async def weather(server, part: str) -> dict:
@@ -1605,11 +1605,12 @@ async def test_several_effects_share_one_canvas_behind_the_see_through_tiles_zoo
     got = await weather(server, "several")
     # several at once: one canvas, one loop, at most 30 frames drawn a second
     several = got["several"]
-    assert several["effects"] == ["haze", "uv", "rain", "wind", "humidity", "ice"] and several["canvases"] == 1, several
+    assert several["effects"] == ["haze", "uv", "rain", "wind", "humidity", "ice"] and several["canvases"] == 3, several   # (the weather's canvas and its two margins: see test_the_weather_reaches_past...)
     assert sorted(several["framed"]) == sorted({EFFECTS[k] for k in several["effects"]}) and several["ink"] > 0, several
     assert 20 <= several["drawn"] <= 32 and several["frames"] <= 64, several    # (a second's: one request a display frame, every other one drawn)
     # the canvas: filling the window, fixed, first, behind the tiles, never in the pointer's way, its pixels crisp
-    assert got["canvas"] == {"rect": [0, 0, 1024, 768], "canvas": [True, True], "position": "fixed", "z": "0", "events": "none",
+    # (#sky now reaches OVER = 100 px past the window's top and bottom: the weather's own canvas is still the window's size)
+    assert got["canvas"] == {"rect": [0, -100, 1024, 968], "canvas": [True, True], "position": "fixed", "z": "0", "events": "none",
                              "first": True, "pixelated": "pixelated", "under": True}
     # the tiles see-through (what's behind shows in a tile's margin), their foreground opaque; zoomed too
     assert got["through"] == {"differs": True, "still": True}
@@ -1619,6 +1620,41 @@ async def test_several_effects_share_one_canvas_behind_the_see_through_tiles_zoo
                            "dragFrames": {"lifted": "rgb(90, 102, 112)", "doomed": "rgb(229, 72, 77)", "after": "rgba(0, 0, 0, 0)"}}
     assert got["zoomed"] == {"zoomed": True, "title": "UV index", "background": "rgba(0, 0, 0, 0)", "grid": "rgba(0, 0, 0, 0)",
                              "alert": True, "running": True}
+
+
+def test_the_page_and_its_browser_bars_are_the_dark_colour_and_the_weather_reaches_past_the_window_in_css():
+    page = PAGE.read_text()
+    assert re.search(r"--bg: #14191D", page) and re.search(r"html, body \{[^}]*background: var\(--bg\)", page)
+    assert '<meta name="theme-color" content="#14191D">' in page
+    assert re.search(r"#sky \{[^}]*--over: 100px;[^}]*top: calc\(-1 \* var\(--over\)\); bottom: calc\(-1 \* var\(--over\)\)", page)
+
+
+@needs_browser
+async def test_the_weather_reaches_past_the_windows_top_and_bottom_so_a_hiding_address_bar_shows_no_bare_strip(server, station):
+    got = await weather(server, "over")
+    OVER = 100
+    for name in ("first", "grown", "relaid"):
+        seen = got[name]
+        h = seen["inner"][1]
+        assert seen["canvases"] == 3, (name, seen)
+        # the weather's canvas and its margins: at least OVER past the top and the bottom of the window, the whole width, even with the
+        # viewport made taller before any relayout (the bar hidden); the margins end where the window's canvas begins
+        # (made taller before any relayout, the margins still cover the whole window; only the margin's own reach is what is left)
+        assert seen["above"][0] <= -OVER and seen["below"][1] >= (h if name == "grown" else h + OVER), (name, seen)
+        # (the weather's own canvas alone covers the window but when it was made taller; then it and the margin below it do together)
+        assert seen["canvas"][0] <= 0 and (seen["canvas"][1] >= h or (name == "grown" and seen["below"][1] >= h)), (name, seen)
+        assert abs(seen["above"][1] - seen["canvas"][0]) < 0.01 and abs(seen["below"][0] - seen["canvas"][1]) < 0.01, (name, seen)
+        assert seen["canvas"][2] <= 0 and seen["canvas"][3] >= seen["inner"][0], (name, seen)
+        # the weather's own world is the window's size alone (the flood's level, the gust's height: from the visible bottom): the
+        # margins are only the first and last rows mirrored
+        width, rows, p = seen["size"]
+        assert (name == "grown" or rows == -(-seen["client"][1] // p)) and seen["flood"] == rows, (name, seen)
+        assert seen["mirrored"] == {"top": True, "bottom": True, "top2": True}, (name, seen)
+        assert seen["ink"][1] > 0 and seen["ink"][0] > 0 and seen["ink"][2] > 0, (name, seen)
+        # the page's own colour all round, and the browser's bars the same
+        assert seen["bg"] == ["rgb(20, 25, 29)", "rgb(20, 25, 29)"] and seen["theme"] == "#14191D", (name, seen)
+    assert got["grown"]["inner"][1] == got["first"]["inner"][1] + 90 and got["grown"]["size"] == got["first"]["size"], got
+    assert got["relaid"]["size"][1] > got["first"]["size"][1], got
 
 
 @needs_browser
