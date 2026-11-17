@@ -1957,14 +1957,14 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert pair[1]["y"] >= snapped["at"][1]["y"] and len(snapped["near"]) == 1, snapped
     assert [(b["x"], b["y"], b["tiny"]) for b in apart] == [(b["x"], b["y"], True) for b in snapped["at"][2:]], snapped
     # ... the fog: forming first (the first bead only once it has, there and on the glass at large), its trails wiped clear through it
-    # about as wide as the bead was there (its edges ragged: a px in or out; a px more where another's beside it), clearer than the
+    # about as wide as the bead was there (its edges soft: a px or so either way; a px more where another's beside it), clearer than the
     # fog beside them (where there is fog); the beads' colours as ever (the glass: the deep blue rim, a faint pale body, a crescent, a
     # white glint)
     for name, beads in got["humidity"].items():
         first = beads["first"]
         assert first["after"] >= 2 and first["cover"] >= 0.3 and first["fog"] > 0.2 and first["formed"]["edge"] > 0.2, (name, first)
         wiped = beads["wiped"]
-        # (wiped clear, or near its ragged edge all but: the fog already creeping back there a little)
+        # (wiped clear, or near its soft edge all but: the fog already creeping back there a little)
         assert len(wiped) >= 8 and all(t["shown"] <= 0.25 * t["fog"] and t["wet"] > 0.85 for t in wiped), (name, wiped)
         assert sum(t["shown"] == 0 for t in wiped) >= 0.3 * len(wiped), (name, wiped)
         assert all(-1 <= t["across"] - t["w"] <= 3 for t in wiped), (name, [t for t in wiped if not -1 <= t["across"] - t["w"] <= 3])
@@ -1972,14 +1972,22 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert len(fogged) >= 5 and all(t["beside"] > t["shown"] for t in fogged), (name, wiped)
         assert sum(t["end"]["wet"] < t["wet"] for t in wiped) >= 0.75 * len(wiped), (name, wiped)   # (fogging over again, slowly)
         # (natural trails through the fog, as they look while fresh: about the bead's width all along (its width as it grew), never
-        # a gap; their edges ragged, each wandering a px in or out down the trail, not straight)
+        # a gap; their edges smooth: soft (partly wiped px), each wandering gently down the trail, a px over many rows, never row to
+        # row; not all straight)
         fog_trails = [t for t in beads["looks"] if t["kind"] == "fog"]
         assert len(fog_trails) >= 6, (name, beads["looks"])
         for t in fog_trails:
             assert min(t["widths"]) >= 1 and abs(sum(t["widths"]) / len(t["widths"]) - t["w"]) <= 1.5, (name, t)
-            moves = [sum(a != b for a, b in zip(edge, edge[1:])) for edge in (t["lefts"], t["rights"])]
-            assert len(set(t["lefts"] + t["rights"])) >= 2 and sum(moves) >= 0.1 * len(t["lefts"]), (name, t)
-            assert len(set(t["widths"])) >= 2, (name, t)
+            # (each edge, on the glass, row by row: shifting a px now and then as the trail wanders, never hopping out and back
+            # (a px over for a row, then back: once in a trail at most), never shifting most rows; its soft edge px partly wiped,
+            # the fog's own shades between, in most rows)
+            edges = [e for e in t["edges"] if e]
+            for side in (0, 1):
+                edge = [e[side] for e in edges]
+                hops = sum(edge[k - 1] == edge[k + 1] != edge[k] for k in range(1, len(edge) - 1))
+                moves = sum(a != b for a, b in zip(edge, edge[1:]))
+                assert hops <= 1 and moves <= 0.4 * len(edge), (name, t["id"], side, edge)
+            assert sum(k >= 1 for k in t["soft"]) >= 0.7 * len(t["soft"]), (name, t["id"], t["soft"])
             # (clean inside: no droplet, glint or other trail's look in it, only the fog's faint shades (FOG's two thinnest at most:
             # residueShades, the residue's own) as residue or as the fog coming back; and no
             # dots: whatever shows inside it, not touching the fog beside it, is a streak of residue down it (3 rows or more, 2 px
@@ -1988,6 +1996,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             assert inside["odd"] == [] and all(1 <= k <= inside["residueShades"][1] for d in inside["patches"] for k in d["shows"]), (name, t["id"], inside)
             dots = [d for d in inside["patches"] if d["tall"] < 3 or d["wide"] > 2 or d["tall"] <= d["wide"]]
             assert dots == [], (name, t["id"], dots)
+        # (most wandering, not ruled straight)
+        assert sum(len({e[0] for e in t["edges"] if e}) > 1 for t in fog_trails) >= 0.5 * len(fog_trails), (name, fog_trails)
         # (a little streaky residue in them all told: some, under a tenth of the wiped px)
         residue, px = sum(t["inside"]["residue"] for t in fog_trails), sum(t["inside"]["px"] for t in fog_trails)
         assert 0 < residue < 0.1 * px, (name, residue, px)

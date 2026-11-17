@@ -1655,8 +1655,9 @@ const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
 // there, not wiped, 0.1 or more at its middle), each row's wiped pixels (its own: the fog shown under half what it'd be): how many, the first
 // and the last against the sprite's left and right; each kind with 12 rows or more (a streak on clear glass 16: a thin one's mean
 // width needs them): {id, kind ("clear", "fog"), w: the bead's mean
-// width, widths, paused: each row where it had paused (a blob there), lefts, rights, ys, and through the fog inside: what shows inside it, see inside()}. (Put in the page as
-// window.__trailLook, see lookable())
+// width, widths, paused: each row where it had paused (a blob there), lefts, rights, ys, and through the fog inside: what shows inside it, see inside(),
+// and soft: each row's px partly wiped (its soft edges), edges: each row's first and last wiped px, on the glass (null: none)}.
+// (Put in the page as window.__trailLook, see lookable())
 const trailLook = (h, b) => {
   const kinds = { clear: [], fog: [] };
   for (const r of h.trailOf(b.id)) {
@@ -1666,7 +1667,9 @@ const trailLook = (h, b) => {
       kinds.clear.push({ y: r.y, w: r.w, paused: r.paused, width: r.alpha.filter((a, k) => k >= 2 && k < r.w + 4 && a > 0 && r.life[k] === r.life[mid]).length });
     } else if (r.fog[mid][1] >= 0.1) {
       const wiped = r.fog.map(([s, f], k) => (f > 0 && s < 0.5 * f && r.life[k] === r.life[mid] ? k : -1)).filter((k) => k >= 0);
-      kinds.fog.push({ y: r.y, w: r.w, width: wiped.length, left: wiped.length ? wiped[0] - 3 : null,
+      // (its soft edges: the px its own trail partly wiped, the fog shown there between a tenth and nine tenths of what it'd be)
+      const soft = r.fog.filter(([s, f], k) => f > 0 && s > 0.1 * f && s < 0.9 * f && r.life[k] === r.life[mid]).length;
+      kinds.fog.push({ y: r.y, w: r.w, at: r.left, width: wiped.length, soft, left: wiped.length ? wiped[0] - 3 : null,
                        right: wiped.length ? wiped[wiped.length - 1] - 3 - (r.w - 1) : null,
                        // (each px across, at x: wiped (its own), what it shows)
                        px: r.fog.map((_, k) => ({ x: r.left - 3 + k, wiped: wiped.includes(k), shows: r.shows[k], residue: r.residue[k] > 0 })),
@@ -1674,7 +1677,7 @@ const trailLook = (h, b) => {
     }
   }
   // (through the fog, what shows inside the wiped streak: each patch of it (8-connected) not touching the fog beside it (not
-  // wiped: the ragged edge, its fog dithered as ever) and wholly within the rows looked at: {px, tall, wide, shows: what its
+  // wiped: the soft edge, its fog partly there) and wholly within the rows looked at: {px, tall, wide, shows: what its
   // pixels show, at: a pixel of it}; anything else than a fog shade shown in the wiped streak; its residue shown (px) and its px
   // wiped)
   const inside = (rows) => {
@@ -1693,7 +1696,7 @@ const trailLook = (h, b) => {
           if (!dx && !dy) continue;
           const q = byY.get(y + dy)?.get(x + dx);
           if (!q) { whole = false; continue; }   // (beyond the rows or columns looked at: can't tell)
-          if (!q.wiped) { whole = false; continue; }   // (at the ragged edge: the fog's own dither coming back)
+          if (!q.wiped) { whole = false; continue; }   // (at the soft edge: the fog partly there, or coming back)
           if (!q.shows) continue;
           if (!done.has(`${x + dx},${y + dy}`)) { done.add(`${x + dx},${y + dy}`); todo.push([x + dx, y + dy]); }
         }
@@ -1708,7 +1711,9 @@ const trailLook = (h, b) => {
   };
   return Object.entries(kinds).filter(([kind, rows]) => rows.length >= (kind === "clear" ? 16 : 12)).map(([kind, rows]) => ({
     id: b.id, kind, w: rows.reduce((s, r) => s + r.w, 0) / rows.length, widths: rows.map((r) => r.width), ys: rows.map((r) => r.y),
-    paused: rows.map((r) => !!r.paused), lefts: rows.map((r) => r.left), rights: rows.map((r) => r.right), ...(kind === "fog" ? { inside: inside(rows) } : {}) }));
+    paused: rows.map((r) => !!r.paused), lefts: rows.map((r) => r.left), rights: rows.map((r) => r.right),
+    ...(kind === "fog" ? { inside: inside(rows), soft: rows.map((r) => r.soft),
+                             edges: rows.map((r) => (r.width ? [r.at + r.left, r.at + r.w - 1 + r.right] : null)) } : {}) }));
 };
 // The beads followed frame by frame (window.__beadWatch(), see lookable(); each frame .step(Sky.state()), then .result()):
 //   stretches: each time one elongated (its stretch from 0 to more), {r: its radius then, most: its stretch at most (0-1), rows: the
