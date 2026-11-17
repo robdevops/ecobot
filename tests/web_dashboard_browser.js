@@ -437,6 +437,7 @@ async function arrangeMode(browser, url, part) {
   if (part === "dragged") await arranged(browser, url, out, errors);
   else if (part === "hidden") await arrangedHidden(browser, url, out, errors);
   else if (part === "stale") await arrangedStale(browser, url, out, errors);
+  else if (part === "reset") await arrangedReset(browser, url, out, errors);
   else await Promise.all([arrangedFromPrefs(browser, url, out, errors), arrangedBlocked(browser, url, out)]);
   out.errors = errors;
   return out;
@@ -494,6 +495,53 @@ async function arranged(browser, url, out, allErrors) {
     const during = await mouseDrag(page, [r.x + 2, y], [r.x + r.width - 1, y + 1], () => midDrag(page));
     out.text[name] = { same: JSON.stringify(before) === JSON.stringify(await titles(page)), dragging: during.dragging, selected: await selection(page) };
   }
+  allErrors.push(...errors);
+  await context.close();
+}
+// "reset preferences" left of the units' switches, in the bar with them (reset | switches | strip): the switches' boxes the same with the
+// link shown (a unit switched) and gone (reset), at a desktop's, a tablet's and two phones' widths; the link left of the first
+// switch, on screen, over nothing; clicking it puts the tiles, the units and the order back.
+async function arrangedReset(browser, url, all, allErrors) {
+  const out = all.resetBar = {};
+  out.widths = {};
+  for (const [width, height] of [[1440, 900], [1024, 768], [768, 1024], [390, 800], [320, 600]]) {
+    const { context, page, errors } = await open(browser, url, width, height, { risen: true });
+    await calm(page);
+    const look = () => page.evaluate(() => {
+      const box = (e) => { const r = e.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
+      const units = [...document.querySelectorAll("#units button")].map(box), link = document.querySelector("#reset .link");
+      const apart = (a, b) => a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
+      const strip = box(document.getElementById("status")), bar = box(document.getElementById("units"));
+      return { units, bar, strip, link: link && box(link), linkInStrip: !!document.querySelector("#status .reset"), name: link && link.textContent,
+               layout: document.body.dataset.units, reset: document.body.dataset.reset, status: document.getElementById("status").textContent,
+               onScreen: !link || (link.getBoundingClientRect().left >= 0 && link.getBoundingClientRect().right <= innerWidth && link.getBoundingClientRect().bottom <= innerHeight),
+               clear: !link || [...units, strip].every((u) => apart(box(link), u)), width: innerWidth };
+    });
+    const first = await look();
+    await page.locator("#units button", { hasText: "°F" }).click();
+    await calm(page);
+    const shown = await look();
+    if (process.env.RESET_SHOTS) await page.screenshot({ path: `${process.env.RESET_SHOTS}/reset-${width}.png`, clip: { x: 0, y: height - 90, width, height: 90 } });
+    const order = await titles(page);
+    await page.getByText("reset preferences").click();
+    await calm(page);
+    const gone = await look();
+    out.widths[width] = { first, shown, gone, restored: JSON.stringify(order) === JSON.stringify(await titles(page)), stored: await stored(page) };
+    allErrors.push(...errors);
+    await context.close();
+  }
+  // a tile hidden: the link, the tiles back on reset
+  const { context, page, errors } = await open(browser, url, 1024, 768, { risen: true });
+  await calm(page);
+  const before = await titles(page);
+  await page.mouse.move(...await at(page, "Rain", 0.5, 0.4));
+  await calm(page);
+  await tileOf(page, "Rain").locator(".close").click();
+  await calm(page);
+  out.hidden = { titles: await titles(page), link: await page.locator("#reset .link").count() };
+  await page.getByText("reset preferences").click();
+  await calm(page);
+  out.back = { titles: await titles(page), link: await page.locator("#reset .link").count(), same: JSON.stringify(before) === JSON.stringify(await titles(page)) };
   allErrors.push(...errors);
   await context.close();
 }
@@ -1434,9 +1482,9 @@ const weatherSeen = (page) => page.evaluate(() => {
 const cornerSeen = (page) => page.evaluate(() => {
   const box = (e) => e ? e.getBoundingClientRect().toJSON() : null, link = document.querySelector("#motion .animations");
   const row = document.getElementById("fxtest"), buttons = row ? [...row.querySelectorAll("button")] : [];
-  const m = box(document.getElementById("motion")), s = box(document.getElementById("status")), u = box(document.getElementById("units"));
+  const m = box(document.getElementById("motion")), s = box(document.getElementById("status")), u = box(document.getElementById("units")), rs = box(document.getElementById("reset"));
   const clear = (s) => m.right <= s.left || s.right <= m.left || m.bottom <= s.top || s.bottom <= m.top;
-  return { units: u, link: link ? link.textContent : null, motion: m, row: box(row), last: box(buttons.at(-1)), strip: s,
+  return { units: u, reset: rs, link: link ? link.textContent : null, motion: m, row: box(row), last: box(buttons.at(-1)), strip: s,
            buttons: buttons.map((b) => b.textContent), tag: row ? !!row.querySelector(".tag") : null,   // (no "test:" label any more)
            fits: row ? row.scrollWidth <= row.clientWidth && row.scrollLeft === 0 : null, spare: innerWidth - m.right,
            window: [innerWidth, innerHeight], apart: clear(s) && clear(u),
@@ -3113,7 +3161,9 @@ const WEATHER = {
       out.phoneCorner = await cornerSeen(phone.page);
       out.phone = await phone.page.evaluate(() => {
         const a = document.getElementById("fxtest").getBoundingClientRect(), b = document.getElementById("status").getBoundingClientRect();
-        return { strip: document.getElementById("status").textContent, right: Math.abs(b.right - innerWidth) < 1 && Math.abs(b.bottom - innerHeight) < 1,
+        const r = document.querySelector("#reset").getBoundingClientRect(), u = document.getElementById("units").getBoundingClientRect();
+        return { strip: document.getElementById("status").textContent, resetRight: r.right <= innerWidth && r.left >= 0 && r.width > 0 && (r.bottom <= u.top || r.right <= u.left),
+                 resetAfterRow: r.bottom <= a.top || r.left >= a.right, right: Math.abs(b.right - innerWidth) < 1 && Math.abs(b.bottom - innerHeight) < 1,
                  apart: a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top, onScreen: a.left >= 0 && a.bottom <= innerHeight };
       });
       await phone.context.close();

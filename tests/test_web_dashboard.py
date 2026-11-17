@@ -1133,7 +1133,7 @@ def units_switched(seen: dict):
     assert fahrenheit["tiles"]["Temperature"]["figures"][0] == "68.0"
     assert fahrenheit["tiles"]["Wind"] == metric["tiles"]["Wind"] and fahrenheit["tiles"]["Humidity"] == metric["tiles"]["Humidity"]
     assert fahrenheit["pressed"] == switch(True, False) and fahrenheit["focused"] == "°F", fahrenheit
-    assert fahrenheit["status"] == "reset preferences · last reading 18:42" and fahrenheit["stored"] == {"order": [], "hidden": [], "temperature": "°F"}
+    assert fahrenheit["status"] == "last reading 18:42" and fahrenheit["stored"] == {"order": [], "hidden": [], "temperature": "°F"}
     # mph: the Wind's reading, dial (0-60 mph, every 10), figures, unit and gust hand; the temperatures still °F, Humidity untouched
     was, now = metric["tiles"]["Wind"], both["tiles"]["Wind"]
     assert was["words"] == ["0", "20", "40", "60", "80", "100", "km/h"] and now["words"] == ["0", "10", "20", "30", "40", "50", "60", "mph"], now
@@ -1174,7 +1174,7 @@ def units_switched(seen: dict):
     assert {t: v for t, v in inches["tiles"].items() if t not in ("Rain", "Rain rate")} == \
         {t: v for t, v in seen["inHg"]["tiles"].items() if t not in ("Rain", "Rain rate")}
     assert inches["pressed"] == switch(True, True, True, True) and inches["focused"] == "in", inches
-    assert inches["status"] == "reset preferences · last reading 18:42"
+    assert inches["status"] == "last reading 18:42"
     assert inches["stored"] == {"order": [], "hidden": [], "temperature": "°F", "wind": "mph", "pressure": "inHg", "rain": "in"}
     # reloaded: as it was left
     assert seen["reloaded"]["tiles"] == inches["tiles"] and seen["reloaded"]["pressed"] == switch(True, True, True, True), seen["reloaded"]
@@ -1191,7 +1191,7 @@ def units_switched(seen: dict):
 
 @needs_browser
 async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_kept_across_reloads_and_reset(server, station):
-    got = await run_page(server, "--arrange", weather=False, parts=("dragged", "hidden", "prefs", "stale"))
+    got = await run_page(server, "--arrange", weather=False, parts=("dragged", "hidden", "prefs", "stale", "reset"))
     default = titles_of(station)
     assert got["errors"] == [] and got["initial"] == default, got["errors"]
     # mouseover: the grip and the × on the tile under the mouse only
@@ -1208,14 +1208,34 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
                            "table": {"same": True, "dragging": False, "selected": "85"},
                            "reading": {"same": True, "dragging": False, "selected": "70"}}
     # the ×, then the remove zone, hide; the reset link shows beside the time
-    assert got["closed"] == {"titles": [t for t in reordered if t != "Rain"], "status": "reset preferences · last reading 18:42"}
+    assert got["closed"] == {"titles": [t for t in reordered if t != "Rain"], "status": "last reading 18:42"}
     assert got["removing"]["over"] and got["removing"]["zone"] == "none"
     shown = [t for t in reordered if t not in ("Rain", "Wind")]
     assert got["removed"] == {"titles": shown, "stored": {"order": reordered, "hidden": ["Rain", "Wind"]}}
-    assert got["reloaded"] == {"titles": shown, "status": "reset preferences · last reading 18:42"}
+    assert got["reloaded"] == {"titles": shown, "status": "last reading 18:42"}
     # reset: every tile, in the default order, nothing kept, no link
     assert got["reset"] == {"titles": default, "status": "last reading 18:42", "stored": None}
     units_switched(got["units"])
+    # "reset preferences" left of the units' switches, in the bar with them: the switches never move for it (their boxes the same
+    # with it shown and gone), the link left of the first switch (or above them when the row is full), on screen, over nothing,
+    # not in the strip; clicking it puts the tiles, units and order back
+    bar = got["resetBar"]
+    assert sorted(bar["widths"], key=int) == ["320", "390", "768", "1024", "1440"], list(bar["widths"])
+    for width, seen in bar["widths"].items():
+        assert seen["first"]["link"] is None and seen["gone"]["link"] is None, (width, seen)
+        assert seen["shown"]["name"] == "reset preferences" and not seen["shown"]["linkInStrip"], (width, seen["shown"])
+        assert seen["shown"]["units"] == seen["first"]["units"] == seen["gone"]["units"], (width, seen)   # (identical boxes)
+        assert seen["shown"]["strip"] == seen["first"]["strip"] and seen["shown"]["status"] == "last reading 18:42", (width, seen)
+        assert seen["shown"]["onScreen"] and seen["shown"]["clear"], (width, seen["shown"])
+        link, first = seen["shown"]["link"], seen["shown"]["units"][0]
+        if seen["shown"]["reset"] == "row":   # (left of the switches, in their row, touching their bar)
+            assert link["right"] <= first["left"] and link["top"] < first["bottom"] and first["top"] < link["bottom"], (width, seen["shown"])
+            assert seen["shown"]["bar"]["left"] - link["right"] < 12, (width, seen["shown"])
+        else:   # (a full row: on its own line above, never over the switches)
+            assert link["bottom"] <= seen["shown"]["bar"]["top"], (width, seen["shown"])
+        assert seen["restored"] and seen["stored"] is None, (width, seen)
+    assert {w: s["shown"]["reset"] for w, s in bar["widths"].items()}["1440"] == "row"   # (side by side where there's room)
+    assert bar["hidden"]["link"] == 1 and "Rain" not in bar["hidden"]["titles"] and bar["back"]["link"] == 0 and bar["back"]["same"], bar
     # unreadable preferences: the defaults; a tile new to the saved order in its usual place (Rain, after Atmospheric pressure; the
     # wind's direction, after Wind); an
     # absent tile's place and a later stage's keys kept
@@ -1281,7 +1301,7 @@ async def test_on_a_touch_screen_a_long_press_picks_a_tile_up_and_a_tap_or_a_swi
     assert got["dropped"]["titles"] == reordered and not got["dropped"]["zone"] and got["dropped"]["clicks"] == 0
     # held and let go in place: the grip and × stay, and a tap on the × hides it
     assert got["armed"]["armed"] == ["Humidity"] and got["armed"]["close"] == "1"
-    assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "reset preferences · last reading 18:42"}
+    assert got["closed"] == {"titles": [t for t in reordered if t != "Humidity"], "status": "last reading 18:42"}
     # held at the bottom edge (on a page of its own, beside them): the page scrolls to its end, never past it, and stays there once let go
     edge = got["edge"]
     assert edge["seen"][-1] == pytest.approx(edge["end"], abs=1) and max(edge["seen"]) <= edge["end"] + 1, edge
@@ -1738,7 +1758,7 @@ async def test_the_temporary_test_links_turn_each_effect_on_and_stop_animation_e
     assert off["off"]["effects"] == EVERY, off["off"]                                    # (asked for all the same: just never drawn)
     assert off["tiles"] == titles_of(station) and off["strip"] == "last reading 18:42", off
     # a tile hidden: "reset preferences" in the strip as ever; still nothing drawn
-    assert off["hidden"] == {"strip": "reset preferences · last reading 18:42", "frames": 0, "ink": 0, "running": False}, off["hidden"]
+    assert off["hidden"] == {"strip": "last reading 18:42", "frames": 0, "ink": 0, "running": False}, off["hidden"]
 
 
 @needs_browser
@@ -2356,21 +2376,30 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # the strip at the bottom right: its links, then the time at the far right; on a phone with both its links, the test row
     # beside it or above it, never over it
     phone = got["phone"]
-    assert phone["strip"] == "reset preferences · last reading 18:42" and phone["right"], phone
+    assert phone["strip"] == "last reading 18:42" and phone["right"], phone
     assert phone["apart"] and phone["onScreen"], phone
+    # "reset preferences" on its own, left of the switches (or above them), on screen, right of the test row or clear of it
+    assert phone["resetRight"] and phone["resetAfterRow"], phone
     # "stop" at the bottom left, just right of the test row's last link (with the row above the strip on a phone, both clear
     # of it); without the test row (the page as it will be), at the bottom left on its own, at 1024x768 and on a phone
     corner = got["phoneCorner"]
     assert corner["link"] == "stop" and corner["apart"] and corner["onScreen"], corner
     just_right_of_the_row(corner)
     # (above the strip; the units' four switches there too, at the right, too wide for the row beside them: just above those)
-    assert corner["units"]["bottom"] == pytest.approx(corner["strip"]["top"], abs=0.5) and corner["units"]["right"] == corner["window"][0]
-    assert corner["motion"]["bottom"] == pytest.approx(corner["units"]["top"], abs=0.5), corner
+    # (the strip is only the time now: the units' switches fit beside it at the bottom, "reset preferences" (a tile is hidden) on a line
+    # of its own just above them, at the right; the test row and "stop" too wide for what's left of that line: on the line above it)
+    assert corner["units"]["bottom"] == corner["window"][1] and corner["units"]["right"] == pytest.approx(corner["strip"]["left"], abs=0.5), corner
+    assert corner["reset"]["right"] == corner["window"][0] and corner["reset"]["bottom"] == pytest.approx(corner["units"]["top"], abs=0.5), corner
+    assert corner["motion"]["bottom"] == pytest.approx(corner["reset"]["top"], abs=0.5), corner
     # (no "test:" there, all of it unscrolled, room for one more short link: as with every effect on, in the links' test)
     assert not corner["tag"] and corner["fits"] and corner["spare"] >= 30, corner
     for bare in (got["bare"], got["barePhone"]):
         assert bare["errors"] == [] and bare["row"] is None and bare["link"] == "stop", bare
-        assert bare["motion"]["left"] == 0 and bare["motion"]["bottom"] == bare["window"][1] and bare["apart"] and bare["onScreen"], bare
+        assert bare["motion"]["left"] == 0 and bare["apart"] and bare["onScreen"], bare
+        if bare is got["bare"]:   # (the bottom left, on its own)
+            assert bare["motion"]["bottom"] == bare["window"][1], bare
+        else:   # (a phone: the bottom row is the switches and the time; "stop" on the line above, left of "reset preferences")
+            assert bare["motion"]["bottom"] == pytest.approx(bare["reset"]["bottom"], abs=0.5) and bare["motion"]["right"] <= bare["reset"]["left"], bare
     # the frost: fern-like crystals from the window's edges, further in and faster the colder, over minutes; melting back from the
     # tips, the edges last. Just below 0 °C (-0.5) a fringe at the edges, grown in a minute or two; then gone again, the loop with it
     frost = got["frost"]
