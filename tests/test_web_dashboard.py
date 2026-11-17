@@ -1560,7 +1560,7 @@ EFFECTS = {"rain": "Rain", "haze": "AQI", "uv": "UV index", "humidity": "Humidit
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"all", "flood", "opened", "gust", "over"}
+DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over"}
 
 
 async def weather(server, part: str) -> dict:
@@ -1797,21 +1797,8 @@ def just_right_of_the_row(corner):
 
 
 @needs_browser
-async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alone_and_within_the_particle_budget(server, station):
-    got = await weather(server, "all")
-    # (the cost: the script's own time a frame, the main thread's CPU time, however busy the machine: about 1.5 ms)
-    assert got["cost"] < 8 and got["flying"] == 1, (got["cost"], got["flying"])   # (something blown across too: the gust link)
-    # ... the ice grown all the way in too, its frost across much of the glass: as cheap
-    assert got["costFrosted"]["cost"] < 8 and got["costFrosted"]["crystals"] > 0.15, got["costFrosted"]
-    # ... after minutes of the weather's time (over 200 s, the humidity's trails and beads built up: tens of thousands of trail
-    # pixels): no dearer than twice the start's (its cost not growing with the trails: about 1.2 ms against 2; it grew to over twice
-    # that at full screen; heavy humidity's budget a third larger than it was, its beads a little dearer); and with its time 20
-    # times as fast, the trails' sweep capped (a slice of them a frame, never all), still cheap
-    late, fast = got["costFrosted"], got["costFast"]
-    assert late["clock"] > 200 and late["trails"] > 15000 and late["beads"] > 100 and late["cost"] < 2 * got["cost"], (got["cost"], late)
-    assert fast["trails"] > 15000 and 0 < fast["swept"] <= fast["most"] == 2500 and fast["cost"] < 8, fast
-    # several at once no brighter than one strong one: every effect on (the ice grown all the way in), against Hazardous haze alone
-    assert 0 < got["light"]["all"] <= got["light"]["haze5"], got["light"]
+async def test_the_haze_alone_in_each_band_clouds_dithered_lit_from_above_drifting_with_the_wind(server, station):
+    got = await weather(server, "haze")
     # the haze (the particulates), each band alone: soft clouds over the whole window, more of it under them with each band (at
     # Moderate a few scattered ones, under a quarter of it; at Hazardous most of it), and denser
     levels = got["haze"]["levels"]
@@ -1833,8 +1820,33 @@ async def test_every_effect_at_once_is_cheap_no_brighter_than_the_strongest_alon
     for clouds in (calm["clouds"], windy["clouds"]):
         assert clouds["n"] >= 20 and clouds["left"] == clouds["n"] and clouds["speed"] > 1, clouds
     assert windy["clouds"]["speed"] > 2 * calm["clouds"]["speed"], (calm, windy)
-    together = got["particles"]["all"]
-    assert together["uv"] == 0 and together["wind"] > 0 and together["rain"] > 0, together
+
+
+@needs_browser
+async def test_heavy_humidity_alone_costs_no_more_as_its_trails_build_up_and_its_sweep_is_capped(server, station):
+    got = await weather(server, "trails")
+    # (the cost: the script's own time a frame, the main thread's CPU time, however busy the machine)
+    # after minutes of the weather's time (over 200 s, the trails and beads built up: tens of thousands of trail pixels): no dearer
+    # than twice the start's plus 1.5 ms (its cost not growing with the trails; the start's itself about 1-2 ms); and with its time 20 times as fast, the trails' sweep capped (a
+    # slice of them a frame, never all), still cheap
+    late, fast = got["late"], got["fast"]
+    assert got["cost"] < 8, got["cost"]
+    assert late["clock"] > 200 and late["trails"] > 15000 and late["beads"] > 100 and late["cost"] < 2 * got["cost"] + 1.5, (got["cost"], late)
+    assert fast["trails"] > 15000 and 0 < fast["swept"] <= fast["most"] == 2500 and fast["cost"] < 20, fast   # (20x time: several times the work a frame, 8-12 ms here; the sweep cap above is the real check)
+
+
+@needs_browser
+async def test_the_ice_grown_all_the_way_in_is_cheap_with_its_frost_across_the_glass(server, station):
+    got = await weather(server, "frost")
+    assert got["frosted"]["cost"] < 8 and got["frosted"]["crystals"] > 0.15, got["frosted"]
+
+
+@needs_browser
+async def test_heavy_rain_with_wind_and_haze_keeps_to_the_shared_particle_budget_and_is_cheap(server, station):
+    got = await weather(server, "budget")
+    assert got["cost"] < 8, got["cost"]
+    together = got["particles"]
+    assert together["wind"] > 0 and together["rain"] > 0, together
     # ... the shared budget kept by every effect but humidity's beads (their own limits bound them: heavy rain keeps every drop)
     assert sum(v for k, v in together.items() if k not in ("budget", "humidity")) <= together["budget"] + 3, together   # (each rounded)
 

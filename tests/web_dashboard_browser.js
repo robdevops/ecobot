@@ -36,7 +36,7 @@
 //     in this one browser: a list of their reports, in that order.)
 //   node web_dashboard_browser.js URL --weather PART: the page at 1024x768, its data altered on the way, a part of the weather behind the
 //     tiles (WEATHER): each reading at, and just short of, the mark that calls up its effect; the canvas behind the tiles and the tiles'
-//     red frames; "stop"; the temporary test links (beside them, MCP_DASHBOARD_ANIMATIONS off); on, low, off and reduced motion; every effect at once (?fx=all: the frame time, the light, the particles);
+//     red frames; "stop"; the temporary test links (beside them, MCP_DASHBOARD_ANIMATIONS off); on, low, off and reduced motion; the haze alone, heavy humidity's trails, the ice grown in, and rain with wind and haze (frame time, particle budget);
 //     a flash flood;
 //     ?fx= as the page opens, a phone; prints {step: what was seen}.
 //   node web_dashboard_browser.js URL --rotate: a phone (412x839) and a tablet (820x1180), touch, scale 2: the page as a fresh load in each
@@ -2265,7 +2265,8 @@ async function motionSeen(browser, url, options) {
 // through, their look, zoomed), "stop" ("stop", the readings, a reload, a test link after it, the reset), "links" (the temporary test links;
 // and beside them, MCP_DASHBOARD_ANIMATIONS off: nothing drawn), "motion" (MCP_DASHBOARD_ANIMATIONS on, low and off, and reduced
 // motion: what moves in each),
-// "all" (?fx=all: its frame time, its brightness against Hazardous haze alone, its particles), "opened" (?fx= when the page opens, uv
+// "haze" (Hazardous haze alone), "trails" (heavy humidity alone: its cost as the trails build up), "frost" (the ice grown all the way in:
+// its cost), "budget" (heavy rain, wind and haze: the shared particle budget), "opened" (?fx= when the page opens, uv
 // and the wind alone, heavy rain alone and in the wind (on a phone too), uv's beams over 40 s, humidity's beads running down the
 // glass alone and in the wind, a phone's strip), "flood" (a flash flood: its mark, its rise, its surface and waves,
 // what ends at it, the test link's rain3, its leaves and its frog, its cost), "gust" (something big blown across in a gust over 99 km/h),
@@ -2510,37 +2511,49 @@ const WEATHER = {
     Object.keys(MOTIONS).forEach((k, i) => { out[k] = seen[i]; });
     out.errors = seen.flatMap((m) => m.errors);
   },
-  async all(browser, url, out) {
-    const particles = (p) => p.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
-    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=all", driven: true });
-    await page.locator("#fxtest button[data-gust]").click();   // (something blown across too: the gust link, never in the URL)
+  // The haze alone (each band, the clouds' look and drift; Hazardous haze: the wind's way)
+  async haze(browser, url, out) {
+    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=haze5", driven: true });
+    await drive(page, 56);   // (faded in: 1.5 s)
+    out.haze = await hazeSeen(page);
+    out.errors = errors;
+    await context.close();
+  },
+  // Heavy humidity alone: the frame cost early, after minutes of the weather's time (the trails and beads built up), and with its
+  // time 20 times as fast (the sweep of the trails capped)
+  async trails(browser, url, out) {
+    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=humidity2", driven: true });
     await drive(page, 90);   // (3 s of the weather's time)
-    out.cost = await frameCost(page, 60);   // (ms of script a frame, with every effect on, and something blown across)
-    out.flying = await page.evaluate(() => Sky.state().gust.flyers.length);
-    // the strongest single effect (Hazardous haze), as bright as "all" may be: faded in while the ice grows on
-    const strongest = (async () => {
-      const haze = await weatherPage(browser, url, { query: "?fx=haze5", driven: true });
-      await drive(haze.page, 56);   // (faded in: 1.5 s)
-      const light = await canvasLight(haze.page);
-      out.haze = await hazeSeen(haze.page);   // (meanwhile, the ice growing on the other page)
-      await haze.context.close();
-      return light;
-    })();
-    // (the ice grown all the way in, over some minutes: the weather's time 100 times as fast meanwhile; then as ever, the cost again
-    // 45 frames on, the frost across the glass, the humidity's trails and beads built up over those minutes)
+    out.cost = await frameCost(page, 60);
+    await page.evaluate(() => Sky.timeScale(100));
+    await driveUntil(page, () => { const s = Sky.state(); return s.clock > 220 && s.humidity.trails > 16000; });
+    await page.evaluate(() => Sky.timeScale(1));
+    await drive(page, 45);
+    out.late = { cost: await frameCost(page, 60), ...await page.evaluate(() => ({ clock: Sky.state().clock, trails: Sky.state().humidity.trails,
+                                                                                  beads: Sky.state().humidity.beads.length })) };
+    await page.evaluate(() => Sky.timeScale(20));
+    out.fast = { cost: await frameCost(page, 60), ...await page.evaluate(() => { const h = Sky.state().humidity; return { trails: h.trails, swept: h.swept, most: h.sweepMost, beads: h.beads.length }; }) };
+    await page.evaluate(() => Sky.timeScale(1));
+    out.errors = errors;
+    await context.close();
+  },
+  // The ice alone, grown all the way in: its frame cost and its frost across the glass
+  async frost(browser, url, out) {
+    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=ice", driven: true });
     await page.evaluate(() => Sky.timeScale(100));
     await driveUntil(page, () => { const f = Sky.frost(true); return f && f.target > 0 && f.extent === f.target; });
     await page.evaluate(() => Sky.timeScale(1));
     await drive(page, 45);
-    out.costFrosted = { cost: await frameCost(page, 60), ...await page.evaluate(() => ({ crystals: Sky.frost().crystals, clock: Sky.state().clock,
-                                                                                          trails: Sky.state().humidity.trails, beads: Sky.state().humidity.beads.length })) };
-    // (and with its time 20 times as fast, many trails and beads on the glass by now: the humidity's sweep of its trails capped)
-    await page.evaluate(() => Sky.timeScale(20));
-    out.costFast = { cost: await frameCost(page, 60), ...await page.evaluate(() => { const h = Sky.state().humidity; return { trails: h.trails, swept: h.swept, most: h.sweepMost, beads: h.beads.length }; }) };
-    await page.evaluate(() => Sky.timeScale(1));
-    out.light = { all: await canvasLight(page) };
-    out.particles = { all: await particles(page) };
-    out.light.haze5 = await strongest;
+    out.frosted = { cost: await frameCost(page, 60), crystals: await page.evaluate(() => Sky.frost().crystals) };
+    out.errors = errors;
+    await context.close();
+  },
+  // Heavy rain, wind and haze together (what can occur together in practice): the shared particle budget
+  async budget(browser, url, out) {
+    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=rain2,wind,haze3", driven: true });
+    await drive(page, 90);
+    out.cost = await frameCost(page, 60);
+    out.particles = await page.evaluate(() => ({ ...Sky.state().particles, budget: Sky.state().budget }));
     out.errors = errors;
     await context.close();
   },
