@@ -1387,56 +1387,39 @@ const rainSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
   const begun = () => Sky.clock().frames >= 50 ? look() : __next(begun);
   begun();
 }), ms);
-// The heat's blazing sun on a driven page, with each of `levels` in turn (the effects on: {heat: its strength, 0.3 at 35 °C to 1
-// at 43 °C, and any others}), each 60 frames after it's set: the sun as Sky's heat probe has it (its middle, home, bloom
-// and core radii, the level built, its flares), the canvas's mean colour and luminance (alpha-weighted, 0-255) in the sun's core and
-// the canvas's mean alpha (0-1) and colour over the window outside the bloom (the veil, the beams and flares in it), each flare's
-// mean alpha over its own disc, how far it is off the line from the sun through the window's middle (art px), the grid seen in the
-// window's top left (gridPeak's ratio: the veil's dithering); then, at the last level, 24 looks a second apart: the sun's middle and
-// each flare's, as drawn
-const sunSeen = (page, levels) => page.evaluate(async (levels) => {
+// The heat's red shafts on a driven page, with each of `levels` in turn (the effects on: {heat: its strength, 0.3 at 35 °C to 1
+// at 43 °C, and any others}), each 60 frames after it's set: Sky's heat probe (the UV's places, its shafts), the canvas's mean alpha
+// (0-1) and colour (alpha-weighted) over the window's top third, and its mean alpha and colour in the top 4 rows within 2 px of each
+// shown shaft's top and of each UV shaft's top (where it would be, unswayed); then, at the last level, 24 looks a second apart: each shaft's left as drawn
+const heatSeen = (page, levels) => page.evaluate(async (levels) => {
   const c = document.querySelector("#sky canvas"), g = c.getContext("2d");
   const looks = [];
   for (const detail of levels) {
-    const level = detail.heat;
     document.dispatchEvent(new CustomEvent("ecobot-fx", { detail }));
     Sky.advance(60);
     const h = Sky.state().heat, W = c.width, H = c.height, d = g.getImageData(0, 0, W, H).data;
-    const at = (x, y) => { const i = (y * W + x) * 4; return [d[i], d[i + 1], d[i + 2], d[i + 3]]; };
     const mean = (inside) => {
-      let n = 0, alpha = 0, rgb = [0, 0, 0], light = 0;
+      let n = 0, alpha = 0, rgb = [0, 0, 0];
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
         if (!inside(x, y)) continue;
-        const [r, gg, b, a] = at(x, y);
+        const i = (y * W + x) * 4, a = d[i + 3];
         n++; alpha += a / 255;
-        light += (0.2126 * r + 0.7152 * gg + 0.0722 * b) * a / 255;
-        if (a) { rgb[0] += r * a; rgb[1] += gg * a; rgb[2] += b * a; }
+        rgb[0] += d[i] * a; rgb[1] += d[i + 1] * a; rgb[2] += d[i + 2] * a;
       }
-      const wa = alpha * 255;
-      return { n, alpha: alpha / Math.max(n, 1), light: light / Math.max(n, 1), colour: rgb.map((v) => Math.round(v / Math.max(wa, 1))) };
+      return { alpha: alpha / Math.max(n, 1), colour: rgb.map((v) => Math.round(v / Math.max(alpha * 255, 1))) };
     };
-    const [sx, sy] = h.sun, off = (x, y) => Math.hypot(x - sx, y - sy);
-    const core = mean((x, y) => off(x, y) <= h.core * 0.8);
-    const veil = mean((x, y) => off(x, y) > h.radius);
-    const [mx, my] = [W / 2 - sx, H / 2 - sy], len = Math.hypot(mx, my);
-    const flares = h.flares.map((f) => {
-      let n = 0, alpha = 0;
-      for (let y = Math.max(0, Math.floor(f.y - f.r)); y <= Math.min(H - 1, Math.ceil(f.y + f.r)); y++)
-        for (let x = Math.max(0, Math.floor(f.x - f.r)); x <= Math.min(W - 1, Math.ceil(f.x + f.r)); x++)
-          if (Math.hypot(x - f.x, y - f.y) <= f.r * 0.95) { n++; alpha += at(x, y)[3] / 255; }
-      return { ...f, alpha: alpha / Math.max(n, 1), aside: Math.abs((f.x - sx) * my - (f.y - sy) * mx) / len,
-               on: f.x >= 0 && f.x < W && f.y >= 0 && f.y < H };
-    });
-    looks.push({ level, sun: h.sun, home: h.home, radius: h.radius, core: h.core, built: h.built, size: h.size, flares,
-                 coreLook: core, veil, drawn: Sky.state().drawn.heat });
+    const tops = (xs) => mean((x, y) => y < 4 && xs.some((t) => Math.abs(x - t) <= 2));
+    const shown = h.shafts.filter((s) => s.top !== null);
+    looks.push({ level: detail.heat, size: h.size, uv: h.uv, shafts: h.shafts, drawn: Sky.state().drawn.heat,
+                 top: mean((x, y) => y < H / 3), atHeat: tops(shown.map((s) => s.top)),
+                 atUv: tops(h.uvTops) });
   }
   const moving = [];
   for (let i = 0; i < 24; i++) {
     Sky.advance(30);
-    const h = Sky.state().heat;
-    moving.push({ sun: h.sun, flares: h.flares.map((f) => [f.x, f.y, f.k]) });
+    moving.push(Sky.state().heat.shafts.map((s) => s.at));
   }
-  return { looks, moving, cost: Sky.state().cost, width: c.width, height: c.height };
+  return { looks, moving, cost: Sky.state().cost };
 }, levels);
 // uv's beams over 40 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame drawn 0.1 s on, Sky's
 // longest step): where each beam's halo was drawn (with uv alone, the glow, then each beam's halo and core), its least and greatest x
@@ -2558,11 +2541,11 @@ const WEATHER = {
       await uv.context.close();
       return [seen, frost];
     })();
-    // the heat's blazing sun at 35 °C, between and at 43 °C; and at 43 °C with the UV's shafts on too (small: cheap)
+    // the heat's red shafts at 35 °C, between and at 43 °C; and at 43 °C with the UV's shafts on too (small: cheap)
     const hot = Promise.all([["heat", [{ heat: 0.3 }, { heat: 0.65 }, { heat: 1 }]], ["heat,uv", [{ heat: 1, uv: 1 }]]].map(async ([name, levels]) => {
       const p = await weatherPage(browser, url, { query: `?fx=${name}`, driven: true, context: { viewport: { width: 640, height: 480 } } });
-      const seen = await sunSeen(p.page, levels);
-      seen.grid = (await gridPeak(p.page)).ratio;   // (its veil's dithering)
+      const seen = await heatSeen(p.page, levels);
+      seen.grid = (await gridPeak(p.page)).ratio;   // (its shafts' dithering)
       seen.errors = p.errors;
       await p.context.close();
       return seen;
@@ -2782,11 +2765,10 @@ const WEATHER = {
       const f = Sky.state().flood;
       return { depth: f.depth, full: f.full, frog: f.frog, running: Sky.state().running, frames: Sky.state().frames };
     });
-    out.still.heat = await still.page.evaluate(() => {   // (the heat: its sun, still)
+    out.still.heat = await still.page.evaluate(() => {   // (the heat: its shafts, still)
       document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { heat: 1 } }));
-      const h = Sky.state().heat, c = document.querySelector("#sky canvas");
-      const [r, g, b, a] = c.getContext("2d").getImageData(h.sun[0], h.sun[1], 1, 1).data;
-      return { sun: h.sun, home: h.home, built: h.built, flares: h.flares.length, drawn: Sky.state().drawn.heat, at: [r, g, b, a],
+      const h = Sky.state().heat;
+      return { shafts: h.shafts.length, on: h.shafts.filter((s) => s.on === 1 && s.at !== null).length, drawn: Sky.state().drawn.heat,
                running: Sky.state().running, frames: Sky.state().frames };
     });
     out.still.gust = await still.page.evaluate(() => {   // (a gust: nothing sent, by the page or the test link)

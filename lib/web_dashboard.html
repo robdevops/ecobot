@@ -759,170 +759,99 @@ const Sky = (() => {
     };
   });
 
-  // ---------- heat: a blazing sun's glare from the top right corner (where the light comes from in the rest's art) ----------
-  // A white-gold bloom in the corner: a white-hot core and a wide warm glow round it, a few thin spikes in it; a few faint sunbeams
-  // fanning down from it across the window; soft lens flares strung along the diagonal from it through the window's middle (rings,
-  // hexagons and discs of different sizes, each faintly its own colour); and the whole window faintly sun-bleached, a warm veil
-  // lifting the dark, warmest near the sun. Stronger and whiter the hotter (its level: 0.3 at 35 °C to 1 at 43 °C): a gentle warm
-  // glow at 35 °C; to 43 °C and up a bigger, whiter, blinding sun, its flares stronger. Very slow: the bloom breathing (its glow and
-  // its core out of step, the beams each half their own way), the sun wandering a pixel or so and the flares drifting with it (each
-  // its own way along the diagonal, as a lens's do). Each part painted once a size (the bloom once a level) and blitted; dithered on
-  // the blue noise (no grid). Reduced or low motion: one still frame. Drawn behind the flood (the sun in the sky, well clear of it),
-  // the sun itself (sun()) in front of the UV's shafts.
-  const SUN = ["#B8641E", "#D98A32", "#EFAE4C", "#F8CC70", "#FCE09A", "#FFEFC4", "#FFF8E6", "#FFFFFA"].map(rgb);   // ember to white-hot
-  const SUN_ALPHA = [18, 30, 48, 72, 104, 146, 196, 245];   // (the glow's shades' alphas)
-  const FLARE = ["#FFD27A", "#FFB08A", "#A6E8C6", "#F6A3A8", "#EEF0A0", "#FFE6B8"].map(rgb);   // gold, peach, mint, rose, lemon, cream
+  // ---------- uv and heat: soft shafts of light coming in from the top, slowly swaying and breathing ----------
+  // Each shaft a dithered wedge, widening and fading as it comes down; drawn twice, a wide faint halo and a narrow bright core, the two
+  // breathing out of step, so it seems to waver. Each sways a pixel or so side to side about its own place, very slowly (a minute
+  // and a half to two a sway), never travelling on. shaftOf(colours, wide, long, slope, bright): one (its top `rows` rows only: the
+  // window's height, the rest never seen)
+  const shaftOf = (colours, wide, long, slope, bright, rows = long) =>
+    painted(wide * 2 + Math.min(long, rows) * Math.abs(slope) + 2, Math.min(long, rows), (x, y) => {
+      const k = y / long, half = wide * (0.6 + 0.6 * k), mid = wide + (slope < 0 ? long * -slope : 0) + y * slope;
+      const across = 1 - Math.abs(x - mid) / half;
+      if (across <= 0) return null;
+      const s = shadeOf(Math.pow(across, 0.7) * Math.pow(1 - k, 1.1) * bright, x, y, colours.length);
+      return s < 0 ? null : colours[s];
+    });
+  // The UV's shafts' places for the window's size (seeded: the same every time): each {wide, long, slope, x: its place (art px), phase,
+  // rate, sway, swayRate}; the heat's go between them
+  const uvShafts = () => {
+    const r = seeded(77), n = Math.max(4, Math.round(W / 70));
+    return Array.from({length: n}, (_, i) => {
+      const wide = Math.round(10 + r() * 22), long = Math.round(H * (0.4 + r() * 0.5)), slope = 0.12 + r() * 0.1;
+      return {wide, long, slope, x: (i + r() * 0.6) * W / n - 10, phase: r() * 7, rate: 0.3 + r() * 0.25,
+              sway: 0.85 + r() * 0.8, swayRate: 0.05 + r() * 0.03};   // (how far each way, art px; rad/s)
+    });
+  };
+  // A shaft's halo and core drawn (from the loop's draw()), breathing and swaying as the UV's do; its left x as drawn
+  const shaftDrawn = (g, s, alpha, t) => {
+    const x = Math.round(s.x - s.halo.width / 2 + s.sway * Math.sin(t * s.swayRate + s.phase * 3));
+    g.globalAlpha = alpha * (0.3 + 0.4 * Math.pow(Math.sin(t * s.rate + s.phase), 2));
+    g.drawImage(s.halo, x, 0);
+    g.globalAlpha = alpha * (0.15 + 0.55 * Math.pow(Math.sin(t * s.rate * 1.7 + s.phase * 2), 4));
+    g.drawImage(s.core, x + s.inset, 0);
+    return x;
+  };
+
+  // ---------- heat: soft shafts of faint red light from the top, as the UV's, between the UV's (with both on, the two interleave) ----------
+  // One in each gap between the UV's shafts' places (halfway between two, and one half a spacing past the last), each 40 % longer
+  // than the UV's shaft to its left, leaning as its two neighbours do (so never crossing them); its own width, breathing and sway.
+  // Stronger the hotter (its level: 0.3 at 35 °C to 1 at 43 °C): brighter, and more of them (about that share of them on, the
+  // others fading out), the first few on at 35 °C spread about at random. Drawn behind the flood (nothing below its water).
+  // Reduced or low motion: one still frame.
+  const EMBER = ["#2A0F0C", "#4A1A13", "#7C2C1E", "#B24A34", "#F0A08A"].map(rgb);   // ember red, faint (the UV's violet's way)
+  const HEAT_LONGER = 1.4;             // each this much longer than a UV shaft
   const heat = effect((e) => {
-    const random = streamOf("sun"), between = random.between;   // (its own randomness)
-    const DRIFT = [1.6, 1.1];          // how far the sun wanders each way (art px), very slowly
-    let S = 0, home = [0, 0], at = [0, 0], veil = null, beams = [], spikes = [], flares = [], glow = null, core = null;
-    let built = 0, R = 0, rc = 0, placed = [];
-    // The bloom at level L: its glow (radius R, spikes and all) and its core (radius rc, white-hot), each a sprite centred on the sun
-    const build = (L) => {
-      built = L;
-      R = Math.round(S * (0.2 + 0.16 * L));
-      rc = Math.max(2, Math.round(S * (0.018 + 0.03 * L)));
-      glow = painted(2 * R + 1, 2 * R + 1, (x, y) => {
-        const dx = x - R, dy = y - R, r = Math.hypot(dx, dy), d = r / R;
-        if (d >= 1) return null;
-        const angle = Math.atan2(dy, dx);
-        let spike = 0;
-        for (const s of spikes) {
-          const off = Math.abs(((angle - s.angle + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) * r;   // (px off its line)
-          if (d < s.reach) spike = Math.max(spike, Math.exp(-(off * off) / (s.wide * s.wide)) * Math.pow(1 - d / s.reach, 1.4));
-        }
-        const v = Math.pow(1 - d, 2.4) * (0.5 + 0.5 * L) + 0.4 * spike * (0.45 + 0.55 * L), s = shadeOf(v, x, y, SUN.length);
-        return s < 0 ? null : [...SUN[Math.round(s * (0.55 + 0.45 * L))], SUN_ALPHA[s]];   // (golder the cooler)
-      });
-      const n = Math.ceil(rc * 1.8);
-      core = painted(2 * n + 1, 2 * n + 1, (x, y) => {
-        const d = Math.hypot(x - n, y - n) / rc, s = d < 1 ? 2 : shadeOf((1.8 - d) / 0.8, x, y, 3);
-        return s < 0 ? null : [...SUN[Math.min(7, 4 + s + (L > 0.6 ? 1 : 0))], [150, 210, 255][s]];
-      });
-    };
-    // A lens flare's sprite: radius r, its colour; a disc (soft, fading out), a ring (a thin bright rim, a whisper inside) or a hexagon
-    // (faintly filled, its rim brighter)
-    const flare = (kind, r, c) => {
-      const n = Math.ceil(r) + 1, tints = [c.map((v) => v * 0.85), c, c.map((v) => v + (255 - v) * 0.45)];
-      return painted(2 * n + 1, 2 * n + 1, (x, y) => {
-        const dx = x - n, dy = y - n, d = Math.hypot(dx, dy) / r;
-        let v;
-        if (kind === "disc") v = d < 1 ? 0.25 + 0.6 * Math.pow(1 - d * d, 0.7) : 0;
-        else if (kind === "ring") v = Math.exp(-Math.pow((d - 0.86) / 0.11, 2)) * 0.95 + (d < 0.86 ? 0.12 : 0);
-        else {   // (a hexagon: its edges' distance across, flat top and bottom)
-          const h = Math.max(Math.abs(dy), Math.abs(dy) / 2 + Math.abs(dx) * 0.866) / (r * 0.866);
-          v = h < 1 ? (h > 0.84 ? 0.85 : 0.22 + 0.1 * (1 - h)) : 0;
-        }
-        const s = shadeOf(v, x, y, 3);
-        return s < 0 ? null : [...tints[s].map(Math.round), [44, 70, 104][s]];
-      });
-    };
+    const random = streamOf("heat"), between = random.between;   // (its own randomness)
+    let shafts = [], last = null;
     return {
       strength: () => 0.4 + 0.4 * e.level,
-      // (for the tests: the sun's middle as last drawn and its home (art px), the bloom's radius and its core's, the level it was
-      // built for, the beams; each flare as last drawn {kind, x, y (its middle), r, k: how far along the diagonal, colour})
-      probe: () => ({sun: at.map(Math.round), home, radius: R, core: rc, built, beams: beams.length, size: [W, H],
-                     flares: placed.map((f) => ({...f}))}),
+      // (for the tests: the UV's places (art px) and its shafts' tops' middles there (unswayed), each shaft {x: its place, long (art px), uvLong: the UV shaft's to its left, on: how
+      // far shown (0-1), at: its left as last drawn (null: not drawn), top: its top's middle then}, the window's size)
+      probe: () => ({level: e.level, size: [W, H], uv: uvShafts().map((s) => s.x),
+                     uvTops: uvShafts().map((u) => u.x - (u.long * u.slope + 2) / 2),
+                     shafts: shafts.map((s) => ({x: s.x, long: s.long, uvLong: s.uvLong, on: s.on, at: s.at,
+                                                 top: s.at === null ? null : s.at + s.wide}))}),
       resize() {
-        S = Math.min(W, H);
-        home = [W - Math.round(S * 0.03), Math.round(S * 0.03)];   // (in the corner: its glare over the tiles' edges, not their gauges)
-        at = home.slice();
-        built = 0;
-        // its spikes: six thin ones, about evenly round, each its own length
-        spikes = Array.from({length: 6}, (_, i) => ({angle: (i + between(-0.2, 0.2)) * Math.PI / 3 + 0.35, reach: between(0.55, 1),
-                                                    wide: between(0.7, 1.3)}));
-        // the veil: faint warm light over the whole window, warmest near the sun
-        const far = Math.hypot(W, H);
-        veil = painted(W, H, (x, y) => {
-          const v = 0.3 + 0.7 * Math.pow(1 - Math.min(1, Math.hypot(x - home[0], y - home[1]) / (far * 0.85)), 1.8);
-          const s = shadeOf(v, x, y, 4);
-          return s < 0 ? null : [...SUN[s > 1 ? 2 : 1], [16, 24, 34, 46][s]];
+        const uv = uvShafts(), spacing = W / uv.length;
+        const order = uv.map((_, i) => [random(), i]).sort((a, b) => a[0] - b[0]).map(([, i]) => i);   // (which are on first)
+        shafts = uv.map((u, i) => {
+          const next = uv[i + 1], x = next ? (u.x + next.x) / 2 : u.x + spacing / 2;
+          const slope = next ? (u.slope + next.slope) / 2 : u.slope, long = Math.round(u.long * HEAT_LONGER);
+          const wide = Math.round(between(8, 18)), narrow = Math.max(3, Math.round(wide * 0.5));
+          return {x, long, uvLong: u.long, rank: order.indexOf(i), on: 0, at: null, wide,
+                  halo: shaftOf(EMBER, wide, long, slope, 0.45, H), core: shaftOf(EMBER, narrow, Math.round(long * 0.8), slope, 0.6, H),
+                  inset: wide - narrow,   // (the core down the halo's middle)
+                  phase: between(0, 7), rate: between(0.3, 0.55), sway: between(0.85, 1.65), swayRate: between(0.05, 0.08)};
         });
-        // the sunbeams: five, fanning down and left from the sun, faint, fading as they go, each its own width and length; two
-        // canvases (alternate beams), breathing out of step
-        const rays = Array.from({length: 5}, (_, i) => ({angle: (0.56 + (i + between(-0.3, 0.3)) * 0.2) * Math.PI,   // (down to left)
-                                                       wide: between(0.018, 0.04), long: far * between(0.55, 0.95)}));
-        beams = [0, 1].map((half) => painted(W, H, (x, y) => {
-          const dx = x - home[0], dy = y - home[1], r = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
-          let v = 0;
-          for (let i = half; i < rays.length; i += 2) {
-            const b = rays[i], off = Math.abs(((angle - b.angle + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) / b.wide;
-            if (r < b.long && off < 3) v += Math.exp(-off * off) * Math.pow(1 - r / b.long, 1.2) * Math.min(1, r / (S * 0.12));
-          }
-          const s = shadeOf(v * 0.75, x, y, 3);
-          return s < 0 ? null : [...SUN[4 + s], [20, 30, 42][s]];
-        }));
-        // the flares: along the diagonal from the sun through the window's middle (k: 0 at the sun, 1 at the middle), a little off it
-        // either way, of different sizes and kinds and faint colours
-        const KINDS = ["hex", "disc", "ring", "hex", "disc", "ring", "disc"];
-        const ks = [0.34, 0.52, 0.7, 0.93, 1.16, 1.42, 1.72];
-        flares = ks.map((k, i) => {
-          const kind = KINDS[i], r = S * (kind === "ring" ? between(0.04, 0.085) : kind === "hex" ? between(0.02, 0.045) : between(0.012, 0.035));
-          const colour = FLARE[Math.floor(random() * FLARE.length)];
-          return {kind, k: k + between(-0.04, 0.04), r, colour, aside: between(-0.015, 0.015) * S, weight: between(0.55, 1),
-                  sprite: flare(kind, r, colour)};
-        });
+        last = null;
       },
+      forget() { for (const s of shafts) s.on = 0; last = null; },
       draw(g, alpha, t) {
-        if (e.level > 0 && e.level !== built) build(e.level);
-        const L = built;
-        at = [home[0] + DRIFT[0] * Math.sin(t * 0.07 + 1.3), home[1] + DRIFT[1] * Math.sin(t * 0.053 + 0.4)];
-        const sx = Math.round(at[0] - home[0]), sy = Math.round(at[1] - home[1]);
-        g.globalAlpha = alpha * (0.75 + 0.25 * L);
-        g.drawImage(veil, 0, 0);
-        beams.forEach((b, i) => {
-          g.globalAlpha = alpha * (0.55 + 0.45 * L) * (0.7 + 0.3 * Math.sin(t * (i ? 0.23 : 0.29) + i * 2.1));
-          g.drawImage(b, sx, sy);
+        // (first drawn since on: those wanted on at once, the effect itself fading in; after, each fading in or out on its own)
+        const want = Math.max(1, Math.round(shafts.length * e.level)), first = last === null, dt = first ? 0 : Math.max(0, t - last);
+        last = t;
+        flood.above(g, () => {
+          for (const s of shafts) {
+            const to = s.rank < want ? 1 : 0;
+            s.on = STILL || first ? to : clamp(s.on + (to ? dt : -dt) / FADE_S, 0, 1);
+            s.at = s.on > 0 ? shaftDrawn(g, s, alpha * (0.55 + 0.45 * e.level) * s.on, t) : null;
+          }
         });
-        // the flares: each where the line from the sun through the window's middle puts it (so drifting as the sun does, those past
-        // the middle the other way)
-        const mx = W / 2 - at[0], my = H / 2 - at[1], len = Math.hypot(mx, my) || 1;
-        placed = flares.map((f) => {
-          const x = Math.round(at[0] + f.k * mx - f.aside * my / len), y = Math.round(at[1] + f.k * my + f.aside * mx / len);
-          const n = (f.sprite.width - 1) / 2;
-          g.globalAlpha = alpha * f.weight * (0.35 + 0.65 * L) * (0.9 + 0.1 * Math.sin(t * 0.31 + f.k * 4));
-          g.drawImage(f.sprite, x - n, y - n);
-          return {kind: f.kind, x, y, r: f.r, k: f.k, colour: f.colour};
-        });
-      },
-      // The sun itself, drawn after the UV's shafts and glow (from the loop's draw()): its glow, breathing, and its white-hot core, so
-      // nothing cool lies over it
-      sun(g, alpha, t) {
-        g.globalAlpha = alpha * (0.86 + 0.14 * Math.sin(t * 0.45));   // (the glow breathing, about every 14 s)
-        g.drawImage(glow, Math.round(at[0]) - R, Math.round(at[1]) - R);
-        g.globalAlpha = Math.min(1, alpha * (1.15 + 0.15 * Math.sin(t * 0.71 + 2)));   // (the core: out of step with the glow)
-        const n = (core.width - 1) / 2;
-        g.drawImage(core, Math.round(at[0]) - n, Math.round(at[1]) - n);
       },
     };
   });
 
-  // ---------- uv: soft shafts of violet light coming in from the top, slowly swaying and breathing ----------
-  // Each shaft a dithered wedge, widening and fading as it comes down; drawn twice, a wide faint halo and a narrow bright core, the two
-  // breathing out of step, so it seems to waver. Each sways a pixel or so side to side about its own place, very slowly (a minute
-  // and a half to two a sway), never travelling on. A faint glow along the top.
+  // ---------- uv: soft shafts of violet light coming in from the top (see the heat's, above), and a faint glow along the top ----------
   const RAD = ["#22153C", "#3C256A", "#6444A8", "#A287E6", "#EFE7FF"].map(rgb);
   const uv = effect((e) => {
     let shafts = [], glow = null;
-    const shaft = (wide, long, slope, bright) => painted(wide * 2 + long * Math.abs(slope) + 2, long, (x, y) => {
-      const k = y / long, half = wide * (0.6 + 0.6 * k), mid = wide + (slope < 0 ? long * -slope : 0) + y * slope;
-      const across = 1 - Math.abs(x - mid) / half;
-      if (across <= 0) return null;
-      const s = shadeOf(Math.pow(across, 0.7) * Math.pow(1 - k, 1.1) * bright, x, y, 5);
-      return s < 0 ? null : RAD[s];
-    });
     return {
       strength: () => 0.8,
       resize() {
-        const r = seeded(77);
-        const n = Math.max(4, Math.round(W / 70));
-        shafts = Array.from({length: n}, (_, i) => {
-          const wide = Math.round(10 + r() * 22), long = Math.round(H * (0.4 + r() * 0.5)), slope = 0.12 + r() * 0.1;
-          const narrow = Math.max(3, Math.round(wide * 0.5));
-          const halo = shaft(wide, long, slope, 0.6), core = shaft(narrow, Math.round(long * 0.8), slope, 0.75);
-          return {halo, core, inset: wide - narrow,   // (the core down the halo's middle)
-                  x: (i + r() * 0.6) * W / n - 10, phase: r() * 7, rate: 0.3 + r() * 0.25,
-                  sway: 0.85 + r() * 0.8, swayRate: 0.05 + r() * 0.03};   // (how far each way, art px; rad/s)
+        shafts = uvShafts().map((u) => {
+          const narrow = Math.max(3, Math.round(u.wide * 0.5));
+          return {...u, halo: shaftOf(RAD, u.wide, u.long, u.slope, 0.6), core: shaftOf(RAD, narrow, Math.round(u.long * 0.8), u.slope, 0.75),
+                  inset: u.wide - narrow};   // (the core down the halo's middle)
         });
         glow = painted(W, Math.ceil(H * 0.16), (x, y) => {
           const s = shadeOf(Math.pow(1 - y / (H * 0.16), 2.4) * 0.6, x, y, 3);
@@ -932,13 +861,7 @@ const Sky = (() => {
       draw(g, alpha, t) {
         g.globalAlpha = alpha * 0.8;
         g.drawImage(glow, 0, 0);
-        for (const s of shafts) {
-          const x = Math.round(s.x - s.halo.width / 2 + s.sway * Math.sin(t * s.swayRate + s.phase * 3));
-          g.globalAlpha = alpha * (0.3 + 0.4 * Math.pow(Math.sin(t * s.rate + s.phase), 2));
-          g.drawImage(s.halo, x, 0);
-          g.globalAlpha = alpha * (0.15 + 0.55 * Math.pow(Math.sin(t * s.rate * 1.7 + s.phase * 2), 4));
-          g.drawImage(s.core, x + s.inset, 0);
-        }
+        for (const s of shafts) shaftDrawn(g, s, alpha, t);
       },
     };
   });
@@ -3258,8 +3181,6 @@ const Sky = (() => {
       const fx = effects[k], a = fx.strength() * fx.amount * (OWN_STRENGTH.has(k) ? faint : cap);
       drawn[k] = fx.amount > 0 ? a : 0;
       if (fx.amount > 0) fx.draw(ctx, a, clock);
-      // (the heat's sun in front of the UV's shafts: white-hot over their violet)
-      if (k === "uv" && effects.heat.amount > 0) effects.heat.sun(ctx, drawn.heat, clock);
     }
     ctx.globalAlpha = 1;
   }
