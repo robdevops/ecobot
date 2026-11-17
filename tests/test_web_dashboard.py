@@ -23,6 +23,7 @@ import functools
 import html
 import io
 import json
+import math
 import re
 import os
 import shutil
@@ -1665,8 +1666,9 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert speed["fog"][3] == 0 and 0.2 < speed["fog"][4] < 0.6 and speed["fog"][-1] > 100, speed["fog"]
     assert after["dry"][0] == 0 and after["fog"][-1] > sizes[-1], after
     # heavy rain's beads: light rain none; heavy, a drop sticking every few s (one in 3 s), a dozen or so (14) on the glass at most, each landing at once
-    # (no fading in) as a large bead (r 3 or more) with a splash (a ring of 10 or more droplets, 3 to 6 of them left on the glass as
-    # tiny beads); on dry glass crawling (about 0.3 of its speed on fog, the same size), down a trail at TRACK or more (its own size's
+    # (no fading in) as a large bead (r 3 or more), hard: squashed flat and wide a frame or two, wobbling back to round, with a splash
+    # (a ring of 14 to 20 droplets thrown out fast, lopsided, some of them spray streaks, 4 to 8 of them left on the glass as tiny
+    # beads); on dry glass crawling (about 0.3 of its speed on fog, the same size), down a trail at TRACK or more (its own size's
     # speed there), shrinking only (its water left behind), never growing; none vanishing; their wet streaks on the
     # clear glass drying over 3 to 10 minutes, each its own: thin streaks (a third of the bead's width or less: a px or two), faint
     # (a greyish film, grime along an edge, a glint, a tiny droplet), uneven along their length (thicker and thinner, now and then
@@ -1679,34 +1681,66 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert 12 <= heavy_rain["landed"] <= 42 and 6 <= heavy_rain["rainMost"] <= 14 and heavy_rain["popped"] == 0, heavy_rain
     # (each landing seen: shown at once, or, landing on a bead already there, merged into it at once (in its absorbed))
     assert len(sticking["stuck"]) == heavy_rain["landed"], sticking["stuck"]
-    assert all(s["r"] >= 3 and (s["alpha"] == 1 or s.get("merged")) and s["dots"] >= 10 and s["phase"] == "heavy" for s in sticking["stuck"]), sticking["stuck"]
-    # (3 to 6 of its droplets meant to stay, all of them left but those thrown off the window or into a flood (off), as many as the
-    # beads' own most had room for as it landed (room): none cut while there was room, every one past it cut)
-    assert all(3 <= s["meant"] <= 6 and s["stay"] + s["cut"] + s["off"] == s["meant"] and s["stay"] == min(s["meant"] - s["off"], s["room"])
+    assert all(s["r"] >= 3 and (s["alpha"] == 1 or s.get("merged")) and 14 <= s["dots"] <= 20 and len(s["thrown"]) == s["dots"] and s["phase"] == "heavy"
                for s in sticking["stuck"]), sticking["stuck"]
-    # (... where there was room, 3 or more left, as ever, but one now and then thrown off the window by a drop landing near its edge)
+    assert len({s["dots"] for s in sticking["stuck"]}) >= 4, sticking["stuck"]
+    # (the burst lopsided: its droplets' mean throw a fifth or so of their speed or more one way, a direction of its own each landing;
+    # some of them (a third or so all told, at least two a splash) spray streaks; squashed 0.5 to 0.75 wider at first)
+    for s in sticking["stuck"]:
+        vx, vy = (sum(v * f(a) for a, v, *_ in s["thrown"]) for f in (math.cos, math.sin))
+        s["lean"], s["aim"] = math.hypot(vx, vy) / sum(v for _, v, *_ in s["thrown"]), math.atan2(vy, vx)
+    assert all(s["lean"] >= 0.12 for s in sticking["stuck"]), [s["lean"] for s in sticking["stuck"]]
+    assert len({int((s["aim"] + math.pi) // (math.pi / 2)) for s in sticking["stuck"]}) == 4, [s["aim"] for s in sticking["stuck"]]
+    sprays = [sum(t[2] for t in s["thrown"]) for s in sticking["stuck"]]
+    assert min(sprays) >= 2 and 0.2 <= sum(sprays) / sum(s["dots"] for s in sticking["stuck"]) <= 0.5, sprays
+    assert all(0.5 <= s["squash"] <= 0.75 for s in sticking["stuck"]), sticking["stuck"]
+    # (followed frame by frame (a 30th of a second each) as they land: as wide as that, as much shorter, held a frame or two; then
+    # within 0.2 s wobbling back (taller and narrower a moment), round again from there on (but elongated as it sets off, as below); its water no different for it (but what
+    # it leaves on dry glass as it runs, or a tiny bead it sweeps up))
+    landings = sticking["landings"]
+    assert len(landings) == 4 and all(len(l["frames"]) >= 10 for l in landings), landings
+    for l in landings:
+        f = l["frames"]
+        held = [x for x in f if x["impact"] < 0.05]
+        assert f[0]["impact"] == 0 and 1 <= len(held) <= 2 and all((x["w"], x["h"]) == (f[0]["w"], f[0]["h"]) for x in held), l
+        assert f[0]["w"] >= 1.4 * f[0]["rw"] and f[0]["h"] <= 0.7 * f[0]["rh"], l
+        assert any(x["w"] < x["rw"] and x["h"] > x["rh"] for x in f if 0.05 <= x["impact"] < 0.2), l
+        assert all((x["w"], x["h"]) == (x["rw"], x["rh"]) for x in f if x["impact"] >= 0.2 - 1e-9 and not x["stretch"]), l   # (round, but as
+                                                                                                                       # it sets off, elongating)
+        assert all(0.75 <= x["w"] * x["h"] / (x["rw"] * x["rh"]) <= 1.3 for x in f), l
+        assert all(abs(x["vol"] - f[0]["vol"]) <= 0.03 * f[0]["vol"] for x in f if x["impact"] < 0.2), l
+    # (4 to 8 of its droplets meant to stay, all of them left but those thrown off the window or into a flood (off), as many as the
+    # beads' own most had room for as it landed (room): none cut while there was room, every one past it cut)
+    assert all(4 <= s["meant"] <= 8 and s["stay"] + s["cut"] + s["off"] == s["meant"] and s["stay"] == min(s["meant"] - s["off"], s["room"])
+               for s in sticking["stuck"]), sticking["stuck"]
+    # (... where there was room, 4 or more left, as ever, but one now and then thrown off the window by a drop landing near its edge
+    # (scattered further out, more of the landings lose one so, but hardly any of their droplets))
     roomy = [s for s in sticking["stuck"] if s["room"] >= s["meant"]]
-    assert roomy and all(s["stay"] >= 3 for s in roomy if not s["off"]) and sum(s["off"] > 0 for s in roomy) <= 0.2 * len(roomy), sticking["stuck"]
+    assert roomy and all(s["stay"] >= 4 for s in roomy if not s["off"]) and sum(s["off"] for s in roomy) <= 0.1 * sum(s["meant"] for s in roomy), sticking["stuck"]
     assert len({s["meant"] for s in sticking["stuck"]}) >= 3, sticking["stuck"]
     dry, trail = heavy_rain["glass"]["dry"], heavy_rain["glass"]["trail"]
     assert dry["lost"] > 0 and dry["gained"] == 0 and 0.2 < dry["all"] / dry["norm"] < 0.4, dry
     assert trail["moves"] > 100 and all(0.75 < o["all"] / o["pace"] < 1.3 for o in (dry, trail)), heavy_rain["glass"]
     assert 0.75 * TRACK < trail["px"] / trail["s"] < 1.3 * 31, trail   # (r 1.8-3.2 down a trail: about TRACK, not their size's)
     # (the splash's droplets left on the glass: tiny beads (r 0.55) like any other, from the splash's end on, as many as were left;
-    # never moving but to snap (merged into a neighbour, or swept up by a runner passing); on the clear glass, nothing taking them,
-    # drying away after 15 to 40 s each)
+    # never moving but to snap (merged into a neighbour, or swept up by a runner passing: as many as eight thrown out, now and then
+    # three of them together at most); on the clear glass, nothing taking them, drying away after 15 to 40 s each)
     left_on = sticking["watched"]["splashes"]
-    assert sum(s["stay"] for s in sticking["stuck"]) - 6 <= len(left_on) <= sum(s["stay"] for s in sticking["stuck"]), (len(left_on), sticking["stuck"])
-    assert all(d["moved"] == 0 and d["r"] < 0.75 for d in left_on) and sum(d["tiny"] for d in left_on) >= 0.9 * len(left_on), left_on
+    assert sum(s["stay"] for s in sticking["stuck"]) - 8 <= len(left_on) <= sum(s["stay"] for s in sticking["stuck"]), (len(left_on), sticking["stuck"])
+    assert all(d["moved"] == 0 and d["r"] < 0.85 for d in left_on) and sum(d["tiny"] for d in left_on) >= 0.9 * len(left_on), left_on
     ends = {end: [d for d in left_on if d["end"] == end] for end in ("faded", "taken", "on", "other")}
     assert len(ends["faded"]) >= 10 and len(ends["taken"]) >= 10, {end: len(d) for end, d in ends.items()}
     assert all(15 <= d["fadedAt"] <= 41 and d["glass"] != "fog" for d in ends["faded"]), ends["faded"]
     assert len({round(d["fadedAt"]) for d in ends["faded"]}) >= 8, ends["faded"]   # (each its own time)
-    # (thrown past the drop's edge every way, up and down too: hardly any taken back the moment it's left (by a runner passing);
-    # none landing on its drop, or close enough to snap back into it at once (they did, about one in ten))
+    # (thrown past the drop's edge every way, up and down too: none landing on its drop, or close enough to snap back into it at
+    # once (they did, about one in ten); those thrown up or to the sides (no further down than half as far across) hardly ever
+    # taken back the moment they're left (by a runner passing); those below it may be: its drop, running at once, runs down through
+    # them)
     # (each left in the heavy rain, as followed here and on, below, as its biggest beads set off again: every one once)
     every = list({d["id"]: d for d in left_on + sticking["stretching"]["splashes"]}.values())
-    assert len(every) >= 120 and sum(d["end"] == "taken" and d["aged"] <= 0.45 for d in every) <= 0.05 * len(every), every
+    across = [d for d in every if d["thrown"][1] <= abs(d["thrown"][0]) / 2]
+    assert len(every) >= 120 and len(across) >= 60, every
+    assert sum(d["end"] == "taken" and d["aged"] <= 0.45 for d in across) <= 0.05 * len(across), across
     # (none outstaying its drying (shown 0.4 s in, 40 s at most, half a second drying away): gone, a merged one shrunk away)
     assert all(d["aged"] <= 42 for d in ends["on"] + ends["other"]), left_on
     # (the biggest (r 2.5 and up: here most) setting off again after a pause (heavy rain's own time, 30 s): about one restart in three
@@ -1756,11 +1790,13 @@ async def test_effects_asked_for_as_the_page_opens_alone_on_a_phone_and_with_red
     assert gone["landed"] == eased["landed"] and gone["beads"] == 0 and gone["popped"] == 0, (eased, gone)
     # (each run off or shrunk to nothing, or merged into one that was: none dried away otherwise but the splashes' droplets, each
     # after 15 to 40 s (some within a frame there: gone between two looks), unless swept up first by a runner passing (taken), as
-    # ever)
+    # ever; two snapped together (too small to run) the same, or shrunk away first on dry glass, never faded)
     assert gone["ranOff"] + gone["shrunk"] > eased["ranOff"] + eased["shrunk"] and eased["beads"] > 0, (eased, gone)
     dried = sticking["afterWatched"]["splashes"]
     assert dried and all(d["end"] in ("faded", "other", "taken") and d["aged"] <= 42 and d["glass"] != "fog" for d in dried), dried
-    assert gone["faded"] - eased["faded"] == sum(d["end"] != "taken" for d in dried) > 0, (eased, gone, dried)
+    shrunk = [d for d in dried if d["end"] == "other" and d["fadedAt"] is None and not d["tiny"]]
+    assert len(shrunk) <= gone["shrunk"] - eased["shrunk"], shrunk
+    assert gone["faded"] - eased["faded"] == sum(d["end"] != "taken" for d in dried) - len(shrunk) > 0, (eased, gone, dried)
     assert all(15 <= d["fadedAt"] <= 41 for d in dried if d["fadedAt"] is not None), dried
     # ... their streaks, the rain still on, drying on their own time: there still 6 s after the last bead had gone
     easing = sticking["easing"]

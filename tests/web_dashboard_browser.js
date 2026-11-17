@@ -1508,7 +1508,7 @@ const trailLook = (h, b) => {
 //     with none set going while it was 2.5 or more;
 //   splashes: each heavy-rain splash's droplet left on the glass {r: its radius at most, tiny: tiny always while it was one, moved:
 //     frames it moved (not snapping), glass: the glass under it as it last sat (before fading), fogged: s on fog, aged: s shown in
-//     all, fadedAt: its age as it began drying away (null: never), end: "faded" (dried away), "taken" (merged into another: snapped
+//     all, fadedAt: its age as it began drying away (null: never), thrown: [dx, dy] from where its drop struck, end: "faded" (dried away), "taken" (merged into another: snapped
 //     or swept up by a runner), "on" (still there at the end) or "other"}
 const beadWatch = () => {
   const stretching = new Map(), stretches = [], splashes = new Map(), last = new Map();
@@ -1534,7 +1534,7 @@ const beadWatch = () => {
         if (b.kind === "splash") {
           let d = splashes.get(b.id);
           const before = last.get(b.id);
-          if (!d) { d = { id: b.id, r: b.r, tiny: true, moved: 0, glass: null, fogged: 0, aged: 0, fadedAt: null, end: "other" }; splashes.set(b.id, d); }
+          if (!d) { d = { id: b.id, r: b.r, tiny: true, moved: 0, glass: null, fogged: 0, aged: 0, fadedAt: null, end: "other", thrown: b.thrown }; splashes.set(b.id, d); }
           d.r = Math.max(d.r, b.r);
           if (!b.tiny) d.tiny = false;
           if (before && b.tiny && !b.snapping && !before.snapping && (b.x !== before.x || b.y !== before.y)) d.moved++;
@@ -1783,12 +1783,13 @@ const rainBeads = (page, light, heavy, after, scale, from = "light") => page.eva
         seenIds.add(b.id);
         const s = h.splashes.find((s) => s.id === b.id);
         out.stuck.push({ r: s ? s.r : 0, alpha: b.alpha, dots: s ? s.dots : 0, stay: s ? s.stay : 0, meant: s ? s.meant : 0, cut: s ? s.cut : 0,
-                         off: s ? s.off : 0, room: s ? s.room : 0, phase });   // (r: as it landed)
+                         off: s ? s.off : 0, room: s ? s.room : 0, squash: s ? s.squash : 0, thrown: s ? s.thrown : [], phase });   // (r: as it landed)
       }
     }
     for (const s of h.splashes) if (!seenIds.has(s.id) && absorbed.has(s.id)) {   // (one landing on a bead there, merged at once: never
       seenIds.add(s.id);                                                          // shown on its own)
-      out.stuck.push({ r: s.r, alpha: null, dots: s.dots, stay: s.stay, meant: s.meant, cut: s.cut, off: s.off, room: s.room, phase, merged: true });
+      out.stuck.push({ r: s.r, alpha: null, dots: s.dots, stay: s.stay, meant: s.meant, cut: s.cut, off: s.off, room: s.room, squash: s.squash,
+                       thrown: s.thrown, phase, merged: true });
     }
     n = state.frames - start;
     if (phase === "light" && n >= light) {
@@ -1814,6 +1815,27 @@ const rainBeads = (page, light, heavy, after, scale, from = "light") => page.eva
   };
   __next(step);
 }), [light, heavy, after, scale, from]);
+// Heavy rain's drops landing, each followed frame by frame (the weather's time a 30th of a second a frame) from the frame it landed
+// in till 0.35 s on: `landings` of them (up to `most` frames): each {id, frames: [{impact: s since it landed, squash, w, h: as drawn,
+// rw, rh: its round sprite's, r, vol, stretch: elongated as it sets off (see beadWatch)}]} (till it merges or goes)
+const landingsWatched = (page, landings, most) => page.evaluate(([landings, most]) => new Promise((resolve) => {
+  const followed = new Map(), done = [];
+  let n = 0;
+  Sky.timeScale(1 / 3);
+  const step = () => {
+    const h = Sky.state().humidity;
+    for (const b of h.beads) if (b.kind === "rain" && b.impact !== null && b.impact <= 0.35 && b.drawn) {
+      if (!followed.has(b.id)) { if (b.impact > 0 || followed.size + done.length >= landings) continue; followed.set(b.id, { id: b.id, frames: [] }); }
+      followed.get(b.id).frames.push({ impact: b.impact, squash: b.squash, w: b.drawn[2], h: b.drawn[3], rw: b.w, rh: b.bottom - Math.floor(b.y), r: b.r, vol: b.vol,
+                                     stretch: b.stretch });
+    }
+    for (const [id, f] of followed) if (f.frames.at(-1).impact >= 0.33 || !h.beads.some((b) => b.id === id)) { done.push(f); followed.delete(id); }
+    if ((done.length < landings || followed.size) && ++n < most) return __next(step);
+    Sky.timeScale(1);
+    resolve(done);
+  };
+  __next(step);
+}), [landings, most]);
 // "stop animation" (an effect on: the link shows; it ends the test links' effects; the link gone), then `detail` on (as a test link
 // clicked after it: the animations on again), all at once (no frame between): the loop, the link and the glass (humidity's marks) as
 // stopped, and once started again, the glass, the frost and the rain's drops then
@@ -2579,6 +2601,8 @@ const WEATHER = {
       await p.page.evaluate(() => Sky.timeScale(1));
       // (heavy still, its weather's own time (a frame 0.1 s: a stretch over a few), 30 s: the biggest setting off again after pauses)
       seen.stretching = await beadsWatched(p.page, 300);
+      // (a few drops landing, frame by frame: squashed and back to round)
+      seen.landings = await landingsWatched(p.page, 4, 900);
       let looks;
       // (the rain eased: watched till the last bead has gone, up to 1100 frames (11 minutes of its weather's time): one shrunk on
       // dry glass under the run size and sitting on a wet trail keeps its size till that trail dries, 3 to 10 minutes)

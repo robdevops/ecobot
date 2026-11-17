@@ -169,7 +169,8 @@
 //   (ids), left: the latest run off the bottom edge (ids), ranOff, shrunk (to nothing), faded (dried away): how many, largest: the
 //   largest radius a merge has made, born: the latest condensed [{id, kind, r, fog: shown there, y: its middle, of the height}],
 //   first: the first bead to show since the glass was fresh {after: s, cover, fog: the fog where it showed (not wiped), formed:
-//   fog() then} or null, landed: heavy rain's drops stuck, rainMost: the most of them at once, splashes: the latest {id, r, dots, stay: its droplets left on the glass},
+//   fog() then} or null, landed: heavy rain's drops stuck, rainMost: the most of them at once, splashes: the latest {id, r, dots, stay: its droplets left on the glass,
+//   meant, cut, off, room, squash: how far it landed squashed, aim, lean: its burst's lopsidedness, thrown: its droplets [angle, px/s, streak (1), left (1)]},
 //   glass: {dry, trail, fog: each {px, s: run and taken there by beads of r 1.8-3.2, band: what they'd have run on fog (each at its
 //   size then), gained, lost: water, moves: steps, all, norm, pace:
 //   px run by any, what they'd have run on fog in that time, and at that glass's own mean speed}}, restarts: the biggest beads (STRETCH_R
@@ -187,7 +188,9 @@
 //   the fog's canvas showing otherwise than they should where no trail is any more, beads: [{id, kind ("fog": condensed, "rain", "splash": a heavy-rain splash's droplet left on the glass),
 //   x, x0 and y0: where it showed, y: its top, cy: its middle, r, vol: its water, w, laidW: its width as it last left its trail,
 //   bottom: its sprite's lowest row + 1, glass: under it, v: px/s now, fading, alpha, drawn: [x, y, w, h, alpha] as drawn last,
-//   age: s shown, behind: its trail there behind it, trail: [x, y] a pixel of it, stretch: how far elongated now, 0-1}]}), joined: how many have run into a flood, joins: the latest of them
+//   age: s shown, behind: its trail there behind it, trail: [x, y] a pixel of it, stretch: how far elongated now, 0-1 (as drawn: none while squashed), impact: a rain
+//   bead's s since it landed (9 at most; null: none), squash: how far squashed now (above 0 wider, below taller), thrown: a splash's
+//   droplet's [dx, dy] from where its drop struck}]}), joined: how many have run into a flood, joins: the latest of them
 //   (each {x, bottom: its sprite's lowest row + 1, surface: the flood's surface there then, level: the flood's level, trail: its trail's
 //   last row + 1, or null: not running, wet: its trail there, in its middle)},
 //   flood (a flash flood: its depth, its surface, its frog and its waves, as flood.probe() gives them; the wind's water, took, rested,
@@ -1254,9 +1257,10 @@ const Sky = (() => {
   // for POP s). A bead not running (under 1 px/s) and a tiny one close below it the same; a running one takes in any tiny one
   // beside or above it as it passes. Only large ones (RUN_R and up: about sixteen tiny ones' water) run (as below); smaller ones stay
   // put (snapping as tiny ones do), a small one growing on the fog till it's large enough. Heavy rain (HEAVY_RAIN or more, the humidity high or not): now and
-  // then (LANDING a second, RAIN_MOST on the glass at most) a drop sticks, landing at once as a large bead (RAIN_R) with a splash (a
-  // ring of tiny droplets bursting out and fading in a few frames, a few of them (STAY) thrown out to varied distances and left there
-  // as tiny beads: from then on tiny beads like any other, the humidity on or not, drying away (DRYING) on glass with no fog shown
+  // then (LANDING a second, RAIN_MOST on the glass at most) a drop sticks, landing at once as a large bead (RAIN_R), hard: squashed
+  // flat and wide for a frame or two, wobbling back to round (SQUASH), with a splash (a ring of tiny droplets (THROWN), some of them
+  // short spray streaks, bursting out fast, lopsided (LEAN), falling a little and fading in a few frames, a few of them (STAY) thrown
+  // out to varied distances and left there as tiny beads; all of it harder in heavier rain: from then on tiny beads like any other, the humidity on or not, drying away (DRYING) on glass with no fog shown
   // if nothing takes them first); none in lighter rain, and none forming once the rain eases.
   // Every bead, condensed or rain, one set of rules (a merged one too):
   //   The glass under it (the row just below it): FOG (fog shown there: FOG_AT or more), a TRAIL (a streak a bead has left: wiped
@@ -1333,9 +1337,19 @@ const Sky = (() => {
     const LANDING = 0.35;              // ... about this many a second (one in 3 s) ...
     const RAIN_MOST = 14;              // ... a dozen or so on the glass at most ...
     const RAIN_R = [3, 3.8];           // ... each landing this big (its radius) ...
+    const SQUASH = [0.5, 0.75];        // ... landing squashed flat and wide (this much wider at first, as much shorter: its water
+                                       // ... kept), held a frame or two (HOLD s), then wobbling back to round (a little taller and
+    const HOLD = 0.05;                 // ... narrower, then wider again, less and less) over SQUASH_S in all ...
+    const SQUASH_S = 0.2;
     const SPLASH_S = 0.25;             // ... with a splash, bursting out and gone in this long ...
-    const STAY = [3, 6];               // ... a few of its droplets (this many) left on the glass as tiny beads, thrown out ...
-    const STAY_AT = [1.5, 9];          // ... this far past the drop's edge (px) ...
+    const THROWN = [14, 20];           // ... its droplets thrown out (this many) ...
+    const THROW = [24, 40];            // ... this fast (px/s, along the ring: squashed a little up and down), falling as they fly ...
+    const FALL = 80;                   // ... (px/s², falling) ...
+    const SPRAY = 0.25;                // ... about a third of them short spray streaks, not dots (every sixth, and this many of the rest) ...
+    const LEAN = [0.25, 0.5];          // ... the burst lopsided, this much (faster that way, slower the other, more of them thrown
+                                       // ... that way) in a direction of its own each landing ...
+    const STAY = [4, 8];               // ... a few of its droplets (this many) left on the glass as tiny beads, thrown out ...
+    const STAY_AT = [2.5, 14];         // ... this far past the drop's edge (px) ...
     const STAY_S = 0.15;               // ... there in this long (s), slowing to a stop, not fading with the rest ...
     const DRYING = [15, 40];           // ... and on glass with no fog shown (none taking them), drying away after this long (s)
     const PER_PX = 0.45;               // beads at most, for each px of the window's width (light or heavy)
@@ -1360,8 +1374,8 @@ const Sky = (() => {
     // A bead bigger than the largest above (merged on and on: no size too big), drawn as wide as it is: the same glass, its rows
     // worked out (one for each width, kept)
     const grown = new Map();
-    function rowsFor(w) {
-      const h = w + 1, cx = (w - 1) / 2, cy = h * 0.53, rx = w / 2, ry = h / 2 + 0.4;
+    function rowsFor(w, h = w + 1) {   // (h: its own height, a squashed one's (see squashed()))
+      const cx = (w - 1) / 2, cy = h * 0.53, rx = w / 2, ry = h / 2 + 0.4;
       const inside = (x, y) => {
         if (x < 0 || x >= w || y < 0 || y >= h) return false;
         const squeeze = y < cy ? 0.82 + 0.18 * y / cy : 1;   // (the top a little narrower)
@@ -1667,19 +1681,31 @@ const Sky = (() => {
       const b = numbered({id: ++made, kind: "rain", x, y, r, merged: 0, life: drop.between(...LIFE)}, landed);
       shows(b);
       b.shown = APPEAR;   // (there at once)
-      b.pause = own(b, "pauses").between(0.45, 0.8);   // (settling a moment after its splash before it runs: its droplets thrown clear first)
+      // (the harder the rain, the harder it hits (hard: 0 at HEAVY_RAIN, 1 at the heaviest): squashed flatter, more droplets thrown
+      // faster and further, more of them left)
+      const hard = clamp((rain.level - HEAVY_RAIN) / (1 - HEAVY_RAIN), 0, 1), more = (k, [lo, hi]) => lo + Math.floor(k * (hi - lo + 1) * (0.6 + 0.4 * hard));
+      const squash = splash.between(...SQUASH) * (0.8 + 0.2 * hard);
+      if (!STILL) Object.assign(b, {impact: 0, squash, fresh: true});   // (squashed, from its first frame; reduced or low motion: never)
       all.push(b);
-      const cy = y + heightOf(r) / 2, n = 10 + Math.floor(splash() * 4);
-      const dots = Array.from({length: n}, (_, j) => ({a: (j + splash.between(-0.3, 0.3)) * 2 * Math.PI / n, v: splash.between(14, 24), s: splash() < 0.4 ? 1 : 0}));
+      // (its droplets: round it (evenly, a little jitter), each its speed; lopsided: bunched toward a direction of its own (lean, at
+      // aim), faster that way, slower the other; some spray streaks)
+      const cy = y + heightOf(r) / 2, n = more(splash(), THROWN), aim = splash.between(0, 2 * Math.PI), lean = splash.between(...LEAN);
+      const dots = Array.from({length: n}, (_, j) => {
+        let a = (j + splash.between(-0.3, 0.3)) * 2 * Math.PI / n;
+        a -= lean * 0.6 * Math.sin(a - aim);
+        return {a, v: splash.between(...THROW) * (0.8 + 0.2 * hard) * (1 + lean * Math.cos(a - aim)), s: splash() < 0.4 ? 1 : 0, streak: splash() < SPRAY || j % 6 === 0};
+      });
       // (a few of them, spread round it, thrown out to varied distances and left there: tiny beads once the splash is gone, as many
-      // as the beads' own most has room for, none in a flood; that far past its edge every way, the ring's flattening (0.8 down and
-      // up) made up for, so none thrown up or down lands on it, or close enough to snap back into it at once)
-      const stay = STAY[0] + Math.floor(splash() * (STAY[1] - STAY[0] + 1)), from = Math.floor(splash() * n);
+      // as the beads' own most has room for, none in a flood; that far past its edge every way (further the way it leans), the
+      // ring's flattening (0.8 down and up) made up for, so none thrown up or down lands on it, or close enough to snap back into it
+      // at once)
+      const stay = more(splash(), STAY), from = Math.floor(splash() * n);
       let kept = 0, cut = 0, off = 0;   // (for the tests: those not left for the beads' most (cut), off the window or in a flood (off),
       let room = 0;                     // and how many the beads' most had room for as it landed (up to all meant))
       for (const now = used(); room < stay && now + (room + 1) * TINY_COST <= most;) room++;
       for (let j = 0; j < stay; j++) {
-        const d = dots[(from + Math.round(j * n / stay)) % n], far = (r + 1 + splash.between(...STAY_AT)) / Math.hypot(Math.cos(d.a), 0.8 * Math.sin(d.a));
+        const d = dots[(from + Math.round(j * n / stay)) % n], past = splash.between(0, STAY_AT[1] - STAY_AT[0]) * (1 + lean * Math.cos(d.a - aim));
+        const far = (r + 1 + STAY_AT[0] + past) / Math.hypot(Math.cos(d.a), 0.8 * Math.sin(d.a));
         const px = Math.round(x + Math.cos(d.a) * far), py = Math.round(cy + Math.sin(d.a) * far * 0.8);
         if (px < 1 || px > W - 2 || py < 1 || py > H - 2) { off++; continue; }
         if (used() + (kept + 1) * TINY_COST > most) { cut++; continue; }
@@ -1689,8 +1715,28 @@ const Sky = (() => {
       }
       splashes.push({x, y: cy, r, age: 0, dots, landed, own: splash});
       seen.landed++;
-      seen.splashes.push({id: b.id, r, dots: n, stay: kept, meant: stay, cut, off, room});
+      seen.splashes.push({id: b.id, r, dots: n, stay: kept, meant: stay, cut, off, room, squash, aim, lean,
+                          thrown: dots.map((d) => [d.a, d.v, d.streak ? 1 : 0, d.stay ? 1 : 0])});
       if (seen.splashes.length > 50) seen.splashes.shift();
+    }
+    // A rain bead just landed: how far squashed (0 round; above, wider and shorter; below, taller and narrower), held at its most a
+    // frame or two, then wobbling back to round, less and less
+    const squashOf = (b) => {
+      if (b.impact === undefined || b.impact >= SQUASH_S) return 0;
+      if (b.impact < HOLD) return b.squash;
+      const u = (b.impact - HOLD) / (SQUASH_S - HOLD);
+      const w = b.squash * (1 - u) ** 2 * Math.cos(3 * Math.PI * u);
+      return w < 0 ? 0.6 * w : w;   // (its recoil, taller, less than its squash)
+    };
+    // ... drawn so: as wide as that, as much shorter (its water kept), the same glass (quantized to whole px, each kept)
+    const flattened = new Map();
+    function squashed(r, q) {
+      const base = sprite(r), w0 = base.width, h0 = base.height;
+      const w = Math.max(1, Math.round(w0 * (1 + q))), h = Math.max(2, Math.round(h0 / (1 + q)));
+      if (w === w0 && h === h0) return base;
+      const key = `${w}x${h}`;
+      if (!flattened.has(key)) flattened.set(key, mapped(rowsFor(w, h), GLASS));
+      return flattened.get(key);
     }
     const centre = (b) => b.y + heightOf(b.r) / 2;
     const touching = (a, b) => Math.abs(a.x - b.x) <= a.r + b.r + 0.5 && Math.abs(a.y - b.y) <= 2 * (a.r + b.r) + 2 && Math.hypot(a.x - b.x, centre(a) - centre(b)) <= a.r + b.r + 0.5;
@@ -1703,6 +1749,8 @@ const Sky = (() => {
       into.merged += 1 + from.merged;
       from.gone = true;
       into.still = into.still && into.r <= TINY;   // (tiny no more: running, as its size has it)
+      if (from.impact < SQUASH_S && !(into.impact < SQUASH_S)) Object.assign(into, {impact: from.impact, squash: from.squash, fresh: from.fresh});   // (a drop
+                                                                                                  // landing on a bead: that one struck, squashed)
       seen.merges++;
       seen.largest = Math.max(seen.largest, into.r);
       seen.merged.push({vol: was, into: into.vol, r: radii, intoR: into.r});
@@ -1925,7 +1973,8 @@ const Sky = (() => {
     const strength = () => (e.level > 0 || cover > 0 ? 0.85 : 0.3);   // (heavy rain's beads alone: fainter in the cap's sum ...
     return {
       strength,                                                         // ... drawn as bright all the same, see draw())
-      need: () => (e.level > 0 ? PER_PX * W : used()) + (heavy() ? RAIN_MOST : 0),   // (as many at light humidity as heavy: its tiny ones pile up)
+      need: () => (e.level > 0 ? PER_PX * W : Math.ceil(used())) + (heavy() ? RAIN_MOST : 0),   // (as many at light humidity as heavy: its tiny ones pile up; off,
+                                                                                // those there, whole: a tiny one a quarter, never rounded down to dry one)
       count: () => Math.round(used()),
       want(v) {   // (on again after gone all the way: the glass fresh; reduced motion, off: gone at once)
         if ((v > 0 && !present() && e.amount <= 0) || (STILL && v <= 0)) clear();
@@ -2000,6 +2049,8 @@ const Sky = (() => {
         for (const b of all) {
           if (b.gone || drowned(b)) continue;
           if (b.shown !== undefined) b.shown += dt;
+          if (b.impact !== undefined) { if (b.fresh) b.fresh = false; else b.impact = Math.min(9, b.impact + dt); }   // (its landing's
+                                                                                                                     // first frame drawn as it struck)
           if (b.pop > 0) b.pop -= dt;
           if (b.state === "rest") {   // (showing once the fog has formed there, and shows: else not at all)
             const i = at(b.x, b.y + heightOf(b.r) / 2);
@@ -2013,9 +2064,10 @@ const Sky = (() => {
             }
           } else if (b.state === "on") {
             if (!b.still) move(b, dt);
-            else if (b.drying !== undefined && (b.g = glassAt(Math.round(b.x), Math.floor(b.y) + heightOf(b.r))) !== FOGGY && (b.drying -= dt) <= 0) {
-              dries(b);   // (a splash's droplet left on clear glass, nothing taking it: drying away, slowly)
-              b.fadeFor = b.left = 1.5;
+            if (b.drying !== undefined && b.state === "on" && b.r < RUN_R && (b.still ? (b.g = glassAt(Math.round(b.x), Math.floor(b.y) + heightOf(b.r))) : b.g) !== FOGGY
+                && (b.drying -= dt) <= 0) {
+              dries(b);   // (a splash's droplet left on clear glass, nothing taking it, or two of them snapped together, too small to
+              b.fadeFor = b.left = 1.5;   // run: drying away, slowly)
             }
           }
           else if (b.state === "snap") pull(b, dt);
@@ -2027,7 +2079,7 @@ const Sky = (() => {
         for (const s of splashes) if (s.age >= SPLASH_S) for (const [j, d] of s.dots.entries()) if (d.stay) {   // (its droplets left
                                                                                                                  // behind: tiny beads now)
           const r = BORN[0] + 0.05, b = numbered({id: ++made, kind: "splash", x: d.px, y: d.py, r, k: 1, merged: 0, life: s.own.between(...LIFE),
-                                                  still: true, drying: s.own.between(...DRYING)}, s.landed * 16 + j);
+                                                  still: true, drying: s.own.between(...DRYING), thrown: [d.px - s.x, d.py - s.y]}, s.landed * 32 + j);
           shows(b);
           b.shown = APPEAR;
           all.push(b);
@@ -2127,7 +2179,8 @@ const Sky = (() => {
                                laidW: b.laidW || null, bottom: top + h, glass: GLASSES[b.g], v: b.state === "on" ? b.v : 0, fading: b.state === "fade",
                                alpha: (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR), drawn: b.drawn || null,
                                age: b.shown, behind: top < b.y0 + 4 || !!trail, trail: trail || null, tiny: !!b.still, snapping: b.state === "snap",
-                               stretch: b.state === "on" ? stretchOf(b) : 0};
+                               stretch: b.state === "on" && !squashOf(b) ? stretchOf(b) : 0, impact: b.impact === undefined ? null : b.impact,
+                               squash: b.state === "on" ? squashOf(b) : 0, thrown: b.thrown || null};
                      })}),
       draw(g, alpha) {
         const a0 = Math.min(1, alpha * 0.85 / strength());   // (heavy rain's beads alone: as bright as with the fog)
@@ -2151,26 +2204,38 @@ const Sky = (() => {
         g.drawImage(dots, 0, 0);
         for (const b of all) {
           if (b.state === "rest" || dotted.has(b)) continue;
-          const st = b.pop > 0 || b.state !== "on" ? 0 : stretchOf(b);
-          const pic = b.pop > 0 ? sprite(SIZES[Math.min(SIZES.length - 1, SIZES.findIndex((size) => size >= b.r - 0.01) + 1)]) : st > 0 ? elongated(b.r, st) : sprite(b.r), a = (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR);
-          const left = Math.round(b.x) - (pic.width >> 1), top = (b.state === "fade" ? Math.round(b.y) : Math.floor(b.y)) - (pic.height - sprite(b.r).height);   // (elongated: its lower edge where it is)
+          const q = b.state !== "on" ? 0 : squashOf(b), st = b.pop > 0 || b.state !== "on" || q ? 0 : stretchOf(b);   // (squashed: not
+                                                                                                                      // its pop as well)
+          const pic = q ? squashed(b.r, q) : b.pop > 0 ? sprite(SIZES[Math.min(SIZES.length - 1, SIZES.findIndex((size) => size >= b.r - 0.01) + 1)]) : st > 0 ? elongated(b.r, st) : sprite(b.r), a = (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR);
+          const left = Math.round(b.x) - (pic.width >> 1), top = (b.state === "fade" ? Math.round(b.y) : Math.floor(b.y)) - (q ? Math.round((pic.height - sprite(b.r).height) / 2) : pic.height - sprite(b.r).height);   // (elongated: its lower
+                                                                                                    // edge where it is; squashed: its middle)
           g.globalAlpha = a0 * a;
           g.drawImage(pic, left, top);
           b.drawn = [left, top, pic.width, pic.height, a0 * a];
         }
-        for (const s of splashes) {   // (a ring of droplets bursting out from where the drop struck, fading)
-          const k = s.age / SPLASH_S;
+        for (const s of splashes) {   // (a ring of droplets bursting out from where the drop struck, falling a little as they fly,
+                                      // fading; a spray streak a px or two trailing behind its head; none in a flood's water)
+          const k = s.age / SPLASH_S, fall = 0.5 * FALL * s.age * s.age;
+          const put = (pic, x, y) => { if (y < flood.surface(x) - 1) g.drawImage(pic, x, y); };
           g.globalAlpha = a0 * (1 - k);
           for (const d of s.dots) {
             if (d.stay) continue;
-            const far = s.r + 1 + d.v * s.age;
-            g.drawImage(DOTS[d.s], Math.round(s.x + Math.cos(d.a) * far), Math.round(s.y + Math.sin(d.a) * far * 0.8));
+            const far = s.r + 1 + d.v * s.age, c = Math.cos(d.a), sn = Math.sin(d.a) * 0.8;
+            const px = Math.round(s.x + c * far), py = Math.round(s.y + sn * far + fall);
+            put(DOTS[d.s], px, py);
+            if (d.streak) {   // (its tail: back along its flight, as long as a frame's flight or so, 1 to 3 px, fainter)
+              const back = Math.min(3, Math.max(1, d.v * 0.06 * (1 - k)));
+              for (let t = 1; t <= back; t++) {
+                const tx = Math.round(s.x + c * (far - t)), ty = Math.round(s.y + sn * (far - t) + fall);
+                if (tx !== px || ty !== py) put(DOTS[0], tx, ty);
+              }
+            }
           }
           g.globalAlpha = a0;   // (those staying: thrown out, slowing to a stop where they'll stay, not fading)
           for (const d of s.dots) if (d.stay) {
             const k2 = Math.min(1, s.age / STAY_S), far = s.r + 1 + (d.stay - s.r - 1) * (1 - (1 - k2) ** 2);
             const px = k2 >= 1 ? d.px : Math.round(s.x + Math.cos(d.a) * far), py = k2 >= 1 ? d.py : Math.round(s.y + Math.sin(d.a) * far * 0.8);
-            g.drawImage(k2 >= 1 ? beads[0] : DOTS[0], px, py);
+            put(k2 >= 1 ? beads[0] : DOTS[0], px, py);
           }
         }
       },
