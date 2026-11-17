@@ -618,11 +618,12 @@ def rgb(colour: str) -> str:
 
 
 def one_end_to_read(compass: dict):
-    """The compass's needle (compassLook's, in its own px): its head a slim blade to a sharp tip in the needles' colour, solid; its tail
-    a short, dim taper of another colour; never two ends alike."""
+    """The compass's needle (compassLook's, in its own px): its head a slim blade to a sharp tip in the red hands' red (not the rose's
+    blue), solid; its tail a short, dim taper of another colour; never two ends alike."""
     head, tail = compass["ends"]
-    assert head["colour"] == rgb(look()["needle"]) and tail["colour"] != head["colour"], compass
+    assert head["colour"] == rgb(look()["high_hand"]) != rgb(look()["needle"]) and tail["colour"] != head["colour"], compass
     assert head["opacity"] == 1 and tail["opacity"] <= 0.6, compass
+    assert compass["hubColour"] == head["colour"], compass                                  # (its hub ringed in the same red)
     assert head["length"] > 4 * tail["length"] and head["area"] > 3 * tail["area"] and head["width"] <= 12, compass   # (slim)
 
 
@@ -645,7 +646,7 @@ def compass_as_a_dial(c: dict):
 
 
 def rose_drawn(c: dict, minutes: list[int]):
-    """Today's rose as drawn (compassLook's petals): a petal for each compass point with any share, in the needles' colour, see-through,
+    """Today's rose as drawn (compassLook's petals): a petal for each compass point with any share, in the dials' needles' blue, see-through,
     its reach from the centre in proportion to its share, the longest 80% of the radius."""
     total, most = sum(minutes), max(minutes)
     want = {POINTS[i]: n / total for i, n in enumerate(minutes) if n}
@@ -732,7 +733,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         compass_as_a_dial(c)
         ring, head = c["ring"], c["head"]
         assert (head["left"] + head["right"]) / 2 > (ring["left"] + ring["right"]) / 2 + ring["width"] * 0.1 and abs((head["top"] + head["bottom"]) / 2 - (ring["top"] + ring["bottom"]) / 2) < ring["height"] * 0.1, c
-        # ... the end to read unmistakable: the head a slim sharp blade in the needles' colour, the tail a short, dim taper of another
+        # ... the end to read unmistakable: the head a slim sharp blade in the red hands' red, the tail a short, dim taper of another
         one_end_to_read(c)
         # ... today's rose under it all, a petal per compass point blown from, as long as its share (the longest 80% of the radius)
         rose_drawn(c, ROSE)

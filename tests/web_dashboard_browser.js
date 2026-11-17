@@ -166,7 +166,7 @@ const compassLook = (page) => page.evaluate(() => {
            pointColours: [...t.querySelectorAll("svg text.point")].map((e) => e.getAttribute("fill")),
            table: t.querySelectorAll(".unit, .chip, .figure, .tablearea").length, zoomed: document.body.classList.contains("zoomed"),
            shown: !t.inert, box: rect(t), title: rect(t.querySelector(".title")), texts: [...t.querySelectorAll("svg text")].map(rect),
-           ring: rect(ring), head: rect(t.querySelector(".needle .head")), circle: circle(ring), dialCircle: circle(dialRing),
+           ring: rect(ring), head: rect(t.querySelector(".needle .head")), hubColour: getComputedStyle(t.querySelector("svg .hub")).stroke, circle: circle(ring), dialCircle: circle(dialRing),
            dialRing: dialRing && rect(dialRing), ringStroke: Number(ring.getAttribute("stroke-width")),
            layers: [...t.querySelector("svg g.gauge").children].map((e) => e.getAttribute("class") || e.tagName),
            readingAt: Math.hypot(Number(reading.getAttribute("x")) - cx, Number(reading.getAttribute("y")) - cy),

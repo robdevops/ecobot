@@ -3534,8 +3534,8 @@ const Sky = (() => {
   // its compass point's share of today's readings, the longest ROSE_REACH of the radius; none with no data), the reading inside the
   // ring, below the hub ("99° E": the compass point the service gives, or, while the needle swings to it, the point it is passing), then
   // the face (one thin ring, fine ticks every 10 degrees and longer ones every 45, N, E, S and W, N in an accent colour) and the needle
-  // (pointing where the wind comes from, in degrees clockwise from north: a slim blade with a sharp head in the needles' colour and a
-  // short, dim, tapered tail) on a small hub. No table.
+  // (pointing where the wind comes from, in degrees clockwise from north: a slim blade with a sharp head in the red hands' red, over
+  // the blue rose, and a short, dim, tapered tail) on a small hub ringed in the same red. No table.
   const ROSE_REACH = 0.8, ROSE_HALF = 9;   // the longest petal's reach (of the radius) and each petal's half-width (degrees)
   const pointOf = (deg) => L.points[Math.floor(((deg % 360) + 360 + 11.25) / 22.5) % 16];   // (direction.py sector())
   // The needle pointing north from (cx, cy), its tip `reach` out ([x, y], ...): the head a slim blade to a sharp tip, widest at the hub;
@@ -3565,9 +3565,9 @@ const Sky = (() => {
     });
     const needle = el("g", {class: "needle"}, svg);
     el("polygon", {points: points(stub(cx, cy, reach)), fill: ink(L.soft), "fill-opacity": 0.45, class: "tail"}, needle);
-    el("polygon", {points: points(blade(cx, cy, reach)), fill: ink(L.needle), stroke: L.bg, "stroke-width": 1.2, "paint-order": "stroke",
+    el("polygon", {points: points(blade(cx, cy, reach)), fill: ink(L.high_hand), stroke: L.bg, "stroke-width": 1.2, "paint-order": "stroke",
                    "stroke-linejoin": "miter", class: "head"}, needle);
-    el("circle", {cx, cy, r: 6.5, fill: L.bg, stroke: ink(L.needle), "stroke-width": 2.5, class: "hub"}, svg);
+    el("circle", {cx, cy, r: 6.5, fill: L.bg, stroke: ink(L.high_hand), "stroke-width": 2.5, class: "hub"}, svg);
     // the rose: a petal per compass point with any share, a slim wedge from the centre to its share of the longest's reach
     const petals = (shares) => {
       rose.replaceChildren();
