@@ -3469,17 +3469,16 @@ const Sky = (() => {
   const DIAL = [240, 203, 138];   // a dial's centre and its ring's radius (the compass's too: the same size, lined up)
   const HUB = 13;                 // a dial's hub, its needle's pivot: its radius (its outline as thin, lw(1.5)); the needle's tail under it
   // The pressure's way over the past hour (tile.tendency: {change, way}, the server's: its newest reading less the one nearest an hour
-  // before; null with none about an hour old): a thin, simple arrow just after the reading under the dial, a small gap after its last
-  // digit whatever its width (hPa or inHg; the reading stays centred), vertically centred on its digits: a straight shaft with a small
-  // open head, as thin as the dial's thin text (lw(1.5)), about the digits' height. Rising: pointing up, in L.rising (the needle's
-  // blue); falling: pointing down, in L.falling (the red hands' red). None when steady (under 0.3 hPa either way), with no tendency or
-  // no reading. Clear of the ring's outline beside a reading in hPa; a wide one (inHg's "29.92")
-  // reaches it, as the reading itself does: there the arrow's thin edge in the tile's background parts the outline round it. No
+  // before; null with none about an hour old): a fine instrument-style arrow right against the reading under the dial, its head's back
+  // touching the last digit's ink (no gap; the reading stays centred), vertically centred on its digits: a thin straight shaft with a
+  // small, narrow, sharp open head (a slim chevron), no outline. Rising: pointing up, in L.rising (the needle's blue); falling:
+  // pointing down, in L.falling (the red hands' red). None when steady (under 0.3 hPa either way), with no tendency or no reading.
+  // A wide reading (inHg's "29.92") reaches the dial's grey ring, as the reading itself does: the arrow is simply drawn over it. No
   // motion: it is only put in place as the reading changes. The reading's width and its digits' ink are measured on a canvas (no
   // layout asked of the page), once for each text.
-  // ARROW: the gap after the number and the head's half-width (px), the arrow's height (of the digits'), the stroke's width, and its edge's (in the background: each side)
-  const ARROW = {gap: 6, head: 5, tall: 0.8, width: lw(1.5), edge: 1.5};
-  const digits = new Map();   // ({size/text: [its width, its digits' ink centre below the em box's middle, their height]})
+  // ARROW: the gap after the number's ink (px), the head's half-width and length (px), the arrow's height (of the digits'), the stroke's width
+  const ARROW = {gap: 0, head: 3.5, back: 7, tall: 0.8, width: lw(1.2)};
+  const digits = new Map();   // ({size/text: [its ink's right edge from its centre, its digits' ink centre below the em box's middle, their height]})
   let measuring = null;
   function measure(words, size) {
     const key = `${size}/${words}`;
@@ -3487,15 +3486,15 @@ const Sky = (() => {
       if (!measuring) measuring = document.createElement("canvas").getContext("2d");
       measuring.font = `${size}px ${getComputedStyle(document.body).fontFamily}`;
       measuring.textBaseline = "middle";   // (the em box's middle: the SVG text's "central")
+      measuring.textAlign = "center";      // (the SVG text's "middle": the box's right is from the centre)
       const ink = measuring.measureText("0123456789");
-      digits.set(key, [measuring.measureText(words).width, (ink.actualBoundingBoxDescent - ink.actualBoundingBoxAscent) / 2,
+      digits.set(key, [measuring.measureText(words).actualBoundingBoxRight, (ink.actualBoundingBoxDescent - ink.actualBoundingBoxAscent) / 2,
                        ink.actualBoundingBoxAscent + ink.actualBoundingBoxDescent]);
     }
     return digits.get(key);
   }
   function tendencyArrow(svg, label, x, y, size, ink) {
-    const group = el("g", {class: "tendency", fill: "none", "stroke-linecap": "round", "stroke-linejoin": "round", "pointer-events": "none"}, svg);
-    const edge = el("path", {stroke: L.bg, "stroke-width": ARROW.width + 2 * ARROW.edge, class: "edge"}, group);
+    const group = el("g", {class: "tendency", fill: "none", "stroke-linecap": "butt", "stroke-linejoin": "miter", "pointer-events": "none"}, svg);
     const arrow = el("path", {"stroke-width": ARROW.width, class: "arrow"}, group);
     let shown = null, words = null;
     return (way) => {   // the arrow at the reading as it reads now, this way ("up" or "down"; anything else, "steady" too: none)
@@ -3505,11 +3504,10 @@ const Sky = (() => {
       if (!way || (way === shown && label.textContent === words)) return;
       shown = way;
       words = label.textContent;
-      const [width, middle, high] = measure(words, size), h = high * ARROW.tall, k = ARROW.head, f = (v) => v.toFixed(2);
-      const left = x + width / 2 + ARROW.gap, cy = y + middle;
+      const [right, middle, high] = measure(words, size), h = high * ARROW.tall, k = ARROW.head, b = ARROW.back, f = (v) => v.toFixed(2);
+      const left = x + right + ARROW.gap, cy = y + middle;
       const sx = left + k, sign = way === "up" ? -1 : 1, tip = cy + sign * h / 2;
-      const d = `M${f(sx)},${f(cy - sign * h / 2)} L${f(sx)},${f(tip)} M${f(sx - k)},${f(tip - sign * k)} L${f(sx)},${f(tip)} L${f(sx + k)},${f(tip - sign * k)}`;
-      edge.setAttribute("d", d);
+      const d = `M${f(sx)},${f(cy - sign * h / 2)} L${f(sx)},${f(tip)} M${f(sx - k)},${f(tip - sign * b)} L${f(sx)},${f(tip)} L${f(sx + k)},${f(tip - sign * b)}`;
       arrow.setAttribute("d", d);
       arrow.setAttribute("stroke", ink(way === "up" ? L.rising : L.falling));
     };

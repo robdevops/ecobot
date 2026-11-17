@@ -204,8 +204,7 @@ const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
 // Every round dial's (and the compass's) hub and its needle's pivot, in its own px: the hub's centre, radius and outline width; the
 // needle's pivot (a dial's: the midpoint of its polygon's two side corners; the compass's: the centre its turn is about). Its arrow
 // after the reading (the pressure's way over the past hour; null without one: its group's absence): whether it shows, its way
-// (data-way), its path (d, the stroke's colour and width, its box (getBBox, the gauge's px), points along it every px), its edge in
-// the background (colour, width, d), the reading's box (getBBox: its advance width; the font's line box) and its digits' ink (the
+// (data-way), its path (d, the stroke's colour and width, its box (getBBox, the gauge's px), points along it every px), the reading's box (getBBox: its advance width; the font's line box), its last digit's ink's right edge and its digits' ink (the
 // reading's text measured on a canvas in its own font, its middle baseline at the reading's y: [top, bottom]), the dial's outline
 // ([cx, cy, r, width]), the hub's, the unit's and the tick numbers' boxes, and in window px the arrow's box and those of the tile's
 // title and table (its chips and figures), the tile's width
@@ -223,23 +222,22 @@ const dialsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
     const g = gauge.querySelector(":scope > g.tendency");
     let arrow = null;
     if (g) {
-      const path = g.querySelector("path.arrow"), edge = g.querySelector("path.edge"), shown = getComputedStyle(g).display !== "none";
+      const path = g.querySelector("path.arrow"), shown = getComputedStyle(g).display !== "none";
       const box = (e) => { const b = e.getBBox(); return [b.x, b.y, b.x + b.width, b.y + b.height]; };
       const rect = (e) => { const b = e.getBoundingClientRect(); return [b.left, b.top, b.right, b.bottom]; };
       const reading = gauge.querySelector(":scope > text.reading"), ring = parts.find((e) => e.tagName === "circle");
       const c = document.createElement("canvas").getContext("2d"), style = getComputedStyle(reading);
       c.font = `${style.fontWeight} ${reading.getAttribute("font-size")}px ${style.fontFamily}`;
-      c.textBaseline = "middle";
-      const m = c.measureText(reading.textContent), y = n(reading, "y");
+      c.textBaseline = "middle"; c.textAlign = "center";
+      const m = c.measureText(reading.textContent), y = n(reading, "y"), inkRight = n(reading, "x") + m.actualBoundingBoxRight;
       const along = [];
       if (shown && path.getAttribute("d")) for (let s = 0, len = path.getTotalLength(); s <= len; s += 1) { const q = path.getPointAtLength(s); along.push([q.x, q.y]); }
       arrow = { shown, way: g.dataset.way, d: path.getAttribute("d"), stroke: getComputedStyle(path).stroke, fill: getComputedStyle(g).fill,
                 width: parseFloat(getComputedStyle(path).strokeWidth), box: shown ? box(path) : null, along,
-                edge: { stroke: getComputedStyle(edge).stroke, width: parseFloat(getComputedStyle(edge).strokeWidth), d: edge.getAttribute("d") },
-                reading: box(reading), ink: [y - m.actualBoundingBoxAscent, y + m.actualBoundingBoxDescent],
+                hubWidth: n(hub, "stroke-width"), reading: box(reading), inkRight, ink: [y - m.actualBoundingBoxAscent, y + m.actualBoundingBoxDescent],
                 ring: [n(ring, "cx"), n(ring, "cy"), n(ring, "r"), n(ring, "stroke-width")], hub: box(hub),
                 unit: box(parts.find((e) => e.tagName === "text" && /^(hPa|inHg)$/.test(e.textContent))),
-                ticks: parts.filter((e) => e.tagName === "text" && /^[\d.]+$/.test(e.textContent)).map(box),
+                ticks: parts.filter((e) => e.tagName === "text" && e !== reading && /^[\d.]+$/.test(e.textContent)).map(box),
                 rect: shown ? rect(path) : null, words: [t.querySelector(".title"), ...t.querySelectorAll(".chip, .figure, .unit")].map(rect),
                 tileWidth: t.getBoundingClientRect().width };
     }

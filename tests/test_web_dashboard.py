@@ -921,36 +921,36 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
 
 
 def arrow_drawn(p: dict, way: str | None, name: str):
-    """The pressure's arrow after its reading (dialsLook's), its way over the past hour: none (`way` None: hidden), or a thin, simple
-    arrow: one straight shaft and a small open head (two short strokes from its tip, back at 45 degrees either side), no fill, as thin
-    as the dial's thin text (about lw(1.5)), with an edge in the tile's background under it; up and blue (the needle's) when rising,
-    down and red (the red hands') when falling, none when steady (`way` None), about the digits' height; just after the reading (a small gap after its advance width), vertically centred on its digits' ink; clear of the
-    hub, the unit, the tick numbers, the title and the table, and inside the dial's outline (beside a reading in hPa; inHg's wider
-    reading reaches the outline itself, and the arrow's edge parts it there)."""
+    """The pressure's arrow after its reading (dialsLook's), its way over the past hour: none (`way` None: hidden), or a fine,
+    instrument-style arrow: one thin straight shaft and a small, narrow, sharp open head (two short strokes from its tip, back and
+    out to either side: a slim chevron, narrower than 45 degrees), no fill, no outline; up and blue (the needle's) when rising, down
+    and red (the red hands') when falling, none when steady (`way` None), about the digits' height; right against the reading (its
+    head's back at the last digit's ink, no gap), vertically centred on its digits' ink; clear of the hub, the unit, the tick numbers,
+    the title and the table (and, in hPa, inside the dial's outline; inHg's wider reading reaches the ring and the arrow is drawn over it)."""
     a = p["arrow"]
     if way is None:
         assert a is not None and not a["shown"] and a["way"] == "", (name, a)
         return
-    assert a["shown"] and a["way"] == way and a["fill"] == "none", (name, a)
+    assert a["shown"] and a["way"] == way and a["fill"] == "none" and "edge" not in a, (name, a)
     assert a["stroke"] == rgb({"up": look()["needle"], "down": look()["high_hand"]}[way]), (name, a)
     assert look()["rising"] == look()["needle"] == "#3E86C0" and look()["falling"] == look()["high_hand"] == "#FF3B30", look()
-    assert 1.5 <= a["width"] <= 2.5 and a["edge"]["stroke"] == rgb(look()["bg"]) and a["edge"]["d"] == a["d"], (name, a)
-    assert 2 <= a["edge"]["width"] - a["width"] <= 4, (name, a["edge"])
+    assert 1 <= a["width"] <= 2 and a["width"] < a["hubWidth"], (name, a)                                     # (fine: about 1.2)
     assert re.fullmatch(r"M[\d.]+,[\d.]+ L[\d.]+,[\d.]+ M[\d.]+,[\d.]+ L[\d.]+,[\d.]+ L[\d.]+,[\d.]+", a["d"]), (name, a["d"])
     x0, y0, x1, y1, hx0, hy0, tx, ty, hx1, hy1 = map(float, re.findall(r"[\d.]+", a["d"]))   # (the shaft, then the head)
     assert (tx, ty) == (x1, y1), (name, a["d"])                                  # the head at the shaft's tip
-    k = abs(hx0 - tx)
-    assert 3 <= k <= 8 and abs(hy0 - ty) == pytest.approx(k) and (hx1, hy1) in {(hx0, 2 * ty - hy0), (2 * tx - hx0, hy0)}, (name, a["d"])
+    k, back = abs(hx0 - tx), abs(hy0 - ty)
+    assert 2 <= k <= 5 and 1.6 * k <= back <= 3 * k, (name, a["d"])              # a slim chevron: longer than wide (under 32 degrees a side)
+    assert x0 == x1 and hy0 == hy1 and (hx1 - tx) == pytest.approx(tx - hx0), (name, a["d"])
+    assert hy0 == pytest.approx(ty + back if way == "up" else ty - back), (name, a["d"])
     ink_top, ink_bottom = a["ink"]
     tall = ink_bottom - ink_top                                                  # (the digits' height: about 38 px at 50 px)
-    assert x0 == x1 and hy0 == hy1 == pytest.approx(ty + k if way == "up" else ty - k), (name, a["d"])
     assert (y1 < y0) == (way == "up") and 0.7 * tall <= abs(y1 - y0) <= tall, (name, a["d"], tall)
     bx0, by0, bx1, by1 = a["box"]
-    assert 3 <= bx0 - a["reading"][2] <= 10, (name, a["box"], a["reading"])      # just after the reading, a small gap
+    assert -0.5 <= bx0 - a["inkRight"] <= 1, (name, a["box"], a["inkRight"])     # against the last digit's ink: no gap (1 px at most)
     assert (by0 + by1) / 2 == pytest.approx((ink_top + ink_bottom) / 2, abs=1), (name, a["box"], a["ink"])   # centred on its digits
-    pad = a["edge"]["width"] / 2
+    pad = a["width"] / 2
     clear = lambda b: b[2] < bx0 - pad or b[0] > bx1 + pad or b[3] < by0 - pad or b[1] > by1 + pad
-    assert clear(a["hub"]) and clear(a["unit"]) and all(map(clear, a["ticks"])), (name, a)
+    assert clear(a["hub"]) and clear(a["unit"]) and all(map(clear, a["ticks"])), (name, a["box"], [t for t in a["ticks"] if not clear(t)])
     rx0, ry0, rx1, ry1 = a["rect"]
     assert all(r[2] <= rx0 or r[0] >= rx1 or r[3] <= ry0 or r[1] >= ry1 for r in a["words"]), (name, a["rect"], a["words"])   # (window px)
     cx, cy, r, w = a["ring"]
@@ -958,7 +958,7 @@ def arrow_drawn(p: dict, way: str | None, name: str):
     if "inHg" not in name:
         assert reach < r - w / 2 - 1, (name, reach, a["ring"])                  # inside the outline, clear of it
     else:
-        assert reach < r + w / 2 + 6, (name, reach, a["ring"])                  # (inHg: at most across it, parted by the edge)
+        assert reach < r + w / 2 + 6, (name, reach, a["ring"])                  # (inHg: at most across it, over the ring)
 
 
 def limit_mark(h, name, title):
