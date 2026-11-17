@@ -1863,6 +1863,16 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert any(t["n"] >= t["cap"] - 3 for t in beads["tinies"]), (name, beads["tinies"])
         assert all(t["n"] <= 1.05 * t["cap"] + 4 for t in beads["tinies"]), (name, beads["tinies"])
         assert beads["sizes"][1][0] > 0, (name, beads["sizes"])
+        # (tiny beads sitting on the fog swelling slowly with it, each its own rate (as thick as the fog is under it): in a minute or
+        # two (as felt here, about 0.4) small beads, no longer tiny (from then on as small ones are); never quicker than their rate)
+        swells, rate, spread = beads["swells"], beads["swell"]["rate"], beads["swell"]["spread"]
+        assert beads["swelled"] >= 20 and len(swells) >= 20, (name, beads["swelled"])
+        assert all(s["r0"] <= beads["tiny"] < s["vol"] ** (1 / 3) and 0 < s["fogged"] <= s["took"] + 1e-6 for s in swells), (name, swells)
+        rates = [(s["vol"] - s["r0"] ** 3) / s["soaked"] for s in swells]   # (water gained for each s on fog as thick as 1)
+        assert all(rate * spread[0] - 1e-9 <= k <= rate * spread[1] + 1e-9 for k in rates), (name, rates)
+        assert max(rates) - min(rates) > 0.4 * rate, (name, rates)   # (each its own)
+        took = sorted(s["took"] for s in swells)
+        assert 40 <= took[len(took) // 2] <= 120 and took[0] >= 8 and took[-1] <= 300, (name, took)
     # (down a trail, r 1.8-3.2, all at about TRACK (a rain bead's least there, about 25.6 px/s; r 3.2: 31), not their size's 2-20:
     # seen over all three pages' together, a page's own a second or two of them, too few for a mean, its pauses one way or another)
     px, s = (sum(beads["glass"]["trail"][k] for beads in got["humidity"].values()) for k in ("px", "s"))
@@ -1932,15 +1942,17 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # unwiped (its two faintest shades), no more: no droplet left in it)
     assert sum(t["look"] == [0, 0, 0, 0] for t in refog) >= 0.5 * len(refog), refog
     assert all(t["look"] in ([0, 0, 0, 0], [50, 60, 67, 56], [74, 85, 92, 69]) for t in refog), refog
-    # ... light (91 %): a thinner fog than heavy (100 %), the fog first all the same; fewer tiny beads than heavy (the user: slightly
-    # fewer tiny dots in light, more in heavy than light): its tiny ones condensing a little slower (0.95 of MISTING, heavy 1.35), so
-    # fewer still on the glass (200 frames, against heavy's 150 + 540), and far fewer running
+    # ... light (91 %): a thinner fog than heavy (100 %), the fog first all the same; its tiny ones condensing a little slower (0.95
+    # of MISTING, heavy 1.35) and swelling slower on its thinner fog (so more of them stay tiny a while: heavy's glass mostly small
+    # beads by then, a small one a whole particle of the budget, a tiny one a quarter); far fewer running
     light, heavy = got["humidityLight"], got["humidity"]["alone"]
     assert light["errors"] == [] and light["popped"] == 0 and light["stray"] == 0, light
     tinies = [t["n"] for t in light["tinies"]]   # (condensing on and on, more and more of them)
     assert tinies[1] < tinies[4] < tinies[8], light["tinies"]
     assert 0.1 < light["fog"]["haze"] < 0.7 * heavy["fog"]["haze"], (light["fog"], heavy["fog"])
-    assert 0 < light["showing"]["still"] < heavy["showing"]["still"], (light["showing"], heavy["showing"])
+    assert light["showing"]["still"] > 0, light["showing"]
+    per_s = {k: sorted((s["vol"] - s["r0"] ** 3) / s["fogged"] for s in b["swells"]) for k, b in (("light", light), ("heavy", heavy))}
+    assert len(per_s["light"]) >= 3 and per_s["light"][len(per_s["light"]) // 2] < 0.85 * per_s["heavy"][len(per_s["heavy"]) // 2], per_s
     assert light["showing"]["running"] < 0.5 * heavy["showing"]["running"], (light["showing"], heavy["showing"])
     # the fog dithered irregularly: no grid in its pixels (as gridPeak sees it: under 100; ordered, about 420)
     assert heavy["grid"] < 100, heavy["grid"]
@@ -1970,9 +1982,10 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert clears["left"] == {"cover": 0, "thickness": 0, "beads": 0} and clears["effects"] == ["wind"], clears
     assert clears["popped"] == 0 and clears["shrank"] > clears["start"], clears
     # (the condensed beads' trails going with the fog as it clears: none of them ever showing a clear-glass streak's look (film,
-    # grime, glint, droplet) while it clears, and once it has cleared nothing of them on the glass, many still listed (fresh still))
+    # grime, glint, droplet) while it clears, and once it has cleared nothing of them on the glass, many still listed (fresh still:
+    # about a hundred or more px of them, how many as the beads happened to run just before))
     assert clears["looks"] == 0, clears
-    assert clears["cleared"]["trails"] > 200 and clears["cleared"]["ink"] == 0 and clears["cleared"]["looks"] == 0, clears["cleared"]
+    assert clears["cleared"]["trails"] > 60 and clears["cleared"]["ink"] == 0 and clears["cleared"]["looks"] == 0, clears["cleared"]
     assert clears["end"]["ink"] == 0 and clears["end"]["looks"] == 0, clears["end"]
     middle = [g["frame"] for g in clears["gone"] if g["far"] < 0.4]
     edges = [g["frame"] for g in clears["gone"] if g["far"] > 0.7]
@@ -2084,6 +2097,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     left_on = sticking["watched"]["splashes"]
     assert sum(s["stay"] for s in sticking["stuck"]) - 8 <= len(left_on) <= sum(s["stay"] for s in sticking["stuck"]), (len(left_on), sticking["stuck"])
     assert all(d["moved"] == 0 and d["r"] < 0.85 for d in left_on) and sum(d["tiny"] for d in left_on) >= 0.9 * len(left_on), left_on
+    assert all(d["r"] == pytest.approx(0.55) for d in left_on if d["tiny"]), left_on   # (no fog to swell with: as left, tiny)
     ends = {end: [d for d in left_on if d["end"] == end] for end in ("faded", "taken", "on", "other")}
     assert len(ends["faded"]) >= 10 and len(ends["taken"]) >= 10, {end: len(d) for end, d in ends.items()}
     assert all(15 <= d["fadedAt"] <= 41 and d["glass"] != "fog" for d in ends["faded"]), ends["faded"]

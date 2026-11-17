@@ -1619,7 +1619,8 @@ const uvSeen = (page) => page.evaluate(() => new Promise((resolve) => {
 // on fog by size; how many pixels showed on the fog's canvas where no trail is any more, at the end; how many beads vanished (gone
 // at a radius of 1 or more, not faded, not merged into another, not run off the bottom: shrinking to nothing, a bead goes small); the
 // beads at the start and at the end; any tiny bead's place changing between two frames (not snapping then: crept); every 10th
-// frame, how many tiny beads (not drying away, not snapping) and the most there may be (cap); how many snaps; every frame, the most pixels drawn in the canvas's top two rows, and the still beads drawn
+// frame, how many tiny beads (not drying away, not snapping) and the most there may be (cap); how many snaps; the tiny beads grown
+// on the fog into small ones since the page opened (swelled: how many; swells: the latest, see the probe's; swell: the rate); every frame, the most pixels drawn in the canvas's top two rows, and the still beads drawn
 // whole (r 2 or more, under 1 px/s, not drying): of the canvas's pixels in their sprites, the alpha (0-255) of the bead's own drawn
 // there (the fog under it taken out), mean and most; the still beads (under 1 px/s) and the running ones, each's mean count; and of each bead's trail (through the fog, off another
 // trail) as it passed 20 px down, a pixel of it: how many px across around it were wiped clear (crisp) as it was (its own, not
@@ -1834,7 +1835,8 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
               fog: h.fog(), first: h.first, colours: h.colours(), aged: h.beads.filter((b) => !b.fading).map((b) => b.age),
               landed: h.landed, looks, crept, tinies, snaps: h.snaps - snaps, tiny: h.tiny,
               restarts: h.restarts - from.restarts, stretches: h.stretches - from.stretches, watched: watch && watch.result(),
-              since: { restarts: h.restarts, stretches: h.stretches } });   // (since the page opened: its beading up first too)
+              since: { restarts: h.restarts, stretches: h.stretches },   // (since the page opened: its beading up first too)
+              swelled: h.swelled, swells: h.swells, swell: h.swell });
   };
   __next(step);
 }), frames);

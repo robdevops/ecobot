@@ -1173,7 +1173,10 @@ const Sky = (() => {
   // Then the beads, condensing out of the fog only (where it has formed and shows, not in a trail wiped through it; more often where
   // it's thick, a little more toward the top), tiny (BORN: a px), fading in; a few a second (MISTING; the more humid, the more), on and
   // on, the glass more and more densely beaded, up to the most the budget allows (there, now and then the most isolated drying away
-  // quietly for another). Tiny ones never run (nor grow, nor shrink): each stays where it condensed till it snaps together with
+  // quietly for another). Tiny ones never run (nor shrink): each stays where it condensed, sitting on the fog swelling slowly with
+  // it (SWELL: its water adding as the fog there is thick, each bead its own rate, SWELLS; on clear glass or a trail, none: tiny it
+  // stays; the fog under it left as it is: a px drawing so little from it), in a minute or two a small bead (no longer tiny: as
+  // small ones are, below), or before that snaps together with
   // another close by (SNAP px between their edges or less, a pixel's gap, not only touching): the higher one pulled into the
   // lower quickly, quicker and quicker, merged there (their water adding up: two tiny, a small one) with a tiny jump (a size bigger
   // for POP s). A bead not running (under 1 px/s) and a tiny one close below it the same; a running one takes in any tiny one
@@ -1232,6 +1235,9 @@ const Sky = (() => {
     const GONE = 0.03;                 // a bead's water this little: gone (r about 0.3)
     const BORN = [0.5, 0.6];           // a bead condensing: its radius, tiny (a px: two of them together small, r 0.63 or more)
     const TINY = 0.61;                 // a condensed bead this small or less: tiny, never running (see snaps())
+    const SWELL = 0.0007;              // water a tiny bead gathers for each s it sits on fog (fog at 1), each bead SWELLS times that:
+    const SWELLS = [0.6, 1.6];         // ... from BORN (r 0.5-0.6) past TINY in about a minute or two on a heavy fog (as felt, about 0.4); none off it
+    const SOAK = 0.5;                  // s between a tiny bead's swellings (its glass looked at then: cheap)
     const DROPLET = BORN[0] + 0.05;    // a splash's droplet left on the glass: its radius (tiny)
     const RUN_R = 1.4;                 // a bead runs only this big or bigger (about sixteen tiny ones' water); smaller, it stays put
                                        // ... (growing, keeping or shrinking as its glass has it, snapping as tiny ones do)
@@ -1385,7 +1391,7 @@ const Sky = (() => {
     let dirty = null, painting = 0, fresh = 0, quiet = false;
     // (for the tests, as Sky.state() gives them)
     const seen = {merges: 0, merged: [], absorbed: [], left: [], ranOff: 0, shrunk: 0, faded: 0, largest: 0, born: [], first: null,
-                  dried: 0, landed: 0, rainMost: 0, snaps: 0, splashes: [], joined: 0, joins: [], restarts: 0, stretches: 0,
+                  dried: 0, landed: 0, rainMost: 0, snaps: 0, splashes: [], joined: 0, joins: [], restarts: 0, stretches: 0, swelled: 0, swells: [],
                   glass: [0, 1, 2].map(() => ({px: 0, s: 0, band: 0, gained: 0, lost: 0, moves: 0, all: 0, norm: 0, pace: 0})),   // (px, s, band: r 1.8-3.2)
                   sizes: [0, 1, 2, 3, 4].map(() => [0, 0])};                                     // (on fog: px and s, by size)
     const BANDS = [1, 1.6, 2.4, 3.2];
@@ -1767,6 +1773,22 @@ const Sky = (() => {
       }
       return best;
     }
+    // A tiny bead sitting s s: on fog, swelling with it (its own rate, as thick as the fog is under it); grown past TINY, a small bead
+    // (no longer still: sitting, gathering and snapping as small ones do, running once it's large enough). Elsewhere, as it was
+    function swells(b, s) {
+      const x = Math.round(b.x), y = Math.floor(b.y) + heightOf(b.r);
+      if ((b.g = glassAt(x, y)) !== FOGGY) return;
+      const f = feltOf(at(x, y));
+      if (b.swell === undefined) { b.swell = own(b, "swell").between(...SWELLS); b.r0 = b.r; b.soaked = 0; b.fogged = 0; }
+      b.vol += SWELL * b.swell * f * s;
+      b.r = Math.cbrt(b.vol);
+      b.soaked += f * s; b.fogged += s;
+      if (b.r > TINY) {
+        b.still = false;
+        seen.swelled++;
+        log(seen.swells, {id: b.id, kind: b.kind, r0: b.r0, vol: b.vol, took: b.shown, fogged: b.fogged, soaked: b.soaked}, 300);
+      }
+    }
     // A bead on the glass for dt s: paused, or running a px at most at a time (none skipped), each its glass, its water, its
     // wandering, what it meets, its trail
     function move(b, dt) {
@@ -1995,6 +2017,7 @@ const Sky = (() => {
             }
           } else if (b.state === "on") {
             if (!b.still) move(b, dt);
+            else if ((b.soak = (b.soak || 0) + dt) >= SOAK) { swells(b, b.soak); b.soak = 0; }
             if (b.drying !== undefined && b.state === "on" && b.r < RUN_R && (b.still ? (b.g = glassAt(Math.round(b.x), Math.floor(b.y) + heightOf(b.r))) : b.g) !== FOGGY
                 && (b.drying -= dt) <= 0) {
               dries(b);   // (a splash's droplet left on clear glass, nothing taking it, or two of them snapped together, too small to
@@ -2042,6 +2065,9 @@ const Sky = (() => {
                      // the fog now (the tiny ones' cap); and, test-only, tiny ones put on the glass at once, each {x, y: its middle,
                      // r}: their ids)
                      tiny: TINY, snap: SNAP, snaps: seen.snaps, cap,
+                     // (tiny beads grown on the fog into small ones: how many, and the latest, each {r0: as it began swelling, vol:
+                     // its water then, took: s on the glass, fogged: s of it on fog, soaked: the fog under it over those s}; and the rate)
+                     swelled: seen.swelled, swells: seen.swells.slice(), swell: {rate: SWELL, spread: SWELLS},
                      place: (list) => list.map(({x, y, r = 0.55}) => {
                        const b = numbered({id: ++made, kind: "fog", x, y: y - heightOf(r) / 2, r, k: 1, still: true}, undefined, "placed");
                        b.life = own(b, "life").between(...LIFE);
