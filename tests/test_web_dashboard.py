@@ -2352,7 +2352,7 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     assert joins and all(j["bottom"] >= j["surface"] for j in joins), joins
     assert all(j["trail"] == j["bottom"] and j["wet"] > 0 for j in joins if j["trail"] is not None) and any(j["trail"] for j in joins), joins
     # ... and nothing on the glass cut off in a straight line at its level: where a trough dips 3 px or more under it, the rows just
-    # under the level as drawn on as those just above (the haze, the heat, the rain's spray, the fog, all down to the wavy surface)
+    # under the level as drawn on as those just above (the haze, the heat, the fog, all down to the wavy surface)
     cut = linked["cut"]
     assert cut["n"] >= 100 and cut["at"] >= 0.8 * cut["above"], cut
     # ... its body dithered irregularly: no grid in its pixels (as gridPeak sees it, its bottom 32 rows: under 100; ordered, about 200)
