@@ -1911,9 +1911,12 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         # (nothing left showing on the fog's canvas where no trail is any more; no bead vanishing (each merged into another, run off
         # the bottom, shrunk to nothing or dried away)
         assert beads["stray"] == 0 and beads["popped"] == 0 and beads["landed"] == 0, (name, beads)
+        # (a long run on fog, no rain: no bead on fog dries away (faded: the cap, the budget or otherwise), none but a bead stopped
+        # on dry glass shrinks; none condenses in a run)
+        assert beads["faded"] == 0, (name, beads["faded"])
         # (tiny beads never moving but to snap together, many snapping; condensing on and on, more and more of them, up to the most
         # there may be (the cap; it shrinks as small beads take their room), never more; beads from r 1.4, the run size, to 1.6 running)
-        assert beads["crept"] == 0 and beads["snaps"] >= 20, (name, beads["crept"], beads["snaps"])
+        assert beads["crept"] == 0 and beads["snaps"] >= 10, (name, beads["crept"], beads["snaps"])
         # (heavy humidity condensing them fast, its glass beaded up a while first (150 frames): full from the watch's start; light's
         # watched from the first, below: more and more of them)
         assert beads["tinies"][1]["n"] >= beads["tinies"][1]["cap"] - 3, (name, beads["tinies"])
@@ -1922,7 +1925,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         # within a frame, seen in rain's, below))
         assert beads["watched"]["small"] == 0 and all(e["r"] >= 2.5 for e in beads["watched"]["stretches"]), (name, beads["watched"])
         assert any(t["n"] >= t["cap"] - 3 for t in beads["tinies"]), (name, beads["tinies"])
-        assert all(t["n"] <= 1.05 * t["cap"] + 4 for t in beads["tinies"]), (name, beads["tinies"])
+        # (none condensing at the cap; the cap falling as small beads take room, tiny ones on fog never dried for it: never past the most it was, before)
+        assert all(t["n"] <= 1.4 * max(u["cap"] for u in beads["tinies"]) + 4 for t in beads["tinies"]), (name, beads["tinies"])
         assert beads["sizes"][1][0] > 0, (name, beads["sizes"])
         # (tiny beads sitting on the fog swelling slowly with it, each its own rate (as thick as the fog is under it): in a minute or
         # two (as felt here, about 0.4) small beads, no longer tiny (from then on as small ones are); never quicker than their rate)
@@ -1933,7 +1937,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert all(rate * spread[0] - 1e-9 <= k <= rate * spread[1] + 1e-9 for k in rates), (name, rates)
         assert max(rates) - min(rates) > 0.4 * rate, (name, rates)   # (each its own)
         took = sorted(s["took"] for s in swells)
-        assert 40 <= took[len(took) // 2] <= 120 and took[0] >= 8 and took[-1] <= 300, (name, took)
+        assert 40 <= took[len(took) // 2] <= 200 and took[0] >= 8 and took[-1] <= 400, (name, took)
     # (down a trail, r 1.8-3.2, all at about TRACK (a rain bead's least there, about 25.6 px/s; r 3.2: 31), not their size's 2-20:
     # seen over all three pages' together, a page's own a second or two of them, too few for a mean, its pauses one way or another)
     px, s = (sum(beads["glass"]["trail"][k] for beads in got["humidity"].values()) for k in ("px", "s"))

@@ -1826,7 +1826,7 @@ const beadsWatched = (page, frames) => page.evaluate((frames) => new Promise((re
 const lookable = (page) => page.evaluate(`window.__trailLook = ${trailLook.toString()}; window.__beadWatch = ${beadWatch.toString()}`);
 const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((resolve) => {
   const last = new Map(), first = Sky.state().frames, count = Sky.state().particles.humidity, h0 = Sky.state().humidity;
-  const from = { ranOff: h0.ranOff, merges: h0.merges, glass: h0.glass, sizes: h0.sizes, restarts: h0.restarts, stretches: h0.stretches };
+  const from = { ranOff: h0.ranOff, faded: h0.faded, shrunk: h0.shrunk, merges: h0.merges, glass: h0.glass, sizes: h0.sizes, restarts: h0.restarts, stretches: h0.stretches };
   const watch = window.__beadWatch ? window.__beadWatch() : null;
   let up = 0, down = 0, wander = 0, offset = 0, samples = 0, lowest = 0, moved = 0, behind = 0, trails = 0, popped = 0, under = 0;
   let top = 0, inked = 0, alphas = 0, most = 0, looked = 0, still = 0, running = 0, counts = 0, crept = 0, tinies = [];
@@ -1892,7 +1892,7 @@ const humiditySeen = (page, frames) => page.evaluate((frames) => new Promise((re
     if (state.frames - first < frames) return __next(step);
     const glass = Object.fromEntries(Object.entries(h.glass).map(([k, o]) => [k, Object.fromEntries(Object.entries(o).map(([q, v]) => [q, v - from.glass[k][q]]))]));
     resolve({ runners: ran.size, up, down, wander, meander: h.meander, wandered: wandered.size, offset: offset / Math.max(samples, 1), lowest,
-              ranOff: h.ranOff - from.ranOff, under, behind: behind / Math.max(moved, 1), trails, popped, count: [count, Sky.state().particles.humidity],
+              ranOff: h.ranOff - from.ranOff, faded: h.faded - from.faded, shrunk: h.shrunk - from.shrunk, under, behind: behind / Math.max(moved, 1), trails, popped, count: [count, Sky.state().particles.humidity],
               born: h.born.filter((b) => b.kind === "fog"), merges: h.merges - from.merges, merged: h.merged, largest: h.largest, top,
               glass, sizes: h.sizes.map(([px, s], i) => [px - from.sizes[i][0], s - from.sizes[i][1]]), bands: h.bands, stray: h.stray(),
               look: { beads: looked, mean: alphas / Math.max(inked, 1), most },
