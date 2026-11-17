@@ -11,6 +11,8 @@
      colours and sizes (lib/gauge_look.py, sent with the data); redrawn on each /dashboard/events event, and every minute regardless.
      The tiles can be rearranged in the browser: dragged to reorder (a long press on a touch screen), hidden with their × or the
      remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server.
+     The units' switches beside the strip ("°C | °F", "km/h | mph"): the temperatures and the wind shown in those, converted here
+     (the server sends metric), kept with the preferences, metric again on "reset preferences".
      A click or tap on a gauge zooms its tile (title and gauge, no table) to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
      Behind everything, the weather as pixel art on one canvas (Sky): rain, haze, uv, humidity, wind, heat and ice, each while the
      readings call for it, its tile framed in red; "stop animation" at the bottom left stops and clears them for this page view only
@@ -93,6 +95,18 @@
   html.scroll { scroll-snap-type: y proximity; scroll-padding-top: var(--pad, 8px); }
   .tile { scroll-snap-align: start; }
   html.scroll:has(body.dragging) { scroll-snap-type: none; }   /* (a drag's own scrolling stops where it stops) */
+  /* The units' two switches ("°C | °F", "km/h | mph"), the active one lit: just left of the strip, as one with it; where the window is
+     too narrow for both side by side (a phone, a long strip), just above it at the right (placeCorner()) */
+  #units { position: fixed; right: 0; bottom: 0; z-index: 1; display: flex; align-items: center; gap: 4px; height: var(--status, 18px);
+    padding: 0 0 0 8px; font-size: 11px; color: var(--soft); background: rgba(20, 25, 29, 0.85); border-top-left-radius: 6px; white-space: nowrap; }
+  body[data-units="above"] #units { padding-right: 10px; }
+  body[data-units="beside"] #status { border-top-left-radius: 0; }
+  #units .switch { display: inline-flex; height: 14px; border: 1px solid #3A444C; border-radius: 4px; overflow: hidden; }
+  #units button { font: inherit; line-height: 12px; padding: 0 3px; margin: 0; border: 0; border-radius: 0; background: none; color: #8A9299; cursor: pointer; }
+  #units button + button { border-left: 1px solid #3A444C; }
+  #units button:hover { color: var(--ink); }
+  #units button[aria-pressed="true"] { background: #3A444C; color: var(--ink); cursor: default; }
+  #units button:focus-visible { outline: 1px solid var(--ink); outline-offset: -1px; }
   #status.lost { color: #F4A93B; }
   /* A device whose reading is over an hour old (showStatus): its name and time, or with none fresh the whole time, greyed out */
   #status .stale { color: #737B82; }
@@ -135,6 +149,7 @@
 <div id="message"></div>
 <div id="remove" aria-hidden="true">× remove</div>
 <div id="corner"><div id="motion"></div></div>
+<div id="units" role="group" aria-label="Units"></div>
 <div id="status">loading…</div>
 <script>
 "use strict";
@@ -3315,12 +3330,12 @@ const Sky = (() => {
   const WHEEL_IDLE_MS = 140;           // ... a trackpad's sideways swipe (wheel deltaX) is over when no wheel event came for this long
   const EASE = "cubic-bezier(0.25, 0.8, 0.3, 1)";   // (quick, then gently to rest)
   const grid = document.getElementById("grid"), statusLine = document.getElementById("status"), message = document.getElementById("message");
-  const corner = document.getElementById("corner"), motion = document.getElementById("motion");
+  const corner = document.getElementById("corner"), motion = document.getElementById("motion"), units = document.getElementById("units");
   // The weather behind the tiles allowed: MCP_DASHBOARD_ANIMATIONS off, the page is served with data-animations="off": never any, for
   // every viewer (Sky never started, no link)
   const ALLOWED = document.documentElement.dataset.animations !== "off";
   const removeZone = document.getElementById("remove");
-  let L = null, tiles = [], asOf = null, devices = {}, lost = false, opening = true, unavailable = "";
+  let L = null, raw = [], tiles = [], asOf = null, devices = {}, lost = false, opening = true, unavailable = "";
   const drawn = new Map();             // each tile drawn, by its id, to be moved in place (shown or hidden)
 
   // ---------- geometry (lib/gauges.py) ----------
@@ -3582,7 +3597,8 @@ const Sky = (() => {
                                                                      : `${t.title} ${figure(t.value, t.decimals)} ${t.unit}`.trim();
   let clips = 0;
 
-  function drawTile(tile) {
+  // (`from`: a tile drawn again in other units, {value, high} where its gauge and red hand were, in the new units: eased on from there)
+  function drawTile(tile, from) {
     const ink = (c) => c;   // (dimmed by the tile's opacity, L.fade over the card: the PNG's blend towards it)
     const box = document.createElement("section");
     box.className = "tile" + (tile.faded ? " faded" : "");
@@ -3606,8 +3622,9 @@ const Sky = (() => {
     close.setAttribute("aria-label", `Hide ${tile.title}`);
     close.addEventListener("click", () => hide(idOf(tile), close.matches(":focus-visible")));
     box.append(grip, close);
-    const drawnTile = {box, shape: shape(tile), value: shown(tile), frame: 0, high: tile.todayHigh ?? null, highFrame: 0};
+    const drawnTile = {box, tile, shape: shape(tile), value: shown(tile), frame: 0, high: tile.todayHigh ?? null, highFrame: 0};
     drawnTile.update = (t) => {   // the same gauge at a new reading: the needle, mercury or water moves there, the figures change;
+      drawnTile.tile = t;
       box.setAttribute("aria-label", label(t));   // a reading come or gone: the tile brightens or dims, the gauge from or to its floor
       box.classList.toggle("faded", !!t.faded);
       fill(t);
@@ -3643,10 +3660,13 @@ const Sky = (() => {
       drawnTile.highFrame = requestAnimationFrame(step);
     };
     if (opening) move(tile.floor, aim(tile.floor, shown(tile)), RISE_MS);   // the page just opened: every gauge rises from its floor to its reading
+    else if (from) { at(from.value); move(from.value, aim(from.value, shown(tile)), MOVE_MS); }   // (other units: on from where it was)
     else at(shown(tile));
     if (at.hand) {   // (its hand with it)
-      at.hand(tile.todayHigh === null ? null : opening ? tile.floor : tile.todayHigh);
+      const was = from && from.high !== null && tile.todayHigh !== null ? from.high : null;
+      at.hand(tile.todayHigh === null ? null : opening ? tile.floor : was ?? tile.todayHigh);
       if (opening) moveHand(tile.floor, tile.todayHigh, RISE_MS);
+      else if (was !== null) { drawnTile.high = was; moveHand(was, tile.todayHigh, MOVE_MS); }
     }
     return drawnTile;
   }
@@ -3753,31 +3773,98 @@ const Sky = (() => {
     if (target) target.focus();
   }
 
-  // What "reset preferences" puts back: every tile shown, in the default order (and whatever a later stage keeps)
-  const resettable = () => prefs.hidden.length > 0;
+  // What "reset preferences" puts back: every tile shown, in the default order, the units metric (and whatever a later stage keeps)
+  const resettable = () => prefs.hidden.length > 0 || Object.keys(UNITS).some((k) => unitOf(k) !== UNITS[k].metric);
   function reset() {
     Object.keys(prefs).forEach((k) => delete prefs[k]);
     Object.assign(prefs, blank());
     try { localStorage.removeItem(PREFS_KEY); } catch (e) { /* blocked: nothing was saved */ }
-    reflow(arrange);
+    tiles = raw.map(inUnits);
+    reflow(() => arrange(true));
+    showUnits();
     weather();
     showStatus();
   }
 
-  // The tile for this data, drawn (again if its shape changed)
-  function tileFor(t) {
+  // ---------- the units: the temperatures in °C or °F, the wind in km/h or mph, each browser its own (prefs.temperature, prefs.wind:
+  // kept only when not metric). The server sends metric; a tile in °C or km/h is converted here, its reading, scale, ticks, figures,
+  // unit and red hand, with the same decimals. Its scale's ends converted (a thermometer's 0 to 40 °C: 32 to 104 °F, its coloured bands
+  // as they were), its ticks every round step (10, 20, 50 ...) that gives no more of them than it had; a dial's (the wind's 0 to 100
+  // km/h) ending on its last tick (0 to 60 mph, every 10). The weather's marks (heat from 35 °C, leaves from 15 km/h) read the server's
+  // own figures: unchanged by these.
+  const UNITS = {temperature: {metric: "°C", other: "°F", name: "Temperature unit", convert: (c) => c * 9 / 5 + 32},
+                 wind: {metric: "km/h", other: "mph", name: "Wind speed unit", convert: (k) => k / 1.609344}};
+  const unitOf = (key) => prefs[key] === UNITS[key].other ? UNITS[key].other : UNITS[key].metric;
+  const STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+  function inUnits(t) {
+    const key = Object.keys(UNITS).find((k) => UNITS[k].metric === t.unit);
+    if (!key || unitOf(key) === UNITS[key].metric) return t;
+    const conv = UNITS[key].convert, c = (v) => typeof v === "number" ? conv(v) : v;
+    const dial = t.kind === "dial", most = t.ticks.length + (dial ? 1 : 0);
+    let low = conv(t.low), high = conv(t.high);
+    const step = STEPS.find((s) => Math.floor((high - low) / s + 1e-9) + 1 <= most) || STEPS[STEPS.length - 1];
+    if (dial) { low = Math.floor(low / step + 1e-9) * step; high = Math.max(low + step, Math.round(high / step) * step); }
+    const ticks = [];
+    for (let v = Math.ceil(low / step - 1e-9) * step; v <= high + 1e-9; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+    if (t.ticks.length > 1 && t.ticks[0] > t.ticks[t.ticks.length - 1]) ticks.reverse();   // (a thermometer's: high to low)
+    const rows = Object.fromEntries(Object.entries(t.rows || {}).map(([name, figures]) => [name, figures.map(c)]));
+    return {...t, unit: UNITS[key].other, value: c(t.value), floor: c(t.floor), low, high, ticks, rows,
+            ...("todayHigh" in t ? {todayHigh: c(t.todayHigh)} : {})};
+  }
+  // A unit chosen: saved, every tile it changes drawn again in it, its gauge (and red hand) eased on from where it was
+  function setUnit(key, unit) {
+    if (unitOf(key) === unit) return;
+    if (unit === UNITS[key].metric) delete prefs[key];
+    else prefs[key] = unit;
+    save();
+    tiles = raw.map(inUnits);
+    if (press && press.engaged) press.rearrange = true;
+    else arrange(true);
+    showUnits();
+    showStatus();
+  }
+  // The switches, made once (the keyboard's focus stays on them): a group each, its two units buttons, the one in use pressed
+  const switches = Object.entries(UNITS).map(([key, u]) => {
+    const group = Object.assign(document.createElement("span"), {className: `switch ${key}`});
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", u.name);
+    for (const unit of [u.metric, u.other]) {
+      const b = Object.assign(document.createElement("button"), {type: "button", textContent: unit});
+      b.dataset.unit = unit;
+      b.addEventListener("click", () => setUnit(key, unit));
+      group.appendChild(b);
+    }
+    return [key, group];
+  });
+  units.replaceChildren(...switches.map(([, g]) => g));
+  function showUnits() {
+    for (const [key, group] of switches)
+      for (const b of group.children) b.setAttribute("aria-pressed", String(b.dataset.unit === unitOf(key)));
+  }
+  showUnits();
+
+  // The tile for this data, drawn (again if its shape changed; `ease`: its units changed, its gauge eased on from where it was, the
+  // new box standing in for the old in a reflow)
+  function tileFor(t, ease) {
     let d = drawn.get(idOf(t));
     if (!d || d.shape !== shape(t)) {
-      d = drawTile(t);
+      const was = ease && d;
+      d = drawTile(t, was ? carried(was, t) : undefined);
+      if (was) d.box._was = was.box;
       drawn.set(idOf(t), d);
     }
     return d;
   }
+  // Where a drawn tile's gauge and red hand are, as readings of the tile `t` (the same place on its scale)
+  function carried(was, t) {
+    const at = (v) => v === null ? null : t.bounds.length ? shown(t) : t.low + share(was.tile, v) * (t.high - t.low);
+    return {value: at(was.value), high: at(was.high)};
+  }
 
   // The visible tiles on the page in their order (moved, not drawn again), and laid out
-  function arrange() {
+  function arrange(ease) {
     const byId = new Map(tiles.map((t) => [idOf(t), t]));
-    const boxes = visibleIds().map((id) => tileFor(byId.get(id)).box);
+    const boxes = visibleIds().map((id) => tileFor(byId.get(id), ease === true).box);
     if (boxes.length !== grid.children.length || boxes.some((b, i) => grid.children[i] !== b)) {
       const focused = grid.contains(document.activeElement) && document.activeElement;
       grid.replaceChildren(...boxes);   // (moving a node drops its focus: put back, if it's still here)
@@ -3798,7 +3885,8 @@ const Sky = (() => {
     change();
     const boxes = [...grid.children];
     for (const b of boxes) {
-      const was = before.get(b), now = b.getBoundingClientRect();
+      const was = before.get(b) || before.get(b._was), now = b.getBoundingClientRect();
+      delete b._was;
       b.style.transition = "none";
       if (!was) b.style.transform = "translate(4%, 4%) scale(0.92)";
       else if (Math.abs(was.left - now.left) + Math.abs(was.top - now.top) + Math.abs(was.width - now.width) > 0.5)
@@ -3850,12 +3938,20 @@ const Sky = (() => {
   }
   // The bottom left corner beside the strip, in the room it leaves; where that's too little for the corner at its narrowest (a phone),
   // just above the strip instead, across the window
+  // The units' switches too: beside the strip, on its left, where both fit across the window; else just above it, at the right (and
+  // the corner then beside them, if it fits there, else above them)
   function placeCorner() {
+    const W = window.innerWidth, strip = statusLine.offsetWidth, h = statusLine.offsetHeight;
+    units.style.right = "0";
+    const unitsW = units.offsetWidth, beside = strip + unitsW <= W;
+    document.body.dataset.units = beside ? "beside" : "above";
+    Object.assign(units.style, {right: beside ? `${strip}px` : "0", bottom: beside ? "0" : `${h}px`});
     corner.style.width = "min-content";
-    const need = corner.offsetWidth, room = window.innerWidth - statusLine.offsetWidth - 8;
+    const need = corner.offsetWidth, room = W - strip - (beside ? units.offsetWidth : 0) - 8, over = W - units.offsetWidth - 8;
     corner.style.width = "";
-    corner.style.bottom = need > room ? `${statusLine.offsetHeight}px` : "0";
-    corner.style.maxWidth = need > room ? "100vw" : `${room}px`;
+    const [bottom, most] = need <= room ? [0, `${room}px`] : beside ? [h, "100vw"] : need <= over ? [h, `${over}px`] : [2 * h, "100vw"];
+    corner.style.bottom = `${bottom}px`;
+    corner.style.maxWidth = most;
   }
   window.addEventListener("resize", placeCorner);
   new ResizeObserver(placeCorner).observe(statusLine);   // (the strip's text, its font, its height)
@@ -3863,9 +3959,10 @@ const Sky = (() => {
   function render(data) {
     L = data.look;
     document.documentElement.style.setProperty("--fade", L.fade);
-    tiles = data.tiles || [];
+    raw = data.tiles || [];   // (as the server sends them: metric; the weather's marks read these)
     const highs = data.today_highs || {};   // (the dials with a red hand: today's highest, null with none)
-    for (const t of tiles) if (t.title in highs) t.todayHigh = highs[t.title];
+    for (const t of raw) if (t.title in highs) t.todayHigh = highs[t.title];
+    tiles = raw.map(inUnits);   // (in this browser's units)
     asOf = data.as_of && data.as_of.time ? data.as_of.time : null;
     devices = data.devices || {};
     unavailable = data.unavailable || "";

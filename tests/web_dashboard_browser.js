@@ -439,8 +439,57 @@ async function arrangedHidden(browser, url, out, allErrors) {
   await page.getByText("reset preferences").click();
   await calm(page);
   out.reset = { titles: await titles(page), status: await statusText(page), stored: await stored(page) };
+  await unitsSwitched(page, out);
   allErrors.push(...errors);
   await context.close();
+}
+// The units' switches (on the "hidden" part's page, after its reset): the temperature tiles, the Wind and Humidity (untouched) as they
+// look (unitsLook) in metric, then °F (clicked), then mph too (the Wind's needle sampled each frame as it eases); reloaded; km/h
+// again from the keyboard; then "reset preferences" (metric again). Each: the looks, the switches' pressed state and the strip
+const UNIT_TILES = ["Temperature", "Dew point", "Feels like", "Wind", "Humidity"];
+const unitsLook = (page) => page.evaluate((names) => {
+  const look = {};
+  for (const t of document.querySelectorAll("#grid .tile")) {
+    const title = t.querySelector(".title").textContent;
+    if (!names.includes(title)) continue;
+    const high = t.querySelector("svg .high");
+    look[title] = { label: t.getAttribute("aria-label"), reading: t.querySelector("svg text.reading").textContent,
+                    words: [...t.querySelectorAll("svg text:not(.reading)")].map((e) => e.textContent),
+                    unit: t.querySelector(".unit").textContent, figures: [...t.querySelectorAll(".figure")].map((e) => e.textContent),
+                    hand: high ? high.getAttribute("transform") : null };
+  }
+  return { tiles: look, pressed: [...document.querySelectorAll("#units button")].map((b) => [b.textContent, b.getAttribute("aria-pressed")]),
+           status: document.getElementById("status").textContent, stored: JSON.parse(localStorage.getItem("ecobot.dashboard.v1")),
+           focused: document.activeElement && document.activeElement.closest("#units") ? document.activeElement.textContent : null };
+}, UNIT_TILES);
+async function unitsSwitched(page, out) {
+  const seen = out.units = {};
+  await calm(page, 2000);
+  seen.metric = await unitsLook(page);
+  await page.click("#units button[data-unit='°F']");
+  await calm(page, 2000);
+  seen.fahrenheit = await unitsLook(page);
+  const needle = () => page.evaluate(() => new Promise((resolve) => {   // (the Wind's needle each frame for 1.2 s: its points)
+    const all = [], start = performance.now();
+    const tile = () => [...document.querySelectorAll("#grid .tile")].find((t) => t.querySelector(".title").textContent === "Wind");
+    const step = (now) => { all.push(tile().querySelector("svg polygon").getAttribute("points")); if (now - start < 1200) requestAnimationFrame(step); else resolve(all); };
+    requestAnimationFrame(step);
+  }));
+  const [, frames] = await Promise.all([page.click("#units button[data-unit='mph']"), needle()]);
+  seen.needleSteps = new Set(frames).size;
+  await calm(page, 2000);
+  seen.mph = await unitsLook(page);
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => document.querySelectorAll(".tile").length > 0 && /last reading/.test(document.getElementById("status").textContent));
+  await calm(page, 2000);
+  seen.reloaded = await unitsLook(page);
+  await page.focus("#units button[data-unit='km/h']");   // the keyboard: km/h again (Enter)
+  await page.keyboard.press("Enter");
+  await calm(page, 2000);
+  seen.keyboard = await unitsLook(page);
+  await page.getByText("reset preferences").click();
+  await calm(page, 2000);
+  seen.reset = await unitsLook(page);
 }
 async function arrangedFromPrefs(browser, url, out, allErrors) {
   const { context, page, errors } = await open(browser, url, 1024, 768, { risen: true });
@@ -1182,6 +1231,8 @@ async function weatherPage(browser, url, options = {}) {
     if ("gust" in readings) data.gust = readings.gust;              // (the gust now, km/h)
     if (readings.asOf) data.as_of = { ...data.as_of, time: readings.asOf };   // (a new reading: its time)
     if (readings.high) Object.assign(data.today_highs, readings.high);   // (the red hands': today's highest)
+    for (const t of data.tiles) if (readings.scales && t.title in readings.scales) Object.assign(t, readings.scales[t.title]);   // (as the server
+                                                                                                    // widens a thermometer's scale)
     await route.fulfill({ response, json: data });
   });
   const page = await context.newPage();
@@ -2055,6 +2106,27 @@ const WEATHER = {
     for (const t of [35, 39, 43, 48]) { await reads({ Temperature: t }); out.heatStrength.push((await weatherSeen(page)).levels.heat); }
     out.iceDepth = [];
     for (const t of [-0.5, -5]) { await reads({ Temperature: t }); out.iceDepth.push((await weatherSeen(page)).levels.ice); }
+    // in °F and mph (the switches): the marks the same, of the readings in °C and km/h; the thermometer's scale widened as in °C
+    await page.click("#units button[data-unit='°F']");
+    await page.click("#units button[data-unit='mph']");
+    out.unitsMarks = {};
+    for (const name of ["heat", "wind", "ice"]) {
+      const [below, at] = marks[name];
+      await reads(below);
+      const short = await weatherSeen(page);
+      await reads(at);
+      out.unitsMarks[name] = { below: short, at: await weatherSeen(page) };
+    }
+    const temperature = () => page.evaluate(() => {
+      const t = [...document.querySelectorAll("#grid .tile")].find((e) => e.querySelector(".title").textContent === "Temperature");
+      return [t.getAttribute("aria-label"), [...t.querySelectorAll("svg text:not(.reading)")].map((e) => e.textContent)];
+    });
+    const widened = (low, high) => ({ low, high, ticks: Array.from({ length: (high - low) / 10 + 1 }, (_, i) => high - 10 * i),
+                                      colours: Array((high - low) / 10).fill("#888888") });
+    await reads({ Temperature: -5, scales: { Temperature: widened(-10, 40) } });
+    out.widened = await temperature();
+    await reads({ Temperature: 43, scales: { Temperature: widened(0, 50) } });
+    out.widenedHot = await temperature();
     out.errors = errors;
     await context.close();
   },

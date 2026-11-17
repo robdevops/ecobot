@@ -942,6 +942,57 @@ def moved(titles, title, after):
     return out
 
 
+TEMPERATURES = ("Temperature", "Dew point", "Feels like")   # (the fixture's tiles in °C; Indoor temperature's the same, by its unit)
+
+
+def in_units(figure: str, convert, decimals: int) -> str:
+    """A figure as the page shows it in the other unit: converted, the same decimals ("-" and "" as they are)."""
+    return figure if figure in ("-", "") else f"{convert(float(figure)):.{decimals}f}"
+
+
+def units_switched(seen: dict):
+    """The units' switches (unitsSwitched's): °F converts every temperature tile (its reading, scale, ticks, figures and unit), mph the
+    Wind's (its reading, dial, ticks, figures, unit and gust hand), the same decimals, the rest untouched; the gauges eased there;
+    kept across a reload; km/h again from the keyboard; "reset preferences" metric again, nothing kept."""
+    f, mph = (lambda c: c * 9 / 5 + 32), (lambda k: k / 1.609344)
+    metric, fahrenheit, both = seen["metric"], seen["fahrenheit"], seen["mph"]
+    switch = lambda t, w: [["°C", str(not t).lower()], ["°F", str(t).lower()], ["km/h", str(not w).lower()], ["mph", str(w).lower()]]
+    assert metric["pressed"] == switch(False, False) and metric["status"] == "last reading 18:42" and metric["stored"] is None, metric
+    for title in TEMPERATURES:
+        was, now = metric["tiles"][title], fahrenheit["tiles"][title]
+        number, unit = was["reading"].split()
+        assert unit == "°C" and now["reading"] == f"{f(float(number)):.1f} °F" and now["label"] == f"{title} {now['reading']}", (title, now)
+        assert was["words"] == ["40", "30", "20", "10", "0"] and now["words"] == ["100", "80", "60", "40"], (title, now)   # (0-40 °C: 32-104 °F)
+        assert was["unit"] == "°C" and now["unit"] == "°F", now
+        assert now["figures"] == [in_units(x, f, 1) for x in was["figures"]] and len(now["figures"]) == 6, (title, was, now)
+    assert fahrenheit["tiles"]["Temperature"]["reading"] == "55.2 °F"                     # (spot values: 12.9 °C, its Daily Max 20.0 °C)
+    assert fahrenheit["tiles"]["Temperature"]["figures"][0] == "68.0"
+    assert fahrenheit["tiles"]["Wind"] == metric["tiles"]["Wind"] and fahrenheit["tiles"]["Humidity"] == metric["tiles"]["Humidity"]
+    assert fahrenheit["pressed"] == switch(True, False) and fahrenheit["focused"] == "°F", fahrenheit
+    assert fahrenheit["status"] == "reset preferences · last reading 18:42" and fahrenheit["stored"] == {"order": [], "hidden": [], "temperature": "°F"}
+    # mph: the Wind's reading, dial (0-60 mph, every 10), figures, unit and gust hand; the temperatures still °F, Humidity untouched
+    was, now = metric["tiles"]["Wind"], both["tiles"]["Wind"]
+    assert was["words"] == ["0", "20", "40", "60", "80", "100", "km/h"] and now["words"] == ["0", "10", "20", "30", "40", "50", "60", "mph"], now
+    assert now["reading"] == in_units(was["reading"], mph, 0) and now["unit"] == "mph" and now["label"] == f"Wind {now['reading']} mph", now
+    assert now["figures"] == [in_units(x, mph, 0) for x in was["figures"]] and (was["figures"][1], now["figures"][1]) == ("28", "17"), (was, now)
+    share = mph(28) / 60   # (the red hand: today's highest gust, its Daily Gust)
+    assert now["hand"] == f"rotate({-(look()['start'] - look()['sweep'] * share):.2f} 240 203)" != was["hand"], (was, now)
+    assert seen["needleSteps"] > 3, seen["needleSteps"]                                   # (eased there, frame by frame)
+    assert {t: both["tiles"][t] for t in TEMPERATURES} == {t: fahrenheit["tiles"][t] for t in TEMPERATURES}
+    assert both["tiles"]["Humidity"] == metric["tiles"]["Humidity"] and both["pressed"] == switch(True, True)
+    assert both["stored"] == {"order": [], "hidden": [], "temperature": "°F", "wind": "mph"}, both["stored"]
+    # reloaded: as it was left
+    assert seen["reloaded"]["tiles"] == both["tiles"] and seen["reloaded"]["pressed"] == switch(True, True), seen["reloaded"]
+    # km/h from the keyboard (Enter): the Wind metric again, the temperatures still °F, the focus kept on the switch
+    keyboard = seen["keyboard"]
+    assert keyboard["tiles"]["Wind"] == metric["tiles"]["Wind"] and keyboard["pressed"] == switch(True, False) and keyboard["focused"] == "km/h"
+    assert {t: keyboard["tiles"][t] for t in TEMPERATURES} == {t: fahrenheit["tiles"][t] for t in TEMPERATURES}
+    assert keyboard["stored"] == {"order": [], "hidden": [], "temperature": "°F"}
+    # "reset preferences": metric, nothing kept, the link gone
+    assert seen["reset"]["tiles"] == metric["tiles"] and seen["reset"]["pressed"] == switch(False, False), seen["reset"]
+    assert seen["reset"]["stored"] is None and seen["reset"]["status"] == "last reading 18:42"
+
+
 @needs_browser
 async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_kept_across_reloads_and_reset(server, station):
     got = await run_page(server, "--arrange", weather=False, parts=("dragged", "hidden", "prefs", "stale"))
@@ -968,6 +1019,7 @@ async def test_tiles_are_dragged_to_reorder_hidden_by_the_x_or_the_remove_zone_k
     assert got["reloaded"] == {"titles": shown, "status": "reset preferences · last reading 18:42"}
     # reset: every tile, in the default order, nothing kept, no link
     assert got["reset"] == {"titles": default, "status": "last reading 18:42", "stored": None}
+    units_switched(got["units"])
     # unreadable preferences: the defaults; a tile new to the saved order in its usual place (Rain, after Atmospheric pressure; the
     # wind's direction, after Wind); an
     # absent tile's place and a later stage's keys kept
@@ -1322,6 +1374,11 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
     assert got["humidityStrength"] == pytest.approx([0.1, 0.5, 1])              # heavier from 90 % to 100 %
     assert got["iceDepth"] == [0.5, 5]                                           # further in the colder
     assert got["heatStrength"] == pytest.approx([0.3, 0.65, 1, 1])               # stronger from 35 °C to 43 °C
+    # shown in °F and mph: the same marks, of the readings in °C and km/h (heat from 35 °C, leaves above 15 km/h, ice below 0 °C)
+    assert got["unitsMarks"] == {k: got["marks"][k] for k in ("heat", "wind", "ice")}, got["unitsMarks"]
+    # the thermometer's scale widened as the server widens it in °C (-10 to 40 °C: 14 to 104 °F; 0 to 50 °C: 32 to 122 °F)
+    assert got["widened"] == ["Temperature 23.0 °F", ["100", "80", "60", "40", "20"]], got["widened"]
+    assert got["widenedHot"] == ["Temperature 109.4 °F", ["120", "100", "80", "60", "40"]], got["widenedHot"]
 
 
 @needs_browser
