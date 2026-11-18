@@ -255,7 +255,9 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   px run by any, what they'd have run on fog in that time, and at that glass's own mean speed}}, restarts: the biggest beads (STRETCH_R
 //   up) setting off again after a pause, stretches: those of them elongating as they did, sizes: [px, s] on fog by size (under bands[0], ..., the last and
 //   over), bands, swept: the trail pixels the latest frame's sweep looked at again (sweepMost at most), physics: {speed(r, glass):
-//   px/s (0 under run), after(r, glass, px, s, fog): its radius after (0: gone), gone, run: the size a bead runs from}, hasten(k): the
+//   px/s (0 under run), after(r, glass, px, s, fog): its radius after (0: gone), gone, run: the size a bead runs from at 90 degrees,
+//   critical(s): r_crit at the steepness s}, critical: r_crit now (RUN_R with no sensor, null pooled), each bead's held (under r_crit), lean (0-1) and
+//   leanDx, leanDy (its shift toward downhill, px), hasten(k): the
 //   trails' time k times as fast (test-only), clock(): the trails', wetAt(x, y): how fresh a trail is there (1 just left, 0 none),
 //   lifeAt(x, y): its life, glassAt(x, y): "dry", "trail" or "fog", fogAt(x, y): [its fog as shown, its fog not wiped] (0-1),
 //   shownAt(x, y): what the fog's canvas shows there [r, g, b, alpha], trailOf(id): a bead's trail as it looks now, its latest rows (paused: one it had paused at, a blob)
@@ -384,7 +386,7 @@ const Sky = (() => {
   // edge is downhill by its dominant axis (0 bottom, 1 top, 2 right, 3 left), epoch: counts its changes; bx, by: the sensor's
   // gravity alone (the unit pull in the screen's terms, without the wind), push: the wind's push now (p times dir.f times the
   // steepness factor: its horizontal part, in units of the pull), p: the push ratio (pushOf, 0-0.6, no sign)}
-  const grav = {x: 0, y: 1, px: 1, py: -0, tilted: false, mode: 0, epoch: 0, readings: 0, raw: null, flat: true, pool: false, steep: 1,
+  const grav = {x: 0, y: 1, px: 1, py: -0, tilted: false, mode: 0, epoch: 0, readings: 0, raw: null, flat: true, pool: false, steep: 1, sin: 1,
                 bx: 0, by: 1, push: 0, p: 0};
   // Pooling: on a device whose sensor has sent readings (grav.raw), with the screen (nearly) flat, face up or down (grav.pool, or its
   // steepness factor, grav.steep, smoothed down to nothing): no downhill, the humidity's beads stay where they are and merge. No sensor
@@ -1796,7 +1798,7 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
   // Every bead, condensed or rain, one set of rules (a merged one too):
   //   The glass under it (the row just below it): FOG (fog shown there: FOG_AT or more), a TRAIL (a streak a bead has left: wiped
   //   through the fog, or wet on clear glass) or DRY (clear glass, no trail).
-  //   Its speed: none under RUN_R; from there (for r of 2.8 and above its water, r³; below that x^5) times SPEED times the glass's PACE (dry slowest, fog quicker, a trail
+  //   Its speed: none under RUN_R (on a device with a tilt sensor, under r_crit(s) = RUN_R / sqrt(s): see LEAN_FROM; a bead from 0.6 of that leans toward downhill); from there (for r of 2.8 and above its water, r³; below that x^5) times SPEED times the glass's PACE (dry slowest, fog quicker, a trail
   //   fastest: water on water); so it rises gradually with its size (tiny and small ones not at all, large ones creeping extremely slowly at
   //   first, larger ones faster and faster: no fastest); on a trail, never slower than a freshly landed rain bead (rainR's least (2.6))
   //   would go there, however small (from RUN_R: a condensed one as quick as a rain one down a track), each
@@ -1855,6 +1857,16 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
     const DROPLET = BORN[0] + 0.05;    // a splash's droplet left on the glass: its radius (tiny)
     const RUN_R = 1.4;                 // a bead runs only this big or bigger (about sixteen tiny ones' water); smaller, it stays put
                                        // ... (growing, keeping or shrinking as its glass has it, snapping as tiny ones do)
+    // Giving way (device tilt): a drop sticks until gravity along the glass beats the surface tension pinning it: the pull grows with its
+    // volume (r³), the pinning with its width (r), so the critical steepness falls with the size, sin(alpha_crit) ~ 1 / r². With s the
+    // steepness (grav.sin, the in-plane share of gravity: 1 upright), a bead runs only from r_crit(s) = RUN_R / sqrt(s) (RUN_R at 90
+    // degrees; no sensor: RUN_R always). A bead from LEAN_FROM of that radius leans toward downhill as it nears it (up to LEAN_PX px,
+    // and LEAN_STRETCH longer along it from r 2), and lets go with the restart stretch; a running one that falls under r_crit (the
+    // device levelled) brakes to a stop over BRAKE_S s
+    const LEAN_FROM = 0.6, LEAN_PX = 1, LEAN_STRETCH = 0.15, LEAN_R = 2, LEAN_LEAST = 0.05, LEAN_S = 0.15, BRAKE_S = 0.3;
+    const critOf = (s) => RUN_R / Math.sqrt(Math.max(s, 0.05));
+    const critR = () => (grav.raw === null ? RUN_R : critOf(grav.sin));
+    const leanFor = (r, rc) => { const t = clamp((r / rc - LEAN_FROM) / (1 - LEAN_FROM), 0, 1); return r < rc ? t * t * (3 - 2 * t) : 0; };
     const SNAP = 1;                    // px between two beads' edges or less (a pixel's gap), one of them tiny: they snap together
     const SNAP_V = [6, 30, 120];       // the one pulled in: px/s to start, at most, and how fast it gets quicker (px/s²): a px or two
                                        // ... in a few frames
@@ -1955,9 +1967,9 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
     // a column just right of its middle taken out (never its glint or rim), keeping its water; the same plump rounded lower edge, no
     // point. Quantized to whole rows and columns, each kept (a few levels a size)
     const stretched = new Map();
-    function elongated(r, s) {
+    function elongated(r, s, least = 0) {   // (least: from this much (0-1) longer, at least one row)
       const base = sprite(r), h = base.height, w = base.width, f = 1 + STRETCH * s;
-      const rows = Math.round((f - 1) * h);
+      const rows = Math.max(f - 1 >= least && least > 0 ? 1 : 0, Math.round((f - 1) * h));
       if (rows <= 0) return base;
       const cols = Math.min(w - 3, Math.round(w - w * h / (h + rows))), key = `${w}x${h}+${rows}-${cols}`;
       if (!stretched.has(key)) {
@@ -2401,7 +2413,7 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
     // quickly, then merged (as two that touch); a running bead, any tiny one beside or above it as it passes. The tiny ones looked up
     // in a grid (GRID px cells), made afresh each frame
     const cell = (x, y) => Math.floor(x / GRID) + Math.floor(y / GRID) * 4096;
-    const slow = (b) => b.still || (b.state === "on" && (pooled() || speedFor(b.r, b.g) < 1));
+    const slow = (b) => b.still || (b.state === "on" && (pooled() || speedFor(b.r, b.g) < 1 || (grav.raw !== null && b.r < critR() && !(b.brake > 0))));
     const near = (b, reach, each) => {   // (every tiny one within about `reach` px of b's centre, each in turn)
       const cy = centre(b), ys = [Math.floor((cy - reach) / GRID), Math.floor((cy + reach) / GRID)];
       for (let gy = ys[0]; gy <= ys[1]; gy++) for (let gx = Math.floor((b.x - reach) / GRID); gx <= Math.floor((b.x + reach) / GRID); gx++) {
@@ -2492,24 +2504,33 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
       const pool = pooled();
       if (pool) { b.pooled = true; rest(b); }   // (pooled: not running: its bounds and trail begun afresh where it is, for when it runs again)
       else if (b.pooled) { b.pooled = false; rest(b); }
+      const tilting = grav.raw !== null && !pool;   // (a sensor's reading, not pooled: a bead held by the glass's pinning if under r_crit)
       while (time > 1e-6 && !b.gone) {
         if (b.epoch !== grav.epoch) turned(b);
         const [cx, below] = aheadOf(b), g = glassAt(cx, below);
+        const held = tilting && b.r < critR(), holding = held && b.r >= RUN_R;   // (holding: a bead of running size that the glass holds)
+        if (!held) b.brake = 1;
         const f = g === FOGGY ? feltOf(at(cx, below)) : 0;
         b.g = g;
-        const sits = pool || speedFor(b.r, g) <= 0, ran = b.pause <= 0 && !sits;   // (sits: under RUN_R, staying put the while)
+        const sits = pool || (held && !(b.brake > 0)) || speedFor(b.r, g) <= 0, ran = b.pause <= 0 && !sits;   // (sits: under r_crit (RUN_R), staying put the while)
+        if (holding && sits) b.hold = true;   // (a bead of running size held back: let go with a stretch when it gives way)
         if (b.pause > 0 && b.r >= STEADY_R && g !== DRY) b.pause = 0;   // (big, on fog or a trail: no pausing)
         if (b.r >= STEADY_R && !sits) seen.big[GLASSES[g]][b.pause > 0 ? 1 : 0] += b.pause > 0 ? Math.min(b.pause, time) : time;   // (for the tests)
         if (sits) { b.v = 0; account(b, g, f, 0, time); time = 0; }
         else if (b.pause > 0) { const p = Math.min(b.pause, time); b.pause -= p; time -= p; b.v = 0; b.rested = (b.rested || 0) + p; account(b, g, f, 0, p); b.waited = true; }
         else {
+          if (b.hold && !held) {   // (giving way: the biggest let go with the restart stretch, from as far as it leaned)
+            b.hold = false;
+            if (b.r >= STRETCH_R) { seen.restarts++; seen.stretches++; b.surge = 0; b.st = Math.min(1, (b.lean || 0) * LEAN_STRETCH / STRETCH); }
+          }
           if (b.waited) {   // (setting off again after a pause: the biggest now and then elongating a little as they go)
             b.waited = false;
             if (b.r >= STRETCH_R) seen.restarts++;
             if (b.r >= STRETCH_R && own(b, "stretch")() < STRETCHES) { b.surge = 0; b.st = b.st || 0; seen.stretches++; }
           }
-          const v = speedFor(b.r, g) * b.base * grav.steep, dy = Math.min(v * time, 1, b.run + 1e-3), s = Math.min(time, dy / v);
+          const v = speedFor(b.r, g) * b.base * grav.steep * (held ? b.brake : 1), dy = Math.min(v * time, 1, b.run + 1e-3), s = Math.min(time, dy / v);
           time -= s;
+          if (held) b.brake = Math.max(0, b.brake - s / BRAKE_S);   // (under r_crit: braking to a stop)
           b.v = v;
           account(b, g, f, dy, s);
           b.y += grav.y * dy;   // (along downhill: straight down, as ever, unless the phone is tilted)
@@ -2537,12 +2558,12 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
         if (b.vol <= GONE) { b.gone = true; seen.shrunk++; return; }   // (shrunk to nothing)
         // Whatever it touches, merged: into the one with more water (the tiny ones looked up in their grid); paused, it's left to
         // those that run into it (only growing a little the while)
-        if (ran || pool) for (const o of others) if (!o.gone && o.state === "on" && touching(b, o)) {
+        if (ran || pool || holding) for (const o of others) if (!o.gone && o.state === "on" && touching(b, o)) {
           if (o.vol > b.vol) { merge(o, b); return; }
           merge(b, o);
         }
         let into = null;
-        if (ran || pool) near(b, b.r + 2, (o) => {
+        if (ran || pool || holding) near(b, b.r + 2, (o) => {
           if (!touching(b, o)) return;
           if (o.vol > b.vol) { into = o; return false; }
           merge(b, o);
@@ -2605,6 +2626,9 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
         if (top >= H || (!pool && grav.tilted && offEdge(b, top))) { b.gone = true; seen.ranOff++; log(seen.left, b.id, 300); return; }   // (run off its downhill edge)
         if (drowned(b)) return;
       }
+      const rc = critR(), lean = tilting && b.r < rc ? leanFor(b.r, rc) : 0;
+      b.pinned = tilting && b.r < rc;
+      b.lean = lean > (b.lean || 0) ? Math.min(lean, (b.lean || 0) + dt / LEAN_S) : lean;   // (leaning in over LEAN_S s, letting go at once)
       stretching(b, dt, b.v > 0 && grav.mode < 2);   // (elongating down or up its path: not when it runs sideways)
     }
     // Downhill changed (the phone tilted): a bead's bounds across its way kept from where it is now; its trail begun afresh if the edge it
@@ -2881,7 +2905,8 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
                                  if (!px) change(b, GLASSES.indexOf(g), f, 0, s);
                                  return b.vol > GONE ? b.r : 0;
                                },
-                               gone: GONE, run: RUN_R},
+                               gone: GONE, run: RUN_R, critical: critOf},
+                     critical: grav.raw === null ? RUN_R : pooled() ? null : critR(),   // (r_crit now: null pooled)
                      hasten: (k) => { hasten = k; },   // (test-only: the trails' time this many times as fast)
                      // (the tiny beads: how small, how close they snap together, how many snaps so far, the most beads condensed in
                      // the fog now (the tiny ones' cap); and, test-only, tiny ones put on the glass at once, each {x, y: its middle,
@@ -2956,6 +2981,7 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
                                age: b.shown, behind: top < b.y0 + 4 || !!trail, trail: trail || null, tiny: !!b.still, snapping: b.state === "snap",
                                angle: b.state === "on" && b.v > 0 ? Math.atan2(grav.x, grav.y) * DEG : null,   // (its run's way: degrees off straight down, positive rightward)
                                stretch: b.state === "on" && !squashOf(b) && !gulpOf(b) ? stretchOf(b) : 0, impact: b.impact === undefined ? null : b.impact,
+                               held: !!b.pinned, lean: b.state === "on" ? b.lean || 0 : 0, leanDx: (b.lean || 0) * LEAN_PX * grav.x, leanDy: (b.lean || 0) * LEAN_PX * grav.y,
                                squash: b.state === "on" ? squashOf(b) : 0, gulp: b.state === "on" ? gulpOf(b) : 0, thrown: b.thrown || null};
                      })}),
       draw(g, alpha) {
@@ -2983,9 +3009,11 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
           const q = b.state !== "on" ? 0 : squashOf(b), st = b.pop > 0 || b.state !== "on" || q ? 0 : stretchOf(b);   // (squashed: not
                                                                                                                       // its pop as well)
           const round = sprite(b.r), sw = b.state === "on" && !q && !(b.pop > 0) ? gulpOf(b) : 0;
-          const pic = q ? squashed(b.r, q) : b.pop > 0 ? popped(b.r) : sw > 0 ? swelled(b.r, sw) : st > 0 ? elongated(b.r, st) : round;
+          const ln = b.state === "on" && b.lean > 0 ? b.lean : 0;   // (leaning toward downhill before giving way: shifted, from r 2 longer along it too)
+          const ls = ln > 0 && b.r >= LEAN_R && grav.mode < 2 && !q && !(b.pop > 0) && !(sw > 0) ? ln * LEAN_STRETCH / STRETCH : 0;
+          const pic = q ? squashed(b.r, q) : b.pop > 0 ? popped(b.r) : sw > 0 ? swelled(b.r, sw) : Math.max(st, ls) > 0 ? elongated(b.r, Math.max(st, ls), ls > st ? LEAN_LEAST : 0) : round;
           const a = (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR);
-          const left = Math.round(b.x) - (pic.width >> 1), top = (b.state === "fade" ? Math.round(b.y) : Math.floor(b.y)) - (q ? Math.round((pic.height - round.height) / 2) : pic.height - round.height);   // (elongated: its lower
+          const left = Math.round(b.x) - (pic.width >> 1) + Math.round(ln * LEAN_PX * grav.x), top = Math.round(ln * LEAN_PX * grav.y) + (b.state === "fade" ? Math.round(b.y) : Math.floor(b.y)) - (q ? Math.round((pic.height - round.height) / 2) : pic.height - round.height);   // (elongated: its lower
                                                                                                     // edge where it is; squashed: its middle)
           g.globalAlpha = a0 * a;
           g.drawImage(pic, left, top);
@@ -4263,7 +4291,9 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
   // doesn't matter, only their ratio), is a speed factor, grav.steep (0-1, smoothed, also by TAU): 0 under POOL_IN (5 degrees: the
   // water pools: nothing runs; kept till POOL_OUT, 7 degrees, so a wobbling tablet doesn't flicker), rising smoothly (smoothstep) to 1
   // at STEEP_FULL (40 degrees; the thresholds are on sin(theta), so the ramp's midpoint is at 21.4 degrees, not 22.5), 1 beyond; sin being symmetric about 90, it falls again from 140 degrees to 0 at 180 (face down: flat
-  // again). A reading of nothing (all zero) is ignored. Ignored while nothing is drawn (the animations off, low or stopped)
+  // again). The steepness itself is also kept, smoothed by TAU (the first reading at once), as grav.sin: the humidity's beads run only from the
+  // radius r_crit = RUN_R / sqrt(sin) (the pinning: gravity's pull grows with a bead's volume, r^3, the surface tension holding it with
+  // its width, r; no sensor: RUN_R). A reading of nothing (all zero) is ignored. Ignored while nothing is drawn (the animations off, low or stopped)
   const POOL_IN = Math.sin(5 * Math.PI / 180), POOL_OUT = Math.sin(7 * Math.PI / 180), STEEP_FULL = Math.sin(40 * Math.PI / 180);
   const TAU = 0.25, SNAP_DEG = 4, STEP_DEG = 1.5, DEG = 180 / Math.PI;
   const smooth = {x: 0, y: 1};
@@ -4273,6 +4303,7 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
     if (!(total > 1e-6)) return false;
     const steep = Math.min(1, m / total);
     grav.readings++;
+    grav.sin = grav.raw === null || dt === Infinity ? steep : grav.sin + (steep - grav.sin) * (1 - Math.exp(-Math.max(dt, 0) / TAU));   // (the pinning's steepness: sin(theta) itself, smoothed, the first reading at once)
     grav.raw = [sx, sy, sz];
     grav.pool = steep < (grav.pool ? POOL_OUT : POOL_IN);
     const t = clamp((steep - POOL_IN) / (STEEP_FULL - POOL_IN), 0, 1), k = dt === Infinity ? 1 : 1 - Math.exp(-Math.max(dt, 0) / TAU);
@@ -4318,7 +4349,7 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
   function level() {   // straight down again (the sensor gone, the animations stopped, or the test's)
     smooth.x = 0; smooth.y = 1;
     if (grav.tilted || grav.raw) Object.assign(grav, {x: 0, y: 1, px: 1, py: -0, tilted: false, mode: 0, epoch: grav.epoch + 1, raw: null, flat: true});
-    grav.pool = false; grav.steep = 1; grav.bx = 0; grav.by = 1;
+    grav.pool = false; grav.steep = 1; grav.sin = 1; grav.bx = 0; grav.by = 1;
     aim();   // (the wind's push alone, if it blows)
   }
 
@@ -4371,7 +4402,7 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
                               levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach(),
                               wind: effects.wind.probe(), rain: effects.rain.probe(), haze: effects.haze.probe(),
                               tilt: {x: grav.x, y: grav.y, angle: Math.atan2(grav.x, grav.y) * DEG, tilted: grav.tilted, mode: grav.mode,
-                                     readings: grav.readings, raw: grav.raw && grav.raw.slice(), flat: grav.flat, pool: grav.pool, steep: grav.steep, epoch: grav.epoch},
+                                     readings: grav.readings, raw: grav.raw && grav.raw.slice(), flat: grav.flat, pool: grav.pool, steep: grav.steep, sin: grav.sin, epoch: grav.epoch},
                               humidity: effects.humidity.probe(), flood: effects.flood.probe(), heat: effects.heat.probe(), beam: {...beamState(), roots: effects.uv.roots()},
                               gust: effects.gust.probe(),
                               windDir: dir.side, windTarget: dir.target, windFactor: dir.f, windFlips: dir.flips,

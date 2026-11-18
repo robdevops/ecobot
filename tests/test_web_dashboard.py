@@ -1815,7 +1815,7 @@ EFFECTS = {"rain": "Rain", "flood": "Rain", "haze": "AQI", "uv": "UV index", "hu
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"push", "trails", "frost", "budget", "flood", "bucket", "pm25", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies"}
+DRIVEN = {"push", "trails", "frost", "budget", "flood", "bucket", "pm25", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies", "gives"}
 
 
 async def weather(server, part: str) -> dict:
@@ -3145,11 +3145,13 @@ async def test_a_phones_gravity_turns_the_humidity_beads_downhill_by_the_screens
         assert c["merges"] > 1000 and c["largest"] > 2 * c["early"] and c["largest"] > 4.52, (theta, c)   # (past the biggest sprite: no cap)
         assert c["tilt"]["steep"] == 0 and not c["tilt"]["tilted"], (theta, c)
     full = pools["90"]["factor"]
-    assert full > 0.5 and all(pools[t]["ran"] > 100 and not pools[t]["tilt"]["pool"] for t in ["10", "30", "60", "90", "120", "150"]), pools
+    # (only the beads big enough for the steepness run: r_crit 3.4 at 10 degrees, 1.98 at 30: fewer there than at 60 and 90)
+    assert full > 0.5 and all(pools[t]["ran"] > 100 and not pools[t]["tilt"]["pool"] for t in ["30", "60", "90", "120", "150"]), pools
+    assert pools["10"]["ran"] > 20 and not pools["10"]["tilt"]["pool"], pools["10"]
     ratio = {t: pools[t]["factor"] / full for t in ["10", "30", "60", "90", "120", "150"]}
     assert ratio["10"] == pytest.approx(0.064, abs=0.04), ratio                  # (smoothstep((sin 10 - sin 5) / (sin 40 - sin 5)))
     assert ratio["30"] == pytest.approx(0.845, abs=0.12) and ratio["10"] < ratio["30"] < 1, ratio
-    assert ratio["60"] == ratio["90"] == ratio["120"] == 1, ratio                # (full speed, the same)
+    assert ratio["60"] == ratio["120"] and ratio["60"] == pytest.approx(1, abs=0.08) and ratio["90"] == 1, ratio   # (full speed, the same by the steepness factor: the beads running differ a little by r_crit)
     assert ratio["150"] == pytest.approx(ratio["30"], abs=0.03) and 0 < ratio["150"] < 1, ratio   # (symmetric about 90: 150 as 30)
     assert pools["10"]["ranOff"] < pools["60"]["ranOff"] and pools["10"]["off"] == 0 == pools["60"]["off"], pools
     # (the pure turn, by readings worked out from the physics, at every screen angle and both signs: the lowered edge is the downhill one;
@@ -3174,7 +3176,7 @@ async def test_a_phones_gravity_turns_the_humidity_beads_downhill_by_the_screens
     assert got["debugOff"] and "raw x 1.50 y 9.50 z 0.50" in got["debugText"] and "window.orientation" in got["debugText"], got["debugText"]
     # (no sensor: straight down, no reading taken; an empty event (a desktop's) ignored)
     none = got["none"]
-    assert none["tilt"] == {"x": 0, "y": 1, "angle": 0, "tilted": False, "mode": 0, "readings": 0, "raw": None, "flat": True, "pool": False, "steep": 1, "epoch": 0}, none
+    assert none["tilt"] == {"x": 0, "y": 1, "angle": 0, "tilted": False, "mode": 0, "readings": 0, "raw": None, "flat": True, "pool": False, "steep": 1, "sin": 1, "epoch": 0}, none
     assert none["running"] >= 20 and abs(none["dx"]) < 3 and none["dy"] > 30 and none["ranOff"] > 0, none
     assert got["empty"] == none["tilt"], got["empty"]
     # (leaning: sideways as well as down, by the screen's own right and down however it's turned)
@@ -3215,6 +3217,50 @@ async def test_a_phones_gravity_turns_the_humidity_beads_downhill_by_the_screens
     assert f["hyst"] == [True, False, False, True], f
     assert not f["level"]["tilted"] and f["level"]["raw"] is None, f
     assert got["errors"] == [], got["errors"]
+
+
+@needs_browser
+async def test_on_a_tilted_device_a_bead_runs_only_from_its_critical_size_which_falls_with_the_steepness_and_leans_before_giving_way(server, station):
+    got = await weather(server, "gives")
+    # (the pinning: sin(alpha_crit) ~ 1 / r^2, so r_crit = RUN_R / sqrt(s), s = sin(theta): 1.4 upright, 1.98 at 30 degrees, 3.36 at 10)
+    crit = {k: v["critical"] for k, v in got["critical"].items()}
+    assert crit["90"] == pytest.approx(1.4, abs=0.05) and crit["30"] == pytest.approx(1.98, abs=0.05) and crit["10"] == pytest.approx(3.4, abs=0.05), crit
+    assert got["critical"]["90"]["of"] == pytest.approx([1.4, 1.98, 3.4], abs=0.05)
+    assert got["noSensor"] == {"critical": 1.4, "run": 1.4, "lean": 0}   # (no sensor: RUN_R as ever, nothing leans)
+    # (10 degrees, 20 s: every bead under 3.36 stays put (merging aside: not a px), a 3.6 runs; 30 degrees: 2.2 and 2.6 run, 1.6 and 1.8 stay)
+    for name, rc in [("ten", crit["10"]), ("thirty", crit["30"])]:
+        beads = [t for batch in got[name] for t in batch["tracked"]]
+        assert len(beads) >= 5, got[name]
+        for t in beads:
+            if t["r"] < rc:   # (never as big as r_crit: held all the while)
+                assert t["ran"] == 0 and t["moved"] < 0.1 and t["held"] > 100 and not t["gone"], (name, t)
+            else:
+                assert t["ran"] > 0 and t["moved"] > 5, (name, t)
+    ten = {t["r0"]: t for batch in got["ten"] for t in batch["tracked"]}
+    thirty = {t["r0"]: t for batch in got["thirty"] for t in batch["tracked"]}
+    assert ten[3.6]["ran"] > 0 and ten[3.2]["ran"] == 0 and ten[3.0]["ran"] == 0, ten
+    assert thirty[2.2]["ran"] > 0 and thirty[1.8]["ran"] == 0, thirty
+    # (the lean toward downhill (straight down here), r / r_crit 0.8: lambda 0.5, shifted 0.3 to 1 px and longer by a row or more (5 % or
+    # more); 0.99: all of it, 1 px and 15 % or so; 1.03: let go (held no more, not leaning, running, the restart stretch))
+    eight, nearly, over = (got["lean"][k][-1] for k in ("eight", "nearly", "over"))
+    assert eight["ratio"] == pytest.approx(0.8, abs=0.01) and eight["held"] and eight["v"] == 0, eight
+    assert 0.4 <= eight["lean"] <= 0.6 and 0.3 <= (eight["dx"] ** 2 + eight["dy"] ** 2) ** 0.5 <= 1 and eight["dy"] > 0, eight
+    assert eight["drawnH"] >= 1.05 * eight["ownH"] and eight["drawnTop"] - math.floor(eight["y"]) in (0, 1), eight
+    assert nearly["lean"] > 0.95 and (nearly["dx"] ** 2 + nearly["dy"] ** 2) ** 0.5 == pytest.approx(1, abs=0.06), nearly
+    assert nearly["drawnH"] / nearly["ownH"] <= 1.2 and nearly["held"] and nearly["v"] == 0, nearly
+    assert not over["held"] and over["lean"] == 0 and over["dx"] == over["dy"] == 0, over
+    assert any(f["v"] > 0 for f in got["lean"]["over"]), got["lean"]["over"]
+    # (giving way as the glass steepens: held and leaning, then running with the restart stretch, no longer leaning)
+    rel = got["release"]
+    assert rel["held"]["held"] and rel["held"]["lean"] > 0.5 and rel["held"]["v"] == 0, rel["held"]
+    assert all(not f["held"] and f["lean"] == 0 for f in rel["frames"]) and any(f["v"] > 0 for f in rel["frames"]) and any(f["stretch"] > 0 for f in rel["frames"]), rel["frames"]
+    # (levelled while running: flat stops it at once (the pooling's), 10 degrees from upright brakes it to a stop within 0.3 s; none after 0.5 s)
+    for name in ("flat", "gentle"):
+        lev = got["level"][name]
+        assert lev["before"][1] > 10, lev   # (it ran: px/s)
+        assert all(m[1] == 0 and m[0] < 0.05 for m in lev["moves"][5:]), lev   # (pooled: the water's own slow drift aside)
+    gentle = got["level"]["gentle"]["moves"]
+    assert gentle[0][0] > 0 and gentle[0][0] > gentle[1][0] > gentle[2][0] >= 0 and gentle[2][0] < 0.5 * gentle[0][0], gentle   # (no sudden freeze)
 
 
 @needs_browser

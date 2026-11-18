@@ -3878,6 +3878,135 @@ const WEATHER = {
       await p.context.close();
     }));
   },
+  // gives: a bead gives way by its size and the steepness (the pinning: sin(alpha_crit) ~ 1 / r^2, r_crit = RUN_R / sqrt(s)), on a device with
+  // a tilt sensor (Sky.tilt at once, no smoothing): r_crit at 90, 30 and 10 degrees; at 10 and 30 degrees beads placed in clear fog,
+  // 20 s of the page's time: each placed bead's {r0, r (largest it reached), moved, held, gone}; the lean at r / r_crit 0.8, 0.99 and
+  // 1.03 (its offset, the drawn sprite against its own); the device levelled (flat; or 10 degrees from upright) with a bead running
+  async gives(browser, url, out) {
+    const pages = [];
+    const open = async () => {
+      const p = await weatherPage(browser, url, { query: "?fx=humidity2", pace: 10, driven: true, context: { viewport: { width: 400, height: 300 } } });
+      pages.push(p);
+      await p.page.evaluate(() => Sky.advance(150));
+      return p;
+    };
+    // clear spots in the fog (no bead within 9 px, 30 px apart across), each {x, y: its middle}
+    const place = (page, tilt, radii, frames) => page.evaluate(([tilt, radii, frames]) => {
+      const h0 = Sky.state().humidity, [W, H] = [h0.width, h0.height], spots = [];
+      for (let y = Math.round(H * 0.15); y < H * 0.8; y += 3) for (let x = 20; x < W - 20; x += 3) {
+        if (spots.length >= radii.length) break;
+        if (spots.some((s) => Math.abs(s.x - x) < 30)) continue;
+        if (h0.glassAt(x, y) !== "fog" || h0.glassAt(x, y + 12) !== "fog") continue;
+        if (h0.beads.every((b) => Math.hypot(b.x - x, b.cy - y) > 9)) spots.push({ x, y });
+      }
+      Sky.tilt(...tilt, Infinity);
+      const ids = h0.place(spots.slice(0, radii.length).map((s, i) => ({ x: s.x, y: s.y, r: radii[i] })));
+      const track = new Map(ids.map((id, i) => [id, { r0: radii[i], r: radii[i], x0: null, y0: null, moved: 0, held: 0, ran: 0, gone: false }]));
+      for (let n = 0; n < frames; n++) {
+        Sky.advance(1);
+        const byId = new Map(Sky.state().humidity.beads.map((b) => [b.id, b]));
+        for (const [id, t] of track) {
+          const b = byId.get(id);
+          if (!b) { t.gone = true; continue; }
+          if (t.x0 === null) { t.x0 = b.x; t.y0 = b.y; }
+          t.r = Math.max(t.r, b.r);
+          if (b.held) t.held++;
+          if (b.v > 0) t.ran++;
+          t.moved = Math.max(t.moved, Math.hypot(b.x - t.x0, b.y - t.y0));
+        }
+      }
+      return { spots: spots.length, tracked: [...track.values()], critical: Sky.state().humidity.critical };
+    }, [tilt, radii, frames]);
+    const at = (deg) => { const r = deg * Math.PI / 180; return [0, 9.8 * Math.sin(r), 9.8 * Math.cos(r)]; };
+    out.critical = {};
+    for (const deg of [90, 30, 10]) {
+      const p = await open();
+      await p.page.evaluate((t) => Sky.tilt(...t, Infinity), at(deg));
+      const h = await p.page.evaluate(() => ({ critical: Sky.state().humidity.critical, of: [1, 0.5, 0.17].map((s) => Sky.state().humidity.physics.critical(s)) }));
+      out.critical[deg] = h;
+      await p.context.close();
+    }
+    // (no sensor: RUN_R, nothing leans)
+    { const p = await open(); out.noSensor = await p.page.evaluate(() => ({ critical: Sky.state().humidity.critical, run: Sky.state().humidity.physics.run,
+                                  lean: Sky.state().humidity.beads.reduce((m, b) => Math.max(m, b.lean), 0) })); await p.context.close(); }
+    // (10 degrees: r_crit 3.36: none of 2.2-3.2 moves; a placed 3.6 runs. 30 degrees: r_crit 1.98: 2.2 runs, 1.8 stays)
+    const radiiTen = [3.6, 3.2, 3.0, 2.6, 2.2], radiiThirty = [2.2, 2.6, 1.8, 1.6, 3.0];
+    out.ten = [], out.thirty = [];
+    for (const [deg, radii, into] of [[10, radiiTen, out.ten], [10, [3.3, 2.6, 2.0], out.ten], [30, radiiThirty, out.thirty], [30, [1.6, 1.9, 2.6], out.thirty]]) {
+      const p = await open();
+      into.push(await place(p.page, at(deg), radii, 200));
+      await p.context.close();
+    }
+    // the lean: at 10 degrees (r_crit 3.36): r 2.69 (0.8), 3.33 (0.99), 3.46 (1.03), a few frames in (leaning in over 0.15 s)
+    out.lean = {};
+    for (const [name, r] of [["eight", 2.69], ["nearly", 3.33], ["over", 3.46]]) {
+      const p = await open();
+      out.lean[name] = await p.page.evaluate(([t, r]) => {
+        const h0 = Sky.state().humidity, [W, H] = [h0.width, h0.height];
+        let spot = null;
+        for (let y = Math.round(H * 0.15); y < H * 0.8 && !spot; y += 3) for (let x = 20; x < W - 20 && !spot; x += 3) {
+          if (h0.glassAt(x, y) === "fog" && h0.glassAt(x, y + 12) === "fog" && h0.beads.every((b) => Math.hypot(b.x - x, b.cy - y) > 9)) spot = [x, y];
+        }
+        Sky.tilt(...t, Infinity);
+        const [id] = h0.place([{ x: spot[0], y: spot[1], r }]);
+        const frames = [];
+        for (let n = 0; n < 12; n++) {
+          Sky.advance(1);
+          const h = Sky.state().humidity, b = h.beads.find((q) => q.id === id);
+          if (!b) break;
+          frames.push({ r: b.r, ratio: b.r / h.critical, lean: b.lean, dx: b.leanDx, dy: b.leanDy, held: b.held, v: b.v, stretch: b.stretch,
+                        drawnH: b.drawn && b.drawn[3], ownH: b.bottom - Math.floor(b.y), y: b.y, drawnTop: b.drawn && b.drawn[1], critical: h.critical });
+        }
+        return frames;
+      }, [at(10), r]);
+      await p.context.close();
+    }
+    // giving way: r 3.0 held at 10 degrees (leaning), then the glass steepened to 30 degrees (r_crit 1.98): each frame {lean, v, stretch, drawn
+    // height against its own}
+    { const p = await open();
+      out.release = await p.page.evaluate(([ten, thirty]) => {
+        const h0 = Sky.state().humidity, [W, H] = [h0.width, h0.height];
+        let spot = null;
+        for (let y = Math.round(H * 0.15); y < H * 0.8 && !spot; y += 3) for (let x = 20; x < W - 20 && !spot; x += 3) {
+          if (h0.glassAt(x, y) === "fog" && h0.glassAt(x, y + 12) === "fog" && h0.beads.every((b) => Math.hypot(b.x - x, b.cy - y) > 9)) spot = [x, y];
+        }
+        Sky.tilt(...ten, Infinity);
+        const [id] = h0.place([{ x: spot[0], y: spot[1], r: 3.0 }]);
+        const frame = () => { const b = Sky.state().humidity.beads.find((q) => q.id === id); return { lean: b.lean, v: b.v, stretch: b.stretch, held: b.held, drawnH: b.drawn && b.drawn[3], ownH: b.bottom - Math.floor(b.y) }; };
+        for (let n = 0; n < 12; n++) Sky.advance(1);
+        const held = frame();
+        Sky.tilt(...thirty, Infinity);
+        const frames = [];
+        for (let n = 0; n < 12; n++) { Sky.advance(1); frames.push(frame()); }
+        return { held, frames };
+      }, [at(10), at(30)]);
+      await p.context.close(); }
+    // levelling: a bead of r 3.0 running upright (r_crit 1.4); then flat, or 10 degrees from upright (r_crit 3.36): its run's move each
+    // frame (px), 10 frames (1 s)
+    out.level = {};
+    for (const [name, to] of [["flat", [0, 0, 9.8]], ["gentle", at(10)]]) {
+      const p = await open();
+      out.level[name] = await p.page.evaluate(([to]) => {
+        const h0 = Sky.state().humidity, [W, H] = [h0.width, h0.height];
+        let spot = null;
+        for (let y = Math.round(H * 0.15); y < H * 0.8 && !spot; y += 3) for (let x = 20; x < W - 20 && !spot; x += 3) {
+          if (h0.glassAt(x, y) === "fog" && h0.glassAt(x, y + 12) === "fog" && h0.beads.every((b) => Math.hypot(b.x - x, b.cy - y) > 9)) spot = [x, y];
+        }
+        Sky.tilt(0, 9.8, 0, Infinity);
+        const [id] = h0.place([{ x: spot[0], y: spot[1], r: 3.0 }]);
+        const pos = () => { const b = Sky.state().humidity.beads.find((q) => q.id === id); return b ? [b.y, b.v] : null; };
+        for (let n = 0; n < 20; n++) Sky.advance(1);
+        const before = pos();
+        Sky.tilt(...to, Infinity);
+        const moves = [];
+        let last = pos();
+        for (let n = 0; n < 12; n++) { Sky.advance(1); const now = pos(); moves.push(now && last ? [Math.hypot(0, now[0] - last[0]), now[1]] : null); last = now; }
+        return { before, moves };
+      }, [to]);
+      await p.context.close();
+    }
+    out.errors = pages.flatMap((p) => p.errors);
+  },
   async gust(browser, url, out) {
     const opened = (async () => {   // (beside the rest)
       const p = await weatherPage(browser, url, { query: "?fx=gust", driven: true });

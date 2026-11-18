@@ -76,6 +76,8 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | B2 | Bead volume `r^3` and merging | 5.2 | REAL-MODEL |
 | B3 | Bead gathering, leaving, evaporation | 5.2 | REAL-APPROX |
 | B4 | Bead pinning threshold `RUN_R` | 5.3 | REAL-APPROX |
+| B9 | Size-dependent pinning under tilt: `sin(alpha_crit) ~ 1/r^2`, `r_crit = RUN_R / sqrt(s)` | 5.3 | REAL-APPROX |
+| B10 | Lean before giving way and braking to a stop under `r_crit` | 5.3 | ARTISTIC |
 | B5 | Bead speed law and glass pace | 5.3 | TUNED |
 | B6 | Condensation, swell and fog timing rates | 5.2 | TUNED |
 | B7 | Snap, pop, gulp, stretch, lock-on, meander, pauses | 5.3 | ARTISTIC |
@@ -123,10 +125,10 @@ Count per label (counted from the table above):
 | Label | Groups |
 |---|---|
 | REAL-MODEL | 20 |
-| REAL-APPROX | 16 |
+| REAL-APPROX | 17 |
 | TUNED | 30 |
-| ARTISTIC | 11 |
-| Total | 77 |
+| ARTISTIC | 12 |
+| Total | 79 |
 
 Not computed here at all (the station or a provider supplies them): dew point, feels like, apparent temperature, VPD, pollen and thunderstorm-asthma levels, and the dashboard's heat index or wind chill (none exists in `lib/`).
 
@@ -303,7 +305,9 @@ Distances are art px, times are seconds. The dew point is not used anywhere in t
 | Speed law | `sized` :2063; `SPEED` 13 | `v(r, g) = 13 * (x <= 1 ? x^5 : x^3) * PACE[g] * run factor * tilt steepness`, `x = r/2.8` | TUNED | Real drops do not move below a pinning threshold, and above it speed grows with size (gravity pull scales with volume, drag with r). The `x^5` and `x^3` branches are a plausible shape, not fitted to data. They meet at x = 1 with a slope kink. The `x^3` branch is linear in water volume; below r = 2.8 the law is steeper than volume. |
 | Pace | `PACE` :1679 | [dry 0.3, trail 1.6, fog 1] | TUNED | Drops run faster on a wetted track, so the order is right; the ratios are chosen. |
 | Speed table | comment ~1592 | r 0.87 gives 0.04 px/s, r 1 gives 0.08, r 1.4 gives 0.4, r 2 gives 2.4, r 2.8 gives 13, r 4 gives 38 (on fog) | TUNED | Computed from the law: 0.038, 0.076, 0.41, 2.4, 13, 37.9, matching the comment. |
-| Pinning | `RUN_R` :1696 | no motion below r = 1.4 (`1.4^3 = 2.74`, about sixteen tiny beads) | REAL-APPROX | Stands in for contact-angle pinning; real pinning depends on drop size, tilt and surface. |
+| Pinning | `RUN_R` :1856 | with no tilt sensor, no motion below r = 1.4 (`1.4^3 = 2.74`, about sixteen tiny beads); with one, the threshold is `r_crit` (the next row), which is 1.4 on an upright device | REAL-APPROX | Stands in for contact-angle pinning; real pinning depends on drop size, tilt and surface. |
+| Pinning threshold by size and tilt | `critOf` :1865, `critR`, `grav.sin` | gravity along the glass pulls with the drop's volume (`r^3`) and surface tension pins it with its width (`r`), so the critical steepness is `sin(alpha_crit) ~ 1/r^2`; with the constant fixed by `RUN_R` 1.4 at 90 degrees (`s = 1`) a bead runs only when `r >= r_crit(s) = RUN_R / sqrt(s)`, `s = sin(theta)` the smoothed in-plane share of gravity (`max(s, 0.05)`): `r_crit` is 1.40 at 90 degrees, 1.98 at 30 (`s = 0.5`), 3.36 at 10 (`s = 0.174`); under the flat dead zone (pooled) nothing runs. A bead under `r_crit` neither runs nor leaves a trail, and still merges, swells and snaps; a pooled bead's pull `TENSION` is unchanged | REAL-APPROX | The `r^3` over `r` balance is the standard drop-on-incline estimate (critical Bond number); real hysteresis also depends on the contact angles, the glass and the dirt on it, which one constant stands in for. Tilt with no direction change (the wind's push) does not move the threshold: it uses the steepness only. |
+| Lean and braking | `LEAN_FROM` 0.6, `LEAN_PX` 1, `LEAN_STRETCH` 0.15, `LEAN_R` 2, `LEAN_S` 0.15 s, `BRAKE_S` 0.3 s | a held bead (`r < r_crit`, a sensor reading present, not pooled) with `u = r / r_crit` from 0.6 leans toward downhill by `lambda = smoothstep((u - 0.6)/0.4)`: its sprite shifts `lambda` px (rounded to whole px when drawn) and, from r 2, is `0.15 * lambda` longer along its way (whole rows, at least one from 5 %), `lambda` rising over 0.15 s and dropping to 0 at once; at `u >= 1` it runs and, from r 2.5, sets off with the restart stretch from where the lean was. A running bead that falls under `r_crit` brakes linearly to a stop over 0.3 s | ARTISTIC | A drop does bulge toward its downhill edge before it lets go; the amounts are chosen for the look. |
 | Track floor | `TRACK` :2064 | `sized(3, trail)`, about 25.6 px/s | TUNED | |
 | Pooled pull | `gather()` | when pooled, a bead within 4 px edge gap of a larger or tiny bead drifts at 0.1 px/s until the gap is 0.25 px, then merges | TUNED | 0.1 is below the slowest running speed 0.122 (checked). |
 | Snap | `snaps()`; `SNAP` 1 px | two beads within 1 px edge gap: the higher is pulled to the lower at 6 to 30 px/s (acceleration 120 px/s^2) and merged | ARTISTIC | Stands in for the capillary jump. |
@@ -325,7 +329,7 @@ Distances are art px, times are seconds. The dew point is not used anywhere in t
 |---|---|---|---|---|
 | Gravity on screen | `screenGravity` | non-iOS (`u = -ax`, `v = ay`): angle 0 gives `(u, v)`, 90 gives `(v, -u)`, 180 gives `(-u, -v)`, 270 gives `(-v, u)`; other angles by `x = u*cos(a) + v*sin(a)`, `y = -u*sin(a) + v*cos(a)`. iOS: `u = ax`, `v = -ay` before the same turn | REAL-MODEL | The direction of gravity from `accelerationIncludingGravity`. Checked against the code's own tables for all four angles on both platforms. |
 | iOS sign | `screenGravity` | iOS reports the pull itself; Android reports the support force (minus gravity); the sign is flipped once | REAL-MODEL | Consistent with the flat-reading example (z = -9.56 on iOS, face up). |
-| Steepness | `tilt()` | `s = sqrt(gx^2 + gy^2) / sqrt(gx^2 + gy^2 + gz^2) = sin(theta)`; theta is the screen normal's angle from vertical (0 lying face up, 90 upright, 180 face down) | REAL-MODEL | The in-plane share of gravity: the sliding force factor `g*sin(theta)`; independent of the reading's size. |
+| Steepness | `tilt()` | `s = sqrt(gx^2 + gy^2) / sqrt(gx^2 + gy^2 + gz^2) = sin(theta)`; theta is the screen normal's angle from vertical (0 lying face up, 90 upright, 180 face down) | REAL-MODEL | The in-plane share of gravity: the sliding force factor `g*sin(theta)`; independent of the reading's size. The same `s`, low-passed with `TAU` (the first reading at once), is `grav.sin`, the steepness of the pinning threshold. |
 | Response curve | `POOL_IN`, `POOL_OUT`, `STEEP_FULL` :4100 | `POOL_IN = sin 5 deg = 0.0872`, `POOL_OUT = sin 7 deg = 0.1219`, `STEEP_FULL = sin 40 deg = 0.6428`; `t = clamp((s - 0.0872)/(0.6428 - 0.0872), 0, 1)`; `steep = smoothstep(t)`, low-passed with `k = 1 - exp(-dt/0.25)` | TUNED | The smoothstep is applied to `sin(theta)`, not theta: the ramp midpoint is s = 0.365 (theta 21.4 degrees). The real driving force keeps rising to 90 degrees; saturating at 40 is a choice. The 5/7 degree dead zone stands in for pinning and prevents flicker. |
 | Smoothing | `SNAP_DEG` 4, `STEP_DEG` 1.5, `TAU` 0.25 s | low-pass of the direction; snaps to straight down within 4 degrees; changes only when it moves 1.5 degrees or more | TUNED | Noise suppression. |
 | Wind push | `pushOf`, `aim()`, `blow()`; `PUSH_ON` 15, `PUSH_FULL` 45, `PUSH_MAX` 0.6 | with the eased effective wind speed s (km/h: the speed plus 0.3 of the gust's excess, low-passed as the rain's is) the push ratio is `p = 0.6 * smoothstep((s - 15) / 30)`: 0 below 15 km/h, 0.3 at 30, 0.6 from 45. The beads' run direction is `normalize(g + p * f * steep * (1, 0))`, with `g` the unit gravity (straight down, or the tilt's), `f = dir.f` (-1 leftward to +1 rightward, eased through 0 as the wind turns) and `steep` the steepness factor: at most `atan(0.6)` = 31.0 degrees off vertical, downwind. A direction within 4 degrees of straight down is straight down; it changes only by 1.5 degrees or more at a time. Speeds are unchanged; a pooled device has no push | TUNED | Wind on a window drags drops downwind; how much, and from which speed, is chosen by look. The ratio is a force ratio (wind drag against gravity) in spirit only: no air density or drop size enters. |
@@ -517,7 +521,7 @@ Constants to grep when checking that the numbers here match the code:
 | Heat | `heatOf`, `HEAT_STEPS`, `HEAT_PERIOD`, `HEAT_PEAK`, `heatWave`, `wanted`, `HEAT_SLEW`, `HEAT_FADE`, `HEAT_SOFT`, `HEAT_BANDS`, `band` |
 | UV and sun | `BEAM_MAX`, `BEAM_CURVE`, `EL_LOW`, `RUN_ON`, `SUN_FALLBACK`, `leanAt`, `leanOf` |
 | Ice, flood | `reachFor`, `growRate`, `MELT`, `RISE = 4`, `DRAIN`, `CALMS`, `PUSH`, `THROAT_PERIOD`, `EDDY_REST`, `flood_of` |
-| Beads | `RUN_R`, `GONE`, `TINY`, `SWELL`, `PACE`, `sized`, `HEAVY_RAIN`, `FOG_AT`, `FORM`, `CLEAR`, `THICKEN` |
+| Beads | `RUN_R`, `critOf`, `LEAN_FROM`, `BRAKE_S`, `GONE`, `TINY`, `SWELL`, `PACE`, `sized`, `HEAVY_RAIN`, `FOG_AT`, `FORM`, `CLEAR`, `THICKEN` |
 | Tilt, wind push | `POOL_IN`, `POOL_OUT`, `STEEP_FULL`, `SNAP_DEG`, `screenGravity`, `tilt(`, `PUSH_ON`, `PUSH_FULL`, `PUSH_MAX`, `pushOf`, `aim(` |
 | Gauges | `STEPS = [0.1`, `START, SWEEP`, `MIN_TILE`, `TABLE_TOP`, `STALE_MS`, `TENDENCY_STEADY`, `TENDENCY_AGO`, `TENDENCY_CLASSES`, `FLOOD_TAU`, `FLOOD_RUNOFF`, `FLOOD_FULL`, `FLOOD_ROW`, `FLOOD_SHOW`, `ROSE_REACH`, `33.8639`, `1.609344`, `25.4` |
 | Server | `sun_position`, `sun_times`, `SUNRISE_ELEVATION`, `refraction`, `17.62`, `us_aqi`, `pm25_aqi`, `PM25_AQI`, `SPIKE_RATIO`, `truncate`, `MAX_GAP`, `RESET_MM`, `MIN_READINGS`, `STEADY_HPA`, `HAURWITZ`, `MIN_HOURS`, `SEASON_MONTHS` |

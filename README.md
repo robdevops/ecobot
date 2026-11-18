@@ -316,7 +316,11 @@ once). A browser asking for reduced motion gets `off`'s.
 On a phone or tablet the humidity's beads run downhill as it tilts: the page reads the motion sensor (gravity, turned for the screen's
 rotation, so the true downhill whichever way it is held), smoothed; they run off whichever edge is lowest, and the steeper the
 tilt the faster (sin of the angle off level: none under 5 degrees, rising smoothly to full speed at 40, which holds through upright, then
-easing off again from 140 degrees). Lying flat, face up or face down (under 5 degrees), the water pools instead: nothing runs, no trails
+easing off again from 140 degrees). A bead also sticks until the glass is steep enough for its size, as a real drop does (surface
+tension pins it by its width, gravity pulls it by its volume): the radius from which a bead runs is 1.4 px / sqrt(sin of the angle off
+level), so 1.4 on an upright device (and with no sensor), 2.0 at 30 degrees and 3.4 at 10; smaller beads stay put (and keep merging
+and growing until they give way), and one nearing its size leans toward downhill (a pixel, a little longer) before it lets go. A
+running bead the glass is levelled under brakes to a stop in about 0.3 s. Lying flat, face up or face down (under 5 degrees), the water pools instead: nothing runs, no trails
 are laid, and beads that touch (or sit a few px apart: a slight pull draws them together) keep merging into ever larger blobs, with no
 size limit. Android's Chrome and Firefox give the sensor freely and it starts by itself; an iPhone's or
 iPad's Safari asks first, so a small "tilt" link appears at the bottom left (a tap asks; gone once answered). Desktop browsers have no
