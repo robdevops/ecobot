@@ -1821,6 +1821,8 @@ const sunLook = async (page) => {
   const out = {};
   await fx({ heat: 1, uv: 1 });
   const DAYS = { summer: [354.36, 1241.24, 75.61], winter: [455.21, 1027.59, 28.74], equinox: [442.31, 1174.58, 52.81] };
+  await page.setViewportSize({ width: 1024, height: 768 });   // (its first row 73 px down: a strip of 24 art px for the arc)
+  await page.waitForTimeout(500);
   out.arcs = await inPage((DAYS) => {
     const run = {};
     for (const [name, [rise, set, noon]] of Object.entries(DAYS)) {
@@ -1828,11 +1830,13 @@ const sunLook = async (page) => {
       for (let m = Math.floor(rise) - 30; m <= set + 30; m += 5) {
         __day(rise, set, noon, m); Sky.advance(1);
         const st = Sky.state(), s = st.heat.sun;
-        run[name].push({ m, day: s.day, x: s.x, y: s.y, r: s.r, t: s.t, size: st.heat.size, noon });
+        run[name].push({ m, day: s.day, x: s.x, y: s.y, r: s.r, t: s.t, size: st.heat.size, noon, band: s.band });
       }
     }
     return run;
   }, DAYS);
+  await page.setViewportSize({ width: 640, height: 480 });
+  await page.waitForTimeout(700);
   // nothing at night (no ink on the canvas; no beams), the sun up at midday
   out.night = await inPage(() => {
     const seen = {};
@@ -1990,10 +1994,39 @@ const sunLook = async (page) => {
     for (let m = Math.floor(rise) - 30; m <= set + 30; m += 5) {
       __day(rise, set, noon, m); Sky.advance(1);
       const st = Sky.state(), s = st.heat.sun;
-      rows.push({ m, day: s.day, x: s.x, y: s.y, r: s.r, t: s.t, size: st.heat.size });
+      rows.push({ m, day: s.day, x: s.x, y: s.y, r: s.r, t: s.t, size: st.heat.size, band: s.band });
     }
     return rows;
   }, DAYS.summer);
+  await page.setViewportSize({ width: 640, height: 480 });
+  await page.waitForTimeout(700);
+  // the reach: the lowest lit pixel of everything the sun draws (the glow, the ember, the beams) against 0.20 of the window's height, at
+  // several window sizes (a laptop, a phone, a wide desktop, a very wide window), places of the sun (summer sunrise, morning, noon, winter
+  // noon, sunset) and UV levels (the heat alone, UV 9, UV 11 and 12 the same), the heat at 0.3 and 1
+  out.reach = [];
+  for (const [w, h] of [[640, 480], [1024, 768], [390, 844], [1600, 900], [1600, 400]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(500);
+    for (const [heat, uv] of [[1, 1], [1, 0.6], [1, 0], [0.3, 1], [0, 1]]) {
+      await fx({ heat, uv });
+      out.reach.push(...await inPage(([heat, uv]) => {
+        const rows = [];
+        for (const [name, rise, set, noon, m, az, el] of [["summer sunrise", 354.36, 1241.24, 75.61, 372, 100, 5], ["summer morning", 354.36, 1241.24, 75.61, 540, 80, 40], ["summer noon", 354.36, 1241.24, 75.61, 798, 0, 75],
+                                                          ["winter noon", 455.21, 1027.59, 28.74, 741, 0, 28], ["summer sunset", 354.36, 1241.24, 75.61, 1225, 260, 3]]) {
+          __day(rise, set, noon, m); Sky.setSunPosition(az, el); Sky.advance(150);
+          let low = -1, lit = 0;
+          for (let k = 0; k < 4; k++) {   // (four moments of the 20 s round)
+            const d = __grab(), W = __c.width, Hh = __c.height;
+            for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (d[i + 3] > 0 && d[i] + d[i + 1] + d[i + 2] > 0) { lit++; if (y > low) low = y; } }
+            Sky.advance(150);
+          }
+          const st = Sky.state();
+          rows.push({ name, heat, uv, low, lit, size: st.heat.size, band: st.heat.sun.band, beams: st.beam.beams.length });
+        }
+        return rows;
+      }, [heat, uv]));
+    }
+  }
   await page.setViewportSize({ width: 640, height: 480 });
   await page.waitForTimeout(700);
   await inPage(() => { Sky.setSunPosition(null, null); Sky.setSun({ rise: 360, set: 1080, now: 720 }); Sky.setTime(720); Sky.advance(3); });   // (the page's own day again)

@@ -1038,9 +1038,12 @@ const Sky = (() => {
   // (the ball's flare as the heat's share of that, the beams as the UV's: see draw()); nothing of it moves faster than 0.5 Hz, and all of
   // it comes round again every 20 s.
   // The place. The day fraction t = (time - sunrise) / (sunset - sunrise) of the station's own day (the page's `sun`: rise, set, now),
-  // 0 at sunrise to 1 at sunset; the sun is at x = W / 2 - 0.42 W cos(pi t), y = 0.30 H - ry sin(pi t), ry = H (0.04 + 0.12 sin(noon
-  // elevation)): a clean elliptical arc from the left to the right, higher in summer (the noon elevation: the page's `sun`.noon_el,
-  // 50 degrees without one), its height eased down smoothly (never a flat clamp) once the window is so wide that the ball's centre would come too near the top, so the sun (radius R = 0.042 W) is always whole in the window. Nothing is drawn outside
+  // 0 at sunrise to 1 at sunset; the sun is at x = W / 2 - 0.42 W cos(pi t), y = yLo - (yLo - yHi) sin(noon elevation) sin(pi t): a clean
+  // elliptical arc from the left to the right along the strip above the first row of tiles (SUN_STRIP0: the first tile's top read from the page,
+  // at least 0.06 H and at most 0.16 H; the ball's radius R = 0.4 S / 6 of the strip S, 1.3 art px at least, 0.02 W and 0.0115 W at most, so
+  // its glow, 6 R across at the most, fills 0.4 of the strip's height; yLo near the strip's bottom at sunrise and sunset, yHi near its top at
+  // noon, the rise scaled by the season's noon elevation (the page's `sun`.noon_el, 50 degrees without one)), so the sun is always whole in the window.
+  // Nothing is drawn outside
   // daylight (t under 0 or over 1, or the sun's real elevation under -1 degree).
   // The ball: a blown-out white ball with no disc edge, no granulation, no rim line and no ring. One radial profile of brightness, v(r) =
   // pk (1.15 exp(-(r / 0.6 R kS)^2) + 0.62 exp(-r / R kS) + 0.24 exp(-r / 2.1 R kS)) (1 - smoothstep(0.3 Rh, Rh, r)), kS = 0.72 + 0.28 h,
@@ -1048,12 +1051,12 @@ const Sky = (() => {
   // holds none of it at its own edge), r the distance over a slow angular wobble (at most 8 %, the sines of a, 2a, 3a). On the colour ramp
   // that is white at the centre through pale yellow-white to the pink-magenta halo that melts into the beams: at h = 1 larger and whiter,
   // at h = 0.3 smaller and dimmer with a warmer cream centre. The ember: a dark-orange glow in the halo, 4 x 0.3 (0.35 + 0.65 h)
-  // exp(-r / 2.2 R) (1 - r / Rh)^2 smoothstep(1.2 R, 3.2 R, r) with a slow wobble (never on the ball, never an edge), and a big
-  // elliptical bloom (0.3 W by 0.24 W, its outline and brightness wobbling), both scaled by the heat's share and faded in from 1.2 R to 3.2 R. The heat's h is its level: 0.3 at 35 C to 1 at 43 C
+  // exp(-r / 2.2 R) (1 - r / Rh)^2 smoothstep(1.2 R, 3.2 R, r) with a slow wobble (never on the ball, never an edge), and a
+  // elliptical bloom (6.5 R by 5.2 R, its outline and brightness wobbling), both scaled by the heat's share and faded in from 1.2 R to 3.2 R. The heat's h is its level: 0.3 at 35 C to 1 at 43 C
   // (0.3 where only the UV is on).
   // The UV: NB = 12 thick beams spaced 30 degrees all round the sun (each a little off its place, and its length 0.9 to 1.1 times), each
   // 1.3 sun diameters wide at its base (0.93 to 1.07 times that) and widening along its length (to 3.3 times at its end), blunt-ended: no
-  // taper, its brightness falling smoothly to zero over the last 60 % of its length (BEAM_FADE, a cosine to the 1.35th power, whose
+  // taper, its brightness falling smoothly to zero over the last 35 % of its length (BEAM_FADE, a cosine to the 1.35th power, whose
   // first and last slopes are zero: no end edge shows), a flat core with a soft dithered edge, a brighter edge line and a few streaks
   // inside, and each rising out of the ball (in from 0.6 R to 1.7 R from the sun). The ones nearest the sun's real direction, the beams' lean (beamState().lean: -atan(sin
   // az / tan el), degrees from vertical, down-left in the morning, at most 75 either way), are the longest and brightest, the far side
@@ -1062,17 +1065,21 @@ const Sky = (() => {
   // top; they fade out near the window's edges over BEAM_EDGE (34 art px, or 0.15 of the narrower side if less); and where the ember
   // flare is lit the violet is held back (by up to 55 %), so the heat stays orange.
   // The UV amount, from the UV index (the effect's level is (UV - 6) / 5, 0 below UV 6 and 1 from UV 11, and 0 until the violet shows, about UV 6.24: Sky.uvLevel): no beams under UV 6; the
-  // violet rises with uvn = clamp((UV - 6) / 5, 0, 1) as (0.3 + 0.7 uvn) smoothstep(6, 7.5, UV); the reach 0.6 + 0.4 uvn of its full 0.8 H.
+  // violet rises with uvn = clamp((UV - 6) / 5, 0, 1) as (0.3 + 0.7 uvn) smoothstep(6, 7.5, UV); the reach 0.6 + 0.4 uvn of its full reach, down to 0.20 H (SUN_CAP) at the most: a mask takes every beam pixel to 0 from 0.20 H - 3 down, and the longest beam's tip fades to 0 there; the window's top fades them over the sun's own height.
   // The cost. Everything the window's size and the sun's place alone decide is made once (bakeSun, again when the size changes or the
   // sun has moved a quarter art pixel: each glow pixel's distance, angle and steady part, in shells of a pixel (a render stops at its own reach), the bloom's, the beams' mask of
   // the window's edges and the sun's root, a dither threshold at every pixel; the profile itself is a table of 4 steps to a pixel made at each render), the beams are worked out on half the resolution (cells
   // of 2 x 2 art px: the beams' own field, then interpolated up) through tables of their profile, and all of it is made again only
   // every SUN_EVERY (0.09 s: every third frame at 30 a second; the beams move 0.1 Hz at most), the in-between frames drawing the last.
-  const SUN_R = 0.042, SUN_X = 0.42, SUN_Y = 0.30, SUN_RY0 = 0.04, SUN_RY1 = 0.12, SUN_NOON_EL = 50, SUN_HORIZON = -1;
+  const SUN_X = 0.42, SUN_NOON_EL = 50, SUN_HORIZON = -1;
+  // The strip above the first row of tiles, where the sun lives: S = its height (art px: the first tile's top, at least 0.06 H and at most 0.16 H),
+  // R = the ball's radius (0.4 S / 6, so its glow, 6 R across at the most, fills 0.4 of the strip's height either side of the arc), at least 1.3 art px
+  // and at most 0.02 W and 0.0115 W; the beams reach at most down to 0.20 H (SUN_CAP), none of the sun's light lit below it
+  const SUN_STRIP0 = 0.06, SUN_STRIP1 = 0.16, SUN_RS = 0.4 / 6, SUN_RMIN = 1.3, SUN_RW0 = 0.02, SUN_RW1 = 0.0115, SUN_CAP = 0.20, SUN_CAP_GAP = 3, SUN_JIT = 1.1, SUN_RB = 6.5;
   const SUN_CYCLE = 20, SUN_W = 2 * Math.PI / SUN_CYCLE;   // (s: everything comes round again; rad/s)
   const SUN_EVERY = 0.09, SUN_STEP = 0.25;                  // (s; art px: the sun's place kept to this)
   const SUN_STRENGTH = 1;
-  const BEAMS_N = 12, BEAM_BW = 1.3, BEAM_LOBE = 0.6, BEAM_WK = 2.3, BEAM_EDGE = 34, BEAM_REACH = 0.8, BEAM_FADE = 0.4;
+  const BEAMS_N = 12, BEAM_BW = 1.3, BEAM_LOBE = 0.6, BEAM_WK = 2.3, BEAM_EDGE = 34, BEAM_FADE = 0.65;
   const UV_FROM = 6, UV_TO = 11, UV_SOFT = 7.5, UV_SEEN = 0.02;   // (the UV index: none below, full from, and the violet's first rise; the least amount that shows: the mark)
   const SUN_BALL0 = 3.4, SUN_BALL1 = 2.6, SUN_PROF = 4, SUN_EMBER = 4, SUN_BLOOM = 1;   // (the ball's reach Rh = R (3.4 + 2.6 heat); the profile's steps to a pixel; the ember's gain near the ball and the bloom's)
   const SUN_LEVELS = {ball: 40, flare: 12, violet: 10};
@@ -1140,18 +1147,26 @@ const Sky = (() => {
     const level = clamp((uvi - UV_FROM) / (UV_TO - UV_FROM), 0, 1);
     return Number.isFinite(level) && level > 0 && uvAmount(level).amp >= UV_SEEN ? level : 0;
   };
-  // The sun's place on its arc at the day fraction t, in art px
-  const arcOf = (t, noonEl, w, h) => {
-    let ry = h * (SUN_RY0 + SUN_RY1 * Math.sin(clamp(noonEl, 0, 90) * Math.PI / 180));
-    // (a wide window: the arc's height eased down, smoothly and still an ellipse, to keep the ball's top inside the window: ry stays
-    // as it is up to 0.7 of the room above the arc's feet (less R and 2 art px), then tends to that room)
-    const room = Math.max(0, SUN_Y * h - SUN_R * w - 2), knee = 0.7 * room;
-    if (ry > knee) ry = knee + (room - knee) * Math.tanh((ry - knee) / Math.max(room - knee, 1e-6));
-    return {x: w / 2 - SUN_X * w * Math.cos(Math.PI * t), y: SUN_Y * h - ry * Math.sin(Math.PI * t)};
+  // The strip above the first row of tiles (see SUN_STRIP0): the first tile's top read from the page (document px, so a scrolled page keeps it)
+  const tileTop = () => {
+    const g = document.getElementById("grid"), c = g && g.firstElementChild;
+    return c ? Math.max(0, c.getBoundingClientRect().top + (window.scrollY || 0)) : 0;
   };
-  const sunNow = () => {   // the sun on the window now: {day, t, x, y, r, noonEl, el}
+  const bandOf = (w, h) => {   // the sun's band in art px: {top (the first tile's top), S, R, Rmax (the glow's reach), yHi, yLo (noon's and the horizon's height), cap}
+    const top = tileTop() / P, S = Math.min(Math.max(top - 1, SUN_STRIP0 * h), SUN_STRIP1 * h);
+    const R = Math.min(Math.max(S * SUN_RS, SUN_RMIN), SUN_RW0 * w, SUN_RW1 * w), Rmax = R * (SUN_BALL0 + SUN_BALL1);
+    const yHi = Rmax + 2, yLo = Math.max(yHi, S - Rmax - 1);
+    return {top, S, R, Rmax, yHi, yLo, cap: SUN_CAP * h};
+  };
+  // The sun's place on its arc at the day fraction t, in art px: a clean ellipse across the strip, from its low point at sunrise and sunset to
+  // a high one at noon, the rise scaled by the sine of the season's noon elevation
+  const arcOf = (t, noonEl, w, h) => {
+    const b = bandOf(w, h), rise = (b.yLo - b.yHi) * Math.sin(clamp(noonEl, 0, 90) * Math.PI / 180);
+    return {x: w / 2 - SUN_X * w * Math.cos(Math.PI * t), y: b.yLo - rise * Math.sin(Math.PI * t), band: b};
+  };
+  const sunNow = () => {   // the sun on the window now: {day, t, x, y, r, noonEl, el, band}
     const b = beamState(), p = arcOf(b.t, b.noonEl, W, H);
-    return {day: b.day, t: b.t, x: p.x, y: p.y, r: SUN_R * W, noonEl: b.noonEl, el: b.el};
+    return {day: b.day, t: b.t, x: p.x, y: p.y, r: p.band.R, noonEl: b.noonEl, el: b.el, band: p.band};
   };
 
   const art = (() => {
@@ -1160,8 +1175,8 @@ const Sky = (() => {
     let prof = new Float32Array(1024), shadeKey = -1, flareShades = null, renders = 0, bakes = 0, ms = 0, lastMs = 0, lastH = 0.3, lastLevel = 1;
     const ALS = new Float32Array(2048), HWS = new Float32Array(2048);   // (a beam's profile at each step along it, grown to what the window needs)
     let als = ALS, hws = HWS;
-    const bake = (sx, sy, R) => {
-      const key = `${W}x${H}@${sx},${sy}`;
+    const bake = (sx, sy, R, p) => {
+      const key = `${W}x${H}@${sx},${sy},${R},${p.band.cap}`;
       if (bk && bk.key === key) return bk;
       const wh = Math.ceil(W / 2), hh = Math.ceil(H / 2), N = W * H, NA = 64, NA2 = 96, TAU = 2 * Math.PI;
       if (!bk || bk.size !== `${W}x${H}`) {   // (the size's: the threshold at every pixel, the buffers)
@@ -1171,7 +1186,7 @@ const Sky = (() => {
         for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) thr[y * W + x] = dither(x, y);
         bk = {size: `${W}x${H}`, thr};
       }
-      const Rb = 0.3 * W, RY = 0.8, E = Math.min(BEAM_EDGE, 0.15 * Math.min(W, H));
+      const Rb = SUN_RB * R, RY = 0.8, E = Math.min(BEAM_EDGE, 0.15 * Math.min(W, H));
       // the ball's glow: every pixel of the biggest box it can have (the hottest: Rh + 3), by its distance (whole-pixel shells, so a
       // render stops at its own reach), its angle step and its steady part of the ember
       const HM = R * (SUN_BALL0 + SUN_BALL1) + 3, x0 = Math.max(0, Math.floor(sx - HM)), x1 = Math.min(W - 1, Math.ceil(sx + HM)), y0 = Math.max(0, Math.floor(sy - HM)), y1 = Math.min(H - 1, Math.ceil(sy + HM));
@@ -1198,11 +1213,12 @@ const Sky = (() => {
         bI.push(y * W + x); bA.push(Math.min(NA2 - 1, ((Math.atan2(ey, ddx) + Math.PI) * NA2 / TAU) | 0)); bR.push(rr); bF.push(fin);
       }
       // the beams' mask over the half-resolution cells: the window's edges' fade and the sun's root (in from 0.6 R to 1.7 R)
+      const cap = p.band.cap - SUN_CAP_GAP, Et = Math.min(E, Math.max(sy, 1)), Ec = Math.max(2, Math.min(8, 0.5 * (cap - sy)));   // (the top's fade ends at the sun's height; none lit from the cap on)
       const mask = new Float32Array(wh * hh), cx = new Float32Array(wh), cy = new Float32Array(hh), m0 = (1.7 * R) * (1.7 * R);
       for (let i = 0; i < wh; i++) cx[i] = 2 * i - sx;
       for (let j = 0; j < hh; j++) cy[j] = 2 * j - sy;
       for (let j = 0; j < hh; j++) {
-        const y = 2 * j, fy = soft(0, E, Math.min(y, H - 1 - y));
+        const y = 2 * j, fy = soft(0, Et, y) * soft(0, E, H - 1 - y) * (1 - soft(cap - Ec, cap, y));
         for (let i = 0; i < wh; i++) {
           const x = 2 * i; let m = soft(0, E, Math.min(x, W - 1 - x)) * fy;
           const sr2 = cx[i] * cx[i] + cy[j] * cy[j];
@@ -1217,7 +1233,7 @@ const Sky = (() => {
     // The picture at time t (0-20 s) for the heat h (0.3-1), the flare's share kF, the UV level and the violet's share kU
     const render = (t, h, kF, level, kU) => {
       const start = performance.now();
-      const p = sunNow(), sx = Math.round(p.x / SUN_STEP) * SUN_STEP, sy = Math.round(p.y / SUN_STEP) * SUN_STEP, R = p.r, k = bake(sx, sy, R);
+      const p = sunNow(), sx = Math.round(p.x / SUN_STEP) * SUN_STEP, sy = Math.round(p.y / SUN_STEP) * SUN_STEP, R = p.r, k = bake(sx, sy, R, p);
       const a = SUN_W * t, cyc = 0.5 + 0.5 * Math.cos(SUN_W * (t - 4)), TAU = 2 * Math.PI;
       const {uvn, amp} = uvAmount(level), uamp = amp * kU, beamsOn = uamp > 0.002;
       fS.fill(0); fR.fill(0); c32.fill(0);
@@ -1265,7 +1281,7 @@ const Sky = (() => {
       // ---- the beams, on half-resolution cells
       const sunNowBeams = [];
       if (beamsOn) {
-        const lean = beamState().lean * Math.PI / 180, be = 0.55 + 0.45 * soft(0, 1, cyc), Lbase = BEAM_REACH * H * (0.6 + 0.4 * uvn);
+        const lean = beamState().lean * Math.PI / 180, be = 0.55 + 0.45 * soft(0, 1, cyc), Lbase = Math.max(0, p.band.cap - SUN_CAP_GAP - sy - R) / SUN_JIT * (0.6 + 0.4 * uvn);
         const {wh, hh, cx, cy, mask} = k;
         fBh.fill(0); rowLo.fill(wh); rowHi.fill(-1);
         for (const b of BEAMS) {
