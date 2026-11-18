@@ -1066,15 +1066,17 @@ const Sky = (() => {
   // ---------- heat: a red wave of radiated heat, building down from the window's top, over the top quarter, then fading, then again ----------
   // The heat fills the whole top quarter of the window, the full width, always: a plain rectangle with no edges of its own (its sides
   // and top are the window's), no wedge, no tilted side, no dark region in it. Its one soft boundary is its bottom: a vertical envelope,
-  // strongest at the top edge, falling smoothly to nothing by HEAT_FADE (a quarter) of the height. The sun's lean (the UV beams' own
-  // value, beamState().lean, shared: no second computation) sets only the direction of the ANIMATION inside that band: the wave's soft
-  // front is a gradient whose iso-lines are perpendicular to the sun's ray, a diagonal front sweeping along the ray from the top corner
-  // on the sun's side, so the bright wash radiates down at the sun's angle (a morning sun in the east, the screen's right: the front goes
-  // from the upper right toward the lower left; afternoon, from the upper left; at solar noon, straight down). The front's place is measured
-  // along the ray and driven past the band's far corner, so at the hold the whole quarter is evenly lit. With the sun down (el <= 0: the
-  // heat comes from the temperature, not the sun) the front is horizontal. The lean follows the sun smoothly (the drawn lean catches up
-  // with a jump at HEAT_SLEW); only the front moves with it, the dithered envelope sprite is baked again only as the heat's colour step
-  // changes (or the window's size), and carries a fixed, subtle sideways variation (two broad lobes: no dark gap, no drift).
+  // strongest at the top edge, falling smoothly to nothing by HEAT_FADE (a quarter) of the height. It shines down along the UV beams'
+  // rays (the sun's lean, beamState().lean, shared: no second computation): its light is made of a few very wide, soft bands (HEAT_BANDS:
+  // lighter and darker shades, not gaps: how much of the window is covered follows the vertical envelope alone), and each row of the
+  // wash is shifted along by y * tan(lean), wrapped round the width, so the bands lean exactly as the beams' axes do (the same angle
+  // from vertical, from the top edge down: a morning sun in the east, the screen's right, leans them down-left; afternoon, down-right;
+  // at solar noon, straight down). The front is horizontal: the lit extent grows down from the top edge, a soft horizontal edge moving
+  // down, each band lengthening along its ray as it does, so the wash comes in from the top as the beams do, with no sideways travel
+  // (the brightness's centroid across stays put, the shear aside); at the hold the whole quarter is lit. With the sun down (el <= 0: the
+  // heat comes from the temperature, not the sun) the bands are vertical. The lean follows the sun smoothly (the drawn lean catches up
+  // with a jump at HEAT_SLEW); the dithered sprite is baked again only as the heat's colour step changes (or the window's size), the
+  // shear and the front are drawn each frame from it.
   // Dithered (the same irregular dither as the beams: no banding at its faint end, no grid). It is not steady but a wave, a cycle of
   // phase u in [0, 1) (the page's own clock; kept as the heat changes, so a change never jumps), implying a direction, heat radiating
   // from above: BUILD (u 0 to HEAT_BUILD, 0.55): the lit extent grows from the top edge down to the reach, an ease-out (quick at first,
@@ -1100,7 +1102,7 @@ const Sky = (() => {
   const heatColours = (h) => HEAT_LIGHT.map((l) => hslToRgb(mixed(HEAT_HUE, h), mixed(HEAT_SAT, h), l + (1 - h) * 0.14));
   const HEAT_FADE = 0.25;              // the reach, as a fraction of the window's height: a quarter of the way down from the top
   const HEAT_TOP = 0.62;               // its brightness at the top edge (0-1, the dither's input; the shades are then dithered about it)
-  const HEAT_LOBES = 0.85;             // its dimmest column's brightness over its brightest's
+  const HEAT_BANDS = 2.0;              // how many shades (of five) the bands lift or lower the light, at their lightest and darkest
   const HEAT_RISE = 0.08;              // the cycle's start: the brightness fades in over this much of it (no pop)
   const HEAT_SOFT = 0.4;               // the leading edge's length, of the reach
   const HEAT_STEPS = 48;               // repainted for each 48th of the heat's range (finer than the eye tells)
@@ -1114,7 +1116,7 @@ const Sky = (() => {
   const HEAT_SLEW = 20;                // degrees a second at most: the drawn lean catching up with the sun's (a jump: sunset, a test's pin)
   const heat = effect((e) => {
     let wash = null, buf = null, bufG = null, tint = -1, colours = heatColours(0), phase = 0, lastT = null, mult = 0, extent = 0, rows = 1;
-    let lean = null, bakes = 0, long = 1;
+    let lean = null, bakes = 0, long = 1, frontNow = 0;
     const cycle = () => {
       const h = heatOf(e.level);
       return {heat: h, peak: mixed(HEAT_PEAK, h), period: mixed(HEAT_PERIOD, h)};
@@ -1124,25 +1126,24 @@ const Sky = (() => {
       return b.up ? b.lean : 0;
     };
     const washAlpha = () => 0.5 * (0.55 + 0.45 * e.level);   // (the gradient's own strength, of the effect's)
-    // The lobes' variation across: 1 at the brightest to HEAT_LOBES at the dimmest, two broad lobes round the width, fixed
-    const lobe = (x) => {
-      const u = 2 * Math.PI * x / W, v = 0.5 + 0.32 * Math.sin(u + 0.7) + 0.18 * Math.sin(2 * u + 2.1);
-      return HEAT_LOBES + (1 - HEAT_LOBES) * clamp(v, 0, 1);
+    // The bands across: -1 to 1, soft, very wide bands round the width (three round it, a fainter two beside them: no two alike), fixed;
+    // `bake` turns them into shade steps (lighter and darker), the draw leans them down the beams' way
+    const band = (x) => {
+      const u = 2 * Math.PI * x / W;
+      return 0.8 * Math.sin(3 * u + 0.7) + 0.2 * Math.sin(2 * u + 2.1);
     };
-    // The front's distance along the ray at a pixel, from the top corner on the sun's side: t = y cos + |dx| sin (dx across from that corner)
-    const along = (lean) => {
-      const rad = lean * Math.PI / 180;
-      return {c: Math.cos(rad), s: Math.sin(rad), x0: lean < 0 ? W : 0};
-    };
-    // The sprite: the axis-aligned envelope (full width, `rows` deep), dithered, in the colour step
+    // The sprite: the axis-aligned envelope (full width, `rows` deep), dithered, in the colour step. How much of the window it covers
+    // (the fill, the dither's) follows the vertical envelope alone; the bands only move each lit pixel's shade up or down, so every
+    // column is as covered as any other and the bands are in the light, not in the edge
     const bake = (step) => {
       colours = heatColours(step / HEAT_STEPS);
-      const across = Float64Array.from({length: W}, (_, x) => lobe(x));
+      const across = Float64Array.from({length: W}, (_, x) => band(x));
       // (the brightness falls from HEAT_TOP at the top edge to 0 at `rows`, smoothly (a cosine-eased square: no kink where it ends))
       const fall = Float64Array.from({length: rows}, (_, y) => Math.pow(0.5 + 0.5 * Math.cos(Math.PI * y / rows), 1.25));
       wash = painted(W, rows, (x, y) => {
-        const sh = shadeOf(HEAT_TOP * fall[y] * across[x], x, y, colours.length);
-        return sh < 0 ? null : colours[sh];
+        const sh = shadeOf(HEAT_TOP * fall[y], x, y, colours.length);
+        if (sh < 0) return null;
+        return colours[clamp(Math.floor(sh + 0.8 + HEAT_BANDS * across[x] + hash(x, y, 31)), 0, colours.length - 1)];
       });
       buf = document.createElement("canvas"); buf.width = W; buf.height = rows; bufG = buf.getContext("2d");
       tint = step; bakes++;
@@ -1160,7 +1161,7 @@ const Sky = (() => {
         const p = cycle(), c = heatColours(p.heat), w = heatWave(phase), want = wanted();
         return {level: e.level, size: [W, H], lean: want, drawn: lean === null ? want : lean, bakes, uv: uvShafts().map((s) => s.x), uvWide: uvShafts().map((s) => s.wide),
                 uvTops: uvShafts().map((u) => u.x), colour: c[3], colours: c, ...p, phase, extent: w.extent, bright: w.bright,
-                lit: w.extent * long, reach: HEAT_FADE, flashes: 1 / p.period, mult,
+                lit: w.extent * long, front: frontNow, soft: rows * HEAT_SOFT, reach: HEAT_FADE, flashes: 1 / p.period, mult,
                 gradient: {top: HEAT_TOP * washAlpha(), rows, fade: rows / H, long}};
       },
       seek(u) { phase = ((u % 1) + 1) % 1; },   // (test-only: the cycle's phase set)
@@ -1183,15 +1184,21 @@ const Sky = (() => {
         const w = heatWave(phase);
         mult = p.peak * w.bright;
         extent = w.extent;
-        const a = along(lean), soft = rows * HEAT_SOFT;
-        long = rows * a.c + W * Math.abs(a.s);   // (the far bottom corner's distance along the ray: the front is driven past it, so the hold is lit all over)
+        const soft = rows * HEAT_SOFT;
+        long = rows;   // (the front's whole way down: it is driven past the reach by `soft`, so the hold is lit all over)
         if (mult <= 0 || extent <= 0) return;
-        // (the front: the envelope masked by a linear ramp along the ray, full behind `front - soft`, nothing from `front`: a diagonal, soft edge)
-        const front = extent * (long + soft), dx = a.s, dy = a.c;
+        // (the wash's rows each shifted along by the lean's tangent: its soft bands lean parallel to the UV beams' axis, down from the top
+        // edge; wrapped round the width, so the rectangle stays full width; then the front: a horizontal, soft edge moving down, the rows
+        // below it cleared, full behind `front - soft`, nothing from `front`)
+        const front = frontNow = extent * (long + soft), tan = Math.tan(lean * Math.PI / 180), lit = Math.min(rows, Math.ceil(front));
         bufG.globalCompositeOperation = "source-over";
         bufG.clearRect(0, 0, W, rows);
-        bufG.drawImage(wash, 0, 0);
-        const ramp = bufG.createLinearGradient(a.x0 + dx * (front - soft), dy * (front - soft), a.x0 + dx * front, dy * front);
+        for (let y = 0; y < lit; y++) {
+          const dx = Math.round(y * tan), at = ((dx % W) + W) % W;
+          bufG.drawImage(wash, 0, y, W, 1, at, y, W, 1);
+          if (at > 0) bufG.drawImage(wash, 0, y, W, 1, at - W, y, W, 1);
+        }
+        const ramp = bufG.createLinearGradient(0, front - soft, 0, front);
         ramp.addColorStop(0, "rgba(0,0,0,1)");
         ramp.addColorStop(1, "rgba(0,0,0,0)");
         bufG.globalCompositeOperation = "destination-in";

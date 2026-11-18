@@ -1901,9 +1901,7 @@ const heatSeen = (page, levels, times = []) => page.evaluate(async ([levels, tim
 // sun unpinned and the clock, Sky.setTime(`time`)), after 400 frames (the drawn lean caught up) at the hold: the heat's and the beams' lean
 // (Sky.state()), the heat's drawn lean, the columns bare in the top 12 %, the mean alpha in a 10 px square at each of the window's top corners,
 // the mean alpha of each row (`rows`) and the lowest inked row, how uneven the columns are over the quarter's top 80 % (`even`: the biggest
-// relative gap of a column's mean alpha from the mean of them all), the alpha right of the middle less the left's over the band, as a
-// fraction of both (`side`), at the hold and in the build at u 0.15, 0.3 and 0.45 (`build`: the same; the front's diagonal shows in it), the
-// bakes so far, and the grid's power (gridPeak's ratio, over the page's top-left square)
+// relative gap of a column's mean alpha from the mean of them all), the bakes so far, and the grid's power (gridPeak's ratio, over the page's top-left square)
 const heatLeans = async (page, places) => {
   const out = [];
   for (const [az, el] of places) {
@@ -1913,11 +1911,6 @@ const heatLeans = async (page, places) => {
       Sky.heatPhase(0.6);
       Sky.advance(400);
       const frame = (u) => { Sky.heatPhase(u); Sky.advance(1); return g.getImageData(0, 0, W, H).data; };
-      const sideOf = (d) => {
-        let right = 0, left = 0;
-        for (let y = 0; y < band; y++) for (let x = 0; x < W; x++) { if (x >= W / 2) right += d[(y * W + x) * 4 + 3]; else left += d[(y * W + x) * 4 + 3]; }
-        return (right - left) / Math.max(right + left, 1);
-      };
       const d = frame(0.62), h = Sky.state().heat;
       const alpha = (x, y) => d[(y * W + x) * 4 + 3];
       let bare = 0, last = -1;
@@ -1932,9 +1925,8 @@ const heatLeans = async (page, places) => {
       for (let x = 0; x < W; x++) { let a = 0; for (let y = 0; y < top; y++) a += alpha(x, y); cols.push(a / top); }
       const avg = cols.reduce((p, q) => p + q, 0) / W, even = Math.max(...cols.map((v) => Math.abs(v - avg) / avg));
       const patch = (x0) => { let a = 0; for (let y = 0; y < 10; y++) for (let x = x0; x < x0 + 10; x++) a += alpha(x, y) / 255; return a / 100; };
-      const out = { az, el, lean: h.lean, drawn: h.drawn, beam: Sky.state().beam.lean, bare, rows, last, even, side: sideOf(d), left: patch(0), right: patch(W - 10),
+      const out = { az, el, lean: h.lean, drawn: h.drawn, beam: Sky.state().beam.lean, bare, rows, last, even, left: patch(0), right: patch(W - 10),
                     size: [W, H], bakes: h.bakes, cost: Sky.state().cost };
-      out.build = [0.15, 0.3, 0.45].map((u) => sideOf(frame(u)));
       Sky.heatPhase(0.62);
       return out;
     }, [az, el]);
@@ -1944,6 +1936,105 @@ const heatLeans = async (page, places) => {
   await page.evaluate(() => { Sky.setSunPosition(null, null); });
   return out;
 };
+// The directions of the UV beams and of the heat, measured from pixels (not from the lean the page says it has), at each of `leans` (degrees:
+// the sun placed 20 degrees up at the azimuth that gives that lean; the heat alone, then the UV alone, each 400 frames after (the drawn lean
+// caught up)). The beams' axis: the principal axis of the structure tensor of the canvas's brightness (luminance times alpha, blurred 3 px,
+// each row's mean taken off and its spread made 1) over the window's top quarter, as degrees from vertical (the iso-lines' direction: a beam
+// leaning L reads L). The heat's: its brightness is in lighter and darker shades of its red (the pixels the red leads: the other
+// effects' grey ignored) in bands round the width, and its structure is where those bands are, row by row: the phase of each of the
+// first five harmonics round the width, for groups of 4 rows, down the band, its slope with the depth turned into pixels across a row
+// (a shift of the bands by dx moves the k-th harmonic's phase by -2 pi k dx / W), the harmonics weighted by their power: dx / dy as
+// degrees from vertical. `hold`: the whole band at u 0.62; `build`: at u 0.3, down to where the front's soft edge begins; `travel`:
+// the same read down the build, a front at a time (u 0.1 to 0.5 every 0.04): where the bands are at the front's depth, frame to frame (the
+// direction the wash's light travels as the front moves down), `cx`: the alpha's centroid across (a fraction of the width) at those
+// frames, `cols`: at lean 0, the sums of the alpha over the band in sixths of the width, at u 0.15 over the hold's (the front's
+// evenness), and the probe's lean, the cost.
+const heatAngles = (page, leans) => page.evaluate(async (leans) => {
+  const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), W = c.width, H = c.height, band = Math.ceil(H * 0.25);
+  const grab = () => g.getImageData(0, 0, W, H).data;
+  const place = (lean) => { const el = 20, az = (Math.asin(-Math.tan(lean * Math.PI / 180) * Math.tan(el * Math.PI / 180)) * 180 / Math.PI + 360) % 360; Sky.setSunPosition(az, el); };
+  const blur = (f, w, h, s) => {
+    const r = Math.ceil(3 * s), k = []; for (let i = -r; i <= r; i++) k.push(Math.exp(-i * i / (2 * s * s)));
+    const a = new Float64Array(f.length), b = new Float64Array(f.length);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let v = 0, n = 0; for (let i = -r; i <= r; i++) { const xx = x + i; if (xx < 0 || xx >= w) continue; v += k[i + r] * f[y * w + xx]; n += k[i + r]; } a[y * w + x] = v / n; }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let v = 0, n = 0; for (let i = -r; i <= r; i++) { const yy = y + i; if (yy < 0 || yy >= h) continue; v += k[i + r] * a[yy * w + x]; n += k[i + r]; } b[y * w + x] = v / n; }
+    return b;
+  };
+  const axisOf = (d, y0, y1) => {   // (the structure tensor's iso-line direction, degrees from vertical)
+    const h = y1 - y0, f = new Float64Array(W * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < W; x++) { const i = ((y0 + y) * W + x) * 4; f[y * W + x] = d[i + 3]; }
+    const q = blur(f, W, h, 3);
+    for (let y = 0; y < h; y++) {
+      let m = 0; for (let x = 0; x < W; x++) m += q[y * W + x]; m /= W;
+      for (let x = 0; x < W; x++) q[y * W + x] -= m;
+    }
+    let jxx = 0, jyy = 0, jxy = 0;
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < W - 1; x++) {
+      const gx = q[y * W + x + 1] - q[y * W + x - 1], gy = q[(y + 1) * W + x] - q[(y - 1) * W + x];
+      jxx += gx * gx; jyy += gy * gy; jxy += gx * gy;
+    }
+    return -0.5 * Math.atan2(2 * jxy, jxx - jyy) * 180 / Math.PI;
+  };
+  const K = [1, 2, 3, 4, 5];
+  const coef = (d, y0, y1) => {   // (the harmonics of the heat's red-led brightness round the width, over rows y0..y1: [re, im] each)
+    const out = K.map(() => [0, 0]);
+    for (let y = y0; y < y1; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4, v = d[i] - Math.max(d[i + 1], d[i + 2]) > 30 ? 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2] : 0;
+      K.forEach((k, j) => { const a = 2 * Math.PI * k * x / W; out[j][0] += v * Math.cos(a); out[j][1] -= v * Math.sin(a); });
+    }
+    return out;
+  };
+  const slope = (pairs) => {   // ([[coefA, coefB, rows between], ...] -> degrees from vertical: the bands' shift (px) over the rows, at the bands' strongest harmonic)
+    const power = K.map((k, j) => pairs.reduce((p, [a]) => p + Math.hypot(a[j][0], a[j][1]), 0)), j = power.indexOf(Math.max(...power)), k = K[j];
+    let dx = 0, dy = 0;
+    for (const [a, b, rows] of pairs) {
+      const re = b[j][0] * a[j][0] + b[j][1] * a[j][1], im = b[j][1] * a[j][0] - b[j][0] * a[j][1], w = Math.hypot(re, im);
+      dx += w * rows * -Math.atan2(im, re) * W / (2 * Math.PI * k); dy += w * rows * rows;
+    }
+    return Math.atan2(dx, dy) * 180 / Math.PI;
+  };
+  const alphaOf = (d, y0, y1) => { let s = 0, at = 0; for (let y = y0; y < y1; y++) for (let x = 0; x < W; x++) { const a = d[(y * W + x) * 4 + 3]; s += a; at += a * x; } return { sum: s, cx: at / Math.max(s, 1) / W }; };
+  const out = [];
+  for (const lean of leans) {
+    const r = { lean };
+    Sky.set({ uv: 1 }, true);
+    place(lean); Sky.advance(400);
+    r.beam = axisOf(grab(), 0, band);
+    r.beamLean = Sky.state().beam.lean;
+    Sky.set({ heat: 1 }, true);
+    place(lean); Sky.heatPhase(0.6); Sky.advance(400);
+    const frame = (u) => { Sky.heatPhase(u); Sky.advance(1); return grab(); };
+    const groups = (d, y0, y1) => { const gs = []; for (let y = y0; y + 4 <= y1; y += 4) gs.push(coef(d, y, y + 4)); return gs; };
+    const down = (gs) => slope([1, 2, 3, 4, 5, 6, 7].flatMap((n) => gs.slice(n).map((b, i) => [gs[i], b, 4 * n])));
+    let d = frame(0.62);
+    const top = Math.round(band * 0.06), bottom = Math.round(band * 0.45);
+    r.hold = down(groups(d, top, bottom)); r.drawn = Sky.state().heat.drawn;
+    d = frame(0.3);
+    const h = Sky.state().heat, fb = Math.floor(h.front - h.soft);
+    r.build = down(groups(d, top, Math.min(bottom, fb - 2)));
+    r.front = [h.front, h.soft, h.lit];
+    // (the build, a front at a time: the bands in the 4 rows above the soft edge, frame to frame)
+    const seen = [], cx = [];
+    for (let u = 0.05; u < 0.3001; u += 0.01) {
+      d = frame(u);
+      const s = Sky.state().heat, y1 = Math.floor(s.front - s.soft) - 2;
+      cx.push(alphaOf(d, 0, band).cx);
+      if (y1 - 4 >= top && y1 <= bottom) seen.push({ y: y1 - 2, c: coef(d, y1 - 4, y1) });
+    }
+    r.travel = slope([1, 2, 3, 4, 5, 6, 7, 8].flatMap((n) => seen.slice(n).map((b, i) => [seen[i].c, b.c, b.y - seen[i].y])));
+    r.travelFrames = seen.length;
+    r.cx = cx;
+    r.cxHold = alphaOf(frame(0.62), 0, band).cx;
+    // (the front's evenness: sixths of the width, alpha summed over the band, at u 0.15 over the hold's)
+    const sixths = (dd) => Array.from({ length: 6 }, (_, k) => { let a = 0; for (let y = 0; y < band; y++) for (let x = Math.floor(k * W / 6); x < Math.floor((k + 1) * W / 6); x++) a += dd[(y * W + x) * 4 + 3]; return a; });
+    const hold = sixths(frame(0.62)), early = sixths(frame(0.15));
+    r.cols = early.map((v, k) => v / hold[k]);
+    r.cost = Sky.state().cost;
+    out.push(r);
+  }
+  Sky.setSunPosition(null, null);
+  return out;
+}, leans);
 // The beams' lean through the day (Sky.setTime, no frames needed): `curve`, every minute of the day on the page's fallback day
 // (06:00-18:00), then a given day's (07:00-19:00, Sky.setSun): the lean at sunrise, at its midday, and 60 s of the weather's time after
 // (the beams on: heat) the page's own clock going on
@@ -3256,7 +3347,7 @@ const WEATHER = {
       const times = SUN_TIMES;
       const p = await weatherPage(browser, url, { query: `?fx=${name}`, driven: true, context: { viewport: { width: 640, height: 480 } } });
       const seen = await heatSeen(p.page, levels, times);
-      if (name === "heat") { seen.byLean = await heatLeans(p.page, LEAN_PLACES); seen.sun = await sunSeen(p.page); seen.place = await placeSeen(p.page, require("./sun_days.json").days); }
+      if (name === "heat") { seen.byLean = await heatLeans(p.page, LEAN_PLACES); seen.angles = await heatAngles(p.page, [-60, -30, -15, 0, 15, 30, 60]); seen.sun = await sunSeen(p.page); seen.place = await placeSeen(p.page, require("./sun_days.json").days); }
       seen.grid = (await gridPeak(p.page)).ratio;   // (its shafts' dithering)
       seen.errors = p.errors;
       await p.context.close();

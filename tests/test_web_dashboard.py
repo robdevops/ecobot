@@ -2868,14 +2868,21 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert all(b <= a * 1.05 + 0.003 for a, b in zip(band, band[1:])) and band[0] > 4 * band[-1], (l["lean"], band)
         assert l["last"] <= 0.25 * height * 1.03 + 1 and all(r == 0 for r in rows[int(height * 0.27):]), (l["lean"], l["last"], 0.25 * height)
         assert sum(rows[int(0.22 * height):int(0.25 * height)]) < 0.02 * sum(rows[:int(0.25 * height)]) * 3, (l["lean"], rows[int(0.22 * height):int(0.25 * height) + 3])
-    # ... and during the build the front is diagonal, along the ray: the right-of-middle less the left's share of the band, against the
-    # hold's, shifts toward the sun's far side: lit first on the right in the morning (negative lean), on the left after, none at no lean
-    for k in (-60, -45, -30):
-        assert by[k]["build"][0] - by[k]["side"] > 0.1, (k, by[k]["side"], by[k]["build"])
-    for k in (30, 45, 60):
-        assert by[k]["build"][0] - by[k]["side"] < -0.1, (k, by[k]["side"], by[k]["build"])
-    assert all(abs(b - by[0]["side"]) < 0.04 for b in by[0]["build"]), (by[0]["side"], by[0]["build"])   # (horizontal: the columns alike)
-    assert by[-45]["build"][0] > by[-45]["build"][2] > by[-45]["side"] - 0.02 and by[45]["build"][0] < by[45]["build"][2], (by[-45], by[45])   # (the lit side spreads across)
+    # ... the heat shines down the beams' own rays: measured from the pixels (heatAngles), at leans -60 to 60, the beams' axis (the structure
+    # tensor of their brightness over the quarter) is the lean, and the heat's bands (their phase round the width, row by row, down the band)
+    # lean the same way within 3 degrees, at the hold, on the build (u 0.3) and as the front's light travels down the build (the bands at
+    # the front's depth, frame to frame); the front itself is horizontal, nothing travels sideways (the alpha's centroid across stays within
+    # 3 % of the width over the build) and at lean 0 the front is even across (sixths of the width alike within 3 %)
+    angles = hot["angles"]
+    assert [a["lean"] for a in angles] == [-60, -30, -15, 0, 15, 30, 60], angles
+    for a in angles:
+        assert a["beam"] == pytest.approx(a["lean"], abs=3) and a["beamLean"] == pytest.approx(a["lean"], abs=0.01), a
+        for way in ("hold", "build", "travel"):
+            assert abs(a[way] - a["beam"]) <= 3, (a["lean"], way, a[way], a["beam"])
+        assert a["travelFrames"] >= 6 and a["drawn"] == pytest.approx(a["lean"], abs=0.01), a
+        assert abs(max(a["cx"]) - a["cxHold"]) < 0.03 and abs(min(a["cx"]) - a["cxHold"]) < 0.03, (a["lean"], a["cx"], a["cxHold"])
+        assert all(abs(c / a["cols"][0] - 1) < 0.03 for c in a["cols"]) or a["lean"] != 0, a["cols"]
+        assert a["cost"] < 4, a["cost"]
     assert by[60]["grid"] < 400 and by[-60]["grid"] < 400 and by[0]["grid"] < 400, [(l["lean"], l["grid"]) for l in hot["byLean"]]
     assert all(l["cost"] < 4 for l in hot["byLean"]), [l["cost"] for l in hot["byLean"]]
     # with the UV on too: the gradient behind, the UV's violet crisp on top (blue over red at its places), within the cap; the union
