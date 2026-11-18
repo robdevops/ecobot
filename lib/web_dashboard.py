@@ -20,7 +20,7 @@
     (`rain_rate`, mm/h: its rain gauge's, or its piezo gauge's where that's the one reporting, which no tile shows; null with
     neither), for the page's rain behind the tiles; today's highest of the dials with a thin red hand (`today_highs`, by title,
     the station's day in its zone: Wind's gust, Rain rate's, Solar radiation's, UV index's: their tiles' Daily Max, the Wind's its
-    Daily Gust, the reading now counted in: today_highs()), the Wind direction tile's `rose` (today's
+    Daily Gust, the reading now counted in: today_highs()), the Wind tile's `common` (the compass point the wind came from most often today, this month and this year: common()), the Wind direction tile's `rose` (today's
     share of the wind's direction from each of the 16 compass points, N first, clockwise, from the file's readings, calm ones left out;
     [] with none: rose()), the Atmospheric pressure tile's `tendency` (its WMO 3-hour tendency, for the arrow after its reading:
     {"change": hPa, "way": "up", "down" or "steady", "class": "none", "slow", "moderate", "quick" or "rapid"}, the file's newest reading
@@ -60,7 +60,7 @@ import json
 import logging
 import math
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from starlette.requests import Request
@@ -73,7 +73,8 @@ from .airgradient.dashboard import AIR_GAUGES
 from .airgradient.metrics import value_of
 from .service.common import iso
 from .ecowitt.dashboard import GAUGES, GUST, live_value
-from .ecowitt.reads import directions_on, pressure_on, rain_rates_on
+from .ecowitt.direction import commonest
+from .ecowitt.reads import directions_on, pressure_on, rain_rates_on, wind_readings_on
 from .gauge_look import look, tile_json
 from .timeutil import day_bounds, local_date
 
@@ -95,6 +96,7 @@ NOT_ANSWERING = "The weather station isn't answering right now."
 RAIN_RATES = ("rainfall", "rainfall_piezo")   # where the station's rain rate is (current's groups): its rain gauge's first, then the piezo's
 ROSE_SECONDS = 60           # the wind rose (today's directions) read from the file at most this often (the data asked for again sooner: the same)
 ROSE_DECIMALS = 4           # its shares rounded so
+COMMON_SECONDS = 120        # the most common wind directions (Daily, Monthly, Yearly) read from the file at most this often
 TENDENCY_TITLE = "Atmospheric pressure"   # the tile with an arrow after its reading: its change over the past 3 hours (`tendency`: tendency())
 TENDENCY_SECONDS = 60       # the past hours' pressure read from the file at most this often (as the rose)
 TENDENCY_AGO = (150 * 60, 180 * 60, 210 * 60)   # ... the reading it is told from: the one nearest 3 hours before the newest, 150 to 210 min before it
@@ -267,6 +269,7 @@ class WebDashboard:
             raise ValueError(f"animations: {animations!r} is not one of {', '.join(MOTIONS)}")
         self._streams: set[asyncio.Queue] = set()
         self._rose: tuple[float, int, list[float]] | None = None   # (when read, the day's start, its shares): rose()'s, kept ROSE_SECONDS
+        self._common: tuple[float, int, dict[str, str | None]] | None = None   # (when read, the day's start, the points): common()'s, kept COMMON_SECONDS
         self._tendency: tuple[float, dict | None] | None = None   # (when read, the 3-hour tendency): tendency()'s, kept TENDENCY_SECONDS
         self._flood: tuple[float, list[tuple[int, float]] | None] | None = None   # (when read, the past hours' 5-minute rain rates): flood_rows()'s, kept FLOOD_SECONDS
         self._shown = self._readings()
@@ -285,6 +288,8 @@ class WebDashboard:
         for tile in tiles:
             if tile["kind"] == "compass":   # (the wind's direction: today's rose under its needle)
                 tile["rose"] = await self.rose()
+            elif "Gust" in tile["columns"]:   # (the wind's speed: its most common direction under its table)
+                tile["common"] = await self.common()
             elif tile["title"] == TENDENCY_TITLE:   # (the pressure: an arrow after its reading, its 3-hour tendency)
                 tile["tendency"] = await self.tendency()
         rate = rain_rate_of(result, live)
@@ -338,6 +343,28 @@ class WebDashboard:
                 log.warning("Dashboard: couldn't read today's wind directions: %s: %s", type(e).__name__, e)
         self._rose = (now, start, shares)
         return shares
+
+    async def common(self) -> dict[str, str | None]:
+        """The compass point (N, NNE ... NNW) the wind came from most often, {"Daily": ..., "Monthly": ..., "Yearly": ...}: since the
+        station's local midnight, the first of its month and its year (in its zone), from the file's wind readings (wind_readings_on),
+        calm ones left out and a tie to the point nearest the newest reading (direction.commonest); None for a period with no reading
+        (or no file, or an error reading it). Read at most every COMMON_SECONDS (and again as the day turns), else kept."""
+        zone, now = self.server.ctx.zone, time.time()
+        today = local_date(int(now), zone)
+        starts = {"Daily": today, "Monthly": today.replace(day=1), "Yearly": date(today.year, 1, 1)}
+        starts = {name: day_bounds(day, zone)[0] for name, day in starts.items()}
+        if self._common and self._common[1] == starts["Daily"] and now - self._common[0] < COMMON_SECONDS:
+            return self._common[2]
+        points: dict[str, str | None] = dict.fromkeys(starts)
+        eco = self.server.ctx.eco
+        if getattr(eco, "storage", None) is not None and getattr(eco, "mac", None):
+            try:
+                readings = await eco.storage.read(wind_readings_on, eco.mac, starts["Yearly"], int(now) + 60)
+                points = {name: commonest([r for r in readings if r[0] >= start]) for name, start in starts.items()}
+            except Exception as e:   # (no table drawn)
+                log.warning("Dashboard: couldn't read the wind's directions: %s: %s", type(e).__name__, e)
+        self._common = (now, starts["Daily"], points)
+        return points
 
     async def tendency(self) -> dict | None:
         """The pressure's 3-hour tendency (tendency_of): the file's newest reading (its 5-minute readings and the minutes they

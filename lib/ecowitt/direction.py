@@ -23,6 +23,23 @@ def point(degrees: float) -> str:
     return POINTS[sector(degrees)]
 
 
+CALM_BELOW = 1.0  # km/h: a reading of a slower wind has no meaningful direction, and is left out of the most common point
+
+
+def commonest(readings: list[tuple[int, float, float | None]]) -> str | None:
+    """The compass point (POINTS) the wind came from most often in these readings ((epoch, degrees, km/h or None), any order): each
+    reading counts once, in its point (sector); a reading slower than CALM_BELOW is left out (one with no speed counts). A tie goes to
+    the tied point nearest the newest reading's direction (the arc between the points, so it does not flip back and forth), then to the
+    first clockwise from north. None with no reading left."""
+    counts = Counter(sector(d) for _, d, speed in readings if speed is None or speed >= CALM_BELOW)
+    if not counts:
+        return None
+    newest = sector(max(readings, key=lambda r: r[0])[1])
+    top = max(counts.values())
+    tied = sorted(i for i, n in counts.items() if n == top)
+    return POINTS[min(tied, key=lambda i: (min((i - newest) % 16, (newest - i) % 16), i))]
+
+
 SPEED_STEPS = (10, 20)  # km/h: the rose's light, middle and strong wind (under 10, 10 to 20, 20 and over)
 
 

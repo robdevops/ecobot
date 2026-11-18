@@ -203,8 +203,20 @@ const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
                    colour: line ? line.getAttribute("stroke") : null, width: line ? Number(line.getAttribute("stroke-width")) : null,
                    limit, needleWidth: needle.getBBox().width,
                    order: [parts.indexOf(needle), parts.indexOf(hand), parts.indexOf(hub)],
-                   heads: title === "Wind" ? [...t.querySelectorAll(".chip.head")].map((e) => e.textContent) : undefined,
-                   headColours: title === "Wind" ? [...t.querySelectorAll(".chip.head")].map((e) => getComputedStyle(e).backgroundColor) : undefined,
+                   heads: title === "Wind" ? [...t.querySelectorAll(".chip.head")].slice(0, 2).map((e) => e.textContent) : undefined,
+                   headColours: title === "Wind" ? [...t.querySelectorAll(".chip.head")].slice(0, 2).map((e) => getComputedStyle(e).backgroundColor) : undefined,
+                   // (the second table, the most common direction: its head, row buttons and figures, each with the first table's counterparts' classes and look)
+                   common: title === "Wind" ? (() => {
+                     const look = (e) => ({cls: e.className, size: getComputedStyle(e).fontSize, weight: getComputedStyle(e).fontWeight, h: e.style.height,
+                                           w: e.style.width, bg: getComputedStyle(e).backgroundColor, colour: getComputedStyle(e).color, radius: getComputedStyle(e).borderRadius});
+                     const heads = [...t.querySelectorAll(".chip.head")], rows = [...t.querySelectorAll(".chip.row")], figs = [...t.querySelectorAll(".figure")];
+                     return {head: heads[2] && heads[2].textContent, headLook: heads[2] && look(heads[2]), maxLook: look(heads[0]),
+                             labels: rows.slice(3).map((e) => e.textContent), labelLooks: rows.slice(3).map(look), firstLabelLooks: rows.slice(0, 3).map(look),
+                             values: figs.slice(6).map((e) => e.textContent), valueLooks: figs.slice(6).map(look), firstValueLooks: figs.slice(0, 3).map(look),
+                             tops: [heads[0], rows[0], rows[1], rows[2], heads[2], rows[3], rows[4], rows[5]].map((e) => e && e.getBoundingClientRect().top),
+                             lefts: [rows[0], rows[3]].map((e) => e && e.getBoundingClientRect().left),
+                             tile: t.getBoundingClientRect().toJSON(), tall: t.classList.contains("tall")};
+                   })() : undefined,
                    daily: title === "Wind" ? [...t.querySelectorAll(".figure")].slice(0, 2).map((e) => e.textContent) : undefined }];
 })));
 // Every round dial's (and the compass's) hub and its needle's pivot, in its own px: the hub's centre, radius and outline width; the
@@ -1821,7 +1833,7 @@ const sunLook = async (page) => {
   const out = {};
   await fx({ heat: 1, uv: 1 });
   const DAYS = { summer: [354.36, 1241.24, 75.61], winter: [455.21, 1027.59, 28.74], equinox: [442.31, 1174.58, 52.81] };
-  await page.setViewportSize({ width: 1024, height: 768 });   // (its first row 73 px down: a strip of 24 art px for the arc)
+  await page.setViewportSize({ width: 1024, height: 834 });   // (its first row 73 px down, the Wind's taller tile counted in: a strip of 24 art px for the arc)
   await page.waitForTimeout(500);
   out.arcs = await inPage((DAYS) => {
     const run = {};

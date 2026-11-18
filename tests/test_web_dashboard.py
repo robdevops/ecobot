@@ -39,12 +39,12 @@ import httpx
 import pytest
 
 from lib import gauge_sheet, solar, web_dashboard
-from lib.ecowitt.direction import POINTS
+from lib.ecowitt.direction import POINTS, commonest, point
 from lib.gauge_look import look, tile_json
 from lib.mcp_server import AIR_URI, EcobotServer, WEATHER_URI, http_app
 from lib.service.context import Context
 from lib.service.names import Catalogue
-from lib.ecowitt.reads import directions_on, pressure_on, rain_rates_on
+from lib.ecowitt.reads import directions_on, pressure_on, rain_rates_on, wind_readings_on
 from lib.gauge_look import CHIPS, MAX_CHIP, START, SWEEP
 from lib.web_dashboard import (DESCRIPTION, ICON, ICON_URL, PAGE, RED_HANDS, WebDashboard, air_readings_of, rain_rate_of, readings_of,
                                today_highs)
@@ -92,14 +92,18 @@ class Station:
         self._keep_air()
 
     def held(self, rose: list[int] | None = None, pressure: list[tuple[float, float]] | None = None,
-             rain: list[tuple[float, float]] | None = None):
+             rain: list[tuple[float, float]] | None = None, wind: list[tuple[int, float, float | None]] | None = None):
         """The station's file holds today's wind directions (directions_on's: minutes from each of the 16 compass points; none: all
         0) and the past four hours' pressure (pressure_on's, given as [(minutes before now, hPa)], oldest first; none: no
         reading) and the past six hours' 5-minute rain rates (rain_rates_on's, [(minutes before now, mm/h)], oldest first; none:
-        no history), as the dashboard reads them (nothing else: the red hands' highs are the sheet's)."""
+        no history) and the year's wind readings (wind_readings_on's, [(epoch, degrees, km/h)]; none: no readings), as the dashboard reads
+        them (nothing else: the red hands' highs are the sheet's)."""
         async def read(fn, mac, *args):
-            assert mac == "fake" and fn in (directions_on, pressure_on, rain_rates_on)
+            assert mac == "fake" and fn in (directions_on, pressure_on, rain_rates_on, wind_readings_on)
             start, end = args
+            if fn is wind_readings_on:                                           # (from the station's 1 January: the year's)
+                assert datetime.fromtimestamp(start, TZ).date() == date(datetime.now(TZ).year, 1, 1) and abs(end - 60 - time.time()) < 5
+                return [r for r in (wind or []) if start <= r[0] <= end]
             if fn is rain_rates_on:                                              # (the past 6 hours: FLOOD_READ)
                 assert end - 60 - start == web_dashboard.FLOOD_READ == 6 * 3600, (start, end)
                 return [(int(end - 60 - m * 60), v) for m, v in (rain or [])]
@@ -166,6 +170,7 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     got = data.json()
     sheet = gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False}))
     assert got["tiles"] == [{**tile_json(t), **({"rose": []} if t.kind == "compass" else {}),             # (no file: no rose, no
+                             **({"common": dict.fromkeys(("Daily", "Monthly", "Yearly"))} if "Gust" in t.columns else {}),   # common point,
                              **({"tendency": None} if t.title == "Atmospheric pressure" else {})} for t in sheet.tiles]   # arrow)
     assert got["as_of"] == AS_OF and got["look"] == look()
     titles = [t["title"] for t in got["tiles"]]
@@ -321,7 +326,7 @@ async def test_the_data_carries_todays_wind_rose_on_the_wind_direction_tile_read
     compass = lambda got: next(t for t in got["tiles"] if t["kind"] == "compass")
     got = await page.data()
     assert compass(got)["rose"] == [] and all("rose" not in t for t in got["tiles"] if t["kind"] != "compass")   # (no file)
-    assert [{k: v for k, v in t.items() if k not in ("rose", "tendency")} for t in got["tiles"]] == [tile_json(t) for t in gauge_sheet.sheet(
+    assert [{k: v for k, v in t.items() if k not in ("rose", "tendency", "common")} for t in got["tiles"]] == [tile_json(t) for t in gauge_sheet.sheet(
         station.current(gauge_sheet.call(), {"fetch": False})).tiles]
     minutes = [10, 4, 2, 0, 30, 12, 6, 0, 0, 0, 3, 0, 0, 0, 5, 8]
     station.held(minutes)
@@ -338,6 +343,126 @@ async def test_the_data_carries_todays_wind_rose_on_the_wind_direction_tile_read
     station.eco.storage = NS(read=broken)
     monkeypatch.setattr(web_dashboard, "ROSE_SECONDS", 0)
     assert compass(await page.data())["rose"] == [] and "couldn't read today's wind directions: OSError: disk" in caplog.text
+
+
+def test_a_direction_is_one_of_the_16_points_each_22_5_degrees_centred_on_its_name_north_spanning_348_75_to_11_25():
+    """direction.point: every point's centre and both its edges (the lower edge in it, the upper in the next), the 360 wrap, and a turn or
+    more round."""
+    for i, name in enumerate(POINTS):
+        centre = 22.5 * i
+        assert point(centre) == name and point(centre + 11.2499) == name and point(centre - 11.2499) == name, name
+        assert point(centre - 11.25) == name and point(centre + 11.25) == POINTS[(i + 1) % 16], name   # (an edge belongs to the point it opens)
+    assert [point(d) for d in (0, 359.99, 348.75, 348.7499, 11.2499, 11.25, 360, 720 + 10, -10, -11.25, -11.26)] == [
+        "N", "N", "N", "NNW", "N", "NNE", "N", "N", "N", "N", "NNW"]
+    assert POINTS[:5] == ("N", "NNE", "NE", "ENE", "E") and POINTS[-1] == "NNW" and len(set(POINTS)) == 16
+
+
+def test_the_most_common_point_counts_each_reading_leaves_calm_ones_out_and_breaks_a_tie_towards_the_newest_reading():
+    """direction.commonest: the point with most readings; a reading under 1 km/h left out (1 counts, none counts as a speed-less one); a
+    tie to the tied point nearest the newest reading's direction (round the compass), else the first clockwise from north; None with no
+    reading or only calm ones."""
+    r = lambda *rows: [(t, d, v) for t, (d, v) in enumerate(rows)]
+    assert commonest([]) is None
+    assert commonest(r((90, 5), (92, 6), (180, 20))) == "E"
+    assert commonest(r((359, 5), (1, 5), (10, 5), (180, 5))) == "N"                          # (north spans the 360 wrap)
+    assert commonest(r((90, 0.9), (90, 0.5), (90, 0), (180, 1.0))) == "S"                    # (calm: under 1 km/h, left out; 1.0 is not)
+    assert commonest(r((90, 0.99), (90, 0))) is None                                          # (nothing left)
+    assert commonest(r((90, None), (90, 0.5), (180, 3))) == "S" and commonest(r((90, None), (90, None), (180, 3))) == "E"   # (no speed counts)
+    assert commonest([(1, 0, 5), (2, 180, 5)]) == "S"                                         # (the newest is S: it wins the N, S tie)
+    assert commonest([(2, 0, 5), (1, 180, 5)]) == "N"                                         # (any order: by the epoch)
+    assert commonest([(1, 0, 5), (2, 180, 5), (3, 20, 0.2)]) == "N"                           # (the newest, a calm NNE: nearer N than S)
+    assert commonest([(1, 180, 5), (2, 0, 5), (3, 200, 0.2)]) == "S"                          # (... nearer S)
+    assert commonest([(1, 180, 5), (2, 0, 5), (3, 90, 0.2)]) == "N"                           # (E: as near both: the first clockwise)
+    assert commonest([(1, 337.5, 5), (2, 22.5, 5), (3, 355, 0.2)]) == "NNE"                   # (north: NNW and NNE as near: the first clockwise)
+    assert commonest([(1, 337.5, 5), (2, 22.5, 5), (3, 330, 0.2)]) == "NNW"
+    assert commonest([(1, 22.5 * 15, 5), (2, 22.5, 5), (3, 22.5 * 14, 5), (4, 22.5 * 2, 5)]) == "NE"   # (all four once: the newest is NE)
+
+
+async def test_the_winds_readings_are_the_5_minute_ones_and_the_minutes_they_dont_cover_with_their_speeds(tmp_path):
+    """wind_readings_on: [(epoch, degrees, km/h or None)] from start to end, oldest first: a 5-minute reading and a minute where no
+    5-minute reading is within 300 s of it; nothing older or newer, nor a 30-minute reading; [] with none, or no wind sensor. A calm reading
+    is given as it is (the speed is for the caller to judge)."""
+    from lib.storage import Storage
+    storage = Storage(tmp_path / "s.sqlite", TZ)
+    mac, now = "AA:BB", 1_794_279_900
+    assert await storage.read(wind_readings_on, mac, now - 6 * 3600, now) == []
+    wind = lambda rows: {"wind": {"wind_direction": {"unit": "º", "list": {str(t): d for t, (d, _) in rows.items()}},
+                                  "wind_speed": {"unit": "km/h", "list": {str(t): v for t, (_, v) in rows.items()}}}}
+    with storage.writer.transaction() as w:
+        w.put_ecowitt(mac, "5min", ["wind"], wind({now - 3600: ("90", "5"), now - 3300: ("95", "0"), now - 7 * 3600: ("0", "4")}),
+                      now - 8 * 3600, now - 2000, now=now)
+        w.put_ecowitt(mac, "30min", ["wind"], wind({now - 1800: ("270", "4")}), now - 1800, now - 1800, now=now)
+        w.put_minutes(mac, wind({now - 3540: ("200", "2"), now - 600: ("350", "6"), now + 120: ("90", "9")}), now)
+        w.put_minutes(mac, {"wind": {"wind_direction": {"unit": "º", "list": {str(now - 360): "135"}}}}, now)
+    got = await storage.read(wind_readings_on, mac, now - 6 * 3600, now)
+    assert got == [(now - 3600, 90.0, 5.0), (now - 3300, 95.0, 0.0), (now - 600, 350.0, 6.0), (now - 360, 135.0, None)], got
+    storage.close()
+
+
+async def test_the_data_carries_the_most_common_wind_direction_for_today_this_month_and_this_year_in_the_stations_zone(
+        server, station, tmp_path, monkeypatch):
+    """The Wind tile's `common`: {"Daily", "Monthly", "Yearly"} the compass point the wind came from most often since the station's
+    midnight, the first of its month and of its year (its zone: Melbourne's, 11 hours ahead of UTC in November), from the file's wind readings,
+    calm ones (under 1 km/h) left out, a tie to the point nearest the newest reading; None for a period with nothing left; no other tile has
+    one."""
+    from lib.storage import Storage
+    from tests import clocks
+    now = datetime(2026, 11, 10, 14, 5, tzinfo=TZ)
+    clocks.pin(monkeypatch, now)
+    storage = Storage(tmp_path / "s.sqlite", TZ)
+    station.eco.storage, station.eco.mac = storage, "AA:BB"
+    page = WebDashboard(server)
+    wind_tile = lambda got: next(t for t in got["tiles"] if t["title"] == "Wind")
+    got = await page.data()
+    assert wind_tile(got)["common"] == {"Daily": None, "Monthly": None, "Yearly": None}                       # (no readings)
+    assert [t["title"] for t in got["tiles"] if "common" in t] == ["Wind"]
+    rows: dict[int, tuple[str, str]] = {}
+
+    def blow(start: tuple, n: int, degrees: float, speed: float = 5.0):
+        at = int(datetime(*start, tzinfo=TZ).timestamp())
+        for i in range(n):
+            rows[at + 300 * i] = (str(degrees), str(speed))
+    blow((2025, 12, 31, 23, 0), 12, 90)           # (E, the 12 readings of the year before: left out of the year, last of them at 23:55)
+    blow((2026, 1, 1, 0, 0), 10, 270)             # (W from the first moment of the year: 10)
+    blow((2026, 10, 31, 23, 30), 6, 180)          # (S, the end of last month: 6)
+    blow((2026, 11, 1, 0, 0), 4, 45)              # (NE from the first moment of the month: 4)
+    blow((2026, 11, 9, 23, 30), 3, 225)           # (SW the last half hour of yesterday: 3)
+    blow((2026, 11, 10, 0, 0), 2, 22.5)           # (NNE from midnight: 2)
+    blow((2026, 11, 10, 10, 0), 20, 0, 0.5)       # (a calm N: 20, left out)
+    with storage.writer.transaction() as w:
+        w.put_ecowitt("AA:BB", "5min", ["wind"], {"wind": {"wind_direction": {"unit": "º", "list": {str(t): d for t, (d, _) in rows.items()}},
+                                                           "wind_speed": {"unit": "km/h", "list": {str(t): v for t, (_, v) in rows.items()}}}},
+                      min(rows), max(rows), now=int(now.timestamp()))
+    page._common = None
+    assert wind_tile(await page.data())["common"] == {"Daily": "NNE", "Monthly": "NE", "Yearly": "W"}
+    assert web_dashboard.COMMON_SECONDS == 120
+    storage.close()
+
+
+async def test_the_most_common_direction_is_kept_two_minutes_read_again_as_the_day_turns_and_an_error_gives_dashes(
+        server, station, monkeypatch, caplog):
+    """WebDashboard.common: read at most every COMMON_SECONDS, else kept; again at once as the station's day turns; None in each
+    period with the file not read (an error is logged)."""
+    page = WebDashboard(server)
+    common = lambda got: next(t for t in got["tiles"] if t["title"] == "Wind")["common"]
+    start = int(datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    station.held(wind=[(start + 1, 90.0, 5.0)])
+    first = common(await page.data())
+    assert first == {"Daily": "E", "Monthly": "E", "Yearly": "E"}
+    station.held(wind=[(start + 1, 180.0, 5.0)])
+    assert common(await page.data()) == first                                   # (kept)
+    page._common = (page._common[0] - 121, *page._common[1:])
+    assert common(await page.data()) == {"Daily": "S", "Monthly": "S", "Yearly": "S"}
+    page._common = (page._common[0], page._common[1] - 86400, page._common[2])   # (the day turned since: read at once)
+    station.held(wind=[(start + 1, 270.0, 5.0)])
+    assert common(await page.data())["Daily"] == "W"
+
+    async def broken(*a):
+        raise OSError("disk")
+    station.eco.storage = NS(read=broken)
+    page._common = None
+    assert common(await page.data()) == {"Daily": None, "Monthly": None, "Yearly": None}
+    assert "couldn't read the wind's directions: OSError: disk" in caplog.text
 
 
 async def test_todays_wind_directions_are_counted_from_the_5_minute_readings_and_the_minutes_they_dont_cover_calm_left_out(tmp_path):
@@ -946,7 +1071,10 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     monkeypatch.setattr(web_dashboard, "ROSE_SECONDS", 0)                  # (today's rose read again with each data: it changes below)
     station.reads("wind", "wind_gust", "12")
     station.highs_today({"wind_gust": 37.0, "rain_rate_max": 4.2, "solar_max": 820.0, "uv_max": 6.5})   # (today's highest: above the
-    station.held(ROSE, pressure_hour(2.0))                               # readings now, all but 0; today's rose, and the pressure
+    midnight = int(datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    station.held(ROSE, pressure_hour(2.0), wind=[(midnight + 1, 202.5, 5.0), (midnight + 2, 200.0, 7.0), (midnight + 3, 90.0, 5.0),
+                                                  (midnight + 4, 0.0, 0.2)])   # readings now, all but 0; today's rose, and the pressure; the wind's
+                                                                                # points: SSW twice, E once (and a calm N)
     monkeypatch.setattr(web_dashboard, "TENDENCY_SECONDS", 0)              # risen over the past 3 hours; read again: it falls below)
     wind = next(t for t in gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False})).tiles if t.title == "Wind")
     station.reads("indoor", "temperature", "23.7")                       # an indoor sensor, served with MCP_DASHBOARD_INDOOR off:
@@ -992,7 +1120,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
             assert g["bands"] == 0, (name, g)
             if g["kind"] == "dial":                                                # (besides its reading)
                 assert sorted(g["words"]) == sorted([*(str(int(x)) if float(x).is_integer() else str(x) for x in t.ticks), t.unit]), (name, g)
-            assert g["gap"] >= GAPS_BEFORE[g["kind"]] + 12 and g["gap"] >= 15, (name, g)
+            least = min(1, min(r["width"] for r in got["rects"]) / 160)   # (the px of a tile 160 wide: less in a narrower one, as at 154 with the Wind's table)
+            assert g["gap"] >= (GAPS_BEFORE[g["kind"]] + 12) * least and g["gap"] >= 15 * least, (name, g)
             assert g["bottom"] <= TABLE_TOP + 0.5, (name, g)
         # the thermometers' glass catches the light: one straight line down the tube (no curve on the bulb, no second line); no dial
         # or beaker has it
@@ -1010,7 +1139,10 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert (c["label"], c["reading"], c["turn"], c["faded"]) == ("Wind direction 99° E", "99°", "rotate(99.00 240 203)", False), c
         assert c["points"] == ["N", "E", "S", "W"] and c["table"] == 0, c
         assert c["pointColours"] == [look()["soft"]] * 4 and "compass_north" not in look(), c
-        assert any(near(c["box"], r, 0.5) for r in rects) and len({(round(r["width"]), round(r["height"])) for r in rects}) == 1, c
+        assert any(near(c["box"], r, 0.5) for r in rects), c
+        sizes = sorted({(round(r["width"]), round(r["height"])) for r in rects})   # (every tile one size, the Wind's, with its second table,
+        assert len(sizes) == 2 and sizes[0][0] == sizes[1][0] and abs(sizes[1][1] - 4 / 3 * sizes[0][1]) <= 3, (name, sizes)   # a third taller)
+        assert c["box"]["height"] == sizes[0][1] or round(c["box"]["height"]) == sizes[0][1], c
         compass_as_a_dial(c)
         ring, head = c["ring"], c["head"]
         assert (head["left"] + head["right"]) / 2 > (ring["left"] + ring["right"]) / 2 + ring["width"] * 0.1 and abs((head["top"] + head["bottom"]) / 2 - (ring["top"] + ring["bottom"]) / 2) < ring["height"] * 0.1, c
@@ -1049,10 +1181,20 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         # ... its heads: Max grey, Gust in the red hand's very red (the hand and its column go together); every other tile's Max red
         assert hands["Wind"]["headColours"] == [rgb(look()["needle"]), rgb(look()["high_hand"])], hands["Wind"]
         others = got["headColours"]
-        assert others["Wind"] == [["▲ Max", rgb(look()["needle"])], ["» Gust", rgb(look()["high_hand"])]], others
+        assert others["Wind"] == [["▲ Max", rgb(look()["needle"])], ["» Gust", rgb(look()["high_hand"])],
+                                  ["Direction", rgb(look()["needle"])]], others   # (and its second table's head)
         assert any(t != "Wind" and heads for t, heads in others.items()), others
         assert all(c == rgb(CHIPS[n.split()[-1]]) for t, heads in others.items() if t != "Wind" for n, c in heads), others
         assert all(c == rgb(MAX_CHIP) for t, heads in others.items() if t != "Wind" for n, c in heads if n.endswith("Max")), others
+        # ... its most common direction under it: a table of its own, three rows, in the first's classes and look, laid out as it is
+        c = hands["Wind"]["common"]
+        assert c["head"] == "Direction" and c["labels"] == ["Daily", "Monthly", "Yearly"] and c["values"] == ["SSW"] * 3, (name, c)
+        assert c["headLook"]["cls"] == c["maxLook"]["cls"] == "at chip head" and c["headLook"]["bg"] == c["maxLook"]["bg"] == rgb(look()["needle"]), c
+        assert c["labelLooks"] == c["firstLabelLooks"] and c["valueLooks"][0] == c["firstValueLooks"][0] and c["valueLooks"][0]["cls"] == "at figure", c
+        assert c["lefts"][0] == c["lefts"][1], c
+        assert {round(b - a, 1) for a, b in zip(c["tops"], c["tops"][1:])} == {round(c["tops"][1] - c["tops"][0], 1)}, c   # (one spacing, head to
+                                                                                                                             # row to row, on to the next head)
+        assert c["tall"] and c["tile"]["height"] > 1.3 * c["tile"]["width"] * 575 / 480, c
         assert hands["Wind"]["daily"] == [f"{v:.0f}" for v in wind.rows["Daily"]] and wind.rows["Daily"][1] >= 12, (hands["Wind"], wind)
         # every round dial's hub small (about half the old 25), its outline as thin, its needle pivoting on its centre; the compass's
         # smaller still; the pressure in whole hPa, its reading and its table; its arrow after its reading (risen 2 hPa over the past 3 hours: moderate, up, blue), no other's
@@ -1082,7 +1224,9 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         got = report[name]
         assert got["scroll"] == "no" and got["scrollHeight"] <= SIZES[name][1], (name, got)
         assert all(r["bottom"] <= SIZES[name][1] + 0.5 for r in got["rects"]), (name, got)
-        assert min(r["width"] for r in got["rects"]) >= 160, (name, got)
+        assert min(r["width"] for r in got["rects"]) >= 150, (name, got)   # (the Wind's second table costs a third of a row: 160 at least, but
+                                                                           # where that would scroll, 150)
+        assert min(r["width"] for r in got["rects"]) >= 160 or name == "tablet-portrait", (name, got)
     assert report["desktop"]["columns"] == "6" and report["tablet-portrait"]["columns"] == "4" and report["tablet-landscape"]["columns"] == "6"
     assert report["phone-portrait"]["columns"] == "2"                         # too small for all at once: two to a row, scrolling
     assert before["label"] == "Temperature 12.9 °C" and after["label"] == "Temperature 21.5 °C", (before, after)
@@ -2815,7 +2959,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             assert r["x"] - b["Rmax"] >= 0 and r["x"] + b["Rmax"] <= w, (day, r)   # (the glow too: whole across the window)
             assert r["y"] >= -1e-9 and r["y"] <= b["yLo"] and r["y"] - r["r"] >= -r["r"] - 1e-9 and b["S"] <= 0.16 * h + 1e-9 and r["y"] + b["Rmax"] < 0.2 * h, (day, r)
             if day == "winter":   # (a winter noon well inside the window: the ball whole)
-                assert r["y"] - b["Rmax"] >= 0 or r["t"] < 0.1 or r["t"] > 0.9 or r["y"] - r["r"] > 1, (day, r)
+                assert r["y"] - b["Rmax"] >= 0 or r["t"] < 0.1 or r["t"] > 0.9 or r["y"] - r["r"] > 0.5, (day, r)   # (the ball whole at the least,
+                # where the Wind's taller tile leaves the strip above the tiles at its least: its glow may reach over the window's top)
             if r["t"] < 0.08 or r["t"] > 0.92:   # (at sunrise and sunset: low in the strip, fully visible)
                 assert r["y"] - r["r"] > 1, (day, r)
             if b["top"] > b["S"] + 1:   # (tiles start below the strip: the ball and its pink halo, 3 R out, wholly above the first row)
@@ -2835,7 +2980,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             a1, a2 = math.atan2(q["y"] - p["y"], q["x"] - p["x"]), math.atan2(s["y"] - q["y"], s["x"] - q["x"])
             turns.append(abs((a2 - a1 + math.pi) % (2 * math.pi) - math.pi))   # (the arc runs leftward: the angle wraps at pi)
         assert max(turns) < 0.35, (day, max(turns))
-    # the real dashboard at 640 x 480 has its first row 8 px down: the strip is then its minimum (0.06 H); at 1024 x 768 the reach rows below
+    # the real dashboard at 640 x 480 has its first row 8 px down: the strip is then its minimum (0.06 H); at 1024 x 834 the reach rows below
     # have a strip of 24 art px: the arc's rise by the season there
     # a very wide window (1600 x 400): the arc a flat run along the strip at most, whole all day, symmetric about noon, the same x as before
     wide = [r for r in hot["wide"] if r["day"]]

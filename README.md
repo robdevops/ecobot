@@ -279,6 +279,12 @@ always agree with the needle and with the PM2.5 and PM10 dials (the alerts and t
 readings, so a passing spike isn't called poor). The page's data never asks the air sensor: with its reading
 stale it shows the one it holds.
 
+The Wind tile has a second table under its Max and Gust one, headed Direction: the compass point the wind came from most often today,
+this month and this year (N, NNE, NE ... NNW, in the station's time zone, kept in the same grey Daily, Monthly and Yearly rows). Each stored
+reading counts once in its 16th of the compass (22.5 degrees, N being 348.75 to 11.25); readings of a wind under 1 km/h are left out, as they have no
+direction; a tie goes to the point nearest the latest reading's direction, so the answer does not flip back and forth; a dash means
+nothing left. The tile is a third taller than the others to hold it.
+
 A tile whose reading is missing just now (the station or the air sensor not sending it) is dimmed, its gauge at its floor (0, or the
 scale's low end where 0 isn't on it: pressure 950 hPa, CO₂ 400 ppm) with its highs and lows still beside it; when the reading comes
 back the tile brightens and its gauge rises in place. A reading the station or the monitor has never sent has no tile.

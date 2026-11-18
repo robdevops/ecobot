@@ -88,6 +88,26 @@ def directions_on(r: Reader, mac: str, start: int, end: int) -> list[int]:
     return counts
 
 
+def wind_readings_on(r: Reader, mac: str, start: int, end: int) -> list[tuple[int, float, float | None]]:
+    """The wind's readings from start to end, oldest first, [(epoch, degrees, km/h or None)]: its 5-minute readings and its minutes where
+    no 5-minute reading covers them (300 s either side, as directions_on), in one query; [] with none, or no wind sensor (the web
+    page's most common direction)."""
+    sensor = r.sensor(mac, "wind")
+    if sensor is None or sensor.kind != "wind":
+        return []
+    got = r.db.execute(f"SELECT res, ts, {q('wind_direction')}, {q('wind_speed')} FROM wind WHERE sensor = ? AND res IN ('1min', '5min') "
+                       f"AND ts BETWEEN ? AND ? AND {q('wind_direction')} IS NOT NULL ORDER BY ts", (sensor.id, start, end)).fetchall()
+    fives = [ts for res, ts, _, _ in got if res == "5min"]
+    out = []
+    for res, ts, degrees, speed in got:
+        if res == "1min":
+            i = bisect.bisect_left(fives, ts - 299)
+            if i < len(fives) and fives[i] < ts + 300:
+                continue
+        out.append((ts, float(degrees), None if speed is None else float(speed)))
+    return out
+
+
 def pressure_on(r: Reader, mac: str, start: int, end: int) -> list[tuple[int, float]]:
     """The relative pressure (hPa) from start to end, oldest first, [(epoch, hPa)]: its 5-minute readings and its minutes where no 5-minute
     reading covers them (300 s either side, as directions_on), in one query; [] with none, or no pressure sensor (the web page's pressure
@@ -221,5 +241,5 @@ def history_on(r: Reader, mac: str, groups: list[str], plan: list[tuple[str, int
     return held
 
 
-__all__ = ["Held", "Store", "buckets_on", "counts_on", "directions_on", "first_minute_on", "history_on", "newest_minute_on", "pressure_on", "readings_on", "rows_on",
+__all__ = ["Held", "Store", "buckets_on", "counts_on", "directions_on", "first_minute_on", "history_on", "newest_minute_on", "pressure_on", "readings_on", "rows_on", "wind_readings_on",
            "slot_values_on"]

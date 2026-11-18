@@ -102,6 +102,7 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | G11 | Art pixel size and canvas margin | 7.5 | TUNED |
 | G12 | Stale-reading rule (1 hour) | 7.5 | TUNED |
 | G13 | Dial, needle, thermometer, beaker geometry | 7.5 | ARTISTIC |
+| G14 | Most common wind direction (16-point binning, calm left out, nearest-to-latest tie rule) | 7.4 | REAL-APPROX |
 | D1 | Server sun position call and sunrise/sunset times (sunrise equation, `solar.sun_times`) | 8.1 | REAL-MODEL |
 | D2 | Magnus dew point (outlook fallback only) | 8.2 | REAL-MODEL |
 | D3 | Server unit conversions | 8.2 | REAL-MODEL |
@@ -127,10 +128,10 @@ Count per label (counted from the table above):
 | Label | Groups |
 |---|---|
 | REAL-MODEL | 19 |
-| REAL-APPROX | 18 |
+| REAL-APPROX | 19 |
 | TUNED | 33 |
 | ARTISTIC | 13 |
-| Total | 83 |
+| Total | 84 |
 
 Not computed here at all (the station or a provider supplies them): dew point, feels like, apparent temperature, VPD, pollen and thunderstorm-asthma levels, and the dashboard's heat index or wind chill (none exists in `lib/`).
 
@@ -388,6 +389,7 @@ The server's own factors (`lib/ecowitt/hass_map.py` ~66-71) are listed in 8.2 an
 | Needle | `compass()` :4447 | rotates to the reading (degrees clockwise from north, where the wind comes from), eased the short way: `from + (((to - from) mod 360) + 540) mod 360 - 180` | REAL-MODEL | |
 | Rose counts | `directions_on()` ecowitt/reads.py:69, `rose()` | per sector, minutes of wind from it: each 5-minute reading counts 5; each 1-minute reading counts 1 only if no 5-minute reading is within 300 s; calm (speed 0 or less) is left out; a reading with no speed counts | REAL-APPROX | Time-weighted, not speed-weighted: a long light breeze equals a short gale. A single 5-minute sample counts 5 minutes. |
 | Rose share | `rose()` web_dashboard.py:319, `ROSE_DECIMALS` 4 (web_dashboard.py:97) | `share_i = count_i / total`, rounded to 4 decimals; empty if total is 0 | REAL-MODEL | |
+| Most common direction | `commonest()` direction.py, `common()` web_dashboard.py, `wind_readings_on()` ecowitt/reads.py; `CALM_BELOW` 1 km/h, `COMMON_SECONDS` 120 | per period (since the station's local midnight, the first of its month, the first of its year), each stored reading (5-minute ones, and minutes no 5-minute reading is within 300 s of) counts 1 in `sector(deg)`; a reading under 1 km/h is left out (no speed counts); the most counted point wins; a tie goes to the tied point with the smallest circular distance `min((i - j) mod 16, (j - i) mod 16)` to the newest reading's point `j`, then to the lowest index (first clockwise from N); none left gives a dash | REAL-APPROX | A count of readings, not of time or speed: a 5-minute reading and a 1-minute one count alike, and a light wind counts as much as a gale. The 1 km/h calm limit is a convention, not a station property. |
 | Petal length | `ROSE_REACH` 0.8, `ROSE_HALF` 9 deg (web_dashboard.html:4440) | `out_i = 0.8*138*share_i/max(share)`; wedge half-width 9 degrees (18 degrees in a 22.5 degree sector) | TUNED | The longest petal is always 80 % of the radius: relative shape only, no absolute percentage scale. |
 
 ### 7.5 Layout, canvas, staleness, appearance
