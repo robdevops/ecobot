@@ -994,20 +994,18 @@ const Sky = (() => {
     return x;
   };
 
-  // ---------- heat: a red wave of radiated heat, building out from the window's top down a quarter of the way, then fading, then again ----------
-  // A smooth wash across the whole width, radiating the way the sun's light does: it leans by the very lean the UV beams have (the one
-  // value, beamState().lean, shared: no second computation), turned about a pivot on the window's top edge, the middle (the beams' own
-  // turning place, their top origin), so a morning sun in the east (the screen's right) has the heat come from the upper right, down
-  // toward the lower left, the afternoon's from the upper left, and at solar noon (no lean) it goes straight down. Its brightness
-  // is measured along the ray (its soft leading edge across the ray, so tilted too), strongest at the pivot's level and above it
-  // (already so there: it starts above, in the margin, no start to see) and thinning down, smoothly to nothing by HEAT_FADE (a
-  // quarter) of the height straight down at the pivot (along a leaning ray that is longer, by 1 / cos(lean)), with a fixed sideways
-  // variation (two very broad soft lobes, brighter and dimmer, fixed in the turned frame: no drift, no pan; never a bare column: its
-  // dimmest part still over HEAT_LOBES' floor of its brightest). Extended well past the window's sides and above its top, so no bare
-  // triangle or corner shows at any lean up to BEAM_MAX (the far side's top corner is further along the ray, so dimmer). With the sun
-  // down (el <= 0: the heat comes from the temperature, not the sun) it is vertical. The lean follows the sun smoothly; the dithered
-  // sprite is baked again (in its own turned frame, about a pivot on the top edge at the end away from the sun) only when the lean has moved 0.5 degree, or 3 while it is catching up with a jump
-  // (a sunset), the turn itself every frame.
+  // ---------- heat: a red wave of radiated heat, building down from the window's top, over the top quarter, then fading, then again ----------
+  // The heat fills the whole top quarter of the window, the full width, always: a plain rectangle with no edges of its own (its sides
+  // and top are the window's), no wedge, no tilted side, no dark region in it. Its one soft boundary is its bottom: a vertical envelope,
+  // strongest at the top edge, falling smoothly to nothing by HEAT_FADE (a quarter) of the height. The sun's lean (the UV beams' own
+  // value, beamState().lean, shared: no second computation) sets only the direction of the ANIMATION inside that band: the wave's soft
+  // front is a gradient whose iso-lines are perpendicular to the sun's ray, a diagonal front sweeping along the ray from the top corner
+  // on the sun's side, so the bright wash radiates down at the sun's angle (a morning sun in the east, the screen's right: the front goes
+  // from the upper right toward the lower left; afternoon, from the upper left; at solar noon, straight down). The front's place is measured
+  // along the ray and driven past the band's far corner, so at the hold the whole quarter is evenly lit. With the sun down (el <= 0: the
+  // heat comes from the temperature, not the sun) the front is horizontal. The lean follows the sun smoothly (the drawn lean catches up
+  // with a jump at HEAT_SLEW); only the front moves with it, the dithered envelope sprite is baked again only as the heat's colour step
+  // changes (or the window's size), and carries a fixed, subtle sideways variation (two broad lobes: no dark gap, no drift).
   // Dithered (the same irregular dither as the beams: no banding at its faint end, no grid). It is not steady but a wave, a cycle of
   // phase u in [0, 1) (the page's own clock; kept as the heat changes, so a change never jumps), implying a direction, heat radiating
   // from above: BUILD (u 0 to HEAT_BUILD, 0.55): the lit extent grows from the top edge down to the reach, an ease-out (quick at first,
@@ -1033,7 +1031,7 @@ const Sky = (() => {
   const heatColours = (h) => HEAT_LIGHT.map((l) => hslToRgb(mixed(HEAT_HUE, h), mixed(HEAT_SAT, h), l + (1 - h) * 0.14));
   const HEAT_FADE = 0.25;              // the reach, as a fraction of the window's height: a quarter of the way down from the top
   const HEAT_TOP = 0.62;               // its brightness at the top edge (0-1, the dither's input; the shades are then dithered about it)
-  const HEAT_LOBES = 0.7;              // its dimmest column's brightness over its brightest's
+  const HEAT_LOBES = 0.85;             // its dimmest column's brightness over its brightest's
   const HEAT_RISE = 0.08;              // the cycle's start: the brightness fades in over this much of it (no pop)
   const HEAT_SOFT = 0.4;               // the leading edge's length, of the reach
   const HEAT_STEPS = 48;               // repainted for each 48th of the heat's range (finer than the eye tells)
@@ -1045,16 +1043,14 @@ const Sky = (() => {
     return {extent: 0, bright: 0};
   };
   const HEAT_SLEW = 20;                // degrees a second at most: the drawn lean catching up with the sun's (a jump: sunset, a test's pin)
-  const HEAT_END = 20;                 // degrees of lean from which the pivot is at the far end of the window's top edge (the middle with none, between)
-  const HEAT_PAD = 3.5;                // degrees: the sprite's coverage beyond its baked lean (the catching up's)
   const heat = effect((e) => {
     let wash = null, buf = null, bufG = null, tint = -1, colours = heatColours(0), phase = 0, lastT = null, mult = 0, extent = 0, rows = 1;
-    let lean = null, baked = 0, slewing = false, bakes = 0, px = 0, u0 = 0, lead = 0, wide = 1, long = 1, high = 1;
+    let lean = null, bakes = 0, long = 1;
     const cycle = () => {
       const h = heatOf(e.level);
       return {heat: h, peak: mixed(HEAT_PEAK, h), period: mixed(HEAT_PERIOD, h)};
     };
-    const wanted = () => {   // the lean the heat is to have: the beams' (the one value), vertical with the sun down
+    const wanted = () => {   // the lean the heat's front is to have: the beams' (the one value), vertical with the sun down
       const b = beamState();
       return b.up ? b.lean : 0;
     };
@@ -1064,68 +1060,44 @@ const Sky = (() => {
       const u = 2 * Math.PI * x / W, v = 0.5 + 0.32 * Math.sin(u + 0.7) + 0.18 * Math.sin(2 * u + 2.1);
       return HEAT_LOBES + (1 - HEAT_LOBES) * clamp(v, 0, 1);
     };
-    // The wave's frame for a lean: columns u across the rays and rows w along them, turned about the pivot (screen offset dx, dy from it:
-    // u = dx cos - dy sin, w = dy cos + dx sin), the pivot on the window's top edge at the end away from the sun (the middle with no lean,
-    // the end from HEAT_END degrees): the sun's side then lies before the front's line through the pivot, w < 0, lit from the start,
-    // and the far corner is the pivot's own, never dark. The reach straight down at the pivot is the quarter: w = rows cos there.
-    const pivotOf = (lean) => Math.round(W / 2 * (1 + clamp(lean / HEAT_END, -1, 1)));
-    const frame = (lean) => {
-      const rad = lean * Math.PI / 180, c = Math.cos(rad), s = Math.sin(rad);
-      return {c, s, L: rows * c, deep: 1 + 2 * (1 - c), px: pivotOf(lean)};
+    // The front's distance along the ray at a pixel, from the top corner on the sun's side: t = y cos + |dx| sin (dx across from that corner)
+    const along = (lean) => {
+      const rad = lean * Math.PI / 180;
+      return {c: Math.cos(rad), s: Math.sin(rad), x0: lean < 0 ? W : 0};
     };
-    // The sprite for a lean, wide enough to cover the window's top edge and the depth's lower corners at this lean and HEAT_PAD either side
-    const bake = (at, step) => {
-      const f = frame(at);
-      let umin = Infinity, umax = -Infinity, wmin = 0;
-      for (let d = -HEAT_PAD; d <= HEAT_PAD + 1e-9; d += 0.5) {
-        const g = frame(clamp(at + d, -85, 85));
-        for (const x of [0, W]) for (const dy of [0, rows * g.deep]) {
-          const dx = x - g.px, u = dx * g.c - dy * g.s, w = dy * g.c + dx * g.s;
-          umin = Math.min(umin, u); umax = Math.max(umax, u); wmin = Math.min(wmin, w);
-        }
-      }
-      u0 = Math.floor(umin) - 2; wide = Math.ceil(umax) - u0 + 2; lead = Math.ceil(-wmin) + 2;
-      long = Math.max(f.L, 1); high = lead + Math.ceil(long) + 1; px = f.px;
+    // The sprite: the axis-aligned envelope (full width, `rows` deep), dithered, in the colour step
+    const bake = (step) => {
       colours = heatColours(step / HEAT_STEPS);
-      // (the brightness falls from HEAT_TOP at w = 0 to 0 at `long`, smoothly (a cosine-eased square: no kink where it ends); full before 0)
-      const across = Float64Array.from({length: wide}, (_, x) => lobe(px + (u0 + x) / f.c));   // (the lobes by where the ray crosses the top: the same top at every lean)
-      const fall = Float64Array.from({length: high}, (_, y) => {
-        const k = clamp((y - lead) / long, 0, 1);
-        return k >= 1 ? 0 : Math.pow(0.5 + 0.5 * Math.cos(Math.PI * k), 1.25);
-      });
-      // (and, down the screen (dy = w cos - u sin): full to the reach, eased out by `deep` times it, so the sun's side, before the front, is no deeper than that)
-      wash = painted(wide, high, (x, y) => {
-        if (fall[y] <= 0) return null;
-        const dy = ((y - lead) * f.c - (u0 + x) * f.s) / rows, k = f.deep > 1 ? (dy - 1) / (f.deep - 1) : dy >= 1 ? 1 : 0;
-        const env = k <= 0 ? 1 : k >= 1 ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * k);
-        if (env <= 0) return null;
-        const sh = shadeOf(HEAT_TOP * fall[y] * env * across[x], x, y, colours.length);
+      const across = Float64Array.from({length: W}, (_, x) => lobe(x));
+      // (the brightness falls from HEAT_TOP at the top edge to 0 at `rows`, smoothly (a cosine-eased square: no kink where it ends))
+      const fall = Float64Array.from({length: rows}, (_, y) => Math.pow(0.5 + 0.5 * Math.cos(Math.PI * y / rows), 1.25));
+      wash = painted(W, rows, (x, y) => {
+        const sh = shadeOf(HEAT_TOP * fall[y] * across[x], x, y, colours.length);
         return sh < 0 ? null : colours[sh];
       });
-      buf = document.createElement("canvas"); buf.width = wide; buf.height = high; bufG = buf.getContext("2d");
-      baked = at; tint = step; bakes++;
+      buf = document.createElement("canvas"); buf.width = W; buf.height = rows; bufG = buf.getContext("2d");
+      tint = step; bakes++;
     };
     return {
       strength: () => 0.4 + 0.4 * e.level,
-      // (for the tests: the UV's places (art px) and widths, the window's size, the lean now (the beams' lean, or 0 with the sun down),
-      // the lean as drawn (catching up with it at HEAT_SLEW degrees a second at most) and as last baked, the bakes so far; the colour now ([r, g, b]: its brightest
+      // (for the tests: the UV's places (art px) and widths, the window's size, the lean now (the beams' lean, or 0 with the sun down)
+      // and as drawn (catching up with it at HEAT_SLEW degrees a second at most), the bakes so far; the colour now ([r, g, b]: its brightest
       // shade, and the five shades) and the cycle now {heat 0-1, peak: the brightness at the hold (0.7 to 1), period (s), phase: u,
-      // extent: how far down it is lit, a fraction of the reach, lit: that in art px (rows), reach: the reach as a fraction of the
+      // extent: how far the front is, 0-1 of its way, lit: that in art px along the ray, reach: the reach as a fraction of the
       // height, bright: the brightness now (0-1 of the peak), flashes: a second}, mult: the brightness factor now (peak times bright,
-      // 0 to 1); gradient: {top: its strength at the top edge (the draw alpha of its peak), rows: the row it has faded out by straight
-      // down at the pivot (art px), fade: that as a fraction of the height, vertical: whether it is not leaning, long: its length along the ray,
-      // pivot: [x, y] it turns about})
+      // 0 to 1); gradient: {top: its strength at the top edge (the draw alpha of its peak), rows: the row it has faded out by (art px),
+      // fade: that as a fraction of the height, long: the front's whole way along the ray (art px)})
       probe: () => {
         const p = cycle(), c = heatColours(p.heat), w = heatWave(phase), want = wanted();
-        return {level: e.level, size: [W, H], lean: want, drawn: lean === null ? want : lean, baked, bakes, uv: uvShafts().map((s) => s.x), uvWide: uvShafts().map((s) => s.wide),
+        return {level: e.level, size: [W, H], lean: want, drawn: lean === null ? want : lean, bakes, uv: uvShafts().map((s) => s.x), uvWide: uvShafts().map((s) => s.wide),
                 uvTops: uvShafts().map((u) => u.x), colour: c[3], colours: c, ...p, phase, extent: w.extent, bright: w.bright,
-                lit: Math.min(rows, w.extent * rows * (1 + HEAT_SOFT)), reach: HEAT_FADE, flashes: 1 / p.period, mult,
-                gradient: {top: HEAT_TOP * washAlpha(), rows, fade: rows / H, vertical: (lean === null ? want : lean) === 0, long, pivot: [pivotOf(lean === null ? want : lean), 0]}};
+                lit: w.extent * long, reach: HEAT_FADE, flashes: 1 / p.period, mult,
+                gradient: {top: HEAT_TOP * washAlpha(), rows, fade: rows / H, long}};
       },
       seek(u) { phase = ((u % 1) + 1) % 1; },   // (test-only: the cycle's phase set)
       resize() {
         tint = -1; wash = null; lean = null;
-        rows = Math.min(H, Math.ceil(H * HEAT_FADE)); px = Math.round(W / 2);
+        rows = Math.min(H, Math.ceil(H * HEAT_FADE));
       },
       forget() { lastT = null; },
       draw(g, alpha, t) {
@@ -1135,38 +1107,38 @@ const Sky = (() => {
         if (lean === null) lean = want;
         else if (lean !== want) {   // (the lean catches up with the sun's: a jump is a quick swing, never a snap)
           const room = HEAT_SLEW * clamp(dt, 0, 0.1), diff = want - lean;
-          slewing = Math.abs(diff) > room;
-          lean = slewing ? lean + Math.sign(diff) * room : want;
-        } else slewing = false;
-        if (step !== tint || !wash || Math.abs(lean - baked) >= (slewing ? 3 : 0.5)) bake(lean, step);   // (repainted as the heat or the lean changes)
+          lean = Math.abs(diff) > room ? lean + Math.sign(diff) * room : want;
+        }
+        if (step !== tint || !wash) bake(step);   // (repainted as the heat's colour changes)
         if (dt > 0 && dt < 1) phase = (phase + dt / p.period) % 1;
         const w = heatWave(phase);
         mult = p.peak * w.bright;
         extent = w.extent;
+        const a = along(lean), soft = rows * HEAT_SOFT;
+        long = rows * a.c + W * Math.abs(a.s);   // (the far bottom corner's distance along the ray: the front is driven past it, so the hold is lit all over)
         if (mult <= 0 || extent <= 0) return;
-        // (the wave's front, across the ray: the wash, then masked by a ramp along it, full to `front - soft` and nothing from `front`, so the front is soft)
-        const soft = rows * HEAT_SOFT, front = extent * (long + soft), reach = Math.min(high, Math.ceil(lead + front) + 1);
+        // (the front: the envelope masked by a linear ramp along the ray, full behind `front - soft`, nothing from `front`: a diagonal, soft edge)
+        const front = extent * (long + soft), dx = a.s, dy = a.c;
         bufG.globalCompositeOperation = "source-over";
-        bufG.clearRect(0, 0, wide, high);
-        bufG.drawImage(wash, 0, 0, wide, reach, 0, 0, wide, reach);
-        const ramp = bufG.createLinearGradient(0, lead + Math.max(front - soft, 0), 0, lead + Math.max(front, 1));
+        bufG.clearRect(0, 0, W, rows);
+        bufG.drawImage(wash, 0, 0);
+        const ramp = bufG.createLinearGradient(a.x0 + dx * (front - soft), dy * (front - soft), a.x0 + dx * front, dy * front);
         ramp.addColorStop(0, "rgba(0,0,0,1)");
         ramp.addColorStop(1, "rgba(0,0,0,0)");
         bufG.globalCompositeOperation = "destination-in";
         bufG.fillStyle = ramp;
-        bufG.fillRect(0, 0, wide, reach);
+        bufG.fillRect(0, 0, W, rows);
         flood.above(g, () => {
           g.save();
           g.imageSmoothingEnabled = false;
           g.globalAlpha = alpha * washAlpha() * mult;
-          g.translate(pivotOf(lean), 0);
-          g.rotate(-lean * Math.PI / 180);
-          g.drawImage(buf, u0, -lead);
+          g.drawImage(buf, 0, 0);
           g.restore();
         });
       },
     };
   });
+
 
   // ---------- uv: soft beams of violet light coming in from the top (see the heat's, above), and a faint glow along the top ----------
   const RAD = ["#22153C", "#3C256A", "#6444A8", "#A287E6", "#EFE7FF"].map(rgb);

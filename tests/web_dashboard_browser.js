@@ -1867,36 +1867,44 @@ const heatSeen = (page, levels, times = []) => page.evaluate(async ([levels, tim
 }, [levels, times]);
 // The heat's lean with the sun, on a driven page with only the heat on (level 1): for each [az, el] of `places` (Sky.setSunPosition; null: the
 // sun unpinned and the clock, Sky.setTime(`time`)), after 400 frames (the drawn lean caught up) at the hold: the heat's and the beams' lean
-// (Sky.state()), the heat's drawn lean, the columns bare in the top 12 %, the alpha's centroid across (a fraction of the
-// width), the mean alpha in a 10 px square at each of the window's top corners, the lowest inked row in the 9 columns about the pivot, the bakes so far, and the grid's power (gridPeak's ratio, over the page's top-left square)
+// (Sky.state()), the heat's drawn lean, the columns bare in the top 12 %, the mean alpha in a 10 px square at each of the window's top corners,
+// the mean alpha of each row (`rows`) and the lowest inked row, how uneven the columns are over the quarter's top 80 % (`even`: the biggest
+// relative gap of a column's mean alpha from the mean of them all), the alpha right of the middle less the left's over the band, as a
+// fraction of both (`side`), at the hold and in the build at u 0.15, 0.3 and 0.45 (`build`: the same; the front's diagonal shows in it), the
+// bakes so far, and the grid's power (gridPeak's ratio, over the page's top-left square)
 const heatLeans = async (page, places) => {
   const out = [];
   for (const [az, el] of places) {
     const seen = await page.evaluate(async ([az, el]) => {
-      const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), W = c.width, H = c.height;
+      const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), W = c.width, H = c.height, band = Math.ceil(H * 0.25);
       Sky.setSunPosition(az, el);
       Sky.heatPhase(0.6);
       Sky.advance(400);
-      Sky.heatPhase(0.62);
-      Sky.advance(1);
-      const d = g.getImageData(0, 0, W, H).data, h = Sky.state().heat;
+      const frame = (u) => { Sky.heatPhase(u); Sky.advance(1); return g.getImageData(0, 0, W, H).data; };
+      const sideOf = (d) => {
+        let right = 0, left = 0;
+        for (let y = 0; y < band; y++) for (let x = 0; x < W; x++) { if (x >= W / 2) right += d[(y * W + x) * 4 + 3]; else left += d[(y * W + x) * 4 + 3]; }
+        return (right - left) / Math.max(right + left, 1);
+      };
+      const d = frame(0.62), h = Sky.state().heat;
       const alpha = (x, y) => d[(y * W + x) * 4 + 3];
-      let bare = 0, sum = 0, at = 0, last = -1;
+      let bare = 0, last = -1;
       for (let x = 0; x < W; x++) {
         let inked = false;
         for (let y = 0; y < Math.ceil(H * 0.12) && !inked; y++) inked = alpha(x, y) > 0;
         if (!inked) bare++;
       }
-      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { sum += alpha(x, y); at += alpha(x, y) * x; }
-      const pv = h.gradient.pivot[0];
-      for (let y = 0; y < H; y++) for (let x = Math.max(0, pv - 4); x <= Math.min(W - 1, pv + 4); x++) if (alpha(x, y) > 0) last = y;
-      let half = 0;   // (the alpha right of the middle less the left's, of the whole)
-      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) half += alpha(x, y) * (x >= W / 2 ? 1 : -1);
-      let wsum = 0, wat = 0;   // (below the quarter: the sun's side's deeper reach only)
-      for (let y = Math.ceil(H * 0.26); y < H; y++) for (let x = 0; x < W; x++) { wsum += alpha(x, y); wat += alpha(x, y) * x; }
+      const rows = [];
+      for (let y = 0; y < H; y++) { let a = 0; for (let x = 0; x < W; x++) a += alpha(x, y); rows.push(a / 255 / W); if (a > 0) last = y; }
+      const top = Math.floor(band * 0.8), cols = [];
+      for (let x = 0; x < W; x++) { let a = 0; for (let y = 0; y < top; y++) a += alpha(x, y); cols.push(a / top); }
+      const avg = cols.reduce((p, q) => p + q, 0) / W, even = Math.max(...cols.map((v) => Math.abs(v - avg) / avg));
       const patch = (x0) => { let a = 0; for (let y = 0; y < 10; y++) for (let x = x0; x < x0 + 10; x++) a += alpha(x, y) / 255; return a / 100; };
-      return { az, el, lean: h.lean, drawn: h.drawn, baked: h.baked, beam: Sky.state().beam.lean, bare, centroid: at / Math.max(sum, 1) / W, lopsided: half / Math.max(sum, 1), deepSum: wsum / 255, deepAt: wsum ? wat / wsum / W : 0.5, left: patch(0), right: patch(W - 10),
-               last, size: [W, H], bakes: h.bakes, cost: Sky.state().cost, vertical: h.gradient.vertical };
+      const out = { az, el, lean: h.lean, drawn: h.drawn, beam: Sky.state().beam.lean, bare, rows, last, even, side: sideOf(d), left: patch(0), right: patch(W - 10),
+                    size: [W, H], bakes: h.bakes, cost: Sky.state().cost };
+      out.build = [0.15, 0.3, 0.45].map((u) => sideOf(frame(u)));
+      Sky.heatPhase(0.62);
+      return out;
     }, [az, el]);
     seen.grid = (await gridPeak(page)).ratio;
     out.push(seen);
@@ -3209,7 +3217,7 @@ const WEATHER = {
     })();
     // the heat's red gradient at 35 °C, between and at 43 °C; and at 43 °C with the UV's beams on too; and the UV's alone (small: cheap)
     const sinFor = (lean, el) => (Math.asin(-Math.tan(lean * Math.PI / 180) * Math.tan(el * Math.PI / 180)) * 180 / Math.PI + 360) % 360;
-    const LEAN_PLACES = [[sinFor(-75, 10), 10], [sinFor(-60, 20), 20], [sinFor(-30, 20), 20], [0, 60], [sinFor(30, 20), 20], [sinFor(60, 20), 20], [90, 3], [270, 3], [60, 15], [250, 1]];   // (leans -75 (capped), -60, -30, 0, 30, 60, then the cap both ways (a low sun), a low sun, a very low one)
+    const LEAN_PLACES = [[sinFor(-75, 10), 10], [sinFor(-60, 20), 20], [sinFor(-45, 20), 20], [sinFor(-30, 20), 20], [0, 60], [sinFor(30, 20), 20], [sinFor(45, 20), 20], [sinFor(60, 20), 20], [90, 3], [270, 3], [60, 15], [250, 1]];   // (leans -75 (capped), -60, -30, 0, 30, 60, then the cap both ways (a low sun), a low sun, a very low one)
     const SUN_TIMES = [360, 420, 480, 600, 720, 840, 960, 1020, 1080];   // (6:00 sunrise to 18:00 sunset, with the fallback day)
     const hot = Promise.all([["heat", [{ heat: 0.05 }, { heat: 0.65 }, { heat: 1 }]], ["heat,uv", [{ heat: 1, uv: 1 }]], ["uv", [{ uv: 1 }]]].map(async ([name, levels]) => {
       const times = SUN_TIMES;

@@ -24,7 +24,7 @@ How to read the tables:
 Status (as of 96e255f):
 
 - The rain slant law `tan(angle) = speed / 24 km/h` (cap 70 degrees), the constant vertical fall speed (path speed `V0 / cos(angle)`) and `TEST_WIND = 11` are in the code. No 18 km/h law remains.
-- The heat wave follows the sun's lean (the UV beams' own value, commit c59e2f3). Section 4.2 describes it.
+- The heat fills the top quarter of the window; the sun's lean (the UV beams' own value) sets only the direction its front travels. Section 4.2.
 - Issues in section 9 carry a status: FIXED (with the commit), LEFT BY DECISION (the user chose to leave it), or N/A.
 
 ## 1. Summary of formula groups
@@ -58,7 +58,7 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | H1 | Haze level from AQI band edges | 4.1 | REAL-MODEL |
 | H2 | Haze texture, tint, palette, motes | 4.1 | ARTISTIC |
 | H3 | Heat level, colour ramp, period, peak | 4.2 | TUNED |
-| H4 | Heat wave phases, rotated frame and spatial wash (the lean itself is S3) | 4.2 | ARTISTIC |
+| H4 | Heat wave phases, envelope and diagonal front (the lean itself is S3) | 4.2 | ARTISTIC |
 | H5 | UV trigger (UV index 11 and above) | 4.3 | REAL-MODEL |
 | H6 | Ice reach, growth and melt rates | 4.4 | TUNED |
 | H7 | Ice crystal forms | 4.4 | ARTISTIC |
@@ -220,10 +220,9 @@ Everything here is drawn in art px. The measured wind speed scales the leaves' p
 | Period | `cycle` :1053; `HEAT_PERIOD` [14, 10] | `period = 14 - 4h` s (14 s at 35 C, 10 s at 43 C) | TUNED | At most 0.1 flashes a second, far under the 3 Hz limit of WCAG 2.3.1. |
 | Peak | `cycle`; `HEAT_PEAK` [0.7, 1] | `peak = 0.7 + 0.3h` | TUNED | |
 | Wave phases | `heatWave` :1041; `HEAT_BUILD` 0.55, `HEAT_HOLD` 0.7, `HEAT_GONE` 0.9, `HEAT_RISE` 0.08 | phase u in [0, 1): build to 0.55 with extent `1 - (1 - s)^2`, `s = u/0.55`, brightness `(0.55 + 0.45s)*smoothstep(min(1, u/0.08))`; hold to 0.7; fade to 0.9 with brightness `1 - smoothstep`; gap to 1 | ARTISTIC | A visual "heat radiating" metaphor. |
-| Lean | `wanted` :1057 | the beams' lean (`beamState().lean`, section 2.2), 0 when the sun is down (`up` false); the drawn lean catches up at `HEAT_SLEW` 20 degrees a second at most (`dt` capped at 0.1 s); the sprite is baked again when the drawn lean is 0.5 degree from the baked one (3 degrees while catching up), or the heat step (48 steps) changes | REAL-APPROX | The direction is the sun's own (S3, with its limits: east-west projection only, 3 degree and 75 degree limits). The heat itself comes from the air temperature, not the sun: the lean says only "the sun's side". With the sun down it is vertical. The slew and re-bake rules are display behaviour. |
-| Frame | `frame` :1072; `HEAT_END` 20, `HEAT_FADE` 0.25 | `rows = ceil(0.25*H)` (at most H); with `c = cos(lean)`, `s = sin(lean)`: along-ray `w = dy*c + dx*s`, across `u = dx*c - dy*s` (dx, dy from the pivot); ray length `L = rows*c`; depth `deep = 1 + 2*(1 - c)`; pivot x `= round(W/2 * (1 + clamp(lean/20, -1, 1)))` on the top edge | ARTISTIC | A rotated frame so the wash radiates along the lean. The pivot sits at the end of the top edge away from the sun (the middle with no lean, the far end from 20 degrees), so the sun's side is lit from the start and no corner is bare. The reach is a quarter of the height at the pivot (straight down), so along a leaning ray it is `rows/cos(lean)` in true length. |
-| Spatial wash | `bake` :1076 | brightness `0.62*fall(k)*env*lobe(x)`; `fall = (0.5 + 0.5*cos(pi*k))^1.25`, `k = clamp((w - lead)/L, 0, 1)` (full before the pivot's level, 0 at `L`); `env` = 1 up to one reach straight down (`dy/rows <= 1`), then `0.5 + 0.5*cos(pi*k2)` with `k2 = (dy/rows - 1)/(deep - 1)`, 0 at `deep` (so the wedge on the sun's side is no deeper than `deep` reaches); `lobe = 0.7 + 0.3*clamp(0.5 + 0.32*sin(2*pi*x/W + 0.7) + 0.18*sin(4*pi*x/W + 2.1), 0, 1)` where x is where the ray crosses the top; alpha `0.5*(0.55 + 0.45*level)`; padded `HEAT_PAD` 3.5 degrees each side of the baked lean | ARTISTIC | All of it is for looks. |
-| Front | `draw` :1131-1160; `HEAT_SOFT` 0.4 | the lit front across the ray at `extent*(L + 0.4*rows)`, a linear mask over the last `0.4*rows` | ARTISTIC | |
+| Lean | `wanted`, `draw` | the beams' lean (`beamState().lean`, section 2.2), 0 when the sun is down; the drawn lean catches up at `HEAT_SLEW` 20 degrees a second at most (`dt` capped at 0.1 s). It moves only the front, never the sprite | REAL-APPROX | The direction is the sun's own (S3, with its limits). The heat itself comes from the air temperature, not the sun: the lean says only which way the animation radiates. |
+| Envelope | `bake`; `HEAT_FADE` 0.25, `HEAT_TOP` 0.62, `HEAT_LOBES` 0.85 | `rows = ceil(0.25*H)`; sprite W by `rows`, brightness `0.62*(0.5 + 0.5*cos(pi*y/rows))^1.25*lobe(x)`, `lobe = 0.85 + 0.15*clamp(0.5 + 0.32*sin(2*pi*x/W + 0.7) + 0.18*sin(4*pi*x/W + 2.1), 0, 1)`; alpha `0.5*(0.55 + 0.45*level)`; dithered | ARTISTIC | A plain full-width rectangle: strongest at the top edge, 0 at a quarter of the height, no side or top edges of its own, fixed subtle lobes (no dark gap). |
+| Front | `draw`; `HEAT_SOFT` 0.4 | with `a = lean` in radians, the distance along the ray from the top corner on the sun's side (the right for negative lean) is `t = y*cos(a) + dx*|sin(a)|`; total way `long = rows*cos(a) + W*|sin(a)|`; the front is at `extent*(long + 0.4*rows)`, a linear mask over its last `0.4*rows` (a canvas linear gradient along the ray, so its iso-lines are perpendicular to it) | ARTISTIC | Driven past the far bottom corner, so at the hold the whole quarter is lit evenly. |
 
 Vertical case (no lean): `c = 1`, `s = 0`, `deep = 1`, pivot at the middle: the wave is the straight-down one of earlier versions.
 
@@ -523,7 +522,7 @@ Constants to grep when checking that the numbers here still match:
 | Rain slant | `FALL = 24`, `CAP = 70`, `OLD_SLANT`, `PATH`, `STREAK_MOST`, `GUST_SHARE`, `effectiveSpeed`, `TAU_UP`, `TEST_WIND`, `STEPS = 20`, `PACE` / `paceOf` |
 | Effect levels | `conditionsOf`, `FLOOD_ON`, `FOG_OFF`, `windSideOf`, `GUST_MARK`, `BUDGET`, `ART_PX`, `FADE_S` |
 | Haze | `PAN_MAX`, `PAN_K`, `bakeTexture`, `HOLLOW` |
-| Heat | `heatOf`, `HEAT_STEPS`, `HEAT_PERIOD`, `HEAT_PEAK`, `heatWave`, `wanted`, `HEAT_SLEW`, `HEAT_END`, `HEAT_PAD`, `frame` |
+| Heat | `heatOf`, `HEAT_STEPS`, `HEAT_PERIOD`, `HEAT_PEAK`, `heatWave`, `wanted`, `HEAT_SLEW`, `HEAT_SOFT` |
 | UV and sun | `BEAM_MAX`, `BEAM_CURVE`, `EL_LOW`, `RUN_ON`, `SUN_FALLBACK`, `leanAt`, `leanOf` |
 | Ice, flood | `reachFor`, `growRate`, `MELT`, `RISE = 4`, `DRAIN`, `CALMS`, `PUSH` |
 | Beads | `RUN_R`, `GONE`, `TINY`, `SWELL`, `PACE`, `sized`, `HEAVY_RAIN`, `FOG_AT`, `FORM`, `CLEAR`, `THICKEN` |

@@ -2605,8 +2605,9 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert frost["grown"]["extent"] > 0 and frost["grown"]["ink"] > 0, frost["grown"]
     started_afresh(frost["restarted"], "ice")
     assert frost["restarted"]["frost"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["restarted"]
-    # the heat (?fx=heat): a red wave of radiated heat from above the window's top, reaching a quarter of the way down, never leaning
-    # or panning, all on at any heat, brighter the hotter (the frames below are taken on the wave's hold, its full extent)
+    # the heat (?fx=heat): a red wave of radiated heat filling the whole top quarter of the window, full width (a plain rectangle: only its
+    # bottom fades), its front leaning with the sun (the animation's direction only), all on at any heat, brighter the hotter (the frames
+    # below are taken on the wave's hold, its full extent)
     hot = got["heat"]
     assert hot["errors"] == [] and hot["cost"] < 4, hot
     looks = hot["looks"]
@@ -2614,7 +2615,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         grad, rows = look["gradient"], look["rowsAlpha"]
         height = len(rows)
         # (a gradient description: vertical, strongest at the top edge, faded out by a quarter of the way down)
-        assert grad["vertical"] and 0 < grad["top"] <= 0.8 and 0.2 < grad["fade"] <= 0.27 and grad["rows"] <= 0.26 * height + 1, grad
+        assert 0 < grad["top"] <= 0.8 and 0.2 < grad["fade"] <= 0.27 and grad["rows"] <= 0.26 * height + 1, grad
         # (the top row the strongest, the mean brightness falling down the window (within noise, in 10-row means), ~0 below the reach)
         band = [sum(rows[i:i + 10]) / 10 for i in range(0, height - 9, 10)]
         assert rows[0] >= max(rows) * 0.85 and max(rows[:3]) >= max(rows) * 0.98, rows[:6]
@@ -2682,40 +2683,44 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert all(w["u"] <= 1 for w in look["wave"]) and look["pulse"]["min"] == 0, look["pulse"]
     # ... dithered irregularly (no grid: under 100, as gridPeak sees it; ordered, about 200)
     assert hot["grid"] < 100, hot["grid"]
-    # ... leaning with the sun by the UV beams' own lean (the one value): the whole width covered at every time of the day (no bare
-    # column), the lean the beams' (the sunrise-sunset curve: -70 at 06:00, 0 at midday, 70 at 18:00, east morning negative, west
-    # afternoon positive), the brightness's centroid shifting toward the sun's side the more it leans, the top as strong at every angle
+    # ... the front leaning with the sun by the UV beams' own lean (the one value): the whole width covered at every time of the day (no
+    # bare column), the lean the beams' (the sunrise-sunset curve: -70 at 06:00, 0 at midday, 70 at 18:00, east morning negative, west
+    # afternoon positive), the top as strong at every angle
     leans = {l["minutes"]: l for l in hot["leans"]}
     assert all(l["bare"] == 0 for l in leans.values()), [(m, l["bare"]) for m, l in leans.items()]
     assert leans[720]["beam"]["lean"] == 0 and leans[360]["beam"]["lean"] == pytest.approx(-70) and leans[1080]["beam"]["lean"] == pytest.approx(70)
     assert leans[480]["beam"]["lean"] < leans[600]["beam"]["lean"] < 0 < leans[840]["beam"]["lean"] < leans[960]["beam"]["lean"]
-    centres = [leans[m]["centroid"] for m in (360, 480, 600, 720, 840, 960, 1080)]
-    assert centres[0] > centres[3] > centres[-1] and centres[0] - centres[-1] > 0.02, centres   # (the sun's side: the right in the morning (negative lean), the left after)
     assert all(l["rows"][0] > 0 and abs(l["rows"][0] - l["rows"][1]) <= 0.2 * l["rows"][1] for l in leans.values()), [l["rows"] for l in leans.values()]   # (the top as strong at every angle)
     # ... the heat's lean IS the beams' lean (Sky.state().heat.lean === .beam.lean within 0.01) at every sun place: east morning negative,
-    # west afternoon positive, noon 0, the cap 75 (a low sun), and drawn at it (the sprite baked within 0.5 degree of it, after the
-    # drawn lean has caught up); no bare column at any; no hard corner (the top corners lit, the far side's dimmer: further along the ray);
-    # the reach a quarter of the height straight down at the pivot; the centroid on the sun's side and further the more it leans; no grid
+    # west afternoon positive, noon 0, the cap 75 (a low sun), and drawn at it (after the drawn lean has caught up)
     by = {round(l["beam"]): l for l in hot["byLean"]}
-    assert len(hot["byLean"]) == 10 and all(l["lean"] == pytest.approx(l["beam"], abs=0.01) for l in hot["byLean"]), hot["byLean"]
-    assert all(l["drawn"] == pytest.approx(l["lean"], abs=0.01) and abs(l["baked"] - l["lean"]) < 0.5 for l in hot["byLean"]), hot["byLean"]
-    assert by[0]["lean"] == pytest.approx(0, abs=0.01) and by[0]["vertical"]
+    assert len(hot["byLean"]) == 12 and all(l["lean"] == pytest.approx(l["beam"], abs=0.01) for l in hot["byLean"]), hot["byLean"]
+    assert all(l["drawn"] == pytest.approx(l["lean"], abs=0.01) for l in hot["byLean"]), hot["byLean"]
+    assert by[0]["lean"] == pytest.approx(0, abs=0.01)
     assert by[-75]["lean"] == pytest.approx(-75, abs=0.01) and by[-60]["lean"] == pytest.approx(-60, abs=0.01) and by[60]["lean"] == pytest.approx(60, abs=0.01)
+    assert by[-45]["lean"] == pytest.approx(-45, abs=0.01) and by[45]["lean"] == pytest.approx(45, abs=0.01)
     caps = [l for l in hot["byLean"] if l["el"] in (3, 1)]
     assert sorted(round(l["lean"], 2) for l in caps) == [-75, 75, 75], caps   # (a low sun: the cap either way)
     assert all(-75 - 1e-9 <= l["lean"] <= 75 + 1e-9 for l in hot["byLean"]) and any(l["az"] == 60 and -75 < l["lean"] < -60 for l in hot["byLean"])
-    assert all(l["bare"] == 0 for l in hot["byLean"]), [(l["lean"], l["bare"]) for l in hot["byLean"]]
-    assert all(l["left"] > 0.05 and l["right"] > 0.05 for l in hot["byLean"]), [(round(l["lean"]), l["left"], l["right"]) for l in hot["byLean"]]
+    # ... at the hold the lit region is a plain full-width rectangle at every lean: no bare column, both top corners lit, every column
+    # within 15 % of the mean over the quarter's top 80 % (even: no wedge, no dark region), the brightness falling down the band (within
+    # the dither's noise, in 10-row means) to 0 at a quarter of the height (+-3 %), nothing below 0.27 of it
     for l in hot["byLean"]:
-        height = l["size"][1]
-        assert abs(l["last"] - 0.25 * height) <= 0.2 * 0.25 * height + 2, (l["lean"], l["last"], 0.25 * height)
-    # (the brightness's weight toward the sun's side (right of the middle less the left's: positive for the east morning, negative for the
-    # west afternoon, beyond the lobes' own slight lean at none), and what is lit below the quarter (the sun's side's deeper reach: none at
-    # no lean, more and more as it leans, centred on the sun's side))
-    side = lambda lean: by[lean]["lopsided"] - by[0]["lopsided"]
-    assert all(side(k) > 0.03 for k in (-75, -60, -30)) and all(side(k) < -0.015 for k in (30, 60)), [(k, side(k)) for k in by]
-    assert by[0]["deepSum"] < 1 and 100 < by[-30]["deepSum"] < by[-60]["deepSum"] < by[-75]["deepSum"] and 100 < by[30]["deepSum"] < by[60]["deepSum"] < by[75]["deepSum"], [(k, by[k]["deepSum"]) for k in sorted(by)]
-    assert all(by[k]["deepAt"] > 0.5 for k in (-75, -60, -30)) and all(by[k]["deepAt"] < 0.5 for k in (30, 60, 75)), [(k, by[k]["deepAt"]) for k in sorted(by)]
+        height, rows = l["size"][1], l["rows"]
+        assert l["bare"] == 0 and l["left"] > 0.2 and l["right"] > 0.2, (l["lean"], l["bare"], l["left"], l["right"])
+        assert l["even"] < 0.15, (l["lean"], l["even"])
+        band = [sum(rows[i:i + 10]) / 10 for i in range(0, int(0.25 * height) - 9, 10)]
+        assert all(b <= a * 1.05 + 0.003 for a, b in zip(band, band[1:])) and band[0] > 4 * band[-1], (l["lean"], band)
+        assert l["last"] <= 0.25 * height * 1.03 + 1 and all(r == 0 for r in rows[int(height * 0.27):]), (l["lean"], l["last"], 0.25 * height)
+        assert sum(rows[int(0.22 * height):int(0.25 * height)]) < 0.02 * sum(rows[:int(0.25 * height)]) * 3, (l["lean"], rows[int(0.22 * height):int(0.25 * height) + 3])
+    # ... and during the build the front is diagonal, along the ray: the right-of-middle less the left's share of the band, against the
+    # hold's, shifts toward the sun's far side: lit first on the right in the morning (negative lean), on the left after, none at no lean
+    for k in (-60, -45, -30):
+        assert by[k]["build"][0] - by[k]["side"] > 0.1, (k, by[k]["side"], by[k]["build"])
+    for k in (30, 45, 60):
+        assert by[k]["build"][0] - by[k]["side"] < -0.1, (k, by[k]["side"], by[k]["build"])
+    assert all(abs(b - by[0]["side"]) < 0.04 for b in by[0]["build"]), (by[0]["side"], by[0]["build"])   # (horizontal: the columns alike)
+    assert by[-45]["build"][0] > by[-45]["build"][2] > by[-45]["side"] - 0.02 and by[45]["build"][0] < by[45]["build"][2], (by[-45], by[45])   # (the lit side spreads across)
     assert by[60]["grid"] < 400 and by[-60]["grid"] < 400 and by[0]["grid"] < 400, [(l["lean"], l["grid"]) for l in hot["byLean"]]
     assert all(l["cost"] < 4 for l in hot["byLean"]), [l["cost"] for l in hot["byLean"]]
     # with the UV on too: the gradient behind, the UV's violet crisp on top (blue over red at its places), within the cap; the union
