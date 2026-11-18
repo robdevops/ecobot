@@ -2462,8 +2462,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # in some stretches with bare gaps in others; the shading uneven: ridges brighter than side branches, those than the fine
     # barbs, the shades spread widely and in several tints
     made, shades = cold["made"], cold["shades"]
-    assert set(made["forms"]) == {"fern", "plume", "needles", "speck"}, made["forms"]
-    assert all(made["forms"][k] >= 5 for k in ("fern", "plume", "needles")) and made["scratches"] >= 1, made["forms"]
+    assert set(made["forms"]) == {"fern", "plume", "cluster", "needles", "speck"}, made["forms"]   # (no star, no plate)
+    assert all(made["forms"][k] >= 5 for k in ("fern", "plume", "cluster", "needles")) and made["scratches"] >= 1, made["forms"]
     specks = made["specks"]
     assert len(specks) == made["forms"]["speck"] >= 5 and set(specks) <= {1, 2} and 1 in specks and 2 in specks, specks
     assert len(specks) < cold["size"][0] * cold["size"][1] / 1000, (len(specks), cold["size"])   # (sparse)
@@ -2473,6 +2473,18 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert len(lengths) >= 40 and q(lengths, 0.9) > 5 * q(lengths, 0.1) and max(lengths) > 60, sorted(lengths)
     assert len(spacings) >= 30 and q(spacings, 0.9) > 2.5 * q(spacings, 0.1), sorted(spacings)
     assert 55 <= q(angles, 0.5) <= 65 and q(angles, 0.1) > 45 and q(angles, 0.9) < 75 and q(angles, 0.9) - q(angles, 0.1) > 6, sorted(angles)
+    # sizes spread wide and skewed: a few long trunks (the longest many times the median), most medium, many tiny
+    assert max(lengths) >= 4 * q(lengths, 0.5) and q(lengths, 0.5) < 25 and q(lengths, 0.95) > 3 * q(lengths, 0.5), sorted(lengths)
+    # ... the long trunks (the longest tenth of the stems and side fronds) curve rarely, the finer fronds (the shorter half) 3 times
+    # as much or more (mean turning per px)
+    strands = sorted(made["strands"], key=lambda t: -t["length"])
+    turn = lambda part: sum(t["turn"] for t in part) / len(part)
+    longest, finest = strands[: len(strands) // 10], strands[len(strands) // 2:]
+    assert len(strands) >= 400 and turn(finest) >= 3 * turn(longest), (turn(finest), turn(longest))
+    trunks = [t for t in longest if t["depth"] == 0]
+    assert len(trunks) >= 20 and sum(t["turn"] > 0.01 for t in trunks) < 0.25 * len(trunks) and turn(finest) > 0.05, (turn(finest), turn(longest))
+    # ... each one's core whiter than its edge (the spine against its rim and barbs, as they read over the glass)
+    assert shades["core"] >= 1.15 * shades["edge"] > 0, shades
     gaps = [b[1] - a[1] for a, b in zip(made["seeds"], made["seeds"][1:]) if a[0] == b[0]]
     assert len(gaps) >= 40 and q(gaps, 0.9) > 4 * q(gaps, 0.1) and max(gaps) > 4 * q(gaps, 0.5), sorted(gaps)
     assert shades["stem"] > shades["side"] + 20 > shades["barb"] + 40 and shades["spread"] > 35 and shades["tints"] >= 3, shades
