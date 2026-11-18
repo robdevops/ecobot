@@ -811,7 +811,16 @@ def rose_drawn(c: dict, minutes: list[int]):
     assert {p["point"]: p["share"] for p in petals} == pytest.approx(want, abs=1e-4), petals
     for p in petals:
         assert p["reach"] == pytest.approx(138 * 0.8 * minutes[POINTS.index(p["point"])] / most, abs=0.05), p
-        assert p["colour"] == rgb(look()["needle"]) and 0.15 <= p["opacity"] <= 0.5, p
+        fills = {f["id"]: f for f in c["fades"]}
+        assert p["fill"].startswith("url(#") and p["stroke"].startswith("url(#") and p["fill"] != p["stroke"], p   # (no flat colour)
+        for ref, top in ((p["fill"], 0.32), (p["stroke"], 0.55)):
+            g = fills[ref[5:-1]]
+            ops = [o for _, _, o in g["stops"]]
+            assert g["units"] == "userSpaceOnUse" and (g["cx"], g["cy"]) == tuple(c["ringCentre"]) and g["r"] == pytest.approx(138 * 0.8), g
+            assert ops[0] == 0 and ops[-1] == top and ops == sorted(ops) and len(set(ops)) == len(ops), g      # (clear at the hub, rising)
+            assert [s[0] for s in g["stops"]] == sorted(s[0] for s in g["stops"]) and g["stops"][0][0] == 0 and g["stops"][-1][0] == 1, g
+            assert all(s[1] == rgb(look()["needle"]) for s in g["stops"]), g                                    # (the blue unchanged)
+    assert len(c["fades"]) == 2 and not c["patterns"], c["fades"]        # (one shared pair, ids unique; smooth: no pattern or dither)
 
 
 @needs_browser

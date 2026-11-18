@@ -279,8 +279,15 @@ const compassLook = (page) => page.evaluate(() => {
            petals: [...t.querySelectorAll("svg .rose .petal")].map((e) => {
              const [x, y] = e.getAttribute("d").match(/L([-\d.]+),([-\d.]+)/).slice(1).map(Number), c = getComputedStyle(e);
              return { point: e.dataset.point, share: Number(e.dataset.share), reach: Math.hypot(x - cx, y - cy), colour: c.fill,
-                      opacity: Number(c.fillOpacity) };
+                      opacity: Number(c.fillOpacity), fill: e.getAttribute("fill"), stroke: e.getAttribute("stroke") };
            }),
+           // (the rose's gradients: id, units, centre and radius in its own px, stops [offset, colour, opacity]; any pattern in it)
+           fades: [...t.querySelectorAll("svg .rose radialGradient")].map((g) => ({
+             id: g.id, units: g.getAttribute("gradientUnits"), cx: Number(g.getAttribute("cx")), cy: Number(g.getAttribute("cy")),
+             r: Number(g.getAttribute("r")), stops: [...g.querySelectorAll("stop")].map((s) => [Number(s.getAttribute("offset")),
+               getComputedStyle(s).stopColor, Number(s.getAttribute("stop-opacity"))]) })),
+           patterns: t.querySelectorAll("svg pattern, svg .rose [fill*=pattern]").length,
+           ringCentre: [cx, cy],
            // (its needle's two ends: their fill and how opaque, their size in its own px (the shape's box, not turned) and on the window)
            ends: [".head", ".tail"].map((k) => {
              const e = t.querySelector(`.needle ${k}`), c = getComputedStyle(e), b = e.getBBox();

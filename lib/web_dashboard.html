@@ -4249,7 +4249,7 @@ const Sky = (() => {
 
   // The wind's direction, a compass, flat like the dials and the same size (DIAL: its ring where theirs is, so it lines up with its
   // neighbours, grid or zoomed). Layers, bottom to top: today's wind rose (rose: 16 soft petals in the needles' colour, each as long as
-  // its compass point's share of today's readings, the longest ROSE_REACH of the radius; none with no data), the reading inside the
+  // its compass point's share of today's readings, the longest ROSE_REACH of the radius; none with no data), each fading in from the hub, the reading inside the
   // ring, below the hub (the degrees only: "99°"), then
   // the face (one thin ring, fine ticks every 10 degrees and longer ones every 45, N, E, S and W, all four alike) and the needle
   // (pointing where the wind comes from, in degrees clockwise from north: a slim blade with a sharp head in the red hands' red, over
@@ -4260,6 +4260,7 @@ const Sky = (() => {
   const blade = (cx, cy, reach) => [[0, reach], [5, 0], [-5, 0]].map(([x, y]) => [cx + x, cy - y]);
   const stub = (cx, cy, reach) => [[3.5, 0], [0, -reach * 0.2], [-3.5, 0]].map(([x, y]) => [cx + x, cy - y]);
   const points = (pts) => pts.map((p) => p.map((n) => n.toFixed(2)).join(",")).join(" ");
+  let roseIds = 0;   // (a compass's gradients' ids: unique per dial, the page over)
   function compass(svg, tile, ink) {
     const [cx, cy, r] = DIAL, reach = r - 22;
     const rose = el("g", {class: "rose", "pointer-events": "none"}, svg);
@@ -4286,16 +4287,26 @@ const Sky = (() => {
                    "stroke-linejoin": "miter", class: "head"}, needle);
     el("circle", {cx, cy, r: 6.5, fill: L.bg, stroke: ink(L.high_hand), "stroke-width": 2.5, class: "hub"}, svg);
     // the rose: a petal per compass point with any share, a slim wedge from the centre to its share of the longest's reach
+    // each fades in from the hub: fully clear there, rising smoothly (SVG's own anti-aliased gradient, no dither or pattern) to the rose's
+    // opacity at the longest petal's reach (the fill's 0.32, the outline's 0.55); one pair of gradients, userSpaceOnUse on the hub, shared
+    // by every petal and made again with them (the group emptied: no stale defs)
+    const FADE = {fill: 0.32, stroke: 0.55}, id = `rose${++roseIds}`;
     const petals = (shares) => {
       rose.replaceChildren();
       const most = Math.max(0, ...(shares || []));
       if (!(most > 0)) return;
+      const defs = el("defs", {}, rose);
+      for (const [k, top] of Object.entries(FADE)) {
+        const g = el("radialGradient", {id: `${id}-${k}`, gradientUnits: "userSpaceOnUse", cx, cy, r: r * ROSE_REACH, class: `fade ${k}`}, defs);
+        [[0, 0], [0.5, 0.35 * top], [1, top]].forEach(([at, o]) =>
+          el("stop", {offset: at, "stop-color": ink(L.needle), "stop-opacity": o.toFixed(3)}, g));
+      }
       shares.forEach((v, i) => {
         if (!(v > 0)) return;
         const out = r * ROSE_REACH * v / most, b = 22.5 * i;
         const [x0, y0] = polar(cx, cy, out, 90 - b + ROSE_HALF), [x1, y1] = polar(cx, cy, out, 90 - b - ROSE_HALF);
         el("path", {d: `M${cx},${cy} L${x0.toFixed(2)},${y0.toFixed(2)} A${out.toFixed(2)},${out.toFixed(2)} 0 0 1 ${x1.toFixed(2)},${y1.toFixed(2)} Z`,
-                    fill: ink(L.needle), "fill-opacity": 0.32, stroke: ink(L.needle), "stroke-opacity": 0.55, "stroke-width": 1,
+                    fill: `url(#${id}-fill)`, stroke: `url(#${id}-stroke)`, "stroke-width": 1,
                     "stroke-linejoin": "round", class: "petal", "data-point": L.points[i], "data-share": v}, rose);
       });
     };
