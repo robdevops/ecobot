@@ -84,6 +84,7 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | T2 | Steepness `sin(theta)` | 6 | REAL-MODEL |
 | T3 | Steepness response curve and dead zone | 6 | TUNED |
 | T4 | Face-down treated as flat | 6 | REAL-APPROX |
+| T5 | Wind push on the beads' run direction | 6 | TUNED |
 | G1 | Display unit conversions | 7.1 | REAL-MODEL |
 | G2 | Scale tick and end re-rounding | 7.1 | TUNED |
 | G3 | Linear needle share and thermometer level | 7.2 | REAL-MODEL |
@@ -123,9 +124,9 @@ Count per label (counted from the table above):
 |---|---|
 | REAL-MODEL | 20 |
 | REAL-APPROX | 16 |
-| TUNED | 29 |
+| TUNED | 30 |
 | ARTISTIC | 11 |
-| Total | 76 |
+| Total | 77 |
 
 Not computed here at all (the station or a provider supplies them): dew point, feels like, apparent temperature, VPD, pollen and thunderstorm-asthma levels, and the dashboard's heat index or wind chill (none exists in `lib/`).
 
@@ -318,7 +319,7 @@ Distances are art px, times are seconds. The dew point is not used anywhere in t
 | Splash | ~2010 | `THROWN` [14, 20], `THROW` [24, 40] px/s, `FALL` 80 px/s^2 (:1734), `SPRAY` 0.25, `SPLASH_S` 0.25 s, `SQUASH` [0.5, 0.75] over 0.2 s | ARTISTIC | `FALL` 80 is not 9.8 m/s^2 at any scale. |
 | Droplet drying | `DRYING` [15, 40] s | | TUNED | |
 
-## 6. Device tilt (`screenGravity` :5563, `tilt` :4103)
+## 6. Device tilt and wind push (`screenGravity`, `tilt`, `aim`)
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
@@ -327,9 +328,10 @@ Distances are art px, times are seconds. The dew point is not used anywhere in t
 | Steepness | `tilt()` | `s = sqrt(gx^2 + gy^2) / sqrt(gx^2 + gy^2 + gz^2) = sin(theta)`; theta is the screen normal's angle from vertical (0 lying face up, 90 upright, 180 face down) | REAL-MODEL | The in-plane share of gravity: the sliding force factor `g*sin(theta)`; independent of the reading's size. |
 | Response curve | `POOL_IN`, `POOL_OUT`, `STEEP_FULL` :4100 | `POOL_IN = sin 5 deg = 0.0872`, `POOL_OUT = sin 7 deg = 0.1219`, `STEEP_FULL = sin 40 deg = 0.6428`; `t = clamp((s - 0.0872)/(0.6428 - 0.0872), 0, 1)`; `steep = smoothstep(t)`, low-passed with `k = 1 - exp(-dt/0.25)` | TUNED | The smoothstep is applied to `sin(theta)`, not theta: the ramp midpoint is s = 0.365 (theta 21.4 degrees). The real driving force keeps rising to 90 degrees; saturating at 40 is a choice. The 5/7 degree dead zone stands in for pinning and prevents flicker. |
 | Smoothing | `SNAP_DEG` 4, `STEP_DEG` 1.5, `TAU` 0.25 s | low-pass of the direction; snaps to straight down within 4 degrees; changes only when it moves 1.5 degrees or more | TUNED | Noise suppression. |
+| Wind push | `pushOf`, `aim()`, `blow()`; `PUSH_ON` 15, `PUSH_FULL` 45, `PUSH_MAX` 0.6 | with the eased effective wind speed s (km/h: the speed plus 0.3 of the gust's excess, low-passed as the rain's is) the push ratio is `p = 0.6 * smoothstep((s - 15) / 30)`: 0 below 15 km/h, 0.3 at 30, 0.6 from 45. The beads' run direction is `normalize(g + p * f * steep * (1, 0))`, with `g` the unit gravity (straight down, or the tilt's), `f = dir.f` (-1 leftward to +1 rightward, eased through 0 as the wind turns) and `steep` the steepness factor: at most `atan(0.6)` = 31.0 degrees off vertical, downwind. A direction within 4 degrees of straight down is straight down; it changes only by 1.5 degrees or more at a time. Speeds are unchanged; a pooled device has no push | TUNED | Wind on a window drags drops downwind; how much, and from which speed, is chosen by look. The ratio is a force ratio (wind drag against gravity) in spirit only: no air density or drop size enters. |
 | Face down | `tilt()` | steepness depends on `sin(theta)` only, so 180 degrees pools like 0 | REAL-APPROX | Real drops hang and fall from the underside. Rare, and documented in the code comment. |
 
-Bead motion along the downhill unit vector (`b.x += grav.x*dy`, `b.y += grav.y*dy`) is REAL-MODEL for direction; wandering across the path is ARTISTIC.
+Bead motion along the run unit vector (`b.x += grav.x*dy`, `b.y += grav.y*dy`: gravity, with the wind's push added) is REAL-MODEL for direction; wandering across the path is ARTISTIC.
 
 ## 7. Gauges, units and layout
 
@@ -516,7 +518,7 @@ Constants to grep when checking that the numbers here match the code:
 | UV and sun | `BEAM_MAX`, `BEAM_CURVE`, `EL_LOW`, `RUN_ON`, `SUN_FALLBACK`, `leanAt`, `leanOf` |
 | Ice, flood | `reachFor`, `growRate`, `MELT`, `RISE = 4`, `DRAIN`, `CALMS`, `PUSH`, `THROAT_PERIOD`, `EDDY_REST`, `flood_of` |
 | Beads | `RUN_R`, `GONE`, `TINY`, `SWELL`, `PACE`, `sized`, `HEAVY_RAIN`, `FOG_AT`, `FORM`, `CLEAR`, `THICKEN` |
-| Tilt | `POOL_IN`, `POOL_OUT`, `STEEP_FULL`, `SNAP_DEG`, `screenGravity`, `tilt(` |
+| Tilt, wind push | `POOL_IN`, `POOL_OUT`, `STEEP_FULL`, `SNAP_DEG`, `screenGravity`, `tilt(`, `PUSH_ON`, `PUSH_FULL`, `PUSH_MAX`, `pushOf`, `aim(` |
 | Gauges | `STEPS = [0.1`, `START, SWEEP`, `MIN_TILE`, `TABLE_TOP`, `STALE_MS`, `TENDENCY_STEADY`, `TENDENCY_AGO`, `TENDENCY_CLASSES`, `FLOOD_TAU`, `FLOOD_RUNOFF`, `FLOOD_FULL`, `FLOOD_ROW`, `FLOOD_SHOW`, `ROSE_REACH`, `33.8639`, `1.609344`, `25.4` |
 | Server | `sun_position`, `sun_times`, `SUNRISE_ELEVATION`, `refraction`, `17.62`, `us_aqi`, `pm25_aqi`, `PM25_AQI`, `SPIKE_RATIO`, `truncate`, `MAX_GAP`, `RESET_MM`, `MIN_READINGS`, `STEADY_HPA`, `HAURWITZ`, `MIN_HOURS`, `SEASON_MONTHS` |
 

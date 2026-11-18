@@ -1815,7 +1815,7 @@ EFFECTS = {"rain": "Rain", "flood": "Rain", "haze": "AQI", "uv": "UV index", "hu
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"trails", "frost", "budget", "flood", "bucket", "pm25", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies"}
+DRIVEN = {"push", "trails", "frost", "budget", "flood", "bucket", "pm25", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies"}
 
 
 async def weather(server, part: str) -> dict:
@@ -3119,6 +3119,49 @@ async def test_a_gust_over_99_kmh_blows_a_cow_a_barn_or_a_chicken_across_far_beh
     assert phone["sent"] == 1 and phone["buttons"][-1] == "gust" and not phone["tag"] and phone["fits"] and phone["onScreen"], phone
     just_right_of_the_row(phone)
     assert got["errors"] == [] and phone["errors"] == [], (got["errors"], phone["errors"])
+
+
+@needs_browser
+async def test_a_strong_wind_pushes_the_humidity_beads_downwind_and_everything_else_about_them_stays(server, station):
+    got = await weather(server, "push")
+    assert got["errors"] == [], got["errors"]
+    # the push ratio by the effective speed, 0.6 * smoothstep((s - 15) / 30), signed by the wind's side (west: rightward, +1)
+    for way, sign in (("west", 1), ("east", -1)):
+        for speed, want in ((0, 0), (15, 0), (30, 0.3), (45, 0.6), (60, 0.6)):
+            r = got["ratio"][f"{way}/{speed}"]
+            assert r["p"] == pytest.approx(want, abs=1e-9) and r["side"] == sign and r["factor"] == sign, (way, speed, r)
+            assert r["push"] == pytest.approx(sign * want, abs=1e-9), (way, speed, r)
+            assert r["angle"] == pytest.approx(sign * math.degrees(math.atan(want)), abs=1e-6), (way, speed, r)
+    # the mean run: 28 to 34 degrees off vertical toward the downwind side at 45 km/h, mirrored; vertical at 10 and none
+    west, east = got["runs"]["west45"], got["runs"]["east45"]
+    assert west["running"] >= 15 and east["running"] >= 15, got["runs"]
+    assert 28 <= west["degrees"] <= 34 and -34 <= east["degrees"] <= -28, (west, east)
+    assert west["angles"] == pytest.approx([30.96, 30.96], abs=0.05) and east["angles"] == pytest.approx([-30.96, -30.96], abs=0.05)
+    assert west["dx"] > 20 and east["dx"] < -20 and west["ranOff"] > 0 and east["ranOff"] > 0, (west, east)   # (running off the downwind edge)
+    for name in ("west10", "west0"):
+        assert abs(got["runs"][name]["degrees"]) < 2 and got["runs"][name]["angles"] == [0, 0], (name, got["runs"][name])
+    mid = got["runs"]["west25"]   # (a part of the push: 25 km/h, p = 0.156, 8.8 degrees)
+    assert 5 < mid["degrees"] < 13 and mid["push"]["p"] == pytest.approx(0.1556, abs=0.001), mid
+    # their speed is the same: the path length per bead at 45 against upright
+    path = lambda r: math.hypot(r["dx"], r["dy"])
+    assert path(west) == pytest.approx(path(got["runs"]["west10"]), rel=0.3), got["runs"]
+    # flat (pooled): none runs and no push, though the wind blows
+    flat = got["flat"]
+    assert flat["running"] == 0 and flat["push"]["push"] == 0 and flat["push"]["p"] == pytest.approx(0.6) and flat["push"]["angle"] == 0 and flat["ranOff"] == 0, flat
+    # tilted 30 degrees left: alone 30 degrees leftward; a rightward push of 0.6 added as a vector (-0.5 + 0.6, 0.866): 6.6 degrees
+    # rightward; a leftward one: (-1.1, 0.866), 51.8 degrees leftward
+    tilted = got["tilted"]
+    assert tilted["alone"]["angles"] == pytest.approx([-30, -30], abs=0.1) and -34 <= tilted["alone"]["degrees"] <= -26, tilted["alone"]
+    assert tilted["against"]["angles"] == pytest.approx([6.59, 6.59], abs=0.1) and 3 <= tilted["against"]["degrees"] <= 10, tilted["against"]
+    assert tilted["with"]["angles"] == pytest.approx([-51.79, -51.79], abs=0.1) and -56 <= tilted["with"]["degrees"] <= -47, tilted["with"]
+    # the trails laid along the slanted run: a row after row (none missing), each row's span touching the last's, running about 31 degrees
+    trails = got["trails"]
+    assert len(trails) >= 8, trails
+    for t in trails:   # (a row's span a pixel off the last's, once, at a bead's hop onto a neighbour's trail (LOCK_GAP, 5 px), aside)
+        assert t["jumps"] == 0 and t["gaps"] <= 1 and t["wide"] <= 6 and t["rows"] >= 40, t
+    assert sum(t["gaps"] for t in trails) <= 0.1 * len(trails), trails
+    assert all(t["jumps"] == 0 and t["gaps"] == 0 for t in got["trailsUpright"]), got["trailsUpright"]
+    assert 26 <= sum(t["degrees"] for t in trails) / len(trails) <= 36, trails
 
 
 @needs_browser

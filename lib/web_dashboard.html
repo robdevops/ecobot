@@ -201,6 +201,12 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   rain's slant follows them continuously (per layer, tan of its angle from vertical = speed / its drops' terminal speed, see Sky.setRainRate: 25 km/h at 5 mm/h about 66, 55 and 48 degrees far, mid, near; none at no wind: straight
 //   down; at most 70 degrees; the gust adding 0.3 of what it is over the speed; the speed eased, rising over about 2 s, falling over
 //   about 4); the haze's sideways pan follows them too (about 0.4 px/s at 3 km/h to 2.6 at 40: none at no wind). The wind's leaves follow it too: their pace (and the gust bands', the turbulence's and the eddies' drift) is scaled by k = clamp(0.4 + 0.024 s, 0.5, 1.6), s the same effective speed eased the same way (25 km/h: the old pace, 1); a third argument true (the test links', over a real speed under their 11 km/h) holds k at 1. Sky.state().wind: {k, speed (the eased s), ...}.
+//   A strong wind pushes the humidity's beads off straight down, downwind: with the speed s (the same eased effective speed, gust share
+//   included), p = 0.6 * smoothstep((s - 15) / 30) (none under 15 km/h, 0.3 at 30, 0.6 from 45), the beads' way = the gravity (straight
+//   down, or the phone's tilt) plus p * dir.f * (the steepness factor) along the screen's row, normalized: at most about 31 degrees off
+//   vertical, downwind; pooled (flat) beads stay put; their speed is unchanged. Sky.state().humidity.windPush: {p, speed, side, factor,
+//   push, angle (degrees off straight down, positive rightward)}; each bead's `angle` while it runs. The page's ?windspeed=40 (km/h) sets
+//   the effective speed while a test link is on (?fx=humidity2,wind-west for a rightward wind).
 //   Sky.setPm25(pm): the air sensor's PM2.5 now, µg/m³ (null: the band's midpoint): the haze's opacity (1 - exp(-0.01457 pm), at most 0.97) and tint follow it continuously.
 //   Sky.setRainRate(rate): the live rain rate, mm/h (the gauge's; none: a nominal 5): the median drop D0 = 0.9 R^0.21 mm (R clamped 0.5-100, Marshall-Palmer)
 //   sizes the layers (0.6, 1, 1.5 times D0), each with its terminal speed v_t = 9.65 - 10.3 exp(-0.6 D) m/s, its fall speed and its lean; the heavy rain's beads on the glass grow with D0 (2.6 to 2.97 px).
@@ -213,7 +219,7 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   speed only), the
 //   rain's slant (by the wind's speed: Sky.setWindSpeed) and push (its streaks mirrored), the flood's frog (in from upwind, swimming downwind, its sprite mirrored) and
 //   its waves (carried downwind), the leaves floating on it, the gust's cow, barn or chicken (mirrored): rightward the exact mirror of
-//   leftward. (The humidity's beads aren't: they follow gravity.) A change eases over DIR_S s: the factor dir.f, -1 to +1, applied to
+//   leftward. (The humidity's beads aren't mirrored: they follow gravity, pushed downwind by a strong wind: see aim().) A change eases over DIR_S s: the factor dir.f, -1 to +1, applied to
 //   every velocity and slant; the sprites turning over as it passes 0. Sky.state(): windDir (the side now, -1 or +1), windTarget,
 //   windFactor (-1 to +1), windFlips (how often the side has turned over); wind.dir and wind.factor the same. The air's eddies are
 //   not turned by it: the leaves' mean wind is the steady drift, the eddies' swirl on top (the turbulence and the vortices) goes on
@@ -334,10 +340,15 @@ const Sky = (() => {
                veer: {u: 1, from: Math.PI, delta: 0, dur: VEER_S, side: 0, count: 0}};   // (angles: radians on screen, 0 rightward, pi/2 up)
   const smoothU = (u) => u * u * (3 - 2 * u);
   // The live wind's speed and gust (km/h, as the page's data gives them: setWindSpeed(), below), which the rain's slant follows
-  const gale = {speed: 0, gust: 0, forced: false, rain: 0};   // (forced: a test link's wind is on and the real speed is under its own: the leaves blow at their usual pace)
+  const gale = {speed: 0, gust: 0, forced: false, rain: 0, felt: 0, seeded: false};   // (forced: a test link's wind is on and the real speed is under its own: the leaves blow at their usual pace)
   const TAU_UP = 1, TAU_DOWN = 2;   // (s: the eased speeds rise over about 2 s and fall over about 4)
   const GUST_SHARE = 0.3;   // how much of a gust over the speed counts (the one share, for the rain's slant, the haze's pan and the leaves' pace)
   const effectiveSpeed = () => gale.speed + GUST_SHARE * Math.max(gale.gust - gale.speed, 0);   // km/h
+  // The wind's push on the humidity's beads (see grav, below). The effective speed s (above), low-passed as the rain's and the leaves' are
+  // (gale.felt: TAU_UP, TAU_DOWN; the first time at once), gives the push ratio p = PUSH_MAX * smoothstep((s - PUSH_ON) / (PUSH_FULL - PUSH_ON)):
+  // 0 under PUSH_ON (15 km/h), PUSH_MAX (0.6) from PUSH_FULL (45 km/h), 0.3 at 30
+  const PUSH_ON = 15, PUSH_FULL = 45, PUSH_MAX = 0.6;
+  const pushOf = (s) => { const u = clamp((s - PUSH_ON) / (PUSH_FULL - PUSH_ON), 0, 1); return PUSH_MAX * u * u * (3 - 2 * u); };
   // The rain's drops by their size (the rain's layers are three size classes, see the rain). R: the live rain rate, mm/h (the rain gauge's:
   // Sky.setRainRate; none, a test link's rain over a dry gauge: RAIN_NOMINAL), clamped to 0.5-100. The median drop diameter D0 (mm)
   // from the Marshall-Palmer drop size distribution, D0 = 0.9 R^0.21 (0.9 mm at 1 mm/h, 1.5 at 10, 2.1 at 50); a drop's terminal
@@ -368,10 +379,13 @@ const Sky = (() => {
     g.restore();
   }
   // Which way is downhill, in screen coordinates (x right, y down), as a unit vector: straight down (0, 1) unless a phone's gravity
-  // sensor says otherwise (tilt(), below). The humidity's beads run along it; nothing else reads it. {x, y, px, py: the unit across it
-  // (to a bead's right as it runs), tilted: not straight down, mode: which edge is downhill by its dominant axis (0 bottom, 1 top, 2
-  // right, 3 left), epoch: counts its changes}
-  const grav = {x: 0, y: 1, px: 1, py: -0, tilted: false, mode: 0, epoch: 0, readings: 0, raw: null, flat: true, pool: false, steep: 1};
+  // sensor says otherwise (tilt(), below), then pushed downwind by a strong wind (aim(), below). The humidity's beads run along it;
+  // nothing else reads it. {x, y, px, py: the unit across it (to a bead's right as it runs), tilted: not straight down, mode: which
+  // edge is downhill by its dominant axis (0 bottom, 1 top, 2 right, 3 left), epoch: counts its changes; bx, by: the sensor's
+  // gravity alone (the unit pull in the screen's terms, without the wind), push: the wind's push now (p times dir.f times the
+  // steepness factor: its horizontal part, in units of the pull), p: the push ratio (pushOf, 0-0.6, no sign)}
+  const grav = {x: 0, y: 1, px: 1, py: -0, tilted: false, mode: 0, epoch: 0, readings: 0, raw: null, flat: true, pool: false, steep: 1,
+                bx: 0, by: 1, push: 0, p: 0};
   // Pooling: on a device whose sensor has sent readings (grav.raw), with the screen (nearly) flat, face up or down (grav.pool, or its
   // steepness factor, grav.steep, smoothed down to nothing): no downhill, the humidity's beads stay where they are and merge. No sensor
   // (or the animations stopped): never
@@ -2714,6 +2728,11 @@ const Sky = (() => {
                      joins: seen.joins.slice(), restarts: seen.restarts, stretches: seen.stretches, big: JSON.parse(JSON.stringify(seen.big)),
                      glass: Object.fromEntries(GLASSES.map((name, g) => [name, {...seen.glass[g]}])), sizes: seen.sizes.map((s) => s.slice()),
                      bands: BANDS,
+                     // (the wind's push on the beads' way: p, the ratio by the eased speed `speed` (km/h), side: dir.f's sign, push: p * dir.f
+                     // * the steepness factor, angle: the way they run, degrees off straight down, positive toward the right, the
+                     // sensor's gravity with the push added)
+                     windPush: {p: grav.p, speed: gale.felt, side: dir.side, factor: dir.f, push: grav.push, angle: Math.atan2(grav.x, grav.y) * DEG,
+                                on: PUSH_ON, full: PUSH_FULL, max: PUSH_MAX, of: pushOf},
                      // (the physics as the beads run by it: a bead's mean speed, px/s, of radius r on glass g ("dry", "trail", "fog"),
                      // and its radius after px run over s s there (fog: as thick as f; kind "rain": a rain bead's))
                      physics: {speed: (r, g) => speedFor(r, GLASSES.indexOf(g)),
@@ -2796,6 +2815,7 @@ const Sky = (() => {
                                laidW: b.laidW || null, bottom: top + h, lock: !!b.lock, glass: GLASSES[b.g], v: b.state === "on" ? b.v : 0, fading: b.state === "fade",
                                alpha: (b.state === "fade" ? b.left / b.fadeFor : 1) * Math.min(1, b.shown / APPEAR), drawn: b.drawn || null,
                                age: b.shown, behind: top < b.y0 + 4 || !!trail, trail: trail || null, tiny: !!b.still, snapping: b.state === "snap",
+                               angle: b.state === "on" && b.v > 0 ? Math.atan2(grav.x, grav.y) * DEG : null,   // (its run's way: degrees off straight down, positive rightward)
                                stretch: b.state === "on" && !squashOf(b) && !gulpOf(b) ? stretchOf(b) : 0, impact: b.impact === undefined ? null : b.impact,
                                squash: b.state === "on" ? squashOf(b) : 0, gulp: b.state === "on" ? gulpOf(b) : 0, thrown: b.thrown || null};
                      })}),
@@ -4012,6 +4032,7 @@ const Sky = (() => {
   function tick(dt) {
     let need = 0;
     steer(dt);
+    blow(dt);
     for (const k of ORDER) if (effects[k].alive() && !effects[k].sized) { effects[k].resize(); effects[k].sized = true; }
     for (const k of ORDER) {
       const fx = effects[k];
@@ -4125,14 +4146,41 @@ const Sky = (() => {
     let ux = n < 0.05 ? 0 : smooth.x / n, uy = n < 0.05 ? 1 : smooth.y / n;
     if (Math.abs(Math.atan2(ux, uy)) * DEG < SNAP_DEG) { ux = 0; uy = 1; }
     const down = ux === 0 && uy === 1;
-    if (down ? (grav.x === 0 && grav.y === 1) : Math.acos(clamp(ux * grav.x + uy * grav.y, -1, 1)) * DEG < STEP_DEG) return false;
+    if (down ? (grav.bx === 0 && grav.by === 1) : Math.acos(clamp(ux * grav.bx + uy * grav.by, -1, 1)) * DEG < STEP_DEG) return aim();
+    grav.bx = ux; grav.by = uy;
+    return aim(true);
+  }
+  // The direction the beads run: the sensor's gravity (bx, by: a unit vector, straight down with none) plus the wind's push, a vector
+  // (push * |gravity|, push = p * dir.f * grav.steep: p, the ratio by the wind's speed, pushOf; dir.f, the wind's side, eased through
+  // calm as it turns; the steepness factor: none pooled, less on a gentle slope) along the screen's row, normalized; within SNAP_DEG of
+  // straight down, straight down; changed (the epoch counted: the beads' bounds begun afresh) only by STEP_DEG or more, or `force`d.
+  // Whether it changed: returned
+  function aim(force = false) {
+    const push = grav.pool ? 0 : grav.p * dir.f * grav.steep;
+    grav.push = push;
+    let ux = grav.bx + push, uy = grav.by;
+    const n = Math.hypot(ux, uy);
+    if (n < 0.05) { ux = grav.bx; uy = grav.by; } else { ux /= n; uy /= n; }
+    if (Math.abs(Math.atan2(ux, uy)) * DEG < SNAP_DEG) { ux = 0; uy = 1; }
+    const down = ux === 0 && uy === 1;
+    if (!force && (down ? (grav.x === 0 && grav.y === 1) : Math.acos(clamp(ux * grav.x + uy * grav.y, -1, 1)) * DEG < STEP_DEG)) return false;
     Object.assign(grav, {x: ux, y: uy, px: uy, py: -ux, tilted: !down, mode: downhill(ux, uy), epoch: grav.epoch + 1});
     return true;
+  }
+  // The effective wind speed low-passed (gale.felt) and the push it gives (dt s on); called every frame
+  function blow(dt) {
+    const goal = effectiveSpeed();
+    gale.felt = gale.seeded ? gale.felt + (goal - gale.felt) * (1 - Math.exp(-dt / (goal > gale.felt ? TAU_UP : TAU_DOWN))) : goal;
+    if (Math.abs(goal - gale.felt) < 0.02) gale.felt = goal;
+    gale.seeded = true;
+    grav.p = pushOf(gale.felt);
+    aim();
   }
   function level() {   // straight down again (the sensor gone, the animations stopped, or the test's)
     smooth.x = 0; smooth.y = 1;
     if (grav.tilted || grav.raw) Object.assign(grav, {x: 0, y: 1, px: 1, py: -0, tilted: false, mode: 0, epoch: grav.epoch + 1, raw: null, flat: true});
-    grav.pool = false; grav.steep = 1;
+    grav.pool = false; grav.steep = 1; grav.bx = 0; grav.by = 1;
+    aim();   // (the wind's push alone, if it blows)
   }
 
   function set(want, on) {
@@ -5473,6 +5521,9 @@ const Sky = (() => {
   }
   let realSpeed = 0, realGust = 0, realRate = 0, realPm25 = null;
   const TEST_WIND = 11;   // (km/h: what a test link's wind effect blows at, about 24 degrees of slant, like the old fixed default's: the readings' being what they are)
+  // ?windspeed=40: the effective wind speed (km/h) for the page while a test link is on (the rain's slant, the haze's pan, the leaves'
+  // pace and the humidity's beads' push all follow it: no gust over it, not a "forced" link wind); none, or no test link on: the reading's
+  const TEST_SPEED = (() => { const v = new URLSearchParams(location.search).get("windspeed"); return v !== null && v.trim() !== "" && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : null; })();
   let realSide = 0;   // (the last side a reading gave: -1 leftward, +1 rightward, 0 none yet)
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop" shows)
   // Stopped ("stop"): for this page view only, nothing saved (a reload runs them again); for good: MCP_DASHBOARD_ANIMATIONS=off.
@@ -5487,7 +5538,8 @@ const Sky = (() => {
   function weather() {
     const was = calling();
     conditions = Object.fromEntries(Object.keys(CALLED_BY).map((k) => [k, Math.max(real[k] || 0, simulated[k] || 0)]));
-    Sky.setWindSpeed(Math.max(realSpeed, simulated.wind > 0 ? TEST_WIND : 0), Math.max(realGust, simulated.wind > 0 ? TEST_WIND : 0), simulated.wind > 0 && realSpeed < TEST_WIND);   // (a link's wind over a calmer real one: the leaves at their usual pace)
+    if (TEST_SPEED !== null && Object.values(simulated).some((v) => v > 0)) Sky.setWindSpeed(TEST_SPEED, TEST_SPEED, false);   // (?windspeed=: a test link's own effective speed, for the whole page)
+    else Sky.setWindSpeed(Math.max(realSpeed, simulated.wind > 0 ? TEST_WIND : 0), Math.max(realGust, simulated.wind > 0 ? TEST_WIND : 0), simulated.wind > 0 && realSpeed < TEST_WIND);   // (a link's wind over a calmer real one: the leaves at their usual pace)
     Sky.setPm25(simulated.haze > (real.haze || 0) ? null : realPm25);   // (the sensor's PM2.5, unless a test link's band is the one shown: that band's own typical look)
     Sky.setRainRate(realRate);   // (the gauge's, mm/h; a test link's rain over a dry one: Sky's nominal 5)
     Sky.setWind(simulated.windDir || realSide);   // (a test link's way, else the reading's: 0 holds it; first, so with nothing yet drawn it's the way from the start)
@@ -5708,7 +5760,7 @@ const Sky = (() => {
 <!-- TEMPORARY: effect test links. A "test:" row at the bottom left (in the corner, before "stop", which also ends them all: its
      "ecobot-fx-stop"; a link clicked after it starts the animations again, with its effect), one link per effect, simulating its condition (the effect and its
      tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
-     ?fx=haze3,wind,ice, ?fx=all (rain light, rain2 heavy (now and then a drop sticking to the glass), rain3 heavy with a flash
+     ?fx=haze3,wind,ice, ?fx=all (with ?windspeed=40: the wind's effective speed in km/h for the page while any test link is on, e.g. ?fx=humidity2,wind-west&windspeed=40 slants the beads' runs downwind;rain light, rain2 heavy (now and then a drop sticking to the glass), rain3 heavy with a flash
      flood (its first frog 30 s after the water starts rising; off: it drains), haze1-haze5 (or smog1-smog5, its earlier name), uv, humidity light (91 %), humidity2 heavy (100 %), wind (wind-east: blowing leftward, as from the east; wind-west: rightward; in the URL only, the link's click is on or off), heat, ice; ?fx=all every one, no link of its own); and "gust", not
      on or off and never in the URL (?fx=gust is ignored): each click sends one cow, barn or chicken across, as a gust over 99 km/h does. To remove: delete
      from here to "END TEMPORARY" (this style, the row and its script). The page's own listener for "ecobot-fx" then simply hears nothing. -->

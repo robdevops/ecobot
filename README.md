@@ -323,6 +323,12 @@ iPad's Safari asks first, so a small "tilt" link appears at the bottom left (a t
 sensor, so nothing changes there, and with `low` or `off` (or reduced motion) the sensor is never read. The browser needs the page
 served over HTTPS for the sensor (behind a TLS proxy, not plain `http://` on the LAN, except on localhost).
 
+A strong wind pushes the beads sideways as they run: from 15 km/h (the effective speed, a gust counting a third of what it is over the
+speed) they lean downwind, by `0.6 * smoothstep((speed - 15) / 30)` of the pull sideways (0.3 at 30 km/h), up to about 31 degrees off
+straight down from 45 km/h; their speed, the trails, merging and running off the downwind edge are as ever, and a flat (pooled) device
+stays pooled. The test link's wind blows at 11 km/h, under the onset: to see the push, open `?fx=humidity2,wind-west&windspeed=40`
+(`windspeed`, km/h, sets the effective wind speed for the page while a test link is on; `wind-east` pushes the beads leftward).
+
 It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
 Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To

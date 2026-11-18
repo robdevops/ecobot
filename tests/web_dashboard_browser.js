@@ -3589,6 +3589,111 @@ const WEATHER = {
   // ?fx=gust as the page opens (ignored: nothing sent, the word dropped from the URL; and beside "wind"), and on a phone the row
   // (every link, "gust" too, and "stop" in sight unscrolled). A frame
   // sequence of the three crossing kept as screenshots (SHOTS, when given)
+  // push: a strong wind pushing the humidity's beads' run downwind (?windspeed=, the test links' own effective speed): the push ratio at
+  // 0, 15, 30, 45 and 60 km/h, both sides; the mean way the beads run at 45 km/h from the west and the east, at 10 (vertical); a flat phone
+  // (pooled: no push), a phone tilted 30 degrees left in a rightward push (the vectors add); the trails laid along the slanted run (rows,
+  // no gaps), and a screenshot of the beads in a 40 km/h west wind (SHOTS, when given)
+  async push(browser, url, out) {
+    const shake = (page, x, y, z) => page.evaluate(([x, y, z]) => window.dispatchEvent(new DeviceMotionEvent("devicemotion", { accelerationIncludingGravity: { x, y, z } })), [x, y, z]);
+    const page = async (speed, way, extra = {}) => weatherPage(browser, url, { query: `?fx=humidity2,wind-${way}&windspeed=${speed}`, pace: 10, driven: true, context: { viewport: { width: 400, height: 300 } }, ...extra });
+    // the beads' run: the sum of each running bead's move (dx, dy), the way it was (degrees off straight down, positive rightward), and what the state said
+    const run = (p, frames = 400) => p.page.evaluate((frames) => {
+      Sky.timeScale(30);
+      const first = new Map(), last = new Map(), steps = new Map(), angles = [];
+      let n = 0;
+      while (n++ < frames && Sky.advance(1)) {
+        for (const b of Sky.state().humidity.beads) if (b.kind === "fog" && b.v > 0) {
+          if (!first.has(b.id)) first.set(b.id, [b.x, b.cy]);
+          last.set(b.id, [b.x, b.cy]);
+          steps.set(b.id, (steps.get(b.id) || 0) + 1);
+          angles.push(b.angle);
+        }
+      }
+      const moves = [...last].filter(([id]) => steps.get(id) >= 8).map(([id, [x, y]]) => [x - first.get(id)[0], y - first.get(id)[1]]);
+      const dx = moves.reduce((t, m) => t + m[0], 0), dy = moves.reduce((t, m) => t + m[1], 0);
+      const h = Sky.state().humidity;
+      return { running: moves.length, dx: dx / Math.max(moves.length, 1), dy: dy / Math.max(moves.length, 1), degrees: Math.atan2(dx, dy) * 180 / Math.PI,
+               ranOff: h.ranOff, push: h.windPush, tilt: Sky.state().tilt, angles: [Math.min(...angles), Math.max(...angles)], nAngles: angles.length };
+    }, frames);
+    out.errors = [];
+    out.ratio = {};
+    for (const way of ["west", "east"]) for (const speed of [0, 15, 30, 45, 60]) {
+      const p = await page(speed, way);
+      await p.page.evaluate(() => Sky.advance(5));
+      const w = await p.page.evaluate(() => Sky.state().humidity.windPush);
+      out.ratio[`${way}/${speed}`] = { p: w.p, side: w.side, factor: w.factor, push: w.push, angle: w.angle, speed: w.speed };
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }
+    out.runs = {};
+    for (const [name, speed, way] of [["west45", 45, "west"], ["east45", 45, "east"], ["west10", 10, "west"], ["west0", 0, "west"], ["west25", 25, "west"]]) {
+      const p = await page(speed, way);
+      out.runs[name] = await run(p);
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }
+    // the speeds' own, the same beads as vertical ones (sized(), PACE unchanged): the mean path length per running bead
+    // flat: pooled, nothing runs, no push
+    {
+      const p = await page(45, "west");
+      await shake(p.page, 0, 0, 9.8);
+      out.flat = await run(p);
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }
+    // tilted 30 degrees to the left (the pull toward the left edge: the reading is minus the pull) in a rightward push: the unit pull
+    // (-0.5, 0.866) plus (0.6, 0): (0.1, 0.866), 6.6 degrees; in a leftward one 30 + 31 = 55.8 degrees leftward... both, and the tilt alone
+    out.tilted = {};
+    for (const [name, speed, way] of [["alone", 0, "west"], ["against", 45, "west"], ["with", 45, "east"]]) {
+      const p = await page(speed, way);
+      await shake(p.page, 4.9, 8.487, 0);
+      out.tilted[name] = await run(p);
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }
+    // the trails: each running bead's rows (the latest 80 laid) one after another: none missing, their spans touching row to row (now and
+    // then a bead's one hop of a few px sideways onto a neighbour's trail, the lock-on's, aside); at 45 km/h, and at 0 for comparison
+    for (const [key, speed] of [["trails", 45], ["trailsUpright", 0]])
+    {
+      const p = await page(speed, "west");
+      out[key] = await p.page.evaluate(() => {
+        Sky.timeScale(30);
+        const h = () => Sky.state().humidity;
+        const seen = new Map();   // (each bead's trail's longest look, while it still runs)
+        for (let n = 0; n < 600 && Sky.advance(1); n++) if (n % 3 === 0) for (const b of h().beads) if (b.kind === "fog" && b.v > 0) {
+          const rows = h().trailOf(b.id);
+          if (rows.length >= (seen.get(b.id) || []).length) seen.set(b.id, rows);
+        }
+        const out = [];
+        for (const [id, rows] of seen) {
+          if (rows.length < 40) continue;
+          let gaps = 0, jumps = 0, wide = 0;
+          for (let i = 1; i < rows.length; i++) {
+            const a = rows[i - 1], b = rows[i];
+            if (Math.abs(b.y - a.y) > 1) jumps++;
+            if (b.left > a.left + a.w || a.left > b.left + b.w) gaps++;   // (a row's span not touching the last's)
+            wide = Math.max(wide, Math.abs(b.left - a.left));
+          }
+          // the rows' own run: x against y over them, degrees off straight down
+          const first = rows[0], last = rows[rows.length - 1];
+          out.push({ id, rows: rows.length, gaps, jumps, wide, ys: [first.y, last.y], degrees: Math.atan2((last.left + last.w / 2) - (first.left + first.w / 2), last.y - first.y) * 180 / Math.PI });
+        }
+        return out;
+      });
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }
+    // the screenshot: 1024 x 768, humidity heavy with the push (40 km/h from the west), the glass wiped by a few trails
+    if (process.env.SHOTS) {
+      const p = await weatherPage(browser, url, { query: "?fx=humidity2,wind-west&windspeed=40", pace: 10, driven: true });
+      await p.page.evaluate(() => { Sky.timeScale(30); for (let n = 0; n < 1500 && Sky.advance(1); n++); });
+      await p.page.waitForTimeout(300);
+      await p.page.screenshot({ path: process.env.SHOTS });
+      out.shot = process.env.SHOTS;
+      out.errors.push(...p.errors);
+      await p.context.close();
+    }
+  },
   // tilt: a phone's gravity turning the humidity's beads' way (the page's own devicemotion listener, Sky.tilt): synthetic readings at
   // screen angles (the spec's convention, as Android's: at rest upright, y +9.8), where the beads run (the mean of their moves while
   // running: dx, dy; which edge, how many ran off), a phone flat (pooling: nothing runs, the beads merge into ever larger blobs) and the speed at angles from flat
