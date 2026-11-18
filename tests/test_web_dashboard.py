@@ -2170,6 +2170,7 @@ def _whole_streaks(looks):
 
 
 @needs_browser
+@pytest.mark.timeout(150)   # (about 70 s of browser time: the long scenario of every effect)
 async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, station):
     got = await weather(server, "opened")
     # ?fx= when the page opens
