@@ -224,7 +224,6 @@ Everything here is drawn in art px. The measured wind speed scales the leaves' p
 | Envelope | `bake`; `HEAT_FADE` 0.25, `HEAT_TOP` 0.62, `HEAT_LOBES` 0.85 | `rows = ceil(0.25*H)`; sprite W by `rows`, brightness `0.62*(0.5 + 0.5*cos(pi*y/rows))^1.25*lobe(x)`, `lobe = 0.85 + 0.15*clamp(0.5 + 0.32*sin(2*pi*x/W + 0.7) + 0.18*sin(4*pi*x/W + 2.1), 0, 1)`; alpha `0.5*(0.55 + 0.45*level)`; dithered | ARTISTIC | A plain full-width rectangle: strongest at the top edge, 0 at a quarter of the height, no side or top edges of its own, fixed subtle lobes (no dark gap). |
 | Front | `draw`; `HEAT_SOFT` 0.4 | with `a = lean` in radians, the distance along the ray from the top corner on the sun's side (the right for negative lean) is `t = y*cos(a) + dx*|sin(a)|`; total way `long = rows*cos(a) + W*|sin(a)|`; the front is at `extent*(long + 0.4*rows)`, a linear mask over its last `0.4*rows` (a canvas linear gradient along the ray, so its iso-lines are perpendicular to it) | ARTISTIC | Driven past the far bottom corner, so at the hold the whole quarter is lit evenly. |
 
-Vertical case (no lean): `c = 1`, `s = 0`, `deep = 1`, pivot at the middle: the wave is the straight-down one of earlier versions.
 
 ### 4.3 UV
 
@@ -500,7 +499,7 @@ Design simplifications that do not estimate reality:
 28. FIXED (03f2b5d): one `GUST_SHARE` and `effectiveSpeed` (:335-336) for the rain, haze and leaves.
 29. LEFT BY DECISION: `PAN_MAX`, `PAN_K` and the rain speeds are in art px/s with no physical length scale; the user chose to leave it.
 30. LEFT BY DECISION: UV beam lean assumes east on the right of the screen; the user chose to leave it (right for the Melbourne station).
-31. N/A (resolved by c59e2f3): the heat wave now follows the sun's lean (section 4.2).
+31. N/A: the heat fills the top quarter and its front follows the sun's lean (section 4.2).
 
 New issues found while refreshing this file (recorded, not fixed):
 
