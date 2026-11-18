@@ -1805,8 +1805,8 @@ const rainSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
 // tests: `arcs` (the sun's place every 5 minutes over the solstice and equinox days, from half an hour before sunrise to half an hour
 // after sunset: {m, day, x, y, r, t} and the window's size), `night` (the canvas's ink and the sun's day flag at 01:00 and 21:40),
 // `balls` (at heat 0.3 and 1, the ball's mean colour by distance from its centre, its centre, its half radius and ember) and `edges` (lit pixels on the edge of its box), `beams` (the probe's beams at
-// UV 11: count, widths against the sun's diameter), `amounts` (UV 5.9 to 12: the probe's amount, the violet pixels drawn), `lobes`
-// (at five places of the sun: the lean, the beams' angles and lengths), `ends` (each beam's brightness along it from 0.5 to 1 of its
+// UV 11: count, widths against the sun's diameter), `amounts` (UV 5.9 to 12: the probe's amount, the violet pixels drawn), `alike`
+// (at five places of the sun: the beams' angles, lengths and strengths), `ends` (each beam's brightness along it from 0.5 to 1 of its
 // length, and the violet along the longest in the picture), `edge` (violet pixels in the window's outer ring), `flash` (the brightness
 // over 24 s: its dominant frequency, heat alone and with the UV), `grid` (the dither's grid power), `bakes` and `renders`
 const sunLook = async (page) => {
@@ -1899,7 +1899,7 @@ const sunLook = async (page) => {
   out.beams = await inPage(() => {
     __day(354.36, 1241.24, 75.61, 600); Sky.setSunPosition(80, 40); Sky.advance(150);
     const b = Sky.state().beam;
-    return { count: b.count, diameter: b.diameter, widths: b.beams.map((x) => x.width), lengths: b.beams.map((x) => x.length), lobe: b.lobe, edge: b.edge };
+    return { count: b.count, diameter: b.diameter, widths: b.beams.map((x) => x.width), lengths: b.beams.map((x) => x.length), edge: b.edge };
   });
   // the UV's amount from its index: the probe's amount and the violet drawn
   out.amounts = [];
@@ -1907,19 +1907,17 @@ const sunLook = async (page) => {
     await fx({ heat: 1, uv: Math.max(0, Math.min(1, (index - 6) / 5)) });
     out.amounts.push(await inPage((index) => {
       Sky.advance(120);
-      Sky.advance(Math.round((((4 - Sky.state().clock) % 20) + 20) % 20 * 30));   // (on to the same phase of the 20 s round: the beams at their brightest)
       const b = Sky.state().beam;
       return { index, amp: b.amp, violet: __violet(__grab()), beams: b.beams.length };
     }, index));
   }
   await fx({ heat: 1, uv: 1 });
-  // the lobe: the longest and brightest beams nearest the sun's real direction; the lean the page works out
-  out.lobes = await inPage(() => {
+  // the sun's real place does not show in the beams: their angles, lengths and strengths the same at five places of the sun
+  out.alike = await inPage(() => {
     __day(354.36, 1241.24, 75.61, 600);
-    return [[80, 40], [300, 30], [0, 70], [120, 10], [240, 60], [100, 20]].map(([az, el]) => {
+    return [[80, 40], [300, 30], [0, 70], [120, 10], [240, 60]].map(([az, el]) => {
       Sky.setSunPosition(az, el); Sky.advance(60);
-      const b = Sky.state().beam;
-      return { az, el, lean: b.lean, beams: b.beams.map((x) => ({ angle: x.angle, length: x.length, bright: x.bright })) };
+      return Sky.state().beam.beams.map((x) => ({ angle: x.angle, length: x.length, bright: x.bright }));
     });
   });
   // the ends: each beam's profile from half its length to its end (steady, then in the picture along the longest)
@@ -1936,7 +1934,7 @@ const sunLook = async (page) => {
     return { profiles, violet, ends: b.beams.map((_, i) => b.at(i, 1)), start: b.beams.map((_, i) => b.at(i, 0.3)) };
   });
   // the shafts: the violet round the sun at half the longest beam's reach, by angle (one degree steps over the lower half, from 85 degrees
-  // left of straight down to 85 right, the sun pinned due south and high so the beams lean 0), smoothed over 5 degrees, its peaks and the
+  // left of straight down to 85 right), smoothed over 5 degrees, its peaks and the
   // valleys between them
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.waitForTimeout(500);
@@ -2125,27 +2123,25 @@ const placeSeen = (page, days) => page.evaluate((days) => {
   return { points, through, run, curve };
 }, days);
 // uv's beams alone over 40 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame 0.1 s on, Sky's longest
-// step): the canvas's brightness every frame from 60 frames in (the beams faded in): its dominant frequency (Hz) and swing, and the beams'
-// angles at the start and the end of it (they sway slowly, each way a few degrees at most)
+// step), the sun at a fixed place: the canvas outside the ball's box every frame from 60 frames in (the beams faded in) against the first of them: how many
+// frames differ in any pixel (`changed`) and by how much at most (`most`), and the beams' angles, lengths and strengths at the start and
+// the end of it (`moved`: the largest change in any)
 const uvSeen = (page) => page.evaluate(() => {
   Sky.setSun({ rise: 354.36, set: 1241.24, now: 600, noon_el: 75.61 }); Sky.setTime(600); Sky.setSunPosition(80, 40);
   Sky.advance(60);
-  const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), series = [], angles = [];
+  const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), grab = () => g.getImageData(0, 0, c.width, c.height).data;
+  const look = () => Sky.state().beam.beams.map((b) => [b.angle, b.length, b.bright, b.width]);
+  const first = grab(), was = look(), W = c.width, [bx0, by0, bx1, by1] = Sky.state().heat.ball.box;   // (outside the ball's own box: its slow shimmer stays)
+  let changed = 0, most = 0, moved = 0;
   for (let k = 0; k < 400; k++) {
     Sky.advance(1);
-    const d = g.getImageData(0, 0, c.width, c.height).data; let s = 0;
-    for (let i = 0; i < d.length; i += 4) s += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * d[i + 3] / 255;
-    series.push(s);
-    if (k % 100 === 0) angles.push(Sky.state().beam.beams.map((b) => b.angle));
+    const d = grab(); let diff = 0;
+    for (let i = 0; i < d.length; i++) { const x = (i >> 2) % W, y = ((i >> 2) - x) / W; if (x >= bx0 && x <= bx1 && y >= by0 && y <= by1) continue; diff = Math.max(diff, Math.abs(d[i] - first[i])); }
+    if (diff > 0) changed++;
+    most = Math.max(most, diff);
+    if (k % 100 === 0) look().forEach((b, i) => b.forEach((v, j) => { moved = Math.max(moved, Math.abs(v - was[i][j])); }));
   }
-  const m = series.length, mean = series.reduce((a, b) => a + b, 0) / m, x = series.map((v) => v - mean);
-  let best = 0, at = 0;
-  for (let k = 1; k <= m / 2; k++) {
-    let re = 0, im = 0; for (let i = 0; i < m; i++) { re += x[i] * Math.cos(2 * Math.PI * k * i / m); im -= x[i] * Math.sin(2 * Math.PI * k * i / m); }
-    const p = re * re + im * im; if (p > best) { best = p; at = k; }
-  }
-  const sway = angles[0].map((a, i) => Math.max(...angles.map((v) => Math.abs(v[i] - a))));
-  return { frames: Sky.clock().frames, dominant: at * 10 / m, swing: (Math.max(...series) - Math.min(...series)) / mean, sway: Math.max(...sway) };
+  return { frames: Sky.clock().frames, changed, most, moved };
 });
 // humidity's beads condensing on the glass and running down it, every frame over `frames` of Sky's (each 0.1 s of the page's time,
 // its clock run on fast: `pace`; times Sky.timeScale's, if set): how many ran (moved 10 px or more); any that went up (between two
