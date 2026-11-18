@@ -243,7 +243,7 @@ async def test_the_sun_carries_its_real_azimuth_and_elevation_at_the_stations_lo
     melbourne = (-37.81, 144.96)
     noon = datetime(2026, 1, 15, 13, 15, tzinfo=TZ)           # (about solar noon in Melbourne's midsummer, daylight saving's clock)
     sun = web_dashboard.sun_of(noon, melbourne)
-    assert set(sun) == {"rise", "set", "now", "az", "el"} and sun["now"] == 795 and sun["rise"] == pytest.approx(6 * 60 + 13, abs=2) and sun["set"] == pytest.approx(20 * 60 + 44, abs=2), sun   # (solar.py's)
+    assert set(sun) == {"rise", "set", "now", "az", "el", "noon_el"} and 70 <= sun["noon_el"] <= 80 and sun["now"] == 795 and sun["rise"] == pytest.approx(6 * 60 + 13, abs=2) and sun["set"] == pytest.approx(20 * 60 + 44, abs=2), sun   # (solar.py's)
     assert 70 <= sun["el"] <= 80 and (sun["az"] < 15 or sun["az"] > 345), sun            # (high in the north)
     winter = web_dashboard.sun_of(datetime(2026, 7, 15, 12, 20, tzinfo=TZ), melbourne)
     assert 25 <= winter["el"] <= 32 and (winter["az"] < 15 or winter["az"] > 345), winter

@@ -60,7 +60,7 @@ import json
 import logging
 import math
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from starlette.requests import Request
@@ -121,10 +121,10 @@ def minutes_of(when: datetime) -> float:
 
 
 def sun_of(now: datetime, location: tuple[float, float] | None = None) -> dict:
-    """{rise, set, now} (and {az, el}, with a `location`): minutes since the station's local midnight (`now`: the station's time, in its zone: the clock's DST in it).
+    """{rise, set, now} (and {az, el, noon_el}, with a `location`): minutes since the station's local midnight (`now`: the station's time, in its zone: the clock's DST in it).
     With a `location` (lat, lon): today's sunrise and sunset from the sunrise equation there (lib/solar.py sun_times, the zone's DST in it; the
     forecast's are not used), and the sun's real place now, `el` its elevation above the horizon and `az` its azimuth clockwise from north,
-    in degrees. Polar day (no set): rise 0 and set 1440; polar night (no rise): both None, the beams absent (the sun's el is below the
+    in degrees, and `noon_el` the day's highest elevation, at solar noon (the sun's arc on the page rises with it; none in polar night). Polar day (no set): rise 0 and set 1440; polar night (no rise): both None, the beams absent (the sun's el is below the
     horizon all day). With no location: 06:00 and 18:00, and neither az nor el (the page keeps to the sunrise and sunset curve)."""
     rise, set_ = SUN_FALLBACK
     out = {"now": minutes_of(now)}
@@ -133,6 +133,9 @@ def sun_of(now: datetime, location: tuple[float, float] | None = None) -> dict:
         rise, set_ = (0, 1440) if times.note == "no set" else (times.rise, times.set)
         el, az = sun_position(location[0], location[1], now)
         out.update(az=round(az, 3), el=round(el, 3))
+        if times.note != "no rise":   # (the day's highest: the sun's elevation at solar noon, the middle of its day)
+            midday = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(minutes=(rise + set_) / 2)
+            out["noon_el"] = round(sun_position(location[0], location[1], midday)[0], 2)
     return {"rise": rise, "set": set_, **out}
 
 
