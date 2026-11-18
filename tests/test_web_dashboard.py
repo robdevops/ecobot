@@ -2183,13 +2183,15 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert got["particles"]["uv"] == {"uv": 0, "budget": got["particles"]["uv"]["budget"]}, got["particles"]
     wind = got["particles"]["wind"]
     assert 0 < wind["wind"] <= wind["budget"], wind
-    # uv's beams over 40 s: each swaying a pixel or so about its own place (not travelling on), so slowly that it turns back at most
-    # once in that time (a sway in 80 s or more), still brightening and dimming
+    # uv's beams over 40 s: each rooted in place, swaying about 3 degrees each way about its root (angle from vertical), its halo and core
+    # breathing in a 12 s cycle that never falls under a quarter of its strength
     uv = got["uv"]
-    assert uv["errors"] == [] and uv["frames"] >= 300 and len(uv["beams"]) >= 4, uv
-    assert all(b["most"] - b["least"] <= 4 and b["turns"] <= 1 and b["bright"] - b["faint"] > 0.2 for b in uv["beams"]), uv
-    assert any(b["most"] > b["least"] for b in uv["beams"]), uv   # (swaying all the same)
-    assert all(a["most"] < b["least"] for a, b in zip(uv["beams"], uv["beams"][1:])), uv   # (each in its own place, apart)
+    assert uv["errors"] == [] and uv["frames"] >= 400 and len(uv["sprites"]) >= 8, uv
+    for sp in uv["sprites"]:
+        assert sp["x"][1] - sp["x"][0] < 1.5 and sp["y"][1] - sp["y"][0] < 1.5, sp   # (in place)
+        if sp["height"] > 100:
+            assert 4 <= sp["angle"][1] - sp["angle"][0] <= 7 and abs(sp["angle"][0] + sp["angle"][1]) < 1, sp
+            assert sp["alpha"][0] >= 0.25 * sp["alpha"][1] and sp["alpha"][1] - sp["alpha"][0] > 0.2 * sp["alpha"][1], sp
     # ... their glow dithered irregularly: no grid in its pixels (as gridPeak sees it: under 100; ordered, about 660)
     assert uv["grid"] < 100, uv["grid"]
     # heavy rain in the wind: its drops blown leftward, faster than with no wind; bunched by the gust bands into curtains and gaps,
@@ -2760,144 +2762,101 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert frost["grown"]["extent"] > 0 and frost["grown"]["ink"] > 0, frost["grown"]
     started_afresh(frost["restarted"], "ice")
     assert frost["restarted"]["frost"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["restarted"]
-    # the heat (?fx=heat): a red wave of radiated heat filling the whole top quarter of the window, full width (a plain rectangle: only its
-    # bottom fades), its front leaning with the sun (the animation's direction only), all on at any heat, brighter the hotter (the frames
-    # below are taken on the wave's hold, its full extent)
+    # the heat (?fx=heat): the bottom of the sun's huge disc seen as a limb (radius 1.6 widths), its apex on the ray from the window's
+    # centre toward the sun (the beams' lean) 0.2 of the height in, its tangent there perpendicular to the beams' axis; static, with a
+    # granulated surface, a steady rim, a shimmering halo, bands of radiation; the UV's beams rooted on its arc
     hot = got["heat"]
-    assert hot["errors"] == [] and hot["cost"] < 4, hot
-    looks = hot["looks"]
-    for look in looks:
-        grad, rows = look["gradient"], look["rowsAlpha"]
-        height = len(rows)
-        # (a gradient description: vertical, strongest at the top edge, faded out by a quarter of the way down)
-        assert 0 < grad["top"] <= 0.8 and 0.2 < grad["fade"] <= 0.27 and grad["rows"] <= 0.26 * height + 1, grad
-        # (the top row the strongest, the mean brightness falling down the window (within noise, in 10-row means), ~0 below the reach)
-        band = [sum(rows[i:i + 10]) / 10 for i in range(0, height - 9, 10)]
-        assert rows[0] >= max(rows) * 0.85 and max(rows[:3]) >= max(rows) * 0.98, rows[:6]
-        assert all(b <= a * 1.1 + 0.002 for a, b in zip(band, band[1:])), band
-        assert band[0] > 3 * band[int(0.2 * height) // 10] and all(r < 0.01 for r in rows[int(height * 0.27):]), (band, rows[-5:])
-        # (no hard start at the top: the top row within 15 % of the second, the gradient already at its strong end there)
-        assert abs(rows[0] - rows[1]) <= 0.15 * rows[1], rows[:4]
-        # (warm, from the top: the top third's red over its green and blue, the whole width: nowhere bare, UV or not)
-        r, g, b = look["top"]["colour"]   # (the top third's mean alpha under 0.4)
-        assert r > 1.2 * b and r > g and 0.01 < look["top"]["alpha"] < 0.4, [(l["level"], l["top"], l["drawn"]) for l in looks]
-        assert look["bare"] == 0, look["bare"]
-        assert 0.35 < look["centroid"] < 0.65, look["centroid"]   # (broad lobes: spread across the width)
-        # (the wave: no horizontal drift over a whole cycle (the brightness's centroid across within 1 % of the width, once bright
-        # enough to measure); its extent growing from the top down to the reach on the build (monotonic, the eased: more than half
-        # the way in the first quarter of it), holding, then whole while it fades, nothing in the gap)
-        wave, reach = look["wave"], look["heat"]["reach"]
-        assert reach == pytest.approx(0.25), reach
-        cxs = [w["cx"] for w in wave if w["mult"] > 0.3 * look["heat"]["peak"] and w["cx"] is not None]
-        assert len(cxs) > 20 and max(cxs) - min(cxs) < 0.01, (min(cxs), max(cxs))
-        build = [w for w in wave if w["u"] < 0.55]
-        assert all(b["extent"] >= a["extent"] for a, b in zip(build, build[1:])) and build[0]["extent"] < 0.1, [w["extent"] for w in build]
-        assert next(w for w in build if w["u"] > 0.14)["extent"] > 0.25 and max(w["extent"] for w in build) > 0.97, [w["extent"] for w in build]   # (ease-out: quick at first)
-        assert all(w["extent"] == 1 and w["bright"] == 1 for w in wave if 0.56 <= w["u"] < 0.7), "the hold"
-        fade = [w for w in wave if 0.7 < w["u"] < 0.9]
-        assert all(w["extent"] == 1 for w in fade) and all(b["mult"] <= a["mult"] for a, b in zip(fade, fade[1:])) and fade[-1]["mult"] < 0.1 * look["heat"]["peak"], [w["mult"] for w in fade]
-        assert all(w["extent"] == 0 and w["mult"] == 0 and w["ink"] == 0 for w in wave if 0.91 <= w["u"] < 0.99), "the gap"
-        # (the lit rows really grow: the last inked row, from the top, never moves back during the build and ends at 0.25 of the height)
-        lasts = [w["last"] for w in build if w["ink"] > 0]
-        assert all(b >= a - 1 for a, b in zip(lasts, lasts[1:])) and lasts[0] < 0.5 * lasts[-1], lasts
-        end = next(w for w in wave if w["u"] >= 0.56)
-        assert abs(end["last"] - 0.25 * height) <= 0.1 * 0.25 * height + 2, (end["last"], 0.25 * height)
-        assert look["beam"]["lean"] == 0 and look["beam"]["fixed"], look["beam"]   # (midday)
-        # (never over the cap, nor the strongest single effect's brightness: the wave only dims from the gradient's own peak)
-        assert look["drawn"] <= look["cap"] and look["drawn"] <= 0.8 + 1e-9 and look["pulse"]["max"] <= 1 + 1e-9 and look["heat"]["peak"] <= 1, look
-    # ... stronger the hotter, brighter
-    cool, warm, hottest = looks
-    assert cool["drawn"] < warm["drawn"] < hottest["drawn"], looks
-    # ... the temperature in the colour and the pulse: at 43 °C a vivid scarlet red (saturated, the red far over the green, little blue,
-    # never maroon: bright enough), at 35 °C a pale, washed-out amber-orange; a smooth ramp between
-    def saturation(c):
-        hi, lo = max(c), min(c)
-        return (hi - lo) / hi
-
-    def hue(c):   # (degrees from pure red: 0 red, 30 orange)
-        r, g, b = c
-        return 60 * (g - b) / (max(c) - min(c)) % 360 if r == max(c) else 360
-
-    cold, mid, hot_c = (look["heat"]["colour"] for look in looks)
-    assert saturation(hot_c) >= 1.5 * saturation(cold) and saturation(hot_c) > 0.8, (cold, hot_c)
-    assert hue(hot_c) < hue(cold) and hue(hot_c) < 12 and 15 < hue(cold) < 45, (cold, hot_c)
-    assert hot_c[0] > 200 and hot_c[1] < 0.2 * hot_c[0] and hot_c[2] < 0.2 * hot_c[0], hot_c   # (clearly red, not maroon)
-    assert cold[0] > 180 and cold[1] > 0.6 * cold[0] and cold[2] > 0.5 * cold[0], cold                                        # (pale: light, a lot of green and blue)
-    assert saturation(cold) < saturation(mid) < saturation(hot_c) and hue(cold) > hue(mid) > hue(hot_c), (cold, mid, hot_c)
-    # ... what is drawn agrees (the canvas's pixels along the top): the hot more saturated and redder
-    sat = lambda there: saturation(there["atHeat"]["colour"])
-    assert sat(hottest) >= 1.5 * sat(cool) and hue(hottest["atHeat"]["colour"]) < hue(cool["atHeat"]["colour"]), (cool["atHeat"], hottest["atHeat"])
-    # ... the cycle quicker and the hold brighter the hotter: 14 s at 35 C to 10 s at 43 C (never under 10 s), the hold's brightness 0.7 to 1;
-    # and what the gradient really does over 16 s: no flash faster than 0.2 a second (0.1 at most, in fact), smoothly from frame to frame
-    assert hottest["heat"]["peak"] > cool["heat"]["peak"] and hottest["heat"]["period"] < cool["heat"]["period"] and hottest["heat"]["period"] >= 10, looks
-    assert cool["heat"]["period"] == pytest.approx(14) and hottest["heat"]["period"] == pytest.approx(10)
-    assert cool["heat"]["peak"] == pytest.approx(0.7) and hottest["heat"]["peak"] == pytest.approx(1)
-    assert hottest["pulse"]["max"] > cool["pulse"]["max"] and hottest["pulse"]["max"] <= 1 + 1e-9, (cool["pulse"], hottest["pulse"])
-    for look in looks:
-        assert look["pulse"]["peaks"] < 0.2 and look["heat"]["flashes"] <= 0.1 + 1e-9 and look["pulse"]["steps"] < 0.1, look["pulse"]
-        assert all(w["u"] <= 1 for w in look["wave"]) and look["pulse"]["min"] == 0, look["pulse"]
-    # ... dithered irregularly (no grid: under 100, as gridPeak sees it; ordered, about 200)
-    assert hot["grid"] < 100, hot["grid"]
-    # ... the front leaning with the sun by the UV beams' own lean (the one value): the whole width covered at every time of the day (no
-    # bare column), the lean the beams' (the sunrise-sunset curve: -70 at 06:00, 0 at midday, 70 at 18:00, east morning negative, west
-    # afternoon positive), the top as strong at every angle
-    leans = {l["minutes"]: l for l in hot["leans"]}
-    assert all(l["bare"] == 0 for l in leans.values()), [(m, l["bare"]) for m, l in leans.items()]
-    assert leans[720]["beam"]["lean"] == 0 and leans[360]["beam"]["lean"] == pytest.approx(-70) and leans[1080]["beam"]["lean"] == pytest.approx(70)
-    assert leans[480]["beam"]["lean"] < leans[600]["beam"]["lean"] < 0 < leans[840]["beam"]["lean"] < leans[960]["beam"]["lean"]
-    assert all(l["rows"][0] > 0 and abs(l["rows"][0] - l["rows"][1]) <= 0.2 * l["rows"][1] for l in leans.values()), [l["rows"] for l in leans.values()]   # (the top as strong at every angle)
-    # ... the heat's lean IS the beams' lean (Sky.state().heat.lean === .beam.lean within 0.01) at every sun place: east morning negative,
-    # west afternoon positive, noon 0, the cap 75 (a low sun), and drawn at it (after the drawn lean has caught up)
-    by = {round(l["beam"]): l for l in hot["byLean"]}
-    assert len(hot["byLean"]) == 12 and all(l["lean"] == pytest.approx(l["beam"], abs=0.01) for l in hot["byLean"]), hot["byLean"]
-    assert all(l["drawn"] == pytest.approx(l["lean"], abs=0.01) for l in hot["byLean"]), hot["byLean"]
-    assert by[0]["lean"] == pytest.approx(0, abs=0.01)
-    assert by[-75]["lean"] == pytest.approx(-75, abs=0.01) and by[-60]["lean"] == pytest.approx(-60, abs=0.01) and by[60]["lean"] == pytest.approx(60, abs=0.01)
-    assert by[-45]["lean"] == pytest.approx(-45, abs=0.01) and by[45]["lean"] == pytest.approx(45, abs=0.01)
-    caps = [l for l in hot["byLean"] if l["el"] in (3, 1)]
-    assert sorted(round(l["lean"], 2) for l in caps) == [-75, 75, 75], caps   # (a low sun: the cap either way)
-    assert all(-75 - 1e-9 <= l["lean"] <= 75 + 1e-9 for l in hot["byLean"]) and any(l["az"] == 60 and -75 < l["lean"] < -60 for l in hot["byLean"])
-    # ... at the hold the lit region is a plain full-width rectangle at every lean: no bare column, both top corners lit, every column
-    # within 15 % of the mean over the quarter's top 80 % (even: no wedge, no dark region), the brightness falling down the band (within
-    # the dither's noise, in 10-row means) to 0 at a quarter of the height (+-3 %), nothing below 0.27 of it
-    for l in hot["byLean"]:
-        height, rows = l["size"][1], l["rows"]
-        assert l["bare"] == 0 and l["left"] > 0.2 and l["right"] > 0.2, (l["lean"], l["bare"], l["left"], l["right"])
-        assert l["even"] < 0.15, (l["lean"], l["even"])
-        band = [sum(rows[i:i + 10]) / 10 for i in range(0, int(0.25 * height) - 9, 10)]
-        assert all(b <= a * 1.05 + 0.003 for a, b in zip(band, band[1:])) and band[0] > 4 * band[-1], (l["lean"], band)
-        assert l["last"] <= 0.25 * height * 1.03 + 1 and all(r == 0 for r in rows[int(height * 0.27):]), (l["lean"], l["last"], 0.25 * height)
-        assert sum(rows[int(0.22 * height):int(0.25 * height)]) < 0.02 * sum(rows[:int(0.25 * height)]) * 3, (l["lean"], rows[int(0.22 * height):int(0.25 * height) + 3])
-    # ... the heat shines down the beams' own rays: measured from the pixels (heatAngles), at leans -60 to 60, the beams' axis (the structure
-    # tensor of their brightness over the quarter) is the lean, and the heat's bands (their phase round the width, row by row, down the band)
-    # lean the same way within 3 degrees, at the hold, on the build (u 0.3) and as the front's light travels down the build (the bands at
-    # the front's depth, frame to frame); the front itself is horizontal, nothing travels sideways (the alpha's centroid across stays within
-    # 3 % of the width over the build) and at lean 0 the front is even across (sixths of the width alike within 3 %)
-    angles = hot["angles"]
-    assert [a["lean"] for a in angles] == [-60, -30, -15, 0, 15, 30, 60], angles
-    for a in angles:
-        assert a["beam"] == pytest.approx(a["lean"], abs=3) and a["beamLean"] == pytest.approx(a["lean"], abs=0.01), a
-        for way in ("hold", "build", "travel"):
-            assert abs(a[way] - a["beam"]) <= 3, (a["lean"], way, a[way], a["beam"])
-        assert a["travelFrames"] >= 6 and a["drawn"] == pytest.approx(a["lean"], abs=0.01), a
-        assert abs(max(a["cx"]) - a["cxHold"]) < 0.03 and abs(min(a["cx"]) - a["cxHold"]) < 0.03, (a["lean"], a["cx"], a["cxHold"])
-        assert all(abs(c / a["cols"][0] - 1) < 0.03 for c in a["cols"]) or a["lean"] != 0, a["cols"]
-    assert by[60]["grid"] < 400 and by[-60]["grid"] < 400 and by[0]["grid"] < 400, [(l["lean"], l["grid"]) for l in hot["byLean"]]
-    assert all(l["cost"] < 4 for l in hot["byLean"]), [l["cost"] for l in hot["byLean"]]
-    # with the UV on too: the gradient behind, the UV's violet crisp on top (blue over red at its places), within the cap; the union
-    # covers the whole width at every angle too
-    over = got["heatOver"]
-    assert over["errors"] == [] and over["looks"][0]["drawn"] < hottest["drawn"] and over["looks"][0]["drawn"] <= over["looks"][0]["cap"], over
-    assert over["order"] == ["heat", "uv"], over["order"]   # (the bottom layer: the heat, then the UV over it, then everything else)
-    there = over["looks"][0]
-    (ur, _, ub) = there["atUvDown"]["colour"]
-    # (the heat's gradient is strong over the top 40 rows now, so down at the beams the violet shows as blue the heat alone has none of, and
-    # in their top rows blue over red)
-    assert ub > 40 and there["atUv"]["colour"][2] > there["atUv"]["colour"][0] and there["atUvDown"]["alpha"] > 0.1, (there["atUvDown"], there["atUv"])
-    assert there["bare"] == 0 and all(l["bare"] == 0 and l["uv"] for l in over["leans"]), (there["bare"], over["leans"])
-    # the UV's beams start well above the window: no start edge at its top whatever the lean (the top row as inked as those below it)
-    for m, l in {l["minutes"]: l for l in got["uvStart"]["leans"]}.items():
-        assert l["rows"][0] >= 0.85 * l["rows"][4] > 0, (m, l["rows"])
+    assert hot["errors"] == [], hot["errors"]
+    leans = {l["lean"]: l for l in hot["leans"]}
+    assert sorted(leans) == [-75, -45, -15, 0, 15, 45, 75], sorted(leans)
+    areas = {}
+    for lean, look in leans.items():
+        w, h = look["size"]
+        limb, beam = look["heat"]["limb"], look["beam"]
+        assert beam["lean"] == pytest.approx(lean, abs=0.01), (lean, beam["lean"])
+        assert limb["a"] == pytest.approx(lean, abs=0.5) and limb["radius"] == pytest.approx(1.6 * w), limb
+        # (the limb's tangent at the apex perpendicular to the beams' axis d: the radius to the apex is along d, within 1 degree)
+        (px, py), (cx, cy) = limb["apex"], limb["centre"]
+        radial = math.degrees(math.atan2(px - cx, py - cy))
+        assert abs(radial - limb["a"]) < 1e-6 and math.hypot(px - cx, py - cy) == pytest.approx(limb["radius"]), (lean, limb)
+        d = (math.sin(math.radians(limb["a"])), math.cos(math.radians(limb["a"])))
+        assert abs(d[0] * (px - cx) + d[1] * (py - cy) - limb["radius"]) < 1e-6
+        # (the apex on the ray from the window's centre toward the sun: M - t d, t > 0 then beyond the window's edge, and inside the window)
+        mx, my = w / 2 - px, h / 2 - py
+        assert abs(mx * d[1] - my * d[0]) < 1e-6 and mx * d[0] + my * d[1] > 0, (lean, limb)   # (collinear, short of the window's centre)
+        assert 0 <= px <= w and 0 <= py <= h, limb
+        areas[lean] = limb["area"]
+        # (static: the rim's pixels the same 0.5 s apart, and over 12 s; and drawn)
+        assert look["rim"] > 20 and look["inked"] == look["rim"] and look["diffs"] == 0 and look["rimMoved"] == 0, (lean, look["rim"], look["inked"], look["diffs"], look["rimMoved"])
+        # (the beams' roots on the visible arc within 1 art px; the others enter from the window's edge; the axis the lean's within 1.5 degrees)
+        roots = beam["roots"]
+        assert len(roots) >= 4 and any(r["inside"] for r in roots), (lean, roots)
+        for r in roots:
+            if r["inside"]:
+                assert abs(math.hypot(r["x"] - cx, r["y"] - cy) - limb["radius"]) < 1 and -1 <= r["x"] <= w + 1 and -1 <= r["y"] <= h + 1, (lean, r)
+            else:
+                assert min(abs(r["x"]), abs(r["x"] - w), abs(r["y"]), abs(r["y"] - h)) < 1e-6, (lean, r)
+        assert look["axes"] > 100 and abs(look["axis"] - lean) < 1.5, (lean, look["axis"])
+        assert look["order"] == ["heat", "uv"], look["order"]
+        assert look["cost"] < 4 and look["cost2"] < 4, (lean, look["cost"], look["cost2"], {l: (v["cost"], v["cost2"]) for l, v in leans.items()})
+        assert look["drawn"] <= look["cap"] and look["drawn"] <= 0.8 + 1e-9
+    # ... noon: the limb symmetric about the centre column along the top edge; a morning sun (negative) near the right and top, an
+    # afternoon sun near the left and top
+    noon = leans[0]["heat"]["limb"]
+    assert noon["apex"][0] == pytest.approx(leans[0]["size"][0] / 2) and noon["centre"][0] == pytest.approx(leans[0]["size"][0] / 2), noon
+    assert noon["apex"][1] == pytest.approx(0.2 * leans[0]["size"][1]) and leans[0]["heat"]["limb"]["a"] == 0
+    for lean in (45, 15, 75):
+        east, west = leans[-lean]["heat"]["limb"]["apex"], leans[lean]["heat"]["limb"]["apex"]
+        w = leans[lean]["size"][0]
+        assert east[0] > w / 2 > west[0] and east[0] + west[0] == pytest.approx(w, abs=1e-6) and east[1] == pytest.approx(west[1], abs=1e-6), (east, west)
+    assert leans[-45]["heat"]["limb"]["apex"][0] > leans[-15]["heat"]["limb"]["apex"][0] > leans[0]["heat"]["limb"]["apex"][0]
+    # ... the visible limb is the largest at noon, smaller at any other lean (a corner at 45 degrees, a band along a side at the cap),
+    # never vanishing, the same either side
+    assert areas[0] > areas[15] > areas[45] and areas[0] > areas[75] > 50 and areas[45] > 50, areas
+    assert all(areas[-l] == pytest.approx(areas[l], rel=0.03) for l in (15, 45, 75)), areas
+    # ... the halo's brightness shimmers (its depth over 12 s, of its mean along the whole limb, where the waves along it average out: at least 5 %; at one place 35-40 %; never moving the limb: the rim above)
+    for lean in (0, 45):
+        glow = leans[lean]["red"]
+        depth = (max(glow) - min(glow)) / (max(glow) + min(glow))
+        assert 0.05 < depth < 0.6, (lean, depth)
+    assert leans[0]["grid"] < 400, leans[0]["grid"]
+    # ... the one thick band along the limb: its centreline the limb's arc (a constant depth, the same at every place), 0.06-0.09 of the
+    # height thick, its thickness within +-25 % of its mean over 10 s (moving, more at the full heat), its brightness wobbling; translucent:
+    # the surface's grain shows through it (its variance along the limb at least 40 % of that just below the band)
+    for lean in (0, 45, -45):
+        look = leans[lean]
+        band, h = look["heat"]["band"], look["size"][1]
+        assert 0.06 * h <= band["thick"] <= 0.09 * h and 0.3 * band["thick"] < band["centre"] < 0.5 * band["thick"], (lean, band)
+        assert 0.35 <= band["alpha"] <= 0.6, band
+        for thick, glow in zip(look["thick"], look["glow"]):
+            assert None not in thick, (lean, thick, glow)
+            mean = sum(thick) / len(thick)
+            assert all(abs(t - mean) <= 0.25 * mean for t in thick) and max(thick) - min(thick) > 0.04, (lean, thick)
+            assert max(glow) - min(glow) > 0.1 and all(0.3 < g < 1.8 for g in glow), (lean, glow)
+        inside, outside = look["vars"]
+        assert inside is not None and outside is not None and inside >= 0.4 * outside, (lean, look["vars"])
+    # the colour: brownish ember at 35 C, vivid scarlet-orange at 43 C: more saturated and redder (the probe's brightest shade, and what is drawn)
+    def sat(c):
+        return (max(c) - min(c)) / max(max(c), 1)
+    def red(c):
+        return c[0] / max(sum(c), 1)
+    cool, hotc = hot["colours"]
+    assert cool["h"] == 0 and hotc["h"] == 1, hot["colours"]
+    assert sat(hotc["probe"]) > sat(cool["probe"]) and red(hotc["probe"]) > red(cool["probe"]), (cool, hotc)
+    assert sat(hotc["mean"]) > sat(cool["mean"]) and red(hotc["mean"]) > red(cool["mean"]), (cool, hotc)
+    # ... the band's wobble rises with the heat, never faster than 0.5 Hz (brightness and thickness, three places, 24 s)
+    assert hotc["wob"]["briSd"] > 1.5 * cool["wob"]["briSd"] > 0 and hotc["wob"]["thickSd"] > 1.5 * cool["wob"]["thickSd"] > 0, (cool["wob"], hotc["wob"])
+    assert hotc["wob"]["freq"] <= 0.5 and cool["wob"]["freq"] <= 0.5, (cool["wob"], hotc["wob"])
+    for c in hot["colours"]:   # (never over the cap)
+        assert c["maxAlpha"] <= c["drawn"] + 0.01 and c["drawn"] <= c["cap"], c
+    # no flash faster than 0.5 Hz (the brightness over 24 s: its dominant frequency), heat alone and with the UV
+    for f in hot["flash"]:
+        assert f["dominant"] <= 0.5, f
+    # the bake: constant while it animates and for a lean change under 0.5 degree; one more for 0.5 or over, and one for a resize
+    bk = hot["bakes"]
+    assert bk["start"] == bk["after"] and bk["second"] == bk["first"] + 1 and bk["first"] >= bk["start"], bk
+    assert abs(bk["leanA"] - bk["leanB"]) >= 0.5, bk
+    assert bk["resized"]["baked"] == bk["second"] + 1 and bk["resized"]["size"] != leans[0]["size"], bk
     # the lean through the day: a smooth curve, 70 degrees at most, no jump (under a degree a minute), the sun's side east (right of the
     # screen): negative (down-left) in the morning, positive (down-right) in the afternoon, rising all day
     curve = hot["sun"]["curve"]
