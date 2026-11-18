@@ -3252,7 +3252,7 @@ def test_the_frogs_feet_are_webbed_between_the_toes_and_the_hands_are_not():
 
 # ---------- the rain's slant: the live wind's speed ----------
 @needs_browser
-async def test_the_rain_slants_with_the_live_wind_speed_straight_down_in_no_wind_never_past_65_degrees_eased_and_mirrored(server, station):
+async def test_the_rain_slants_with_the_live_wind_speed_straight_down_in_no_wind_never_past_70_degrees_eased_and_mirrored(server, station):
     got = await weather(server, "slant")
     assert got["errors"] == [], got["errors"]
     speeds = {int(k): v for k, v in got["speeds"].items()}
@@ -3260,23 +3260,26 @@ async def test_the_rain_slants_with_the_live_wind_speed_straight_down_in_no_wind
     for calm in (speeds[0], got["calm"], got["calmWind"]):
         assert calm["slantDeg"] == 0 and calm["vxMax"] == 0 and calm["vx"] == 0 and calm["tilts"] == [0], calm
     assert "wind" in got["calmWind"]["effects"] and "rain" in got["calmWind"]["effects"], got["calmWind"]
-    # tan(angle) = speed / 18 km/h: 5, 10, 20, 40 km/h about 15, 28, 48, 65 degrees (within 5), growing with the speed, capped at 65
-    for kmh, want in ((5, 15), (10, 28), (20, 48), (40, 65)):
-        assert speeds[kmh]["slantDeg"] == pytest.approx(want, abs=5), (kmh, speeds[kmh])
-    deg = [speeds[k]["slantDeg"] for k in sorted(speeds)]
-    assert all(a < b for a, b in zip(deg[:6], deg[1:6])) and deg[5] <= 65.0001 and deg[6] == pytest.approx(65, abs=0.01) == deg[7], deg
+    # tan(angle) = speed / 24 km/h (real rain's: about 46 degrees at 25 km/h): 5, 10, 25, 40, 60 km/h about 12, 23, 46, 59, 68 degrees
+    # (within 3), growing with the speed, capped at 70 (reached at 100 km/h; 60 km/h is 68 degrees, under it)
+    for kmh, want in ((5, 12), (10, 23), (40, 59), (60, 68)):
+        assert speeds[kmh]["slantDeg"] == pytest.approx(want, abs=3), (kmh, speeds[kmh])
+    assert abs(got["paths"]["25"]["deg"]) == pytest.approx(46, abs=3), got["paths"]["25"]
+    deg = [speeds[k]["slantDeg"] for k in sorted(speeds)]   # (0, 2, 5, 10, 20, 40, 60, 100 km/h)
+    assert all(a < b for a, b in zip(deg[:7], deg[1:7])) and deg[6] <= 70.0001 and deg[7] == pytest.approx(70, abs=0.01), deg
     assert all(0 < speeds[k]["slantDeg"] for k in (2, 5, 10)) and speeds[2]["slantDeg"] < speeds[5]["slantDeg"] / 2, speeds
     # the gust adds a little: speed + 0.3 * (gust - speed); a gust under the speed adds nothing
-    assert got["gust"]["target"] == pytest.approx(16) and got["gust"]["slantDeg"] == pytest.approx(math.degrees(math.atan(16 / 18)), abs=0.1), got["gust"]
+    assert got["gust"]["target"] == pytest.approx(16) and got["gust"]["slantDeg"] == pytest.approx(math.degrees(math.atan(16 / 24)), abs=0.1), got["gust"]
     assert got["noGust"]["slantDeg"] == pytest.approx(speeds[10]["slantDeg"], abs=0.01), got["noGust"]
     # the drops move across as their slant says (leftward: negative), the wind effect on too (its bands bunch them)
     assert speeds[20]["vx"] < speeds[5]["vx"] < speeds[0]["vx"] == 0 and got["blowing"]["vx"] < speeds[20]["vx"] * 0.5, (speeds, got["blowing"])
     # eased: a jump from no wind to 40 km/h (at 60 frames a second) never steps more than 5 degrees in a frame, rising in about 2 s
-    # and falling in about 4 (to half way: under 2 s up, between 1 and 4 s down), smoothly (never backing up)
+    # and falling in about 4 (to half way: under 2 s up, between 1 and 4 s down), smoothly (never backing up); 40 km/h is 59 degrees
+    # (the jump's goal), the half way point 30
     jump = got["jump"]
-    assert jump["maxUp"] < 5 and jump["maxDown"] < 5 and jump["monotonic"] and jump["final"] == pytest.approx(65, abs=0.01), jump
-    assert jump["upSecondsHalf"] < 2 and jump["upTo50"] > 0.5 and 0.8 < jump["downSecondsHalf"] < 4 and abs(jump["back"]) < 2, jump   # (and back near vertical after 10 s)
-    # the streaks tilt granularly: at least 16 distinct tilts between 0 and 65 degrees, as the speed goes up
+    assert jump["maxUp"] < 5 and jump["maxDown"] < 5 and jump["monotonic"] and jump["final"] == pytest.approx(59.0, abs=0.5), jump
+    assert jump["upSecondsHalf"] < 2 and jump["upTo50"] > 0.4 and 0.8 < jump["downSecondsHalf"] < 4 and abs(jump["back"]) < 2, jump   # (and back near vertical after 10 s)
+    # the streaks tilt granularly: at least 16 distinct tilts between 0 and 70 degrees (21 steps, 3.5 degrees apart), as the speed goes up
     tilts = {t for each in got["tilts"] for t in each}
     assert got["tiltSteps"] >= 21 and len(tilts) >= 16, (sorted(tilts), got["tiltSteps"])
     # blowing rightward: the exact mirror: a negative angle, the drops going right, their streaks mirrored
@@ -3284,8 +3287,24 @@ async def test_the_rain_slants_with_the_live_wind_speed_straight_down_in_no_wind
     assert right["slantDeg"] == pytest.approx(-speeds[20]["slantDeg"], abs=0.01) and right["vx"] > 20 and right["mirrored"] > 0, right
     # the drops cover the whole width at the steepest slant, either way (no bare left or right strip)
     for way, cover in got["coverage"].items():
-        assert cover["deg"] == pytest.approx(65 * -int(way), abs=0.01), cover
+        assert cover["deg"] == pytest.approx(70 * -int(way), abs=0.01), cover
         assert min(cover["cols"]) > 0.4 * (sum(cover["cols"]) / 8), (way, cover)
+    # the test link's wind (11 km/h, like the old fixed default slant of 0.45, 24 degrees; a real reading above it would win)
+    assert got["link"]["speed"] == pytest.approx(11, abs=0.05) and abs(got["link"]["deg"]) == pytest.approx(24, abs=3), got["link"]
+    assert abs(got["paths"]["11"]["deg"]) == pytest.approx(24, abs=3), got["paths"]["11"]
+    # the drops' speed along their path doesn't grow with the slant: the same (within 5 %) at 0, 25 and 60 km/h; its downward part is
+    # the cosine of the angle (the path speed times it), and the streaks keep the same length along their path (within 15 %: pixels)
+    paths = got["paths"]
+    for kmh in ("0", "25", "60"):
+        assert paths[kmh]["path"] == pytest.approx(1, rel=0.05), (kmh, paths[kmh])
+        assert paths[kmh]["down"] == pytest.approx(math.cos(math.radians(abs(paths[kmh]["deg"]))), rel=0.05), (kmh, paths[kmh])
+        assert paths[kmh]["streak"] == pytest.approx(paths["11"]["streak"], rel=0.15), (kmh, paths)
+    assert paths["25"]["down"] < paths["0"]["down"] * 0.8, paths   # (a 46 degree rain falls at 0.69 of the vertical's pace)
+    # and the rate they land at (drops per second over the window) stays what it was at every slant, within 15 %, the count of them
+    # scaled by the downward speed (path speed times cos(angle)) to the power -0.4, 1 at and under the old default: the same at 0, 11 (the old default), 25 and 60 km/h
+    for kmh in ("0", "25", "60"):
+        assert paths[kmh]["landed"] == pytest.approx(paths["11"]["landed"], rel=0.15), (kmh, paths)
+    assert paths["60"]["drops"] > paths["25"]["drops"] > paths["11"]["drops"] * 1.05 and paths["0"]["drops"] == paths["11"]["drops"], paths
 
 
 # ---------- the wind's direction ----------

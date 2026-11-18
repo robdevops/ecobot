@@ -3879,6 +3879,30 @@ const WEATHER = {
         return { cols, deg: Sky.state().rain.slantDeg };
       }, way);
     }
+    // the path speed, the streaks' length and the landing rate at 0, 25 and 60 km/h (no wind effect: just the rain): the drops' speed
+    // along their path over what their layer's is, the downward speed over it, the streaks' mean length along theirs, and the drops
+    // landed over 60 s of the weather's time (no wind: the page's gusts don't push)
+    out.paths = {};
+    for (const kmh of [0, 11, 25, 60]) {
+      await settle(kmh);
+      out.paths[kmh] = await p.page.evaluate(() => {
+        Sky.set({ rain: 1, wind: 0 }, true);
+        Sky.advance(50);
+        const r0 = Sky.state().rain, from = r0.landed;
+        let ratio = 0, down = 0, len = 0, count = 0, n = 0;
+        for (let i = 0; i < 600; i++) {
+          Sky.advance(1);
+          const r = Sky.state().rain;
+          ratio += r.pathRatio; down += r.downRatio; len += r.streakLen; count += Sky.state().particles.rain; n++;
+        }
+        const r = Sky.state().rain;
+        return { path: ratio / n, down: down / n, streak: len / n, drops: count / n, landed: r.landed - from, deg: r.slantDeg };
+      });
+    }
+    // the test link's wind (?fx=rain2,wind: simulated 11 km/h, no reading above it): the slant it gives
+    const link = await weatherPage(browser, url, { query: "?fx=rain2,wind", driven: true });
+    out.link = await link.page.evaluate(() => { Sky.timeScale(3); Sky.advance(200); Sky.timeScale(1); const r = Sky.state().rain; return { deg: r.slantDeg, speed: r.speed }; });
+    await link.context.close();
     // the splashes: sideways spread (their x as drawn against where the drop landed) isn't asserted; no error is
     out.errors = p.errors;
     await p.context.close();
