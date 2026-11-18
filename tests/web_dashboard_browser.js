@@ -1935,6 +1935,28 @@ const sunLook = async (page) => {
     });
     return { profiles, violet, ends: b.beams.map((_, i) => b.at(i, 1)), start: b.beams.map((_, i) => b.at(i, 0.3)) };
   });
+  // the shafts: the violet round the sun at half the longest beam's reach, by angle (one degree steps over the lower half, from 85 degrees
+  // left of straight down to 85 right, the sun pinned due south and high so the beams lean 0), smoothed over 5 degrees, its peaks and the
+  // valleys between them
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.waitForTimeout(500);
+  out.shafts = await inPage(() => {
+    __day(354.36, 1241.24, 75.61, 798); Sky.setSunPosition(0, 75); Sky.advance(150);
+    const st = Sky.state(), b = st.beam, s = st.heat.sun, W = __c.width, d = __grab();
+    const R = 0.5 * Math.max(...b.beams.map((x) => x.length)), prof = [];
+    for (let a = -85; a <= 85; a++) {
+      let sum = 0, n = 0;
+      for (let k = -2; k <= 2; k++) for (let dr = -2; dr <= 2; dr++) {
+        const an = (a + k) * Math.PI / 180, x = Math.round(s.x + Math.sin(an) * (R + dr)), y = Math.round(s.y + Math.cos(an) * (R + dr));
+        if (x < 0 || y < 0 || x >= W || y >= __c.height) continue;
+        const i = (y * W + x) * 4; sum += (d[i] + d[i + 1]) * (d[i + 3] > 0); n++;
+      }
+      prof.push(sum / Math.max(n, 1));
+    }
+    return { prof, R, lean: b.lean, longest: Math.max(...b.beams.map((x) => x.length)), y: s.y, r: s.r, h: __c.height };
+  });
+  await page.setViewportSize({ width: 640, height: 480 });
+  await page.waitForTimeout(700);
   // the window's outer ring (one pixel): no violet there (the beams fade out over 34 px short of the edge)
   out.edge = await inPage(() => {
     __day(354.36, 1241.24, 75.61, 450); Sky.setSunPosition(90, 5); Sky.advance(150);

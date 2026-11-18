@@ -2761,7 +2761,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert frost["grown"]["extent"] > 0 and frost["grown"]["ink"] > 0, frost["grown"]
     started_afresh(frost["restarted"], "ice")
     assert frost["restarted"]["frost"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["restarted"]
-    # the sun (?fx=heat,uv): a small white ball on a clean elliptical arc along the strip above the first row of tiles, x = W / 2 - 0.42 W
+    # the sun (?fx=heat,uv): a small white ball on a clean elliptical arc along the strip above the first row of tiles, x = W / 2 + 0.42 W
     # cos(pi t), y = yLo - (yLo - yHi) sin(noon elevation) sin(pi t): from its low point at sunrise and sunset to its high point at noon (the
     # season's noon elevation scaling the rise), the ball whole in the window and its centre above the strip's bottom, never cut; nothing outside daylight
     hot = got["heat"]
@@ -2775,7 +2775,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         sin_el = math.sin(math.radians(rows[0]["noon"]))
         for r in up:   # (the clean arc: its own formula, the ball whole in the window, its centre in the strip above the first row)
             b = r["band"]
-            assert r["x"] == pytest.approx(w / 2 - 0.42 * w * math.cos(math.pi * r["t"]), abs=1e-6), (day, r)
+            assert r["x"] == pytest.approx(w / 2 + 0.42 * w * math.cos(math.pi * r["t"]), abs=1e-6), (day, r)
             assert r["y"] == pytest.approx(b["yLo"] - (b["yLo"] - b["yHi"]) * sin_el * math.sin(math.pi * r["t"]), abs=1e-6), (day, r)
             assert r["r"] == pytest.approx(b["R"]) and b["R"] <= 0.02 * w + 1e-9 and b["R"] >= 1.3 - 1e-9, (day, r)
             assert r["x"] - b["Rmax"] >= 0 and r["x"] + b["Rmax"] <= w and r["y"] - b["Rmax"] >= 0, (day, r)   # (the glow too: whole in the window)
@@ -2783,13 +2783,14 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             if b["top"] > b["S"] + 1:   # (tiles start below the strip: the glow wholly above the first row)
                 assert r["y"] + b["Rmax"] <= b["top"] and r["y"] < b["top"], (day, r)
         xs = [r["x"] for r in up]
-        assert all(b > a for a, b in zip(xs, xs[1:])), (day, "x not rising")                      # (monotone: no stall)
+        assert all(b < a for a, b in zip(xs, xs[1:])), (day, "x not falling")                     # (monotone: no stall; east, the screen's right, to west, the left)
+        assert xs[0] > 0.8 * w and xs[-1] < 0.2 * w and abs(xs[len(xs) // 2] - w / 2) < 0.03 * w, (day, xs[0], xs[-1])   # (sunrise on the right, noon in the middle, sunset on the left)
         assert all(r["x"] - r["band"]["Rmax"] > 1 and r["x"] + r["band"]["Rmax"] < w - 1 and r["y"] - r["r"] > 1 for r in up), day   # (no flat run along a border)
         # (the direction of travel turns smoothly: no step of the path turns more than 0.35 rad from the one before)
         turns = []
         for p, q, s in zip(up, up[1:], up[2:]):
             a1, a2 = math.atan2(q["y"] - p["y"], q["x"] - p["x"]), math.atan2(s["y"] - q["y"], s["x"] - q["x"])
-            turns.append(abs(a2 - a1))
+            turns.append(abs((a2 - a1 + math.pi) % (2 * math.pi) - math.pi))   # (the arc runs leftward: the angle wraps at pi)
         assert max(turns) < 0.35, (day, max(turns))
     # the real dashboard at 640 x 480 has its first row 8 px down: the strip is then its minimum (0.06 H); at 1024 x 768 the reach rows below
     # have a strip of 24 art px: the arc's rise by the season there
@@ -2798,20 +2799,20 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     w, h = wide[0]["size"][:2]
     assert w / h > 3.5 and len(wide) > 100, (w, h)
     assert all(r["x"] - r["band"]["Rmax"] >= 0 and r["x"] + r["band"]["Rmax"] <= w and r["y"] - r["r"] > 1 and r["y"] + r["band"]["Rmax"] < 0.2 * h for r in wide), min(r["y"] - r["r"] for r in wide)
-    assert all(r["x"] == pytest.approx(w / 2 - 0.42 * w * math.cos(math.pi * r["t"]), abs=1e-6) for r in wide)
+    assert all(r["x"] == pytest.approx(w / 2 + 0.42 * w * math.cos(math.pi * r["t"]), abs=1e-6) for r in wide)
     assert max(abs(a["y"] - b["y"]) for a, b in zip(wide, wide[::-1])) < 0.02 * h                         # (symmetric about solar noon)
     summer_ry, winter_ry = (min(r["y"] for r in hot["arcs"][d] if r["day"]) for d in ("summer", "winter"))
     assert summer_ry < hot["arcs"]["equinox"][len(hot["arcs"]["equinox"]) // 2]["y"] and summer_ry < winter_ry, (summer_ry, winter_ry)   # (higher in summer)
-    # the reach: nothing the sun draws (glow, ember, beams) lit below 0.20 of the window's height, at five window sizes (a phone's too),
+    # the reach: nothing the sun draws (glow, ember, beams) lit below 0.34 of the window's height, at five window sizes (a phone's too),
     # places of the sun, UV levels and heats; the beams there (with the UV) and some light drawn everywhere
     assert len(hot["reach"]) == 5 * 5 * 5, len(hot["reach"])
     for r in hot["reach"]:
         w, h = r["size"][:2]
-        assert r["lit"] > 0 and r["low"] < 0.20 * h, r
+        assert r["lit"] > 0 and r["low"] < 0.34 * h, r
         if r["uv"] >= 0.6:
             assert r["beams"] == 12, r
         if r["uv"] == 1 and r["heat"] == 1 and r["name"] == "summer noon":
-            assert r["low"] > 0.5 * r["band"]["cap"], r   # (straight down at noon the beams really reach: over half the way to the line)
+            assert r["low"] > 0.5 * r["band"]["cap"] and r["low"] > 0.2 * h, r   # (straight down at noon the beams really reach: over half the way to the line, and past the old fifth)
     # ... nothing drawn at night, the sun up at midday
     assert hot["night"]["early"] == {"ink": 0, "day": False} and hot["night"]["late"] == {"ink": 0, "day": False}, hot["night"]
     assert hot["night"]["noon"]["day"] and hot["night"]["noon"]["ink"] > 500, hot["night"]
@@ -2838,11 +2839,11 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert len(hot["edges"]) == 14, hot["edges"]
     for look in hot["edges"]:
         assert look["ball"]["n"] == 0 and look["all"]["n"] == 0 and look["ball"]["sides"] >= 2 and look["all"]["sides"] >= 2, look
-    # the beams: twelve, about 1.3 sun diameters wide at the base (within 10 %), their lengths varying, blunt
+    # the beams: twelve, as wide at the base as their length says (0.12 of the longest tip: BEAM_BL 0.06 each side, within 20 %), their lengths varying, blunt
     beams = hot["beams"]
     assert beams["count"] == 12 and len(beams["widths"]) == 12 and beams["lobe"] == 0.6 and beams["edge"] == 34, beams
     for width in beams["widths"]:
-        assert width == pytest.approx(1.3 * beams["diameter"], rel=0.1), (width, beams["diameter"])
+        assert width == pytest.approx(0.12 * max(beams["lengths"]), rel=0.2), (width, beams["lengths"])
     # ... spaced about 30 degrees all round (each one off its place by up to 3.5 degrees and swaying 3 more: a gap within 13 degrees of even)
     angles = sorted(a % 360 for a in (b for b in hot["lobes"][0]["beams"] for b in [b["angle"]]))
     gaps = [(b - a) for a, b in zip(angles, angles[1:] + [angles[0] + 360])]
@@ -2876,6 +2877,18 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert max(abs(b - a) for a, b in zip(profile, profile[1:])) < 0.3 * profile[0], profile   # (no step in it)
     seen = [v for v in ends["violet"] if v["inside"]]
     assert len(seen) >= 4 and seen[0]["v"] > seen[1]["v"] * 0.9 and seen[1]["v"] > seen[2]["v"] and seen[-1]["v"] < 0.25 * seen[0]["v"], ends["violet"]
+    # the shafts: distinct, not a puff: at half the longest reach the violet round the sun (by angle over the lower half) has at least five
+    # separate peaks (the beams 30 degrees apart: 0, +-30, +-60 about straight down) with valleys between them under 0.95 of the lower neighbouring peak (the red and green channels' sum, at 1024 x 768)
+    sh = hot["shafts"]
+    prof = sh["prof"]
+    peaks = [i for i in range(1, len(prof) - 1) if prof[i] >= prof[i - 1] and prof[i] > prof[i + 1] and prof[i] > 0.3 * max(prof)]
+    strong = [i for i in peaks if all(abs(i - j) >= 15 for j in peaks if prof[j] > prof[i])]   # (one per beam: at least 15 degrees from a higher one)
+    assert len(strong) >= 5, (strong, [round(v, 1) for v in prof])
+    strong.sort()
+    for a_, b_ in zip(strong, strong[1:]):
+        assert min(prof[a_:b_ + 1]) < 0.95 * min(prof[a_], prof[b_]), (a_, b_, [round(v, 1) for v in prof])
+    # the longest beam about twice the old reach (0.20 H): over 1.7 times the room the old cap left (0.20 H - 3 - y - R)
+    assert sh["longest"] > 1.7 * (0.20 * sh["h"] - 3 - sh["y"] - sh["r"]) * 0.8, sh
     # ... faded out short of the window's edge: no violet in its outer ring
     assert hot["edge"]["violet"] == 0 and hot["edge"]["whole"] > 100, hot["edge"]
     # no dot pattern in the dither (its grid power), no flash faster than 0.5 Hz (the brightness over 24 s: its dominant frequency, the heat
