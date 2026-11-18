@@ -3922,8 +3922,8 @@ const WEATHER = {
         return { cols, deg: Sky.state().rain.slantDeg };
       }, way);
     }
-    // the path speed, the streaks' length and the landing rate at 0, 25 and 60 km/h (no wind effect: just the rain): the drops' speed
-    // along their path over what their layer's is, the downward speed over it, the streaks' mean length along theirs, and the drops
+    // the path speed, the streaks' length and the landing rate at 0, 11, 25 and 60 km/h (no wind effect: just the rain): the drops' speed
+    // along their path over their layer's vertical speed (1 / cos(angle)), the downward speed over it (1), the streaks' mean length along theirs, and the drops
     // landed over 60 s of the weather's time (no wind: the page's gusts don't push)
     out.paths = {};
     for (const kmh of [0, 11, 25, 60]) {

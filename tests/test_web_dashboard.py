@@ -3319,19 +3319,20 @@ async def test_the_rain_slants_with_the_live_wind_speed_straight_down_in_no_wind
     # the test link's wind (11 km/h, like the old fixed default slant of 0.45, 24 degrees; a real reading above it would win)
     assert got["link"]["speed"] == pytest.approx(11, abs=0.05) and abs(got["link"]["deg"]) == pytest.approx(24, abs=3), got["link"]
     assert abs(got["paths"]["11"]["deg"]) == pytest.approx(24, abs=3), got["paths"]["11"]
-    # the drops' speed along their path doesn't grow with the slant: the same (within 5 %) at 0, 25 and 60 km/h; its downward part is
-    # the cosine of the angle (the path speed times it), and the streaks keep the same length along their path (within 15 %: pixels)
+    # the drops' VERTICAL speed is the same (within 5 %) at 0, 25 and 60 km/h; their speed along the path is that over the cosine of
+    # the angle (within 5 %); the streaks lengthen with the slant (the path speed) and stop at 1.6 times the calm length
     paths = got["paths"]
-    for kmh in ("0", "25", "60"):
-        assert paths[kmh]["path"] == pytest.approx(1, rel=0.05), (kmh, paths[kmh])
-        assert paths[kmh]["down"] == pytest.approx(math.cos(math.radians(abs(paths[kmh]["deg"]))), rel=0.05), (kmh, paths[kmh])
-        assert paths[kmh]["streak"] == pytest.approx(paths["11"]["streak"], rel=0.15), (kmh, paths)
-    assert paths["25"]["down"] < paths["0"]["down"] * 0.8, paths   # (a 46 degree rain falls at 0.69 of the vertical's pace)
-    # and the rate they land at (drops per second over the window) stays what it was at every slant, within 15 %, the count of them
-    # scaled by the downward speed (path speed times cos(angle)) to the power -0.4, 1 at and under the old default: the same at 0, 11 (the old default), 25 and 60 km/h
-    for kmh in ("0", "25", "60"):
-        assert paths[kmh]["landed"] == pytest.approx(paths["11"]["landed"], rel=0.15), (kmh, paths)
-    assert paths["60"]["drops"] > paths["25"]["drops"] > paths["11"]["drops"] * 1.05 and paths["0"]["drops"] == paths["11"]["drops"], paths
+    for kmh in ("0", "11", "25", "60"):
+        assert paths[kmh]["down"] == pytest.approx(1, rel=0.05), (kmh, paths[kmh])
+        assert paths[kmh]["path"] == pytest.approx(1 / math.cos(math.radians(abs(paths[kmh]["deg"]))), rel=0.05), (kmh, paths[kmh])
+    assert paths["0"]["streak"] < paths["11"]["streak"] < paths["25"]["streak"] < paths["60"]["streak"], paths
+    assert paths["60"]["streak"] <= paths["0"]["streak"] * 1.6 * 1.1 and paths["60"]["streak"] >= paths["0"]["streak"] * 1.6 * 0.9, paths   # (capped: 1.6 times, within pixels)
+    # the rate they land at (drops per second over the window) is the same at every angle, within 10 % of each other (the same vertical
+    # speed, the plain count of drops: no density scaling)
+    landed = [paths[k]["landed"] for k in ("0", "11", "25", "60")]
+    assert max(landed) <= min(landed) * 1.1, (landed, paths)
+    assert len({paths[k]["drops"] for k in paths}) == 1, paths   # (the count is the budget's, whatever the slant)
+    assert "const density" not in HTML and "density()" not in HTML
 
 
 @needs_browser

@@ -482,12 +482,14 @@ const Sky = (() => {
     // from vertical in a 25 km/h wind), so no wind: straight down, 5 km/h about 12 degrees, 10 km/h 23, 25 km/h 46, 40 km/h 59, 60 km/h
     // 68, never past CAP (70 degrees from vertical: a storm's). The speed used is the reading's plus 0.3 of the gust over it,
     // low-passed (rising over about 2 s, falling over about 4: TAU_UP, TAU_DOWN) so the 16 s readings' jitter doesn't wobble the rain.
-    // The drops' speed ALONG their path doesn't change with the slant (a drop doesn't speed up as it leans): its path speed is its
-    // layer's speed times PATH, what the old fixed slant's (0.45, 24 degrees) gave (the vertical fall times sqrt(1 + 0.45^2)), split
-    // into down = path * cos(angle) and across = path * sin(angle). So the old default looks as it did, a vertical rain falls 10 %
-    // faster and a 46 degree one at 0.76 of that vertically. A streak keeps its length along the path the same too (spriteRows).
+    // The drops' VERTICAL fall speed doesn't change with the slant (wind pushes a drop sideways, it doesn't slow its fall): it is
+    // its layer's speed (what the old fixed slant's, 0.45, 24 degrees, fell at), its speed across that times tan(angle), and so its
+    // speed along its path that over cos(angle): 1.1 times at 24 degrees, 1.4 at 46, 1.9 at 59, 2.9 at the 70 degree cap. A faster
+    // drop leaves a longer streak: its length grows with the path speed, to at most STREAK_MOST (1.6) times the calm length (see
+    // streak()). The landing rate per area is the same at every angle (the same fall speed: the same count in flight).
     const FALL = 24, CAP = 70 * Math.PI / 180, TAN_CAP = Math.tan(CAP);
-    const OLD_SLANT = 0.45, PATH = Math.sqrt(1 + OLD_SLANT * OLD_SLANT);   // (the old default's path speed over its vertical one: 1.097)
+    const OLD_SLANT = 0.45, PATH = Math.sqrt(1 + OLD_SLANT * OLD_SLANT);   // (the old default's path over its vertical: 1.097, the calm streak's length over its (n - 1) rows)
+    const STREAK_MOST = 1.6;           // a streak grows with the path speed to at most this many times its calm length
     const cosOf = (slant) => 1 / Math.sqrt(1 + slant * slant);   // (the cosine of the angle whose tangent is `slant`)
     const STEPS = 20;                  // the streaks drawn at STEPS + 1 slants, evenly in angle from vertical to CAP (3.5 degrees apart)
     const SLANTS = Array.from({length: STEPS + 1}, (_, i) => Math.tan(CAP * i / STEPS));
@@ -500,10 +502,10 @@ const Sky = (() => {
       {speed: 230, length: [5, 6], alpha: 0.8, shades: [1, 2, 3], share: 0.33, ripple: 0.6},    // ... px down)
       {speed: 330, length: [8, 10], alpha: 1, shades: [1, 3, 4], share: 0.22, splash: true, ripple: 1.1}];
     // A streak: its bright head at the bottom left, its tail fading up to the right
-    // (n: the rows it has at the old default's slant; its length along its path is (n - 1) * PATH at every slant: rows and columns
-    // from that length's cosine and sine, so the same streak leans over without getting longer)
+    // (n: the rows it has at the old default's slant; its length along its path is (n - 1) * PATH when calm, growing with the path
+    // speed (1 / cos(angle)) to STREAK_MOST times that: rows and columns from that length's cosine and sine)
     const streak = (n, [tail, body, head], tan) => {
-      const len = (n - 1) * PATH, rows = Math.max(1, Math.round(len * cosOf(tan))), across = Math.round(len * tan * cosOf(tan)), slant = across / rows;
+      const len = (n - 1) * PATH * Math.min(STREAK_MOST, 1 / cosOf(tan)), rows = Math.max(1, Math.round(len * cosOf(tan))), across = Math.round(len * tan * cosOf(tan)), slant = across / rows;
       const w = across + 1, h = rows + 1;
       return painted(w, h, (x, y) => {
         if (x !== Math.round((h - 1 - y) * slant)) return null;
@@ -519,15 +521,8 @@ const Sky = (() => {
       d.tilt = leaning(slant);
       d.sprite = (d.flip ? mirrors : sprites)[d.layer][d.li][d.tilt];
     };
-    // The drops' count, so the rate they land at (drops per second over the window) is about the same at every slant as at the old
-    // default's: there the count is need() itself (what the shared particle budget is divided on: a steeper rain's extra drops go
-    // beyond it, up to 1.3 times as many at 68 degrees, small sprites). The steeper the rain, the slower it goes downward (the path
-    // speed times the cosine), so fewer land per second for the same number in flight, but not in proportion: more of them come in
-    // over the side, part way down the window (the lean * H of the W + lean * H it lets in), with less to fall. Measured with the
-    // count scaled by (PATH cos)^-1: too many drops landing at the steep slants (6.0k over 20 s at 68 degrees against 4.3k at the
-    // old default); the exponent was fitted: the count goes as the downward speed to the power -0.4: landing rates then within
-    // 10 % of the old default's at 0, 46 and 68 degrees (1 at the old default exactly and never less than it: straight down is the same count, 1.4 at 68 degrees).
-    const density = () => Math.max(1, Math.pow(PATH * cosOf(slantOf(speed)), -0.4));
+    // The drops' count is the plain budget (need() times the share) at every slant: the fall speed is the same, and a drop blown out of
+    // the window's side starts again (step), so the landing rate per area is too.
     const push = () => slantOf(speed) / OLD_SLANT;   // (the wind effect's push and bands, in proportion to the slant: none at no wind, as the gusts are of the wind's own strength; the old fixed slant's as 1)
     // A splash, frame by frame: a bead, a crown, droplets thrown wider, falling back ([dx, dy, shade] from where the drop landed)
     const SPLASH = [[[0, 0, 4], [0, -1, 3]],
@@ -543,14 +538,13 @@ const Sky = (() => {
       d.li = random() < 0.5 ? 0 : 1;   // (its length: the shorter or the longer)
       d.flip = dir.f > 0;
       tilt(d, slantOf(speed));
-      d.v = l.speed * PATH * between(0.85, 1.15);   // (its path speed: see PATH)
+      d.v = l.speed * between(0.85, 1.15);   // (its vertical fall speed, the same at every slant)
       d.y = anywhere ? between(-10, H) : between(-H * 0.25, -10);
       // Where it comes in: over the top edge, or, the wind blowing it across, in over the upwind side (right, or left blowing
-      // rightward), each in proportion to the air they let in (the top's width, the side's height times the lean: its slant, the
-      // slant's breathing up to 12 % more, and with the wind effect its steady push on this drop), so the rain falls evenly across the
+      // rightward), each in proportion to the air they let in (the top's width, the side's height times the lean: its slant, and with the wind effect its steady push on this drop), so the rain falls evenly across the
       // whole window whatever the slant and none is wasted off to the side: the spawn extent grows with the slant. (Starting out, over
       // the window itself, evenly.)
-      const lean = (slantOf(speed) * 1.12 + wind.steady(l.speed / FASTEST) * push() / (d.v * cosOf(slantOf(speed)) * (0.8 + 0.4 * e.level))) * Math.abs(dir.f);
+      const lean = (slantOf(speed) + wind.steady(l.speed / FASTEST) * push() / (d.v * (0.8 + 0.4 * e.level))) * Math.abs(dir.f);
       const u = anywhere ? 0 : between(0, W + H * lean);
       if (anywhere) d.x = between(0, W);
       else if (u < W) d.x = u - dir.side * Math.max(-d.y, 0) * lean;   // (over the top: back along its path from where it crosses the top edge)
@@ -558,7 +552,7 @@ const Sky = (() => {
         d.x = dir.side < 0 ? W + 1 : -1;
         d.y = (u - W) / lean;
       }
-      d.vx = 0; d.vy = d.v;
+      d.vy = d.v * (0.8 + 0.4 * e.level); d.vx = dir.f * d.vy * slantOf(speed);   // (as it falls from its first frame)
       d.floor = l.splash ? between(H * 0.8, H + 2) : H + 12;
     };
     return {
@@ -567,9 +561,9 @@ const Sky = (() => {
       count: () => drops.length,
       // (for the tests: where the drops are across, on screen in the window's lower half (art px), and their mean speed across, px/s,
       // negative leftward)
-      probe: () => ({landed,   // (the drops that have landed in all: on the floor or a flood)
-                     // the mean path speed and downward speed of the drops over what their layer's path speed would be (at 1 and
-                     // cos(angle)), and the mean length of their streaks along the path (px)
+      probe: () => ({landed,   // (the drops that have landed in the window: on the floor or a flood)
+                     // the mean path speed and downward speed of the drops over their layer's vertical speed (1 / cos(angle) and 1), and
+                     // the mean length of their streaks along the path over (n - 1) (px; PATH when calm)
                      pathRatio: drops.reduce((m, d) => m + Math.hypot(d.vx, d.vy) / (d.v * (0.8 + 0.4 * e.level)), 0) / Math.max(drops.length, 1),
                      downRatio: drops.reduce((m, d) => m + d.vy / (d.v * (0.8 + 0.4 * e.level)), 0) / Math.max(drops.length, 1),
                      streakLen: drops.reduce((m, d) => m + Math.hypot(d.sprite.width - 1, d.sprite.height - 1) / (LAYERS[d.layer].length[d.li] - 1), 0) / Math.max(drops.length, 1),
@@ -588,7 +582,7 @@ const Sky = (() => {
         drops = [];
       },
       step(dt, t, share) {
-        const n = Math.round(this.need() * share * density());
+        const n = Math.round(this.need() * share);
         while (drops.length < n) {   // (the layers in their shares, far first: drawn back to front)
           const k = drops.length / Math.max(n, 1);
           const d = {layer: k < LAYERS[0].share ? 0 : k < LAYERS[0].share + LAYERS[1].share ? 1 : 2};
@@ -607,44 +601,45 @@ const Sky = (() => {
         // (the wind's gust bands, one air with the leaves', carried along as fast as the middle drops go across; each layer reads
         // them as carried along at its own pace across (rate), so each bunches, whatever the slant: the layers' speeds across
         // spread further apart the steeper it is)
-        const carried = (k) => LAYERS[k].speed * PATH * pace * sway * cosOf(sway) + wind.steady(LAYERS[k].speed / FASTEST) * gain;   // (how fast layer k goes across)
+        const carried = (k) => LAYERS[k].speed * pace * sway + wind.steady(LAYERS[k].speed / FASTEST) * gain;   // (how fast layer k goes across)
         const ridden = Math.max(carried(1), 1);
         if (windy) wind.ride(carried(1));   // (sideways, whichever way it blows)
         // (how hard a drop knocks a leaf it hits: light rain's barely, heavy rain's a bash)
         const hard = 0.04 + 0.96 * Math.pow(e.level, 2.5);
         for (const d of drops) {
-          const x0 = d.x, y0 = d.y + d.sprite.height - 1, path = d.v * pace;   // (its head, where it was; its path speed)
+          const x0 = d.x, y0 = d.y + d.sprite.height - 1, down = d.v * pace;   // (its head, where it was; its fall speed)
           if (windy) {   // (the wind's air where it is, leftward px/s; the streak leaning to match: sideways over down)
             // (in a lull it can blow back against the drop's own lean, so they fall almost straight down; never back up the window)
-            // (it leans over by the air's push on top of its own across, down as it was: then the path speed back to what it was,
-            // across and down the sine and cosine of the new lean)
-            const down = path * cosOf(sway), own = down * sway, air = Math.max(wind.across(d.x, LAYERS[d.layer].speed / FASTEST, carried(d.layer) / ridden) * gain, -0.7 * own);
-            const lean = (own + air) / down, c = cosOf(lean);   // (leftward: dir.f -1, rightward +1; between, it swings over)
-            d.vy = path * c;
-            d.vx = dir.f * path * lean * c;
+            // (it leans over by the air's push on top of its own across, its fall as it was)
+            const own = down * sway, air = Math.max(wind.across(d.x, LAYERS[d.layer].speed / FASTEST, carried(d.layer) / ridden) * gain, -0.7 * own);
+            const lean = (own + air) / down;   // (leftward: dir.f -1, rightward +1; between, it swings over)
+            d.vy = down;
+            d.vx = dir.f * down * lean;
             d.y += d.vy * dt;
             d.x += d.vx * dt;
             d.flip = dir.f > 0;
             tilt(d, lean * Math.abs(dir.f));
             if (wind.knock(d.layer, x0, y0, d.x, d.y + d.sprite.height - 1, d.vx, d.vy, hard)) { spawn(d, false); continue; }
           } else {
-            const c = cosOf(sway);
-            d.vy = path * c;
-            d.vx = dir.f * path * sway * c;
+            d.vy = down;
+            d.vx = dir.f * down * sway;
             d.y += d.vy * dt;
             d.x += d.vx * dt;
             d.flip = dir.f > 0;
             tilt(d, sway * Math.abs(dir.f));
           }
+          // (one blown clear out of the window's downwind side is done: in again at the top or the upwind side, so the drops all fall through
+          // the window and the rate they land at per area is the same at every slant: what a constant fall speed gives)
+          if (d.vx < 0 ? d.x + d.sprite.width < 0 : d.vx > 0 && d.x - d.sprite.width > W) { spawn(d, false); continue; }
           if (d.y + d.sprite.height >= flood.surface(d.x) - 2) {   // (a flood: ending at its surface, in a ripple, the near ones a splash)
             flood.hit(d.x, LAYERS[d.layer].ripple, !!LAYERS[d.layer].splash);
-            landed++;
+            if (d.x >= 0 && d.x < W) landed++;
             spawn(d, false);
             continue;
           }
           if (d.y + d.sprite.height >= d.floor) {
             // (its droplets thrown downwind as far as it leans: about 4 px by the end at the steepest slant)
-            landed++;
+            if (d.x >= 0 && d.x < W) landed++;
             if (d.floor < H && d.x >= 0 && d.x < W && splashes.length < 40) splashes.push({x: d.x, y: d.floor, age: 0, dx: Math.sign(d.vx) * Math.min(Math.abs(d.vx) / d.vy, TAN_CAP) * 1.4});
             spawn(d, false);
           }
