@@ -954,17 +954,17 @@ const Sky = (() => {
   // ---------- heat: one broad red gradient from above the window's top, fading out down the window, behind the UV's beams ----------
   // A smooth wash across the whole width, never leaning or changing direction (vertical): at its strongest at the window's top edge
   // (already so there: it starts above, in the margin, which mirrors the top rows, no start to see) and fading down, smoothly to nothing
-  // by HEAT_FADE of the height (the top third), with a gentle sideways variation, so it is not a flat band: two very broad soft lobes
+  // by HEAT_FADE of the height (nearly two thirds: as far down as the UV's beams mostly reach), with a gentle sideways variation, so it is not a flat band: two very broad soft lobes
   // (brighter, dimmer) slowly drifting sideways round the width (the same lobes wrapped, so no seam), never a bare column (its
   // dimmest part still over HEAT_LOBES' floor of its brightest). Dithered (the same irregular dither as the beams: no banding at its
   // faint end, no grid). Drawn behind the UV's beams (with both on, the UV's stay crisp on top, leaning as they do with the sun) and
   // behind the flood (nothing below its water). All on at any heat. The temperature shows in the colour and the pulse, not in extra light
   // (the strength, and with it the peak, is under the cap as before): its heat h runs 0 at 35 °C (its level 0.3) to 1 at 43 °C (level 1),
   // smoothly: the colour from a pale, washed-out amber-orange (low saturation, light) to a vivid scarlet-red (never maroon), and the
-  // whole gradient breathing in brightness together from a barely felt +-5 % every 7 s to a throb of +-30 % every 2.5 s (0.4 flashes
+  // whole gradient breathing in brightness together from a barely felt +-5 % every 14 s to a slow swell of +-30 % every 10 s (never quicker: a cycle of 10 s at least, 0.1 flashes
   // a second at most: photosensitivity; the phase is kept, so a change of heat never jumps). The throb only ever dims from the peak.
   const HEAT_HUE = [30, 4], HEAT_SAT = [0.3, 1], HEAT_LIGHT = [0.3, 0.4, 0.48, 0.55, 0.68];   // [at 35 °C, at 43 °C]; the five shades' lightness at the hottest (0.14 lighter at 35 °C)
-  const HEAT_DEPTH = [0.05, 0.3], HEAT_PERIOD = [7, 2.5];                                      // [at 35 °C, at 43 °C]: the pulse
+  const HEAT_DEPTH = [0.05, 0.3], HEAT_PERIOD = [14, 10];                                      // [at 35 °C, at 43 °C]: the pulse
   const heatOf = (level) => clamp((level - 0.3) / 0.7, 0, 1);
   const mixed = (pair, h) => pair[0] + (pair[1] - pair[0]) * h;
   const hslToRgb = (hue, sat, light) => {
@@ -973,7 +973,7 @@ const Sky = (() => {
     return [r, g, b].map((v) => Math.round(255 * (v + m)));
   };
   const heatColours = (h) => HEAT_LIGHT.map((l) => hslToRgb(mixed(HEAT_HUE, h), mixed(HEAT_SAT, h), l + (1 - h) * 0.14));
-  const HEAT_FADE = 0.32;              // the gradient's end, as a fraction of the window's height (above the bottom third)
+  const HEAT_FADE = 0.64;              // the gradient's end, as a fraction of the window's height: it reaches well down from the top (the UV's beams reach 0.4-0.9)
   const HEAT_TOP = 0.62;               // its brightness at the top edge (0-1, the dither's input; the shades are then dithered about it)
   const HEAT_LOBES = 0.7;              // its dimmest column's brightness over its brightest's
   const HEAT_DRIFT = 2.5;              // the lobes drifting round, art px a second

@@ -2499,13 +2499,13 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     for look in looks:
         grad, rows = look["gradient"], look["rowsAlpha"]
         height = len(rows)
-        # (a gradient description: vertical, strongest at the top edge, faded out by the top third at the most)
-        assert grad["vertical"] and 0 < grad["top"] <= 0.8 and 0.2 < grad["fade"] <= 0.34 and grad["rows"] <= height / 3 + 1, grad
+        # (a gradient description: vertical, strongest at the top edge, faded out by two thirds down at the most)
+        assert grad["vertical"] and 0 < grad["top"] <= 0.8 and 0.5 < grad["fade"] <= 0.66 and grad["rows"] <= 0.66 * height + 1, grad
         # (the top row the strongest, the mean brightness falling down the window (within noise, in 10-row means), ~0 in the bottom third)
         band = [sum(rows[i:i + 10]) / 10 for i in range(0, height - 9, 10)]
         assert rows[0] >= max(rows) * 0.85 and max(rows[:3]) >= max(rows) * 0.98, rows[:6]
         assert all(b <= a * 1.1 + 0.002 for a, b in zip(band, band[1:])), band
-        assert band[0] > 3 * band[len(band) // 3 - 1] and all(r < 0.01 for r in rows[int(height * 2 / 3):]), (band, rows[-5:])
+        assert band[0] > 3 * band[len(band) // 2 - 1] and all(r < 0.01 for r in rows[int(height * 0.66):]), (band, rows[-5:])
         # (no hard start at the top: the top row within 15 % of the second, the gradient already at its strong end there)
         assert abs(rows[0] - rows[1]) <= 0.15 * rows[1], rows[:4]
         # (warm, from the top: the top third's red over its green and blue, the whole width: nowhere bare, UV or not)
@@ -2538,11 +2538,11 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # ... what is drawn agrees (the canvas's pixels along the top): the hot more saturated and redder
     sat = lambda there: saturation(there["atHeat"]["colour"])
     assert sat(hottest) >= 1.5 * sat(cool) and hue(hottest["atHeat"]["colour"]) < hue(cool["atHeat"]["colour"]), (cool["atHeat"], hottest["atHeat"])
-    # ... the pulse deeper and quicker the hotter: depth at 43 °C at least 4 times that at 35 °C, its period at most half, and what the
+    # ... the pulse deeper and quicker the hotter: depth at 43 °C at least 4 times that at 35 °C, its period shorter (never under 10 s), and what the
     # gradient really does over 12 s (all of it together): breathing barely at the cool end, a pronounced throb at the hot, never a flash
     # faster than the 3 a second photosensitivity limit (here 0.4 at the most), moving smoothly from frame to frame
-    assert hottest["heat"]["depth"] >= 4 * cool["heat"]["depth"] and hottest["heat"]["period"] <= 0.5 * cool["heat"]["period"], looks
-    assert cool["heat"]["period"] == pytest.approx(7) and hottest["heat"]["period"] == pytest.approx(2.5)
+    assert hottest["heat"]["depth"] >= 4 * cool["heat"]["depth"] and hottest["heat"]["period"] < cool["heat"]["period"] and hottest["heat"]["period"] >= 10, looks
+    assert cool["heat"]["period"] == pytest.approx(14) and hottest["heat"]["period"] == pytest.approx(10)
     assert cool["heat"]["depth"] == pytest.approx(0.05) and hottest["heat"]["depth"] == pytest.approx(0.3)
     assert (1 - hottest["pulse"]["min"]) >= 4 * (1 - cool["pulse"]["min"]) > 0.01, (cool["pulse"], hottest["pulse"])
     for look in looks:
