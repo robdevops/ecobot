@@ -1605,7 +1605,7 @@ EFFECTS = {"rain": "Rain", "haze": "AQI", "uv": "UV index", "humidity": "Humidit
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over", "direction", "uturn"}
+DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over", "direction", "uturn", "slant"}
 
 
 async def weather(server, part: str) -> dict:
@@ -3114,6 +3114,44 @@ def test_the_frogs_feet_are_webbed_between_the_toes_and_the_hands_are_not():
     assert n_web(5) > n_web(6), (n_web(5), n_web(6))
     for n in (3, 4):   # (it shows on the tucked feet too)
         assert n_web(n) >= 3, n
+
+
+# ---------- the rain's slant: the live wind's speed ----------
+@needs_browser
+async def test_the_rain_slants_with_the_live_wind_speed_straight_down_in_no_wind_never_past_65_degrees_eased_and_mirrored(server, station):
+    got = await weather(server, "slant")
+    assert got["errors"] == [], got["errors"]
+    speeds = {int(k): v for k, v in got["speeds"].items()}
+    # no wind: exactly vertical, every drop, with the wind effect off and on; nothing of the old fixed slant left
+    for calm in (speeds[0], got["calm"], got["calmWind"]):
+        assert calm["slantDeg"] == 0 and calm["vxMax"] == 0 and calm["vx"] == 0 and calm["tilts"] == [0], calm
+    assert "wind" in got["calmWind"]["effects"] and "rain" in got["calmWind"]["effects"], got["calmWind"]
+    # tan(angle) = speed / 18 km/h: 5, 10, 20, 40 km/h about 15, 28, 48, 65 degrees (within 5), growing with the speed, capped at 65
+    for kmh, want in ((5, 15), (10, 28), (20, 48), (40, 65)):
+        assert speeds[kmh]["slantDeg"] == pytest.approx(want, abs=5), (kmh, speeds[kmh])
+    deg = [speeds[k]["slantDeg"] for k in sorted(speeds)]
+    assert all(a < b for a, b in zip(deg[:6], deg[1:6])) and deg[5] <= 65.0001 and deg[6] == pytest.approx(65, abs=0.01) == deg[7], deg
+    assert all(0 < speeds[k]["slantDeg"] for k in (2, 5, 10)) and speeds[2]["slantDeg"] < speeds[5]["slantDeg"] / 2, speeds
+    # the gust adds a little: speed + 0.3 * (gust - speed); a gust under the speed adds nothing
+    assert got["gust"]["target"] == pytest.approx(16) and got["gust"]["slantDeg"] == pytest.approx(math.degrees(math.atan(16 / 18)), abs=0.1), got["gust"]
+    assert got["noGust"]["slantDeg"] == pytest.approx(speeds[10]["slantDeg"], abs=0.01), got["noGust"]
+    # the drops move across as their slant says (leftward: negative), the wind effect on too (its bands bunch them)
+    assert speeds[20]["vx"] < speeds[5]["vx"] < speeds[0]["vx"] == 0 and got["blowing"]["vx"] < speeds[20]["vx"] * 0.5, (speeds, got["blowing"])
+    # eased: a jump from no wind to 40 km/h (at 60 frames a second) never steps more than 5 degrees in a frame, rising in about 2 s
+    # and falling in about 4 (to half way: under 2 s up, between 1 and 4 s down), smoothly (never backing up)
+    jump = got["jump"]
+    assert jump["maxUp"] < 5 and jump["maxDown"] < 5 and jump["monotonic"] and jump["final"] == pytest.approx(65, abs=0.01), jump
+    assert jump["upSecondsHalf"] < 2 and jump["upTo50"] > 0.5 and 0.8 < jump["downSecondsHalf"] < 4 and abs(jump["back"]) < 2, jump   # (and back near vertical after 10 s)
+    # the streaks tilt granularly: at least 16 distinct tilts between 0 and 65 degrees, as the speed goes up
+    tilts = {t for each in got["tilts"] for t in each}
+    assert got["tiltSteps"] >= 21 and len(tilts) >= 16, (sorted(tilts), got["tiltSteps"])
+    # blowing rightward: the exact mirror: a negative angle, the drops going right, their streaks mirrored
+    right = got["rightward"]
+    assert right["slantDeg"] == pytest.approx(-speeds[20]["slantDeg"], abs=0.01) and right["vx"] > 20 and right["mirrored"] > 0, right
+    # the drops cover the whole width at the steepest slant, either way (no bare left or right strip)
+    for way, cover in got["coverage"].items():
+        assert cover["deg"] == pytest.approx(65 * -int(way), abs=0.01), cover
+        assert min(cover["cols"]) > 0.4 * (sum(cover["cols"]) / 8), (way, cover)
 
 
 # ---------- the wind's direction ----------

@@ -1709,6 +1709,7 @@ const rainSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
     const columns = looks[0].map((_, i) => looks.map((c) => c[i]));
     resolve({ looks: looks.length, drops: looks.reduce((a, c) => a + c.reduce((x, y) => x + y, 0), 0) / looks.length,
               across: looks.reduce((a, c) => a + spread(c), 0) / looks.length,
+              profile: columns.map((c) => Math.round(c.reduce((x, y) => x + y, 0) / c.length * 10) / 10),
               overTime: columns.reduce((a, c) => a + spread(c), 0) / columns.length, vx: vx.reduce((a, b) => a + b, 0) / vx.length });
   };
   // (from 50 frames in, 1.5 s or more of the page's time: the effects faded in, the wind's gusts under way)
@@ -3211,6 +3212,9 @@ const WEATHER = {
     const raining = Promise.all([["rain2"], ["rain2,wind"], ["rain2,wind", phoneSize]].map(async ([name, context], i) => {
       const p = await weatherPage(browser, url, { query: `?fx=${i === 1 ? "rain,wind" : name}`, context, driven: true });
       let light = null;
+      // (the rain alone: slanted by a breeze's reading, 6 km/h (about 18 degrees), under the 15 the wind effect comes on at; with no wind at all it
+      // falls straight down, which the slant tests check)
+      if (i === 0) await p.reads({ "Wind": 6 });
       if (i === 1) {
         await driveUntil(p.page, () => Sky.state().wind.hits >= 3);
         light = await p.page.evaluate(() => Sky.state().wind);
@@ -3681,6 +3685,87 @@ const WEATHER = {
   // The wind's direction (Sky.setWind; the page's: the Wind direction tile's reading, or the test link's ?fx=wind-east / wind-west):
   // which side each reading calls for and how a flip eases; then each effect with the wind blowing leftward (wind-east) and
   // rightward (wind-west), side by side on pages of their own (the same seed, so the same weather: the rightward mirrors the leftward)
+  // The rain's slant: a continuous function of the live wind's speed (Sky.setWindSpeed), settled at each speed (no wind effect, then
+  // with it), rightward too; eased in a few seconds, never a jump (at 60 frames a second); the streaks' tilts; its coverage of the width
+  async slant(browser, url, out) {
+    const p = await weatherPage(browser, url, { query: "?fx=rain2", driven: true });
+    // (each speed held long enough to settle: frames of 0.1 s of the weather's time, 20 s)
+    const settle = (kmh, gust = 0) => p.page.evaluate(([kmh, gust]) => {
+      Sky.timeScale(3);
+      Sky.setWindSpeed(kmh, gust);
+      Sky.advance(200);
+      Sky.timeScale(1);
+      const r = Sky.state().rain;
+      return { slantDeg: r.slantDeg, slant: r.slant, speed: r.speed, target: r.target, vxMax: r.vxMax, tilts: r.tilts, mirrored: r.mirrored, vx: r.vx };
+    }, [kmh, gust]);
+    out.speeds = {};
+    for (const kmh of [0, 2, 5, 10, 20, 40, 60, 100]) out.speeds[kmh] = await settle(kmh);
+    out.gust = await settle(10, 30);   // (speed 10, gust 30: 10 + 0.3 * 20 = 16 km/h)
+    out.noGust = await settle(10, 4);   // (a gust under the speed adds nothing)
+    // the tilts in use, speed by speed (0 to 40 km/h in steps of 2): every sprite step, drawn
+    out.tilts = [];
+    for (let kmh = 0; kmh <= 40; kmh += 2) out.tilts.push((await settle(kmh)).tilts);
+    out.tiltSteps = await p.page.evaluate(() => Sky.state().rain.tiltSteps);
+    // no wind, the wind effect on too (its leaves, its gust bands): every drop straight down; and with it on, wind: still the same
+    out.calm = await settle(0);
+    await p.page.evaluate(() => Sky.set({ rain: 1, wind: 1 }, true));
+    await p.page.evaluate(() => Sky.advance(150));
+    out.calmWind = await settle(0);
+    out.calmWind.effects = await p.page.evaluate(() => Sky.state().effects);
+    out.blowing = await settle(20);   // (the wind effect on: the bands push and bunch the drops, their mean still slanted that way)
+    // a jump in the wind's speed at 60 frames a second: the slant's step each frame
+    out.jump = await p.page.evaluate(() => {
+      Sky.set({ rain: 1 }, true);
+      Sky.advance(60);
+      Sky.timeScale(0.5);   // (frames of a 60th of a second)
+      Sky.setWindSpeed(0, 0);
+      Sky.advance(600);
+      const at = () => Sky.state().rain.slantDeg, up = [at()], down = [];
+      Sky.setWindSpeed(40, 0);
+      for (let i = 0; i < 600; i++) { Sky.advance(1); up.push(at()); }
+      Sky.setWindSpeed(0, 0);
+      for (let i = 0; i < 600; i++) { Sky.advance(1); down.push(at()); }
+      Sky.timeScale(1);
+      const steps = (a) => Math.max(...a.map((v, i) => i ? Math.abs(v - a[i - 1]) : 0));
+      const to = (a, deg) => a.findIndex((v) => Math.abs(v) >= deg) / 60;   // (s until it has got that far)
+      return { maxUp: steps(up), maxDown: steps(down), final: up[up.length - 1], upTo50: to(up, 50), upSecondsHalf: to(up, up[up.length - 1] * 0.5),
+               downSecondsHalf: down.findIndex((v) => v <= up[up.length - 1] * 0.5) / 60, back: down[down.length - 1], monotonic: up.every((v, i) => i === 0 || v >= up[i - 1] - 1e-9) };
+    });
+    // rightward: the exact mirror (a negative angle, the streaks mirrored, the drops moving right)
+    out.rightward = await p.page.evaluate(() => {
+      Sky.setWind(1);
+      Sky.setWindSpeed(20, 0);
+      Sky.timeScale(3);
+      Sky.advance(150);
+      Sky.timeScale(1);
+      const r = Sky.state().rain;
+      return { slantDeg: r.slantDeg, vx: r.vx, mirrored: r.mirrored, drops: Sky.state().particles.rain, flips: Sky.state().windFlips };
+    });
+    // coverage across the window's width at the capped slant, each way: the drops on screen in the lower half, over eight columns, from
+    // many looks: none bare
+    out.coverage = {};
+    for (const way of [-1, 1]) {
+      out.coverage[way] = await p.page.evaluate((way) => {
+        Sky.setWind(way);
+        Sky.setWindSpeed(80, 0);
+        Sky.timeScale(3);
+        Sky.advance(150);
+        Sky.timeScale(1);
+        const cols = new Array(8).fill(0), top = new Array(8).fill(0);
+        const { width } = Sky.state().rain;
+        for (let i = 0; i < 120; i++) {
+          Sky.advance(2);
+          for (const x of Sky.state().rain.xs) cols[Math.min(7, Math.floor(x / width * 8))]++;
+        }
+        return { cols, deg: Sky.state().rain.slantDeg };
+      }, way);
+    }
+    // the splashes: sideways spread (their x as drawn against where the drop landed) isn't asserted; no error is
+    out.errors = p.errors;
+    await p.context.close();
+    return out;
+  },
+
   async direction(browser, url, out) {
     const small = { viewport: { width: 640, height: 480 } };
     const errored = [];   // (every page's console errors, to the end)
@@ -3766,7 +3851,7 @@ const WEATHER = {
     // the rain: its drops' mean speed across, how many drawn mirrored, with and without the wind
     const rain = async (way, withWind) => {
       const p = await open(`?fx=rain2${withWind ? `,wind-${way}` : ""}`);
-      if (!withWind) await p.reads({ "Wind direction": way === "east" ? 90 : 270 });
+      if (!withWind) await p.reads({ "Wind direction": way === "east" ? 90 : 270, "Wind": 12 });   // (a breeze: the slant follows its speed)
       await drive(p.page, 120);
       const r = await rainSeen(p.page, 2000);
       r.mirrored = await p.page.evaluate(() => Sky.state().rain.mirrored);

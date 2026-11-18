@@ -195,10 +195,15 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   the sun: down-left in the morning, down-right in the afternoon); Sky.setTime(minutes) (test-only): the time of day fixed there
 //   (null: by the clock again; window.__skyTest.time: at the start). Sky.state().beam: {lean: degrees from vertical now, negative
 //   down-left (morning), positive down-right, minutes, rise, set, noon, fixed}.
+//   Sky.setWindSpeed(speed, gust): the live wind's speed and gust, km/h (the Wind tile's reading and the gust, from the page's data): the
+//   rain's slant follows them continuously (tan of its angle from vertical = speed / 18 km/h, the drops' fall; none at no wind: straight
+//   down; at most 65 degrees; the gust adding 0.3 of what it is over the speed; the speed eased, rising over about 2 s, falling over
+//   about 4). Sky.state().rain: {slant (radians from vertical, positive leftward), slantDeg, speed (the eased km/h), target (the speed it
+//   heads for), tilts (the streak sprites' steps in use, of tiltSteps: 21, 3.25 degrees apart), vxMax (the fastest drop across)}.
 //   Sky.setWind(d): the way the wind blows, -1 leftward (the default: a reading from the east side, 0 < degrees < 180) or +1
 //   rightward (from the west side, 180 < degrees < 360); 0 holds the way it is (due north or south: 0, 180, 360; or no reading).
 //   Everything that follows the wind follows it: the wind's leaves (where they come in: upwind), the haze's drift, the
-//   rain's slant and push (its streaks mirrored), the flood's frog (in from upwind, swimming downwind, its sprite mirrored) and
+//   rain's slant (by the wind's speed: Sky.setWindSpeed) and push (its streaks mirrored), the flood's frog (in from upwind, swimming downwind, its sprite mirrored) and
 //   its waves (carried downwind), the leaves floating on it, the gust's cow, barn or chicken (mirrored): rightward the exact mirror of
 //   leftward. (The humidity's beads aren't: they follow gravity.) A change eases over DIR_S s: the factor dir.f, -1 to +1, applied to
 //   every velocity and slant; the sprites turning over as it passes 0. Sky.state(): windDir (the side now, -1 or +1), windTarget,
@@ -320,6 +325,8 @@ const Sky = (() => {
   const dir = {target: -1, p: -1, f: -1, side: -1, flips: 0,
                veer: {u: 1, from: Math.PI, delta: 0, dur: VEER_S, side: 0, count: 0}};   // (angles: radians on screen, 0 rightward, pi/2 up)
   const smoothU = (u) => u * u * (3 - 2 * u);
+  // The live wind's speed and gust (km/h, as the page's data gives them: setWindSpeed(), below), which the rain's slant follows
+  const gale = {speed: 0, gust: 0};
   const veerAngle = () => dir.veer.from + dir.veer.delta * smoothU(dir.veer.u);
   // A sprite's exact mirror image (its pixels reversed along each row)
   function flipped(img) {
@@ -457,15 +464,23 @@ const Sky = (() => {
 
   // ---------- rain: streaks from the top right, three layers deep, splashing at the bottom ----------
   // With the wind on too, the drops ride its air (wind.across, below): blown further downwind (left, or right as the wind blows: dir,
-  // above; always slanting its way, with no wind too), harder in its gusts, and through the gust
+  // above), harder in its gusts, and through the gust
   // bands rolling downwind with the leaves; each drop's sideways speed rising and falling as a band passes, so the rain bunches
-  // into denser curtains and thins into gaps; each streak leaning as its drop moves (sprites at a few slants, the nearest drawn). A
+  // into denser curtains and thins into gaps; each streak leaning as its drop moves (sprites at 21 slants, the nearest drawn). A
   // drop that hits a leaf (one as far off as itself) knocks it (wind.knock(), below) and ends there in a tiny splash.
   const RAIN = ["#2A4560", "#3A6688", "#5A90B8", "#8FC2E2", "#D6F0FF"].map(rgb);
   const rain = effect((e) => {
     const random = streamOf("rain"), between = random.between;   // (its own randomness)
-    const SLANT = 0.45;                // px left for each px down (no wind)
-    const SLANTS = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.1, 1.3, 1.55], ALONE = SLANTS.indexOf(SLANT);   // the streaks drawn at these
+    // The slant follows the live wind speed, continuously: tan(angle) = speed / FALL (a drop falls at about 5 m/s, 18 km/h), so no wind:
+    // straight down, 5 km/h about 15 degrees, 20 km/h about 48, never past CAP (65 degrees from vertical: a storm's). The speed used
+    // is the reading's plus 0.3 of the gust over it, low-passed (rising over about 2 s, falling over about 4: TAU_UP, TAU_DOWN) so
+    // the 16 s readings' jitter doesn't wobble the rain.
+    const FALL = 18, CAP = 65 * Math.PI / 180, TAN_CAP = Math.tan(CAP), GUST_SHARE = 0.3, TAU_UP = 1, TAU_DOWN = 2;
+    const STEPS = 20;                  // the streaks drawn at STEPS + 1 slants, evenly in angle from vertical to CAP (3.25 degrees apart)
+    const SLANTS = Array.from({length: STEPS + 1}, (_, i) => Math.tan(CAP * i / STEPS));
+    let speed = 0, seeded = false;     // the smoothed speed (km/h) the slant follows
+    const slantOf = (kmh) => Math.min(TAN_CAP, Math.max(kmh, 0) / FALL);   // px across for each px down
+    const effective = () => gale.speed + GUST_SHARE * Math.max(gale.gust - gale.speed, 0);
     const FASTEST = 330;               // the near layer's speed: the wind's air full strength on it; slower layers, further off, less
     const LAYERS = [                   // far (short, dim, slow) to near; [tail, body, head] shades
       {speed: 150, length: [3, 4], alpha: 0.55, shades: [0, 1, 2], share: 0.45, ripple: 0.3},   // (ripple: a flood's, where it lands,
@@ -483,11 +498,12 @@ const Sky = (() => {
     const sprites = LAYERS.map((l) => l.length.map((n) => SLANTS.map((slant) => streak(n, l.shades, slant))));   // [layer][length][slant]
     // ... and each one's mirror image, for rain slanting rightward (head at the bottom right, drawn so: see draw())
     const mirrors = sprites.map((layer) => layer.map((lengths) => lengths.map(flipped)));
-    const leaning = (slant) => {   // the nearest of SLANTS
-      let i = 0;
-      while (i < SLANTS.length - 1 && slant > (SLANTS[i] + SLANTS[i + 1]) / 2) i++;
-      return i;
+    const leaning = (slant) => clamp(Math.round(Math.atan(Math.max(slant, 0)) / CAP * STEPS), 0, STEPS);   // the nearest of SLANTS
+    const tilt = (d, slant) => {   // (its streak leaning at `slant`: the sprite, mirrored for rightward)
+      d.tilt = leaning(slant);
+      d.sprite = (d.flip ? mirrors : sprites)[d.layer][d.li][d.tilt];
     };
+    const push = () => slantOf(speed) / 0.45;   // (the wind effect's push and bands, in proportion to the slant: none at no wind, as the gusts are of the wind's own strength; the old fixed slant's 0.45 as 1)
     // A splash, frame by frame: a bead, a crown, droplets thrown wider, falling back ([dx, dy, shade] from where the drop landed)
     const SPLASH = [[[0, 0, 4], [0, -1, 3]],
                     [[0, 0, 2], [-1, -1, 4], [1, -2, 3]],
@@ -501,13 +517,22 @@ const Sky = (() => {
       const l = LAYERS[d.layer];
       d.li = random() < 0.5 ? 0 : 1;   // (its length: the shorter or the longer)
       d.flip = dir.f > 0;
-      d.sprite = (d.flip ? mirrors : sprites)[d.layer][d.li][ALONE];
+      tilt(d, slantOf(speed));
       d.v = l.speed * between(0.85, 1.15);
       d.y = anywhere ? between(-10, H) : between(-H * 0.25, -10);
-      // (far enough right to come in across the whole window on its way down; with the wind, further: its steady push on this drop)
-      // (and, blowing rightward, the mirror of that: in from the left, its head's x counted as the window's width less the leftward one's)
-      const room = H * (SLANT + wind.steady(l.speed / FASTEST) / (d.v * (0.8 + 0.4 * e.level))) * Math.abs(dir.f);
-      d.x = dir.side < 0 ? between(0, W + room) : between(-room, W);
+      // Where it comes in: over the top edge, or, the wind blowing it across, in over the upwind side (right, or left blowing
+      // rightward), each in proportion to the air they let in (the top's width, the side's height times the lean: its slant, the
+      // slant's breathing up to 12 % more, and with the wind effect its steady push on this drop), so the rain falls evenly across the
+      // whole window whatever the slant and none is wasted off to the side: the spawn extent grows with the slant. (Starting out, over
+      // the window itself, evenly.)
+      const lean = (slantOf(speed) * 1.12 + wind.steady(l.speed / FASTEST) * push() / (d.v * (0.8 + 0.4 * e.level))) * Math.abs(dir.f);
+      const u = anywhere ? 0 : between(0, W + H * lean);
+      if (anywhere) d.x = between(0, W);
+      else if (u < W) d.x = u - dir.side * Math.max(-d.y, 0) * lean;   // (over the top: back along its path from where it crosses the top edge)
+      else {                     // (over the side: as far down it as the air it let in, its head just outside)
+        d.x = dir.side < 0 ? W + 1 : -1;
+        d.y = (u - W) / lean;
+      }
       d.vx = 0;
       d.floor = l.splash ? between(H * 0.8, H + 2) : H + 12;
     };
@@ -520,8 +545,14 @@ const Sky = (() => {
       probe: () => ({xs: drops.filter((d) => d.y > H / 2 && d.y < H && d.x >= 0 && d.x < W).map((d) => Math.round(d.x)), width: W,
                      under,   // (drawn last with its head below a flood's surface)
                      mirrored: drops.filter((d) => d.flip).length,   // (those slanting rightward: their sprites mirrored)
+                     // the slant now (the base, without its breathing): radians and degrees from vertical, positive leftward (negative
+                     // rightward); the smoothed speed (km/h) it follows, and the speed it is heading for; the streak tilts in use (of 21);
+                     // the most any drop moves across (px/s)
+                     slant: -dir.f * Math.atan(slantOf(speed)), slantDeg: -dir.f * Math.atan(slantOf(speed)) * DEG, speed, target: effective(),
+                     tilts: [...new Set(drops.map((d) => d.tilt))].sort((a, b) => a - b), tiltSteps: STEPS + 1,
+                     vxMax: drops.reduce((m, d) => Math.max(m, Math.abs(d.vx)), 0),
                      vx: drops.reduce((sum, d) => sum + d.vx, 0) / Math.max(drops.length, 1)}),
-      forget() { drops = []; splashes = []; under = 0; },
+      forget() { drops = []; splashes = []; under = 0; seeded = false; },
       resize() {
         drops = [];
       },
@@ -535,10 +566,19 @@ const Sky = (() => {
         }
         if (drops.length > n) drops.length = n;
         drops.sort((a, b) => a.layer - b.layer);
-        const pace = 0.8 + 0.4 * e.level, sway = SLANT * (1 + 0.12 * Math.sin(t * 0.37)), windy = wind.amount > 0;
-        // (the wind's gust bands, one air with the leaves', carried along as fast as the near drops go across: so they bunch, and the
-        // far ones, slower, are overtaken by them, and bunch too)
-        if (windy) wind.ride(LAYERS[1].speed * pace * sway + wind.steady(LAYERS[1].speed / FASTEST));   // (sideways, whichever way it blows)
+        // (the speed the slant follows, eased toward the wind's now: at once the first time)
+        const goal = effective();
+        speed = seeded ? speed + (goal - speed) * (1 - Math.exp(-dt / (goal > speed ? TAU_UP : TAU_DOWN))) : goal;
+        if (Math.abs(goal - speed) < 0.02) speed = goal;   // (all the way there in the end: no wind is exactly straight down)
+        seeded = true;
+        const base = slantOf(speed), gain = push();
+        const pace = 0.8 + 0.4 * e.level, sway = base * (1 + 0.12 * Math.sin(t * 0.37)), windy = wind.amount > 0;
+        // (the wind's gust bands, one air with the leaves', carried along as fast as the middle drops go across; each layer reads
+        // them as carried along at its own pace across (rate), so each bunches, whatever the slant: the layers' speeds across
+        // spread further apart the steeper it is)
+        const carried = (k) => LAYERS[k].speed * pace * sway + wind.steady(LAYERS[k].speed / FASTEST) * gain;   // (how fast layer k goes across)
+        const ridden = Math.max(carried(1), 1);
+        if (windy) wind.ride(carried(1));   // (sideways, whichever way it blows)
         // (how hard a drop knocks a leaf it hits: light rain's barely, heavy rain's a bash)
         const hard = 0.04 + 0.96 * Math.pow(e.level, 2.5);
         for (const d of drops) {
@@ -546,18 +586,18 @@ const Sky = (() => {
           d.y += fall;
           if (windy) {   // (the wind's air where it is, leftward px/s; the streak leaning to match: sideways over down)
             // (in a lull it can blow back against the drop's own lean, so they fall almost straight down; never back up the window)
-            const own = d.v * pace * sway, air = Math.max(wind.across(d.x, LAYERS[d.layer].speed / FASTEST), -0.7 * own);
+            const own = d.v * pace * sway, air = Math.max(wind.across(d.x, LAYERS[d.layer].speed / FASTEST, carried(d.layer) / ridden) * gain, -0.7 * own);
             const lean = (sway + air / (d.v * pace)) * Math.abs(dir.f);   // (leftward: dir.f -1, rightward +1; between, it swings over)
             d.vx = dir.f * (own + air);
             d.x += d.vx * dt;
             d.flip = dir.f > 0;
-            d.sprite = (d.flip ? mirrors : sprites)[d.layer][d.li][leaning(lean)];
+            tilt(d, lean);
             if (wind.knock(d.layer, x0, y0, d.x, d.y + d.sprite.height - 1, d.vx, d.v * pace, hard)) { spawn(d, false); continue; }
           } else {
             d.vx = dir.f * d.v * pace * sway;
             d.x += dir.f * fall * sway;
             d.flip = dir.f > 0;
-            d.sprite = (d.flip ? mirrors : sprites)[d.layer][d.li][leaning(SLANT * Math.abs(dir.f))];
+            tilt(d, sway * Math.abs(dir.f));
           }
           if (d.y + d.sprite.height >= flood.surface(d.x) - 2) {   // (a flood: ending at its surface, in a ripple, the near ones a splash)
             flood.hit(d.x, LAYERS[d.layer].ripple, !!LAYERS[d.layer].splash);
@@ -565,7 +605,8 @@ const Sky = (() => {
             continue;
           }
           if (d.y + d.sprite.height >= d.floor) {
-            if (d.floor < H && splashes.length < 40) splashes.push({x: d.x, y: d.floor, age: 0});
+            // (its droplets thrown downwind as far as it leans: about 3 px by the end at the steepest slant)
+            if (d.floor < H && d.x >= 0 && d.x < W && splashes.length < 40) splashes.push({x: d.x, y: d.floor, age: 0, dx: Math.sign(d.vx) * Math.min(Math.abs(d.vx) / (d.v * pace), TAN_CAP) * 1.4});
             spawn(d, false);
           }
         }
@@ -583,7 +624,7 @@ const Sky = (() => {
           g.drawImage(d.sprite, Math.round(d.x) - (d.flip ? d.sprite.width - 1 : 0), y);   // (its head's column: the sprite's left, or right if mirrored)
         }
         g.globalAlpha = alpha * 0.8;
-        for (const s of splashes) g.drawImage((dir.side > 0 ? SPLASH_R : SPLASH)[Math.min(4, Math.floor(s.age / 0.05))], Math.round(s.x) - 4, Math.round(s.y) - 4);
+        for (const s of splashes) g.drawImage((dir.side > 0 ? SPLASH_R : SPLASH)[Math.min(4, Math.floor(s.age / 0.05))], Math.round(s.x + s.dx * s.age / 0.24) - 4, Math.round(s.y) - 4);
       },
     };
   });
@@ -1191,7 +1232,7 @@ const Sky = (() => {
       count: () => flying.length,
       // The air across, on screen at x (art px), on something `k` (0-1) as near as the nearest rain: leftward, px/s (none without the
       // wind); and its steady part. (Its bands not slowed on narrow art: there they are what's left of the wind in the rain.)
-      across: (x, k) => e.amount * k * (calm * STEADY * (1 + gust) + BANDS * gusting() * bandAt(sx(x) - swept)),
+      across: (x, k, rate = 1) => e.amount * k * (calm * STEADY * (1 + gust) + BANDS * gusting() * bandAt(sx(x) - swept * rate)),
       steady: (k) => e.amount * k * calm * STEADY * (1 + gust),
       // How hard it blows now, for the haze's drift: 0 without the wind, 1 at its steady pace, more in a gust
       breeze: () => e.amount * calm * (1 + gust),
@@ -3907,8 +3948,14 @@ const Sky = (() => {
     return sent;
   }
 
+  // setWindSpeed(speed, gust): the live wind's speed and gust, km/h (null or none: 0), which the rain's slant follows (see the rain)
+  function setWindSpeed(speed, gust) {
+    gale.speed = Number.isFinite(speed) && speed > 0 ? speed : 0;
+    gale.gust = Number.isFinite(gust) && gust > 0 ? gust : 0;
+  }
+
   const running = () => DRIVEN ? animate && alive() : !!frame;
-  return {set, fling, tilt, level, setSun, setTime, setWind, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
+  return {set, fling, tilt, level, setSun, setTime, setWind, setWindSpeed, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
           advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
           clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: running(), frames, cost, clock, size: [W, H, P],
@@ -4678,6 +4725,7 @@ const Sky = (() => {
     else arrange();
     real = conditionsOf(data);
     realSide = windSideOf(data) || realSide;   // (a reading due north or south, or none: the way it was)
+    const speedNow = conditionsOfWind(data); realSpeed = speedNow.speed; realGust = speedNow.gust;
     Sky.setSun(data.sun);   // (the beams lean with the station's time of day)
     weather();
     gusting(data);
@@ -5167,6 +5215,13 @@ const Sky = (() => {
     const d = ((deg % 360) + 360) % 360;
     return d > 0 && d < 180 ? -1 : d > 180 ? 1 : 0;
   }
+  // The wind's speed and gust now (km/h on the wire), which the rain's slant follows (Sky.setWindSpeed); none: 0
+  function conditionsOfWind(data) {
+    const t = (data.tiles || []).find((tile) => idOf(tile) === "Wind");
+    return {speed: t && typeof t.value === "number" ? t.value : 0, gust: typeof data.gust === "number" ? data.gust : 0};
+  }
+  let realSpeed = 0, realGust = 0;
+  const TEST_WIND = 25;   // (km/h: what a test link's wind effect blows at, the readings' being what they are)
   let realSide = 0;   // (the last side a reading gave: -1 leftward, +1 rightward, 0 none yet)
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop" shows)
   // Stopped ("stop"): for this page view only, nothing saved (a reload runs them again); for good: MCP_DASHBOARD_ANIMATIONS=off.
@@ -5181,6 +5236,7 @@ const Sky = (() => {
   function weather() {
     const was = calling();
     conditions = Object.fromEntries(Object.keys(CALLED_BY).map((k) => [k, Math.max(real[k] || 0, simulated[k] || 0)]));
+    Sky.setWindSpeed(Math.max(realSpeed, simulated.wind > 0 ? TEST_WIND : 0), Math.max(realGust, simulated.wind > 0 ? TEST_WIND : 0));
     Sky.setWind(simulated.windDir || realSide);   // (a test link's way, else the reading's: 0 holds it; first, so with nothing yet drawn it's the way from the start)
     Sky.set(conditions, animated());
     const framed = new Set(Object.keys(CALLED_BY).filter((k) => conditions[k] > 0).map((k) => CALLED_BY[k]));
