@@ -190,6 +190,11 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   100 %), uv, wind: 0 or 1, heat: 0-1 (35 °C to 43 °C), ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
 //   sooner)}; animate false (the page's "stop", MCP_DASHBOARD_ANIMATIONS low or off, or reduced motion): nothing drawn (and
 //   anything blown across gone).
+//   Sky.setSun({rise, set, now}): the station's sunrise and sunset and the time of day now (minutes since its local midnight: the page's
+//   data's `sun`), which the UV's and the heat's beams lean with (straight down at midday, to 70 degrees by sunrise and sunset, toward
+//   the sun: down-left in the morning, down-right in the afternoon); Sky.setTime(minutes) (test-only): the time of day fixed there
+//   (null: by the clock again; window.__skyTest.time: at the start). Sky.state().beam: {lean: degrees from vertical now, negative
+//   down-left (morning), positive down-right, minutes, rise, set, noon, fixed}.
 //   Sky.fling(kind): something big blown across far behind (a gust over 99 km/h): "cow", "barn" or "chicken", else one at random;
 //   its kind, or null (nothing drawn: stopped, no weather, the tab hidden). The gust effect is on while one is crossing.
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), clock (the weather's time, s), size: [art width, art height,
@@ -798,99 +803,129 @@ const Sky = (() => {
     };
   });
 
-  // ---------- uv and heat: soft shafts of light coming in from the top, slowly swaying and breathing ----------
-  // Each shaft a dithered wedge, widening and fading as it comes down; drawn twice, a wide faint halo and a narrow bright core, the two
-  // breathing out of step, so it seems to waver. Each sways a pixel or so side to side about its own place, very slowly (a minute
-  // and a half to two a sway), never travelling on. shaftOf(colours, wide, long, slope, bright): one (its top `rows` rows only: the
-  // window's height, the rest never seen)
-  const shaftOf = (colours, wide, long, slope, bright, rows = long) =>
-    painted(wide * 2 + Math.min(long, rows) * Math.abs(slope) + 2, Math.min(long, rows), (x, y) => {
-      const k = y / long, half = wide * (0.6 + 0.6 * k), mid = wide + (slope < 0 ? long * -slope : 0) + y * slope;
+  // ---------- uv and heat: soft beams of light coming in from the top, leaning with the sun, slowly swaying and breathing ----------
+  // The sun by the station's clock (the page's `sun` datum {rise, set, now}, minutes since the station's local midnight; never the
+  // viewer's own clock, which may be in another zone): sunrise to sunset, the day's midpoint "midday". Every beam leans with it: straight
+  // down at midday, tilted toward the sun's side the more the further from it, 0 to BEAM_MAX degrees from vertical by sunrise or
+  // sunset, 70 * sin(pi/2 * h) for h = (time - midday) / (half the day), clamped to -1..1: smooth, slow (at most about 0.3 degrees a
+  // minute), no jump. East is on the right of the screen (as on the compass dial): in the morning the sun is in the east, the beams
+  // come from the upper right and lean down-left (a negative lean); in the afternoon from the upper left, down-right (positive).
+  // Without the page's data yet: midday. Test-only: Sky.setTime(minutes) (null: the clock again), or window.__skyTest.time.
+  const BEAM_MAX = 70;                 // degrees from vertical at sunrise and sunset, at the most
+  const sun = {rise: 360, set: 1080, now: null, at: 0};   // (now: the time of day, minutes, as of the weather's clock `at`, s)
+  let fixedTime = typeof TEST.time === "number" ? TEST.time : null;
+  const minutesNow = () => fixedTime !== null ? fixedTime : sun.now === null ? (sun.rise + sun.set) / 2 : sun.now + (clock - sun.at) / 60;
+  const leanOf = (minutes, rise = sun.rise, set = sun.set) => {
+    const noon = (rise + set) / 2, h = clamp((minutes - noon) / ((set - rise) / 2), -1, 1);
+    return BEAM_MAX * Math.sin(Math.PI / 2 * h);
+  };
+  const beamState = () => {
+    const minutes = minutesNow();
+    return {lean: leanOf(minutes), minutes, rise: sun.rise, set: sun.set, noon: (sun.rise + sun.set) / 2, fixed: fixedTime !== null};
+  };
+  function setSun(given) {   // the page's data's sun
+    if (!given || ![given.rise, given.set, given.now].every(Number.isFinite) || given.set <= given.rise) return;
+    Object.assign(sun, {rise: given.rise, set: given.set, now: given.now, at: clock});
+  }
+  function setTime(minutes) { fixedTime = Number.isFinite(minutes) ? minutes : null; }   // (test-only)
+
+  // Each beam a dithered band, widening and fading as it comes down; drawn twice, a wide faint halo and a narrow bright core, the two
+  // breathing out of step, so it seems to waver. Each sways a pixel or so side to side about its own place along the top (very
+  // slowly: a minute and a half to two a sway), never travelling on. beamOf(colours, wide, long, bright): a sprite hanging straight
+  // down from its top's middle, `long` rows (a beam leaning is this drawn turned about that top: beamDrawn(), below)
+  const beamOf = (colours, wide, long, bright) => {
+    const w = Math.ceil(wide * 2.4) + 2, mid = (w - 1) / 2;
+    return painted(w, long, (x, y) => {
+      const k = y / long, half = wide * (0.6 + 0.6 * k);
       const across = 1 - Math.abs(x - mid) / half;
       if (across <= 0) return null;
       const s = shadeOf(Math.pow(across, 0.7) * Math.pow(1 - k, 1.1) * bright, x, y, colours.length);
       return s < 0 ? null : colours[s];
     });
-  // The UV's shafts' places for the window's size (seeded: the same every time): each {wide, long, slope, x: its place (art px), phase,
-  // rate, sway, swayRate}; the heat's go between them
+  };
+  // The UV's beams' places along the window's top for its size (seeded: the same every time), each {wide, long, x: its place (art px),
+  // phase, rate, sway, swayRate}, in a lane from past the window's left edge to past its right, as far as a leaning beam
+  // could reach in from beyond (so a leaning beam never leaves a bare triangle at a side); the heat's go between them
+  const UV_WIDE = [8, 18];             // a UV beam's width (see beamOf: its top 1.2 times this, widening to 2.4)
   const uvShafts = () => {
-    const r = seeded(77), n = Math.max(4, Math.round(W / 70));
-    return Array.from({length: n}, (_, i) => {
-      const wide = Math.round(10 + r() * 22), long = Math.round(H * (0.4 + r() * 0.5)), slope = 0.12 + r() * 0.1;
-      return {wide, long, slope, x: (i + r() * 0.6) * W / n - 10, phase: r() * 7, rate: 0.3 + r() * 0.25,
-              sway: 0.85 + r() * 0.8, swayRate: 0.05 + r() * 0.03};   // (how far each way, art px; rad/s)
+    const r = seeded(77), n = Math.max(4, Math.round(W / 70)), spacing = W / n;
+    const k = Math.ceil((H * 1.2 + 140) / spacing);   // (the longest heat beam, at the most lean, and its width)
+    return Array.from({length: n + 2 * k}, (_, j) => {
+      const i = j - k, wide = Math.round(UV_WIDE[0] + r() * (UV_WIDE[1] - UV_WIDE[0])), long = Math.round(H * (0.4 + r() * 0.5));
+      return {wide, long, x: (i + r() * 0.6) * spacing - 10, phase: r() * 7, rate: 0.3 + r() * 0.25,
+              sway: 0.85 + r() * 0.8, swayRate: 0.05 + r() * 0.03, spacing};   // (how far each way, art px; rad/s)
     });
   };
-  // A shaft's halo and core drawn (from the loop's draw()), breathing and swaying as the UV's do; its left x as drawn
-  const shaftDrawn = (g, s, alpha, t) => {
-    const x = Math.round(s.x - s.halo.width / 2 + s.sway * Math.sin(t * s.swayRate + s.phase * 3));
+  // A beam's halo and core drawn (from the loop's draw()), turned about its top by the lean, breathing and swaying: its top's x as drawn.
+  // Squeezed across by the lean's cosine so its width along the window's top, and the beams' overlap, stay as they are leaning.
+  // Nearest-neighbour: the pixel art stays pixels. One wholly off the window isn't drawn.
+  const beamDrawn = (g, s, alpha, t, lean) => {
+    const x = Math.round(s.x + s.sway * Math.sin(t * s.swayRate + s.phase * 3));
+    const rad = lean * Math.PI / 180, reach = s.long * Math.sin(rad), half = s.wide * 1.2 + 2;
+    if (Math.max(x, x + reach) + half < 0 || Math.min(x, x + reach) - half > W) return x;
+    if (!s.halo) { s.halo = beamOf(s.colours, s.wide, s.long, s.bright[0]); s.core = beamOf(s.colours, s.narrow, Math.round(s.long * 0.8), s.bright[1]); }
+    g.save();
+    g.imageSmoothingEnabled = false;
+    g.translate(x, 0);
+    g.rotate(-rad);
+    g.scale(Math.cos(rad), 1);
     g.globalAlpha = alpha * (0.3 + 0.4 * Math.pow(Math.sin(t * s.rate + s.phase), 2));
-    g.drawImage(s.halo, x, 0);
+    g.drawImage(s.halo, -Math.floor(s.halo.width / 2), 0);
     g.globalAlpha = alpha * (0.15 + 0.55 * Math.pow(Math.sin(t * s.rate * 1.7 + s.phase * 2), 4));
-    g.drawImage(s.core, x + s.inset, 0);
+    g.drawImage(s.core, -Math.floor(s.core.width / 2), 0);
+    g.restore();
     return x;
   };
 
-  // ---------- heat: soft shafts of faint red light from the top, as the UV's, between the UV's (with both on, the two interleave) ----------
-  // One in each gap between the UV's shafts' places (halfway between two, and one half a spacing past the last), each 40 % longer
-  // than the UV's shaft to its left, leaning as its two neighbours do (so never crossing them); its own width, breathing and sway.
-  // Stronger the hotter (its level: 0.3 at 35 °C to 1 at 43 °C): brighter, and more of them (about that share of them on, the
-  // others fading out), the first few on at 35 °C spread about at random. Drawn behind the flood (nothing below its water).
+  // ---------- heat: wide soft beams of faint red light from the top, as the UV's, behind them (with both on, the UV's stay crisp on top) ----------
+  // One in each gap between the UV's beams' places (halfway between two, and one half a spacing past the last), each 40 % longer than
+  // the UV beam to its left, and much wider (at least HEAT_WIDER times the widest UV beam: about one and a half spacings and more), so
+  // they cover all the width the UV's beams don't: where the UV's are, each fills the gap between them, overlapping under them; with
+  // none (the UV off) they overlap each other's soft edges across the whole width, no bare gap, each its own width, breathing and
+  // sway (so irregular, not stripes). All on at any heat; the hotter (its level: 0.3 at 35 °C to 1 at 43 °C) the brighter. Leaning
+  // as the UV's do. Drawn behind the flood (nothing below its water).
   const EMBER = ["#3A0503", "#6E0B05", "#B8160A", "#FF2A14", "#FF7A66"].map(rgb);   // scarlet, infrared imagery's red (no orange, hardly any blue), faint (the UV's violet's way)
-  const HEAT_LONGER = 1.4;             // each this much longer than a UV shaft
+  const HEAT_LONGER = 1.4;             // each this much longer than a UV beam
+  const HEAT_WIDER = 3.3;              // ... and at least this times the widest UV beam's width
   const heat = effect((e) => {
     const random = streamOf("heat"), between = random.between;   // (its own randomness)
-    let shafts = [], last = null;
+    let shafts = [];
     return {
       strength: () => 0.4 + 0.4 * e.level,
-      // (for the tests: the UV's places (art px) and its shafts' tops' middles there (unswayed), each shaft {x: its place, long (art px), uvLong: the UV shaft's to its left, on: how
-      // far shown (0-1), at: its left as last drawn (null: not drawn), top: its top's middle then}, the window's size)
-      probe: () => ({level: e.level, size: [W, H], uv: uvShafts().map((s) => s.x),
-                     uvTops: uvShafts().map((u) => u.x - (u.long * u.slope + 2) / 2),
-                     shafts: shafts.map((s) => ({x: s.x, long: s.long, uvLong: s.uvLong, on: s.on, at: s.at,
-                                                 top: s.at === null ? null : s.at + s.wide}))}),
+      // (for the tests: the lean now, the UV's places (art px) and widths, and each heat beam {x: its place, wide, long (art px),
+      // uvLong: the UV beam's to its left, at: its top's x as last drawn (null: not drawn)}, the window's size)
+      probe: () => ({level: e.level, size: [W, H], lean: beamState().lean, uv: uvShafts().map((s) => s.x), uvWide: uvShafts().map((s) => s.wide),
+                     uvTops: uvShafts().map((u) => u.x),
+                     shafts: shafts.map((s) => ({x: s.x, wide: s.wide, long: s.long, uvLong: s.uvLong, at: s.at}))}),
       resize() {
-        const uv = uvShafts(), spacing = W / uv.length;
-        const order = uv.map((_, i) => [random(), i]).sort((a, b) => a[0] - b[0]).map(([, i]) => i);   // (which are on first)
+        const uv = uvShafts();
         shafts = uv.map((u, i) => {
-          const next = uv[i + 1], x = next ? (u.x + next.x) / 2 : u.x + spacing / 2;
-          const slope = next ? (u.slope + next.slope) / 2 : u.slope, long = Math.round(u.long * HEAT_LONGER);
-          const wide = Math.round(between(8, 18)), narrow = Math.max(3, Math.round(wide * 0.5));
-          return {x, long, uvLong: u.long, rank: order.indexOf(i), on: 0, at: null, wide,
-                  halo: shaftOf(EMBER, wide, long, slope, 0.45, H), core: shaftOf(EMBER, narrow, Math.round(long * 0.8), slope, 0.6, H),
-                  inset: wide - narrow,   // (the core down the halo's middle)
+          const next = uv[i + 1], x = next ? (u.x + next.x) / 2 : u.x + u.spacing / 2;
+          const long = Math.round(u.long * HEAT_LONGER);
+          const least = Math.max(Math.ceil(HEAT_WIDER * UV_WIDE[1]), Math.round(1.5 * u.spacing));
+          const wide = Math.round(least * between(1, 1.25)), narrow = Math.max(3, Math.round(wide * 0.35));
+          return {x, long, uvLong: u.long, wide, narrow, at: null, colours: EMBER, bright: [0.3, 0.4],
                   phase: between(0, 7), rate: between(0.3, 0.55), sway: between(0.85, 1.65), swayRate: between(0.05, 0.08)};
         });
-        last = null;
       },
-      forget() { for (const s of shafts) s.on = 0; last = null; },
+      forget() { for (const s of shafts) s.at = null; },
       draw(g, alpha, t) {
-        // (first drawn since on: those wanted on at once, the effect itself fading in; after, each fading in or out on its own)
-        const want = Math.max(1, Math.round(shafts.length * e.level)), first = last === null, dt = first ? 0 : Math.max(0, t - last);
-        last = t;
+        const lean = beamState().lean;
         flood.above(g, () => {
-          for (const s of shafts) {
-            const to = s.rank < want ? 1 : 0;
-            s.on = first ? to : clamp(s.on + (to ? dt : -dt) / FADE_S, 0, 1);
-            s.at = s.on > 0 ? shaftDrawn(g, s, alpha * (0.55 + 0.45 * e.level) * s.on, t) : null;
-          }
+          for (const s of shafts) s.at = beamDrawn(g, s, alpha * 0.4 * (0.55 + 0.45 * e.level), t, lean);   // (each beam fainter than a UV one: they overlap, and cover the width)
         });
       },
     };
   });
 
-  // ---------- uv: soft shafts of violet light coming in from the top (see the heat's, above), and a faint glow along the top ----------
+  // ---------- uv: soft beams of violet light coming in from the top (see the heat's, above), and a faint glow along the top ----------
   const RAD = ["#22153C", "#3C256A", "#6444A8", "#A287E6", "#EFE7FF"].map(rgb);
   const uv = effect((e) => {
     let shafts = [], glow = null;
     return {
       strength: () => 0.8,
       resize() {
-        shafts = uvShafts().map((u) => {
-          const narrow = Math.max(3, Math.round(u.wide * 0.5));
-          return {...u, halo: shaftOf(RAD, u.wide, u.long, u.slope, 0.6), core: shaftOf(RAD, narrow, Math.round(u.long * 0.8), u.slope, 0.75),
-                  inset: u.wide - narrow};   // (the core down the halo's middle)
-        });
+        shafts = uvShafts().map((u) => ({...u, colours: RAD, narrow: Math.max(3, Math.round(u.wide * 0.5)), bright: [0.6, 0.75]}));
         glow = painted(W, Math.ceil(H * 0.16), (x, y) => {
           const s = shadeOf(Math.pow(1 - y / (H * 0.16), 2.4) * 0.6, x, y, 3);
           return s < 0 ? null : RAD[s];
@@ -899,7 +934,8 @@ const Sky = (() => {
       draw(g, alpha, t) {
         g.globalAlpha = alpha * 0.8;
         g.drawImage(glow, 0, 0);
-        for (const s of shafts) shaftDrawn(g, s, alpha, t);
+        const lean = beamState().lean;
+        for (const s of shafts) beamDrawn(g, s, alpha, t, lean);
       },
     };
   });
@@ -3623,7 +3659,7 @@ const Sky = (() => {
   }
 
   const running = () => DRIVEN ? animate && alive() : !!frame;
-  return {set, fling, tilt, level, timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
+  return {set, fling, tilt, level, setSun, setTime, timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
           advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
           clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: running(), frames, cost, clock, size: [W, H, P],
@@ -3633,7 +3669,7 @@ const Sky = (() => {
                               wind: effects.wind.probe(), rain: effects.rain.probe(), haze: effects.haze.probe(),
                               tilt: {x: grav.x, y: grav.y, angle: Math.atan2(grav.x, grav.y) * DEG, tilted: grav.tilted, mode: grav.mode,
                                      readings: grav.readings, raw: grav.raw && grav.raw.slice(), flat: grav.flat, pool: grav.pool, steep: grav.steep, epoch: grav.epoch},
-                              humidity: effects.humidity.probe(), flood: effects.flood.probe(), heat: effects.heat.probe(),
+                              humidity: effects.humidity.probe(), flood: effects.flood.probe(), heat: effects.heat.probe(), beam: beamState(),
                               gust: effects.gust.probe()})};
 })();
 </script>
@@ -4390,6 +4426,7 @@ const Sky = (() => {
     if (press && press.engaged) press.rearrange = true;   // (mid-drag: the page's tiles stay put until it's dropped)
     else arrange();
     real = conditionsOf(data);
+    Sky.setSun(data.sun);   // (the beams lean with the station's time of day)
     weather();
     gusting(data);
   }

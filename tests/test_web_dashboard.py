@@ -196,6 +196,30 @@ async def test_the_data_carries_the_stations_rain_rate_now_its_rain_gauges_or_el
     assert readings_of({**station.live, **live}) != readings_of(station.live)    # the piezo's rate changing: an event, the page fetches it
 
 
+async def test_the_data_carries_the_sun_sunrise_sunset_and_the_time_now_by_the_stations_clock_else_six_to_six(server, station):
+    """`sun`: {rise, set, now}, minutes since the station's local midnight (its zone, DST included): today's sunrise and sunset from the
+    forecast (Open-Meteo's daily, ISO local times); 06:00 and 18:00 with no forecast, none for today or a day that doesn't make sense."""
+    page = WebDashboard(server)
+    before = datetime.now(TZ)
+    sun = (await page.data())["sun"]                                            # (no forecast)
+    after = datetime.now(TZ)
+    assert (sun["rise"], sun["set"]) == (360, 1080) and set(sun) == {"rise", "set", "now"}
+    assert web_dashboard.minutes_of(before) - 0.02 <= sun["now"] <= web_dashboard.minutes_of(after) + 0.02 or after.date() != before.date(), sun
+    today = datetime.now(TZ).date()
+    day = {"date": today, "sunrise": f"{today}T05:52", "sunset": f"{today}T20:07"}
+    server.ctx.forecast = NS(days=[{"date": date(2000, 1, 1), "sunrise": "2000-01-01T01:00", "sunset": "2000-01-01T02:00"}, day])
+    sun = (await page.data())["sun"]
+    assert (sun["rise"], sun["set"]) == (5 * 60 + 52, 20 * 60 + 7), sun        # (today's: DST in it, the zone's clock)
+    for days in ([], None, [{"date": today}], [{**day, "sunset": f"{today}T04:00"}], [{**day, "sunrise": "dawn"}],
+                 [{"date": today + __import__("datetime").timedelta(days=1), "sunrise": f"{today}T05:00", "sunset": f"{today}T19:00"}]):
+        server.ctx.forecast = NS(days=days)
+        sun = (await page.data())["sun"]
+        assert (sun["rise"], sun["set"]) == (360, 1080), (days, sun)           # (the fallback)
+    # by the station's zone, not the server's: the same instant, 12:30 in Melbourne in summer (UTC+11)
+    noon = datetime(2026, 1, 15, 12, 30, 15, tzinfo=TZ)
+    assert web_dashboard.sun_of(None, noon) == {"rise": 360, "set": 1080, "now": 750.25}
+
+
 async def test_the_data_carries_todays_highest_of_the_wind_gust_rain_rate_sun_and_uv_and_the_gust_now(server, station):
     """The dials' thin red hands: each one's reading's highest today (the station's day; Wind: its gust), its tile's Daily figure (Max;
     the Wind's Gust), which counts the reading now in, so it rises with it; null with none. Nothing read from the file for it. And the
@@ -2466,8 +2490,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert frost["grown"]["extent"] > 0 and frost["grown"]["ink"] > 0, frost["grown"]
     started_afresh(frost["restarted"], "ice")
     assert frost["restarted"]["frost"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["restarted"]
-    # the heat (?fx=heat): soft shafts of faint red light from the top, as the UV's: one in each gap between the UV's places (halfway
-    # between two, one past the last), each 40 % longer than the UV's to its left; more of them and brighter the hotter
+    # the heat (?fx=heat): wide soft beams of faint red light from the top, one in each gap between the UV's places (halfway between
+    # two, one past the last), each 40 % longer than the UV's to its left, all on at any heat, brighter the hotter
     hot = got["heat"]
     assert hot["errors"] == [] and hot["cost"] < 4, hot
     looks = hot["looks"]
@@ -2476,21 +2500,20 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert len(shafts) == len(uv) >= 4, look
         assert all(a < s["x"] < b for a, s, b in zip(uv, shafts, uv[1:])) and shafts[-1]["x"] > uv[-1], (uv, shafts)
         assert all(s["long"] == round(1.4 * s["uvLong"]) for s in shafts), shafts
-        # (about the level's share of them on, at least one; each on drawn)
-        on = [s for s in shafts if s["on"] == 1]
-        assert len(on) == max(1, round(len(shafts) * look["level"])) and all(s["at"] is not None for s in on), shafts
-        # (red, from the top: the top third warm (red over green and blue), the shafts' tops inked, the UV's places' tops (between
-        # them) far fainter)
+        assert all(s["at"] is not None for s in shafts), shafts   # (every one drawn, however hot: no gaps between)
+        # (much wider than the UV's: each at least 3 times the widest UV beam, and not all the same)
+        assert min(s["wide"] for s in shafts) >= 3 * max(look["uvWide"]), (look["uvWide"], shafts)
+        assert len({s["wide"] for s in shafts}) > 3, shafts
+        # (red, from the top: the top third warm (red over green and blue), the whole width: nowhere bare, UV or not)
         r, g, b = look["top"]["colour"]
-        assert r > 1.5 * b and r > 1.5 * g and 0.01 < look["top"]["alpha"] < 0.25, look["top"]
-        r, g, b = look["atHeat"]["colour"]
-        assert r > 1.5 * b and look["atHeat"]["alpha"] > 3 * look["atUv"]["alpha"], (look["atHeat"], look["atUv"])
+        assert r > 1.5 * b and r > 1.5 * g and 0.01 < look["top"]["alpha"] < 0.3, [(l["level"], l["top"], l["drawn"]) for l in looks]
+        assert look["bare"] == 0, look["bare"]
+        assert look["beam"]["lean"] == 0 and look["beam"]["fixed"], look["beam"]   # (midday: straight down)
         # (a deep, saturated crimson, infrared imagery's red, not an orange ember: the red far over the green, little blue)
-        assert g < 0.15 * r and b < 0.35 * r, look["atHeat"]
-    # ... stronger the hotter: from 35 °C to 43 °C more of them, brighter
+        for there in (look["atHeat"], look["atUv"]):
+            assert there["colour"][1] < 0.15 * there["colour"][0] and there["colour"][2] < 0.35 * there["colour"][0], there
+    # ... stronger the hotter, brighter
     cool, warm, hottest = looks
-    count = [sum(s["on"] == 1 for s in l["shafts"]) for l in looks]
-    assert count[0] < count[1] < count[2] == len(hottest["shafts"]), count
     assert cool["drawn"] < warm["drawn"] < hottest["drawn"] and cool["top"]["alpha"] < warm["top"]["alpha"] < hottest["top"]["alpha"], looks
     # ... dithered irregularly (no grid: under 100, as gridPeak sees it; ordered, about 200)
     assert hot["grid"] < 100, hot["grid"]
@@ -2498,14 +2521,34 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     columns = list(zip(*hot["moving"]))
     assert all(max(c) - min(c) <= 4 and all(abs(a - b) <= 1 for a, b in zip(c, c[1:])) for c in columns), columns
     assert any(max(c) > min(c) for c in columns), columns
-    # with the UV on too: the two interleaving, the heat's tops warmer than the UV's (red over the UV's violet glow along the top),
-    # the UV's violet (blue over red), within the cap
+    # ... leaning with the sun (06:00-18:00 here): straight down at midday, more and more toward the sun's side to sunrise and sunset,
+    # the whole width covered at every angle (no bare triangle at a side)
+    leans = {l["minutes"]: l for l in hot["leans"]}
+    assert all(l["bare"] == 0 for l in leans.values()), [(m, l["bare"]) for m, l in leans.items()]
+    assert leans[720]["beam"]["lean"] == 0 and leans[360]["beam"]["lean"] == pytest.approx(-70) and leans[1080]["beam"]["lean"] == pytest.approx(70)
+    assert leans[480]["beam"]["lean"] < leans[600]["beam"]["lean"] < 0 < leans[840]["beam"]["lean"] < leans[960]["beam"]["lean"]
+    # with the UV on too: the two interleaving, the heat's red wider and behind (warmer between the UV's beams, though the UV's violet glow along the top shows), the UV's violet crisp on top
+    # (blue over red at its places), within the cap; the union covers the whole width at every angle too
     over = got["heatOver"]
     assert over["errors"] == [] and over["looks"][0]["drawn"] < hottest["drawn"], over
     there = over["looks"][0]
     assert [s["x"] for s in there["shafts"]] == [s["x"] for s in hottest["shafts"]], there
     (hr, _, hb), (ur, _, ub) = there["atHeat"]["colour"], there["atUv"]["colour"]
-    assert ub > ur and hr / hb > 1.3 * ur / ub and there["atUv"]["alpha"] > 0.1, (there["atHeat"], there["atUv"])
+    assert ub > ur and hr / hb > 1.1 * ur / ub and there["atUv"]["alpha"] > 0.1, (there["atHeat"], there["atUv"])
+    assert there["bare"] == 0 and all(l["bare"] == 0 and l["uv"] for l in over["leans"]), (there["bare"], over["leans"])
+    # the lean through the day: a smooth curve, 70 degrees at most, no jump (under a degree a minute), the sun's side east (right of the
+    # screen): negative (down-left) in the morning, positive (down-right) in the afternoon, rising all day
+    curve = hot["sun"]["curve"]
+    assert len(curve) == 1441 and max(abs(c) for c in curve) <= 70 + 1e-9, curve[:3]
+    assert all(a <= b + 1e-9 for a, b in zip(curve, curve[1:])), "not rising through the day"
+    assert max(abs(b - a) for a, b in zip(curve, curve[1:])) < 1, "jumps"
+    assert curve[720] == pytest.approx(0, abs=1e-9) and all(c < 0 for c in curve[361:720]) and all(c > 0 for c in curve[721:1080])
+    assert curve[0] == curve[360] == pytest.approx(-70) and curve[1080] == curve[1440] == pytest.approx(70)
+    # ... by the page's own sun (sunrise 07:00, sunset 19:00: midday 13:00), going on with the page's clock (a minute in 60 s of it)
+    sun = hot["sun"]
+    assert sun["sunrise"]["lean"] == pytest.approx(-70) and sun["midday"]["lean"] == pytest.approx(0, abs=1e-9), sun
+    assert sun["later"]["minutes"] == pytest.approx(781, abs=0.05) and sun["later"]["lean"] > 0, sun["later"]
+    assert sun["ignored"]["rise"] == 420 and sun["ignored"]["set"] == 1140, sun["ignored"]   # (a "day" that ends before it begins: ignored)
 
 def clean_glass(marks):
     """Nothing on the glass (Sky.state().humidity.marks()): no trail, no stain on its canvas, no bead, no fog"""

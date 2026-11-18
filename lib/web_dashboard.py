@@ -26,7 +26,10 @@
     {"change": hPa, "way": "up", "down" or "steady"}, the file's newest reading less its reading nearest an hour before it; null with
     no reading about an hour old: tendency()), and
     the gust now (`gust`, km/h: over 99, a new
-    reading sends a cow, a barn or a chicken across behind the tiles);
+    reading sends a cow, a barn or a chicken across behind the tiles), and the sun (`sun`: {rise, set, now}, minutes since the station's
+    local midnight, DST included: today's sunrise and sunset from the forecast (Open-Meteo's daily ones, in the station's zone), 06:00 and
+    18:00 without them, and the station's clock now), for the sky's UV and heat beams to lean with the time of day by the station's clock,
+    not the viewer's own (sun_of());
   - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading or the
     air sensor's latest change, told by the server's own change detection for ecobot://now/weather and ecobot://now/air
     (EcobotServer.publish_changes: nothing is fetched for it), so the page fetches the data again and moves its gauges in place. A
@@ -93,6 +96,32 @@ TENDENCY_READ = 90 * 60     # ... read from this long before now (the newest mor
 TENDENCY_STEADY = 0.3       # ... a change under this (hPa) either way: steady (no arrow)
 RED_HANDS = {g.title: "Gust" if g.gust else "Max" for g in GAUGES if g.high_hand}   # the dials with a red hand at today's highest,
 # and the column of their table whose Daily figure it is (the Wind's: its highest gust)
+
+
+SUN_FALLBACK = (6 * 60, 18 * 60)   # sunrise and sunset (minutes since midnight) when the forecast gives none
+
+
+def minutes_of(when: datetime) -> float:
+    """Minutes since that local midnight (the time of day, seconds a fraction), to a hundredth."""
+    return round(when.hour * 60 + when.minute + when.second / 60, 2)
+
+
+def sun_of(forecast, now: datetime) -> dict:
+    """{rise, set, now}: minutes since the station's local midnight (`now`: the station's time, in its zone: the clock's DST in it): today's
+    sunrise and sunset from the forecast's day for that date (Open-Meteo's, as ISO local times), 06:00 and 18:00 with no forecast, none for
+    today, or times that don't make a day (set not after rise)."""
+    rise, set_ = SUN_FALLBACK
+    for day in (getattr(forecast, "days", None) or []):
+        if day.get("date") != now.date():
+            continue
+        try:
+            found = [minutes_of(datetime.fromisoformat(day[k])) for k in ("sunrise", "sunset")]
+        except (KeyError, TypeError, ValueError):
+            break
+        if found[0] < found[1]:
+            rise, set_ = found
+        break
+    return {"rise": rise, "set": set_, "now": minutes_of(now)}
 
 
 def readings_of(live: dict | None, indoor: bool = True) -> tuple | None:
@@ -187,7 +216,7 @@ class WebDashboard:
 
     # ---------- the data ----------
     async def data(self) -> dict:
-        """{as_of, devices, tiles, look, rain_rate, gust, today_highs}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
+        """{as_of, devices, tiles, look, rain_rate, gust, today_highs, sun}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
         (fetch off): an open request on the LAN never asks the station (the keep-warm keeps the live reading, and the events come from it)."""
         tool = self.server.service.get("current")
         result = json.loads(await tool.call(gauge_sheet.call(), {"fetch": False})) if tool else {"error": "no current"}
@@ -201,7 +230,8 @@ class WebDashboard:
                 tile["tendency"] = await self.tendency()
         out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": tiles, "look": look(),
                "rain_rate": rain_rate_of(result, live), "gust": now_of(result, live, GUST),
-               "today_highs": today_highs(sheet.tiles if sheet else [])}
+               "today_highs": today_highs(sheet.tiles if sheet else []),
+               "sun": sun_of(getattr(self.server.ctx, "forecast", None), datetime.now(self.server.ctx.zone))}
         if sheet is None:
             out["unavailable"] = (result.get("unavailable") or {}).get("station") or NOT_ANSWERING
         return out

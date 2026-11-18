@@ -121,11 +121,13 @@ class Forecast(Source):
     async def _open_meteo(self) -> list[dict]:
         lat, lon = self.location
         d = await self._json(OPEN_METEO, latitude=lat, longitude=lon, timezone=str(self.tz),
-                             daily="temperature_2m_min,temperature_2m_max,precipitation_probability_max,weather_code")
+                             daily="temperature_2m_min,temperature_2m_max,precipitation_probability_max,weather_code,sunrise,sunset")
         dd = d["daily"]
+        # (sunrise and sunset: local ISO times, "2026-11-18T05:52", the dashboard's sky leans its beams with them; left out when not given)
+        sun = [{k: dd[k][i] for k in ("sunrise", "sunset") if dd.get(k) and dd[k][i]} for i in range(len(dd["time"]))]
         return [
             {"date": date.fromisoformat(dd["time"][i]), "min_c": dd["temperature_2m_min"][i], "max_c": dd["temperature_2m_max"][i],
-             "summary": WMO.get(dd["weather_code"][i], ""), "rain_chance_pct": dd["precipitation_probability_max"][i]}
+             "summary": WMO.get(dd["weather_code"][i], ""), "rain_chance_pct": dd["precipitation_probability_max"][i], **sun[i]}
             for i in range(len(dd["time"]))]
 
     async def _ensemble(self, days: int) -> dict[date, int]:
