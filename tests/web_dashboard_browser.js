@@ -1951,6 +1951,20 @@ const sunLook = async (page) => {
   out.bakes.resized = await inPage(() => { Sky.advance(3); return { baked: Sky.state().heat.bakes, size: Sky.state().heat.size }; });
   await page.setViewportSize({ width: 640, height: 480 });
   await page.waitForTimeout(700);
+  // a very wide window (1600 x 400, W / H about 4): the summer day's arc, its disc whole all day
+  await page.setViewportSize({ width: 1600, height: 400 });
+  await page.waitForTimeout(700);
+  out.wide = await inPage((DAY) => {
+    const [rise, set, noon] = DAY, rows = [];
+    for (let m = Math.floor(rise) - 30; m <= set + 30; m += 5) {
+      __day(rise, set, noon, m); Sky.advance(1);
+      const st = Sky.state(), s = st.heat.sun;
+      rows.push({ m, day: s.day, x: s.x, y: s.y, r: s.r, t: s.t, size: st.heat.size });
+    }
+    return rows;
+  }, DAYS.summer);
+  await page.setViewportSize({ width: 640, height: 480 });
+  await page.waitForTimeout(700);
   await inPage(() => { Sky.setSunPosition(null, null); Sky.setSun({ rise: 360, set: 1080, now: 720 }); Sky.setTime(720); Sky.advance(3); });   // (the page's own day again)
   return out;
 };
@@ -2642,7 +2656,7 @@ const WEATHER = {
     out.nothing = { ...await weatherSeen(page), frames: await framesIn(page, 800), ink: await canvasInk(page) };
     // each mark: just short of it, then at it
     const marks = { rain: [{ rain_rate: 0 }, { rain_rate: 0.1 }], haze: [{ "AQI": 50 }, { "AQI": 51 }],
-                    uv: [{ "UV index": 6 }, { "UV index": 6.1 }], humidity: [{ Humidity: 89.9 }, { Humidity: 90 }],
+                    uv: [{ "UV index": 6.2 }, { "UV index": 6.3 }], humidity: [{ Humidity: 89.9 }, { Humidity: 90 }],
                     wind: [{ Wind: 15 }, { Wind: 15.1 }], heat: [{ Temperature: 34.9 }, { Temperature: 35 }],
                     ice: [{ Temperature: 0.1 }, { Temperature: -0.1 }], iceAtZero: [{ Temperature: 0 }, { Temperature: -0.1 }],
                     flood: [{ flood: 0.049 }, { flood: 0.05 }] };

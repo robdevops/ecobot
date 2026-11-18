@@ -64,9 +64,9 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | A14 | Leaf pace scale `k` from the wind speed | 3.3 | TUNED |
 | H1 | Haze band from AQI band edges; its opacity from PM2.5 (Beer-Lambert) | 4.1 | REAL-MODEL |
 | H2 | Haze texture, tint, palette, motes | 4.1 | ARTISTIC |
-| H3 | Heat level, colour ramp by heat, core strength, wash reach | 4.2 | TUNED |
-| H4 | Heat's ember surface, rim, halo, glow band and wobble, ember wash (the beams' lean itself is S3) | 4.2 | ARTISTIC |
-| H5 | UV trigger (UV index 11 and above) | 4.3 | REAL-MODEL |
+| H3 | Heat level (`0.3 + 0.7 (T - 35)/8`), the disc's colour ramp by heat, the halo's and ring's strength `hb`, the ember bloom's strength `bI` (0.62) and its colour read `0.6 + 0.4h` | 4.2 | TUNED |
+| H4 | Heat's disc surface, rim, halo, orange ring and the ember bloom's outline (0.3 W by 0.24 W) and wobble (the beams' lean itself is S3) | 4.2 | ARTISTIC |
+| H5 | UV trigger (fades in from UV index 6, once the violet shows, to full at 11) | 4.3 | TUNED |
 | H6 | Ice reach, growth and melt rates | 4.4 | TUNED |
 | H7 | Ice crystal forms | 4.4 | ARTISTIC |
 | H8 | Flood trigger: a leaky-bucket runoff model on the server (tau 30 min, runoff share 0.5, full 15 mm) | 4.5 | REAL-APPROX |
@@ -125,9 +125,9 @@ Count per label (counted from the table above):
 
 | Label | Groups |
 |---|---|
-| REAL-MODEL | 20 |
+| REAL-MODEL | 19 |
 | REAL-APPROX | 18 |
-| TUNED | 31 |
+| TUNED | 32 |
 | ARTISTIC | 12 |
 | Total | 81 |
 
@@ -169,7 +169,7 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Effect levels | `conditionsOf` :5676 | rain: 0 if rate is 0, else `0.3 + 0.7*min(1, rate/8)` (mm/h). haze: the number of AQI edges [50, 100, 150, 200, 300] below the AQI (0 to 5; the tile's own bounds if given; with no AQI, the PM2.5 breakpoints 9, 35.4, 55.4, 125.4, 225.4 against `data.pm25`): the band only picks the baked pattern, the opacity and tint follow PM2.5 (the haze table). uv: `clamp((UVI - 6)/5, 0, 1)` (none at 6 or under, full at 11). humidity: 0 when not fogging, else `max(0.05, min(1, (RH - 90)/10))` (so 0.05 while held between 85 and 90 %). wind: 1 if wind is above 15 km/h (the reading, not the gust). heat: 0 below 35 C, else `0.3 + 0.7*min(1, (T - 35)/8)`. ice: `-T` if T is below 0 (degrees below zero). flood: the server's bucket depth `data.flood.depth` (0-1) when it is 0.05 or more (`FLOOD_SHOW`), else 0 (no hysteresis; see the flood trigger) | TUNED | The thresholds come from real category names (UVI 11 is WHO "extreme"; 15 km/h is mid-Beaufort 3), but the ramps are linear and chosen by look. Rain saturates at 8 mm/h, so 8 and 30 mm/h look the same. Hysteresis on the humidity (on from 90 %, off below 85 %) is held in the page (`fogging`, :5431), so a reading near the edge does not toggle the effect; the flood has none (the bucket is slow itself). |
+| Effect levels | `conditionsOf` :5676 | rain: 0 if rate is 0, else `0.3 + 0.7*min(1, rate/8)` (mm/h). haze: the number of AQI edges [50, 100, 150, 200, 300] below the AQI (0 to 5; the tile's own bounds if given; with no AQI, the PM2.5 breakpoints 9, 35.4, 55.4, 125.4, 225.4 against `data.pm25`): the band only picks the baked pattern, the opacity and tint follow PM2.5 (the haze table). uv: `clamp((UVI - 6)/5, 0, 1)`, 0 until the violet shows (about UVI 6.24; full at 11). humidity: 0 when not fogging, else `max(0.05, min(1, (RH - 90)/10))` (so 0.05 while held between 85 and 90 %). wind: 1 if wind is above 15 km/h (the reading, not the gust). heat: 0 below 35 C, else `0.3 + 0.7*min(1, (T - 35)/8)`. ice: `-T` if T is below 0 (degrees below zero). flood: the server's bucket depth `data.flood.depth` (0-1) when it is 0.05 or more (`FLOOD_SHOW`), else 0 (no hysteresis; see the flood trigger) | TUNED | The thresholds come from real category names (UVI 11 is WHO "extreme"; 15 km/h is mid-Beaufort 3), but the ramps are linear and chosen by look. Rain saturates at 8 mm/h, so 8 and 30 mm/h look the same. Hysteresis on the humidity (on from 90 %, off below 85 %) is held in the page (`fogging`, :5431), so a reading near the edge does not toggle the effect; the flood has none (the bucket is slow itself). |
 | Wind side | `windSideOf` :5456 | direction in (0, 180) gives leftward (-1); in (180, 360) gives rightward (+1); 0, 180, 360 or no reading keeps the last side | REAL-APPROX | Correct sign for a dial with east on the right: wind from the east blows toward the west. Only the side counts; 91 and 179 degrees behave the same. |
 | Direction easing | `steer`, `DIR_S` 4 s | `p` slides to its target at rate `2/DIR_S`; `f = sin(p*pi/2)`; the side flips when f crosses 0 and sprites are mirrored | ARTISTIC | |
 | Particle budget | `BUDGET` :289, `tick()` | budget = `W*H/400` particles (480 x 300 gives 360); `share = min(1, budget / sum of needs)`; each effect gets `round(need*share)`; humidity has its own limits; rain's count is the plain budget at every slant | TUNED | A performance and legibility cap. Max rain alone: need 360, exactly the budget. |
@@ -230,7 +230,7 @@ The heat is a small granulated sun on a clean arc across the window, drawn with 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
 | Day fraction | `beamState` | `t = (minutes - rise) / (set - rise)`, from the station's real sunrise and sunset (section 2.2); nothing is drawn for `t` under 0 or over 1, or with the sun's elevation under -1 degree | REAL-MODEL | The sun is drawn only in daylight, from sunrise (`t = 0`) to sunset (`t = 1`). |
-| Arc | `arcOf`; `SUN_X` 0.42, `SUN_Y` 0.30, `SUN_RY0` 0.04, `SUN_RY1` 0.12 | `x = W/2 - 0.42 W cos(pi t)`, `y = 0.30 H - ry sin(pi t)`, `ry = H (0.04 + 0.12 sin(noonEl))`; never clamped; the disc stays whole in the window | REAL-APPROX | Sunrise at the left and sunset at the right (the picture's convention, not the compass dial's), higher when the day's noon elevation is higher. A real sun's path is not an ellipse and its disc is half a degree wide: the picture is not to scale. |
+| Arc | `arcOf`; `SUN_X` 0.42, `SUN_Y` 0.30, `SUN_RY0` 0.04, `SUN_RY1` 0.12 | `x = W/2 - 0.42 W cos(pi t)`, `y = 0.30 H - ry sin(pi t)`, `ry = H (0.04 + 0.12 sin(noonEl))`; `ry` eased down smoothly (never a flat clamp) once `0.30 H - R - 2` (art px) of room above the arc's feet is nearly used: `ry` is kept up to `0.7` of that room, above it `ry = 0.7 room + 0.3 room tanh((ry - 0.7 room)/(0.3 room))`; the disc stays whole in the window at any aspect ratio | REAL-APPROX | Sunrise at the left and sunset at the right (the picture's convention, not the compass dial's), higher when the day's noon elevation is higher. A real sun's path is not an ellipse and its disc is half a degree wide: the picture is not to scale. |
 | Noon elevation | `noon_el` of `sun_of`; `SUN_NOON_EL` 50 | the sun's elevation at solar noon (the middle of rise and set) at the station's latitude and longitude, degrees; 50 with no location | REAL-MODEL | From S1. |
 | Heat 0 to 1 | `heat.level` | `h = 0.3` at 35 C to `1` at 43 C (the level is `0.3 + 0.7 (T - 35)/8`); 0.3 where only the UV is on | TUNED | Linear and chosen. Nothing relates it to heat's effect on a person. |
 | Disc | `render`; `DISC_RAMP`, 20 shades | value `cV - (cV - lV) rho^2.4 + 0.075 (c - 0.5) 2 mod (0.4 + 0.6 rho) + 0.05 exp(-q/2.2)`, `cV = 0.84 + 0.16h`, `lV = 0.3 + 0.36h`, `rho` the distance from the centre over `R`, `c` two octaves of value noise warped by slow noise, `mod = 0.75 + 0.25 gm sin(2a + phase + 4c)`, `a = 2 pi t / 20`; the rim row at least `0.7 + 0.26h`; on the ramp white-hot (255, 250, 225) at 1 down through pale yellow to orange | ARTISTIC | A real sun is granulated and limb-darkened (cooler at the edge): the centre brighter than the limb is the real cue; the colours and the dependence on `h` (a yellow-orange ember at 35 C, near white at 43 C) are chosen by eye. |
@@ -243,7 +243,7 @@ The heat is a small granulated sun on a clean arc across the window, drawn with 
 
 | Name | Where | Formula | Label | Faithful? |
 |---|---|---|---|---|
-| Trigger | `conditionsOf`; `UV_NONE` 6, `UV_FULL` 11 | the effect's level is `(UVI - 6)/5` clamped to 0..1: none at 6 or under; the violet's amount `(0.3 + 0.7 uvn) smoothstep(6, 7.5, UVI)`, `uvn = clamp((UVI - 6)/5, 0, 1)`, full at 11; the beams' reach `0.6 + 0.4 uvn` of their longest | TUNED | 11 and above is the WHO "extreme" category; the rise from 6 ("high") is chosen. |
+| Trigger | `Sky.uvLevel` (called by `conditionsOf`); `UV_FROM` 6, `UV_TO` 11, `UV_SEEN` 0.02 | the effect's level is `(UVI - 6)/5` clamped to 0..1, but 0 until the violet's amount reaches `UV_SEEN` (about UVI 6.24), so the red frame and "stop" come only when there is something to see; the violet's amount `(0.3 + 0.7 uvn) smoothstep(6, 7.5, UVI)`, `uvn = clamp((UVI - 6)/5, 0, 1)`, full at 11; the beams' reach `0.6 + 0.4 uvn` of their longest | TUNED | 11 and above is the WHO "extreme" category; the rise from 6 ("high") is chosen. |
 | Beams, lean, glow | section 2.2 | | REAL-APPROX / ARTISTIC | See 2.2. |
 
 ### 4.4 Ice and frost (~3240-3600)

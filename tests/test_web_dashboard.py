@@ -233,6 +233,8 @@ async def test_the_data_carries_the_sun_sunrise_sunset_and_the_time_now_by_the_s
     assert (day["rise"], day["set"]) == (0, 1440) and day["el"] > 0, day
     night = web_dashboard.sun_of(datetime(2026, 12, 21, 12, 0, tzinfo=timezone.utc), (80.0, 0.0))
     assert night["rise"] is None and night["set"] is None and night["el"] < 0, night
+    assert "noon_el" not in night and "noon_el" not in web_dashboard.sun_of(datetime(2026, 12, 21, 12, 0, tzinfo=timezone.utc)), "no noon elevation in polar night or with no location"
+    assert day["noon_el"] > 0 and summer["noon_el"] > 60 and winter["noon_el"] < 35, (day, summer, winter)
 
 
 async def test_the_sun_carries_its_real_azimuth_and_elevation_at_the_stations_location_and_clock_and_none_without_a_location(server, station):
@@ -2760,7 +2762,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     started_afresh(frost["restarted"], "ice")
     assert frost["restarted"]["frost"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["restarted"]
     # the sun (?fx=heat,uv): a small granulated disc (radius 0.042 W) on a clean elliptical arc from sunrise to sunset, x = W / 2 - 0.42 W
-    # cos(pi t), y = 0.30 H - ry sin(pi t), ry = H (0.04 + 0.12 sin(noon elevation)), never clamped or cut; nothing outside daylight
+    # cos(pi t), y = 0.30 H - ry sin(pi t), ry = H (0.04 + 0.12 sin(noon elevation)) (eased down at a very wide window), never cut; nothing outside daylight
     hot = got["heat"]
     assert hot["errors"] == [], hot["errors"]
     assert sorted(hot["arcs"]) == ["equinox", "summer", "winter"], sorted(hot["arcs"])
@@ -2784,6 +2786,16 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             a1, a2 = math.atan2(q["y"] - p["y"], q["x"] - p["x"]), math.atan2(s["y"] - q["y"], s["x"] - q["x"])
             turns.append(abs(a2 - a1))
         assert max(turns) < 0.35, (day, max(turns))
+    # a very wide window (1600 x 400): the arc's height eased down so the disc stays whole at any aspect ratio, still an ellipse (the
+    # path rising and falling smoothly, symmetric about noon, the same x as before)
+    wide = [r for r in hot["wide"] if r["day"]]
+    w, h = wide[0]["size"]
+    assert w / h > 3.5 and len(wide) > 100, (w, h)
+    assert all(r["x"] - r["r"] >= 0 and r["x"] + r["r"] <= w and r["y"] - r["r"] > 1 and r["y"] + r["r"] <= h for r in wide), min(r["y"] - r["r"] for r in wide)
+    top = min(wide, key=lambda r: r["y"])
+    assert 0.2 < top["t"] < 0.8 and top["y"] - top["r"] < 0.25 * h, top                                  # (still climbing: not flattened)
+    assert all(r["x"] == pytest.approx(w / 2 - 0.42 * w * math.cos(math.pi * r["t"]), abs=1e-6) for r in wide)
+    assert max(abs(a["y"] - b["y"]) for a, b in zip(wide, wide[::-1])) < 0.02 * h                         # (symmetric about solar noon)
     summer_ry, winter_ry = (min(r["y"] for r in hot["arcs"][d] if r["day"]) for d in ("summer", "winter"))
     assert summer_ry < hot["arcs"]["equinox"][len(hot["arcs"]["equinox"]) // 2]["y"] and summer_ry < winter_ry, (summer_ry, winter_ry)   # (higher in summer)
     # ... nothing drawn at night, the sun up at midday

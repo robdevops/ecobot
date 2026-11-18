@@ -1040,7 +1040,7 @@ const Sky = (() => {
   // The place. The day fraction t = (time - sunrise) / (sunset - sunrise) of the station's own day (the page's `sun`: rise, set, now),
   // 0 at sunrise to 1 at sunset; the disc is at x = W / 2 - 0.42 W cos(pi t), y = 0.30 H - ry sin(pi t), ry = H (0.04 + 0.12 sin(noon
   // elevation)): a clean elliptical arc from the left to the right, higher in summer (the noon elevation: the page's `sun`.noon_el,
-  // 50 degrees without one), never clamped or cut, the disc (radius 0.042 W) always whole in the window. Nothing is drawn outside
+  // 50 degrees without one), its height eased down smoothly (never a flat clamp) once the window is so wide that the disc would touch the top, so the disc (radius 0.042 W) is always whole in the window. Nothing is drawn outside
   // daylight (t under 0 or over 1, or the sun's real elevation under -1 degree).
   // The disc: white-hot at the centre through pale yellow to orange at the limb, a thin bright rim, a subtle granulation drifting and
   // warping slowly (never a dark centre); the cooler the heat, the lower it all sits on the ramp (a yellow-orange ember at 35 C, near
@@ -1048,7 +1048,7 @@ const Sky = (() => {
   // elliptical ember bloom, both scaled by the heat, their outlines wobbling. The heat's h is its level: 0.3 at 35 C to 1 at 43 C
   // (0.3 where only the UV is on).
   // The UV: NB = 12 thick beams spaced 30 degrees all round the sun (each a little off its place, and its length 0.9 to 1.1 times), each
-  // 1.3 sun diameters wide at its base (0.915 to 1.07 times that) and widening along its length (to 3.3 times at its end), blunt-ended: no
+  // 1.3 sun diameters wide at its base (0.93 to 1.07 times that) and widening along its length (to 3.3 times at its end), blunt-ended: no
   // taper, its brightness falling smoothly to zero over the last 60 % of its length (BEAM_FADE, a cosine to the 1.35th power, whose
   // first and last slopes are zero: no end edge shows), a flat core with a soft dithered edge, a brighter edge line and a few streaks
   // inside, and a hot pink-white root at the sun. The ones nearest the sun's real direction, the beams' lean (beamState().lean: -atan(sin
@@ -1057,7 +1057,7 @@ const Sky = (() => {
   // length 0.2 + 0.8 k and brightness 0.3 + 0.7 k of the most. Where beams cross they add (soft: 1 - exp(-1.6 v)), at most the violet's
   // top; they fade out near the window's edges over BEAM_EDGE (34 art px, or 0.15 of the narrower side if less); and where the orange
   // flare is lit the violet is held back (by up to 55 %), so the heat stays orange.
-  // The UV amount, from the UV index (the effect's level is (UV - 6) / 5, 0 below UV 6 and 1 from UV 11): no beams under UV 6; the
+  // The UV amount, from the UV index (the effect's level is (UV - 6) / 5, 0 below UV 6 and 1 from UV 11, and 0 until the violet shows, about UV 6.24: Sky.uvLevel): no beams under UV 6; the
   // violet rises with uvn = clamp((UV - 6) / 5, 0, 1) as (0.3 + 0.7 uvn) smoothstep(6, 7.5, UV); the reach 0.6 + 0.4 uvn of its full 0.8 H.
   // The cost. Everything the window's size and the sun's place alone decide is made once (bakeSun, again when the size changes or the
   // sun has moved a quarter art pixel: each disc and halo pixel's distance, angle and steady parts, the bloom's, the beams' mask of
@@ -1069,7 +1069,7 @@ const Sky = (() => {
   const SUN_EVERY = 0.09, SUN_STEP = 0.25;                  // (s; art px: the sun's place kept to this)
   const SUN_STRENGTH = 1;
   const BEAMS_N = 12, BEAM_BW = 1.3, BEAM_LOBE = 0.6, BEAM_WK = 2.3, BEAM_EDGE = 34, BEAM_REACH = 0.8, BEAM_FADE = 0.4;
-  const UV_FROM = 6, UV_TO = 11, UV_SOFT = 7.5;            // (the UV index: none below, full from, and the violet's first rise)
+  const UV_FROM = 6, UV_TO = 11, UV_SOFT = 7.5, UV_SEEN = 0.02;   // (the UV index: none below, full from, and the violet's first rise; the least amount that shows: the mark)
   const SUN_LEVELS = {disc: 20, flare: 12, violet: 10};
   const lcg = (s) => () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
   const soft = (a, b, x) => { const u = clamp((x - a) / (b - a), 0, 1); return u * u * (3 - 2 * u); };
@@ -1129,9 +1129,19 @@ const Sky = (() => {
   // The UV's amount from the effect's level: uvn and the violet's strength
   const uvIndexOf = (level) => UV_FROM + (UV_TO - UV_FROM) * clamp(level, 0, 1);
   const uvAmount = (level) => { const uvn = clamp(level, 0, 1); return {uvn, amp: (0.3 + 0.7 * uvn) * soft(UV_FROM, UV_SOFT, uvIndexOf(uvn))}; };
+  // The effect's level for a UV index: (UV - UV_FROM) / (UV_TO - UV_FROM) clamped to 0..1, but 0 until the violet's amount shows (UV_SEEN: about
+  // UV 6.24), so the effect's mark (the red frame, "stop") is called for only when there is something to see
+  const uvLevel = (uvi) => {
+    const level = clamp((uvi - UV_FROM) / (UV_TO - UV_FROM), 0, 1);
+    return Number.isFinite(level) && level > 0 && uvAmount(level).amp >= UV_SEEN ? level : 0;
+  };
   // The sun's place on its arc at the day fraction t, in art px
   const arcOf = (t, noonEl, w, h) => {
-    const ry = h * (SUN_RY0 + SUN_RY1 * Math.sin(clamp(noonEl, 0, 90) * Math.PI / 180));
+    let ry = h * (SUN_RY0 + SUN_RY1 * Math.sin(clamp(noonEl, 0, 90) * Math.PI / 180));
+    // (a wide window: the arc's height eased down, smoothly and still an ellipse, to keep the disc's top inside the window: ry stays
+    // as it is up to 0.7 of the room above the arc's feet (less the disc and 2 art px), then tends to that room)
+    const room = Math.max(0, SUN_Y * h - SUN_R * w - 2), knee = 0.7 * room;
+    if (ry > knee) ry = knee + (room - knee) * Math.tanh((ry - knee) / Math.max(room - knee, 1e-6));
     return {x: w / 2 - SUN_X * w * Math.cos(Math.PI * t), y: SUN_Y * h - ry * Math.sin(Math.PI * t)};
   };
   const sunNow = () => {   // the sun on the window now: {day, t, x, y, r, noonEl, el}
@@ -4419,7 +4429,7 @@ const Sky = (() => {
   }
 
   const running = () => DRIVEN ? animate && alive() : !!frame;
-  return {set, fling, tilt, level, setSun, setTime, setSunPosition, setWind, setWindSpeed, setRainRate, setPm25, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
+  return {set, fling, tilt, level, uvLevel, setSun, setTime, setSunPosition, setWind, setWindSpeed, setRainRate, setPm25, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
           advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
           clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: running(), frames, cost, clock, size: [W, H, P],
@@ -5677,7 +5687,6 @@ const Sky = (() => {
   // The humidity's fog has a hysteresis, so a reading hovering at its mark doesn't toggle it with each fetch: on from 90 % and kept on down
   // to 85 % (off below that). The state is the page's, from the data it has fetched (a page load starts with the plain mark); a tile with
   // no reading now clears it. The flood has none: its depth is the server's leaky bucket, which moves slowly itself.
-  const UV_NONE = 6, UV_FULL = 11;   // (the UV index: no beams at or below 6, the effect's level (UV - 6) / 5 up to 1 at 11)
   const FOG_ON = 90, FOG_OFF = 85, FLOOD_SHOW = 0.05;   // (the flood shows from a depth of 0.05 of full)
   const PM25_EDGES = [9, 35.4, 55.4, 125.4, 225.4];     // (the EPA's 2024 PM2.5 breakpoints: a band where the AQI tile gives none)
   let fogging = false;
@@ -5696,7 +5705,7 @@ const Sky = (() => {
     fogging = humidity !== null && (humidity >= FOG_ON || (fogging && humidity >= FOG_OFF));
     return {rain: rate > 0 ? 0.3 + 0.7 * Math.min(1, rate / 8) : 0,
             haze: aqi !== null ? Math.min(5, bands.filter((b) => aqi > b).length) : pm25 !== null ? PM25_EDGES.filter((b) => pm25 > b).length : 0,
-            uv: uvi !== null && uvi > UV_NONE ? Math.min(1, (uvi - UV_NONE) / (UV_FULL - UV_NONE)) : 0,
+            uv: uvi !== null ? Sky.uvLevel(uvi) : 0,   // (the sun's own: 0 until the violet shows, then (UV - 6) / 5 to 1 at 11)
             humidity: fogging ? Math.max(0.05, Math.min(1, (humidity - 90) / 10)) : 0,
             wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 0.3 + 0.7 * Math.min(1, (temperature - 35) / 8) : 0,
             ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: depth >= FLOOD_SHOW ? depth : 0};
