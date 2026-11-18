@@ -1604,7 +1604,7 @@ EFFECTS = {"rain": "Rain", "haze": "AQI", "uv": "UV index", "humidity": "Humidit
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over", "direction"}
+DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over", "direction", "uturn"}
 
 
 async def weather(server, part: str) -> dict:
@@ -3088,11 +3088,12 @@ async def test_the_winds_side_follows_the_wind_direction_reading_east_leftward_w
     assert got["readings"] == [[180, -1], [90, -1], [270, 1], [0, 1], [180, 1], [360, 1], [359.5, 1], [0.5, -1], [270, 1], [None, 1],
                                [180, 1], [45, -1], [315.5, 1], [360, 1], [179.5, -1], [180.5, 1]], got["readings"]
     # a flip: the factor from -1 to +1 over about 4 s, never more than a frame's smooth step, the side changing as it crosses 0 (once),
-    # the leaves' mean speed across going from leftward through none to rightward; and back again
+    # the leaves' mean speed across going from leftward to rightward (those in an eddy veering round, see the next test); and back again
     flip = got["flip"]
     assert flip["first"] == -1 and flip["last"] == 1 and flip["flips"] == 1 and flip["sides"] == [-1, 1] and flip["monotonic"], flip
     assert flip["maxStep"] < 0.03 and 3.5 <= flip["seconds"] <= 4.6, flip
-    assert flip["vx"][0] < -10 and abs(flip["vx"][1]) < 12 and flip["vx"][2] > 10, flip
+    # (the leaves' mean speed across: leftward, then rightward: those in an eddy veer round rather than stop, so not calm in between)
+    assert flip["vx"][0] < -10 and flip["vx"][2] > 10, flip
     assert got["flipBack"]["maxStep"] < 0.03 and got["flipBack"]["last"] == -1, got["flipBack"]
     # the wind alone, blowing rightward: the exact mirror of leftward, the streaks, the leaves in their sprites mirrored
     mirror = got["mirrorWind"]
@@ -3128,3 +3129,38 @@ async def test_the_winds_side_follows_the_wind_direction_reading_east_leftward_w
     assert gust["chickenWest"]["to"] == 1 and gust["chickenWest"]["x1"] > gust["chickenWest"]["x0"], gust["chickenWest"]
     # everything on, the wind turning back and forth under it: no error, each effect still on
     assert got["busy"]["flips"] == 3 and got["busy"]["dir"] == 1 and {"haze", "rain", "wind", "flood"} <= set(got["busy"]["effects"]), got["busy"]
+
+
+@needs_browser
+async def test_when_the_wind_turns_its_eddies_swirl_on_undisturbed_and_the_leaves_in_them_veer_round_in_a_u_up_then_down_while_the_rest_reverse_along_their_line(server, station):
+    got = await weather(server, "uturn")
+    if os.environ.get("SKY_UTURN_DUMP"):   # (the paths, for a picture of them)
+        Path(os.environ["SKY_UTURN_DUMP"]).write_text(json.dumps(got))
+    # the eddy's swirl, through a turn (the wind from one side to the other): the same way round, the same strength and the same
+    # velocity at each point, whichever side the wind has: the flip doesn't touch it (the turbulence off; and on, the eddy's eye the same way)
+    swirl = got["swirl"]
+    assert swirl["sides"] == [-1, 1] and swirl["factors"] == [-1, 1], swirl
+    for name in ("east", "north"):
+        assert 0.9 <= swirl[name]["ratio"][0] <= swirl[name]["ratio"][1] <= 1.1 and swirl[name]["drift"] < 0.1 and swirl[name]["v0"] > 30, swirl[name]
+    assert swirl["sense"]["east"][0] == swirl["sense"]["east"][1] != 0 and swirl["sense"]["north"][0] == swirl["sense"]["north"][1] != 0, swirl["sense"]
+    assert swirl["sense"]["eye"][0] == swirl["sense"]["eye"][1] != 0 and 0.9 <= swirl["sense"]["eyeRatio"][0] <= swirl["sense"]["eyeRatio"][1] <= 1.1, swirl["sense"]
+    assert swirl["rough"][0] == swirl["rough"][1] != 0, swirl["rough"]
+    # a leaf in the eddy, over three turns (left to right, back, and right again): its mean wind veers, its heading turning through 180
+    # degrees, never slowing below 60 % of its speed, through up (the first turn), down (the second), up again (the third)
+    assert [t["veerSide"] for t in got["leaf"]] == [1, -1, 1], got["leaf"]
+    for turn, up in zip(got["leaf"], (True, False, True)):
+        assert turn["eddy"][0] > 0.9, turn   # (in the eddy throughout)
+        assert turn["speeds"][0] >= 0.6 * turn["speeds"][1] and turn["speeds"][2] <= 1.4 * turn["speeds"][1], turn
+        assert turn["total"] == pytest.approx(math.pi, abs=0.1) and abs(turn["signed"]) == pytest.approx(math.pi, abs=0.1), turn   # (turning one way)
+        assert (turn["pathY"][0] < -30) if up else (turn["pathY"][1] > 30), turn   # (its mean's path bulging up on screen, or down)
+        assert turn["sides"] in ([-1, 1], [1, -1]) and turn["meanXs"][0] * turn["meanXs"][1] < 0, turn   # (and ending the other way)
+    # a leaf in no eddy: its mean wind reverses along its line (no sideways), through calm, as before
+    for turn, sign in zip(got["straight"], (1, -1)):
+        assert turn["eddy"] == 0 and turn["ys"] < 1e-6 and sign * turn["xs"][0] < -10 and sign * turn["xs"][2] > 10 and abs(turn["xs"][1]) < 2, turn
+    # a leaf in a weak eddy: half veering, half straight: the two blended by how much of an eddy it is in
+    assert 0.35 < got["half"]["strength"] < 0.65, got["half"]
+    assert sum(0.15 < r["w"] < 0.85 for r in got["blend"]) > 100, [r["w"] for r in got["blend"][::30]]
+    for r in got["blend"]:
+        for axis in (0, 1):
+            assert r["mean"][axis] == pytest.approx(r["straight"][axis] + (r["veer"][axis] - r["straight"][axis]) * r["w"], abs=1e-6), r
+    assert any(r["f"] == 1 and abs(r["mean"][0] - r["straight"][0]) > 0.5 for r in got["blend"]), "it veers while the straight part has finished"

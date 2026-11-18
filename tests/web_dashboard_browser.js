@@ -3802,6 +3802,145 @@ const WEATHER = {
     await p.context.close();
     out.errors = errored.flat();
   },
+
+  // The wind turning, its eddies: the air set up by hand (Sky.lab: one eddy held still, one leaf, no random turbulence unless asked), the
+  // wind turned (Sky.setWind) and each frame recorded: the eddy's swirl (Sky.air) undisturbed, a leaf in the eddy veering through up on
+  // the first turn and down on the second, one outside any eddy reversing along its line, one in a weak eddy half and half
+  async uturn(browser, url, out) {
+    const p = await weatherPage(browser, url, { query: "?fx=wind", driven: true, context: { viewport: { width: 640, height: 480 } } });
+    await drive(p.page, 60);
+    const size = await p.page.evaluate(() => Sky.state().size);
+    const [W, H] = size;
+    out.size = size;
+    // runs `turns` flips (each to the other way, `frames` frames after a flip), recording what each frame shows
+    const run = (spec, turns, frames, watch) => p.page.evaluate(([spec, turns, frames, watch, W, H]) => {
+      Sky.setWind(-1);
+      Sky.advance(200);   // (any turn settled: leftward)
+      const lab = {
+        still: spec.still, eddy: spec.eddy && { x: spec.eddy.x * W, y: spec.eddy.y * H, r: spec.eddy.r, spin: spec.eddy.spin },
+        leaf: spec.leaf && { x: spec.leaf.x * W, y: spec.leaf.y * H, layer: spec.leaf.layer, pinned: spec.leaf.pinned },
+      };
+      Sky.lab(lab);
+      const frames_ = [];
+      let way = -1;
+      for (let turn = 0; turn < turns; turn++) {
+        way = -way;
+        Sky.setWind(way);
+        const log = [];
+        for (let i = 0; i < frames; i++) {
+          Sky.advance(1);
+          const s = Sky.state(), l = s.wind.leafStates[0];
+          const rec = { f: s.windFactor, side: s.windDir, veer: s.windVeerAngle, veerSide: s.windVeerSide, leaf: l && { ...l } };
+          for (const [name, x, y] of watch) { const a = Sky.air(x * W, y * H, 0); rec[name] = { eddy: a.eddy, curl: a.curl, strength: a.strength }; }
+          log.push(rec);
+        }
+        frames_.push(log);
+      }
+      Sky.lab(null);
+      return frames_;
+    }, [spec, turns, frames, watch, W, H]);
+    const norm = (v) => Math.hypot(v[0], v[1]);
+    // 1. the eddy's swirl (turbulence off): at points round the eye, through the flip: the same sense, the same strength, the same velocity
+    const swirl = await run({ still: true, eddy: { x: 0.5, y: 0.5, r: 36, spin: 180 } }, 2, 330,
+                            [["east", 0.5 + 36 / W, 0.5], ["north", 0.5, 0.5 - 36 / H], ["eye", 0.5, 0.5]]);
+    const all = swirl.flat();
+    const first = all[0];
+    out.swirl = {};
+    for (const name of ["east", "north"]) {
+      const v0 = norm(first[name].eddy);
+      out.swirl[name] = { curls: [Math.min(...all.map((r) => Math.sign(r[name].curl))), Math.max(...all.map((r) => Math.sign(r[name].curl)))],
+                          ratio: [Math.min(...all.map((r) => norm(r[name].eddy) / v0)), Math.max(...all.map((r) => norm(r[name].eddy) / v0))],
+                          drift: Math.max(...all.map((r) => Math.hypot(r[name].eddy[0] - first[name].eddy[0], r[name].eddy[1] - first[name].eddy[1]))) / v0, v0 };
+    }
+    // (the eddy's sense of turning: the velocity east of the eye going down or up, north of it left or right, and the curl at the eye)
+    out.swirl.sense = { east: [Math.min(...all.map((r) => Math.sign(r.east.eddy[1]))), Math.max(...all.map((r) => Math.sign(r.east.eddy[1])))],
+                        north: [Math.min(...all.map((r) => Math.sign(r.north.eddy[0]))), Math.max(...all.map((r) => Math.sign(r.north.eddy[0])))],
+                        eye: [Math.min(...all.map((r) => Math.sign(r.eye.curl))), Math.max(...all.map((r) => Math.sign(r.eye.curl)))],
+                        eyeRatio: [Math.min(...all.map((r) => r.eye.curl / first.eye.curl)), Math.max(...all.map((r) => r.eye.curl / first.eye.curl))] };
+    out.swirl.sides = [...new Set(all.map((r) => r.side))];
+    out.swirl.factors = [Math.min(...all.map((r) => r.f)), Math.max(...all.map((r) => r.f))];
+    // (and with the turbulence on, at the eye: the eddy still turns the way it turned, as the air's own turbulence is the lesser)
+    const rough = await run({ eddy: { x: 0.5, y: 0.5, r: 36, spin: 180 } }, 2, 330, [["eye", 0.5, 0.5]]);
+    out.swirl.rough = [Math.min(...rough.flat().map((r) => Math.sign(r.eye.curl))), Math.max(...rough.flat().map((r) => Math.sign(r.eye.curl)))];
+    // 2. a leaf in the eddy, over four turns (left to right and back, twice): its mean wind's heading and speed, the path of the mean, up and down
+    const leaf = await run({ still: true, eddy: { x: 0.5, y: 0.5, r: 36, spin: 180 }, leaf: { x: 0.5 + 30 / W, y: 0.5, layer: 0, pinned: true } }, 3, 330, []);
+    const turned = leaf.map((log) => {
+      const dt = 1 / 30, mean = log.map((r) => r.leaf.mean), speed = mean.map(norm);
+      const heading = mean.map((m) => Math.atan2(-m[1], m[0]));
+      let total = 0, signed = 0;
+      for (let i = 1; i < heading.length; i++) { let d = heading[i] - heading[i - 1]; d = Math.atan2(Math.sin(d), Math.cos(d)); total += Math.abs(d); signed += d; }
+      let y = 0, x = 0, upMost = 0;   // (the mean's own path: screen down positive)
+      for (const m of mean) { x += m[0] * dt; y += m[1] * dt; upMost = Math.min(upMost, y); }
+      return { veerSide: log[log.length - 1].veerSide, speeds: [Math.min(...speed), speed[0], Math.max(...speed)], total, signed,
+               pathY: [upMost, y, Math.max(...log.map((r, i) => 0))], eddy: [Math.min(...log.map((r) => r.leaf.eddy)), Math.max(...log.map((r) => r.leaf.eddy))],
+               headings: [heading[0], heading[heading.length - 1]], path: log.map((r) => [r.leaf.x, r.leaf.y]), meanXs: [mean[0][0], mean[mean.length - 1][0]],
+               sides: [...new Set(log.map((r) => r.side))] };
+    });
+    out.leaf = turned;
+    // 3. a leaf outside any eddy, going straight: its mean wind reverses along its line, through calm
+    const straight = await run({ still: true, leaf: { x: 0.5, y: 0.5, layer: 1, pinned: true } }, 2, 330, []);
+    out.straight = straight.map((log) => {
+      const mean = log.map((r) => r.leaf.mean);
+      return { eddy: Math.max(...log.map((r) => r.leaf.eddy)), ys: Math.max(...mean.map((m) => Math.abs(m[1]))), xs: [mean[0][0], Math.min(...mean.map((m) => Math.abs(m[0]))), mean[mean.length - 1][0]],
+               monotonic: mean.every((m, i) => i === 0 || (mean[0][0] < 0 ? m[0] >= mean[i - 1][0] - 1e-9 : m[0] <= mean[i - 1][0] + 1e-9)) };
+    });
+    // a free straight leaf's path, for the picture
+    const free = await run({ still: true, leaf: { x: 0.8, y: 0.5, layer: 1 } }, 2, 330, []);
+    out.freePaths = free.map((log) => log.map((r) => [r.leaf.x, r.leaf.y]));
+    // 4. a leaf in a weak eddy (pinned where its strength is about a half): its mean wind half way between the straight and the veer
+    const half = await p.page.evaluate(([W, H]) => {
+      Sky.setWind(-1); Sky.advance(200);
+      Sky.lab({ still: true, eddy: { x: 0.5 * W, y: 0.5 * H, r: 36, spin: 180 } });
+      let best = null;
+      for (let d = 30; d < 160; d += 1) {
+        const a = Sky.air(0.5 * W + d, 0.5 * H, 0);
+        if (!best || Math.abs(a.strength - 0.5) < Math.abs(best.strength - 0.5)) best = { d, strength: a.strength };
+      }
+      Sky.lab(null);
+      return best;
+    }, [W, H]);
+    out.half = half;
+    const blend = await run({ still: true, eddy: { x: 0.5, y: 0.5, r: 36, spin: 180 }, leaf: { x: 0.5 + half.d / W, y: 0.5, layer: 0, pinned: true } }, 1, 330, []);
+    out.blend = blend[0].map((r) => ({ w: r.leaf.eddy, f: r.f, mean: r.leaf.mean, straight: r.leaf.straight, veer: r.leaf.veer }));
+    await p.context.close();
+    // 5. the paths: on a wider window, a leaf in a drifting eddy through a turn (the first: up; and the second: down) and a leaf in none
+    // (two turns), each frame's place, the eddy's too (for a picture of them)
+    const q = await weatherPage(browser, url, { query: "?fx=wind", driven: true, context: { viewport: { width: 1400, height: 720 } } });
+    await drive(q.page, 60);
+    out.paths = await q.page.evaluate(() => {
+      const [W, H] = Sky.state().size, r = { size: [W, H], turns: [], straight: [] };
+      const settle = (way) => { Sky.setWind(way); Sky.advance(300); };
+      const record = (frames) => {
+        const log = [];
+        for (let i = 0; i < frames; i++) {
+          Sky.advance(1);
+          const s = Sky.state(), l = s.wind.leafStates[0], e = s.wind.eddyStates[0];
+          log.push({ x: l.x, y: l.y, eddy: e && [e.x, e.y], f: s.windFactor, veer: s.windVeerAngle, side: s.windVeerSide });
+        }
+        return log;
+      };
+      Sky.setWind(-1); Sky.advance(300);
+      for (const way of [1, -1, 1]) {   // (the eddy drifting the way the wind was blowing, its leaf in the ring on its upwind side)
+        const from = way > 0 ? 0.85 : 0.15;
+        Sky.lab({ eddy: { x: from * W, y: 0.5 * H, r: 36, spin: 180, drift: true, u: 45 }, leaf: { x: from * W + (way > 0 ? 30 : -30), y: 0.5 * H, layer: 0 }, still: true });
+        Sky.advance(20);
+        Sky.setWind(way);
+        r.turns.push(record(270));
+        Sky.lab(null);
+        settle(way);
+      }
+      for (const way of [-1, 1]) {   // (it ended rightward)
+        Sky.lab({ leaf: { x: 0.5 * W, y: 0.5 * H, layer: 1 }, still: true });
+        Sky.setWind(way);
+        r.straight.push(record(240));
+        Sky.lab(null);
+        settle(way);
+      }
+      return r;
+    });
+    await q.context.close();
+    out.errors = [...p.errors, ...q.errors];
+  },
 };
 
 const PARTED = { "--arrange": arrangeMode, "--touch": touchMode, "--zoom": zoomMode, "--zoom-touch": zoomTouchMode };

@@ -202,7 +202,16 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   its waves (carried downwind), the leaves floating on it, the gust's cow, barn or chicken (mirrored): rightward the exact mirror of
 //   leftward. (The humidity's beads aren't: they follow gravity.) A change eases over DIR_S s: the factor dir.f, -1 to +1, applied to
 //   every velocity and slant; the sprites turning over as it passes 0. Sky.state(): windDir (the side now, -1 or +1), windTarget,
-//   windFactor (-1 to +1), windFlips (how often the side has turned over); wind.dir and wind.factor the same.
+//   windFactor (-1 to +1), windFlips (how often the side has turned over); wind.dir and wind.factor the same. The air's eddies are
+//   not turned by it: the leaves' mean wind is the steady drift, the eddies' swirl on top (the turbulence and the vortices) goes on
+//   round the same way throughout. A leaf in an eddy doesn't stop and reverse along its line: its mean wind VEERS, its heading
+//   turning 180 degrees over VEER_S (9 s) at its full speed, through up (the first turn of a page) and down (the next), alternating,
+//   so it goes round in a U in front of the eddy (or an S, where the swirl opposes the veer); a leaf in none (how much of one it is
+//   in: 0 to 1, by how fast a vortex swirls the air there against the mean wind) reverses along its line as the factor does, one
+//   in a weak eddy partly each. Sky.state(): windVeerSide (+1 up, -1 down, 0 before the first turn), windVeerAngle (radians, 0
+//   rightward, pi/2 up), windVeering; wind.leafStates: each leaf's {x, y, vx, vy, eddy, straight, veer, mean, heading} on screen.
+//   Test-only: Sky.lab({still, eddy: {x, y, r, spin}, leaf: {x, y, layer, pinned}}): the wind's air set up by hand (null: back to
+//   itself), Sky.air(x, y, layer): the air there in parts (the eddies' swirl, the leaf's mean wind).
 //   Sky.fling(kind): something big blown across far behind (a gust over 99 km/h): "cow", "barn" or "chicken", else one at random;
 //   its kind, or null (nothing drawn: stopped, no weather, the tab hidden). The gust effect is on while one is crossing.
 //   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), clock (the weather's time, s), size: [art width, art height,
@@ -299,9 +308,19 @@ const Sky = (() => {
   // = sin(p * 90 degrees) is the factor every velocity and slant follows, -1 to +1 with no jump, gentle at both ends; dir.side is
   // the sign of f (-1 or +1, kept at 0 itself): the way things face and enter from upwind. When f crosses 0 and side changes, each
   // effect with its own frame of reference (the wind's leaves, eddies and wisps are worked out downwind) is turned over (flip()),
-  // standing still on screen as the wind is calm just then. Everything else reads f or side each frame.
-  const DIR_S = 4;
-  const dir = {target: -1, p: -1, f: -1, side: -1, flips: 0};
+  // standing still on screen as the wind is calm just then; the eddies' own swirl untouched (their spin turned over with the frame, to
+  // keep its sense on screen), and the leaves in them veering rather than reversing (see veer, below). Everything else reads f or
+  // side each frame.
+  // The mean wind of a leaf in an eddy doesn't stop and reverse along its line: it VEERS, its heading turning half way round (180
+  // degrees, over VEER_S s: angle = from + delta * smoothstep(u)) through up (north, the screen's top) on one flip, through down on the
+  // next, alternating (dir.veer.side: +1 up, -1 down; 0 before the first, so the first flip of a page bulges up). The eddies' own swirl
+  // is not turned by the flip at all (see airAt): a leaf going round an eddy is carried round in a U in front of it, or an S where
+  // the swirl and the veer oppose.
+  const DIR_S = 4, VEER_S = 9;
+  const dir = {target: -1, p: -1, f: -1, side: -1, flips: 0,
+               veer: {u: 1, from: Math.PI, delta: 0, dur: VEER_S, side: 0, count: 0}};   // (angles: radians on screen, 0 rightward, pi/2 up)
+  const smoothU = (u) => u * u * (3 - 2 * u);
+  const veerAngle = () => dir.veer.from + dir.veer.delta * smoothU(dir.veer.u);
   // A sprite's exact mirror image (its pixels reversed along each row)
   function flipped(img) {
     const c = canvasOf(img.width, img.height), g = c.getContext("2d");
@@ -1081,7 +1100,7 @@ const Sky = (() => {
     const sx = (x) => dir.side < 0 ? W - x : x;          // (downwind x to the screen's, a leaf's, an eddy's; and back: the same)
     const px1 = (x) => dir.side < 0 ? W - 1 - x : x;      // (a wisp's trail's pixel column)
     const WISP = ["#2E363D", "#45515B", "#5F6E7A"].map((c) => `rgb(${rgb(c)})`);
-    let flying = [], eddies = [], wisps = [], gust = 0, nextGust = 0, travelled = 0, calm = 1, swept = 0, riding = 0;
+    let flying = [], eddies = [], wisps = [], gust = 0, nextGust = 0, tdrift = 0, tau = 1, lswept = 0, calm = 1, swept = 0, riding = 0, lab = null;
     let splashes = [], hits = 0, pushed = 0, kicked = 0, born = 0, lastT = 0, owed = 0;
     const KNOCK = 60;                  // a heavy drop's push on a near leaf (px/s, along its fall); farther leaves less (parallax)
     // A splash on a leaf, frame by frame: a bead where the drop struck, then two droplets thrown up off it, falling away ([dx, dy, shade])
@@ -1096,33 +1115,57 @@ const Sky = (() => {
       const s = clamp(NARROW / Math.max(W, 1), 1, 2.6);
       return 0.62 * Math.sin(0.024 * s * X) + 0.38 * Math.sin(0.041 * s * X + 1.7);
     };
-    const band = (x) => bandAt(x - swept);   // (x downwind)
+    // (the leaves' bands, and the turbulence below, are worked out on a frame that turns over with the wind (tau, -1 after each odd
+    // flip) and slides on by its own signed count (lswept, tdrift): on the flip they stand as they were on screen, no jump)
+    const band = (x) => bandAt((tau > 0 ? x : W - x) - lswept);   // (x downwind)
     const gusting = () => 0.7 + gust;
     // The air's velocity at (x, y) for a layer whose leaves the steady wind carries at `pace` (px/s): [vx, vy], and how fast it turns
-    // there (its curl, 1/s)
+    // there (its curl, 1/s). It is the MEAN WIND (the steady drift with its gusts and bands, and the eddies' own drift, which an eddy
+    // draws what is near onto) times `lam` (default |dir.f|: the wind's turn: it stops and reverses along its line as it turns), plus
+    // the EDDIES (the turbulence's swirl, and each vortex's), which don't depend on the wind's turn at all: undisturbed, they go round
+    // the same way throughout a flip. With lam 0 only the eddies' part; the leaves take both apart (the mean they veer).
     const air = [0, 0, 0];
-    function airAt(x, y, pace, t) {
+    let swirl = 0;   // (and, of the last airAt, how fast the vortices alone swirl the air there, px/s)
+    function airAt(x, y, pace, t, lam = Math.abs(dir.f)) {
       const k = pace / DRIFT;   // (the far layers' air slower, its swirls smaller: parallax)
       // turbulence: the curl of a stream function, two crossed waves riding along with the wind (it swirls, never piles up)
-      const X = x - travelled, a = 0.6 * t, A = 420 * (0.7 + 0.6 * gust) * k, B = 110 * k;
+      const X = (tau > 0 ? x : W - x) - tdrift, a = 0.6 * t, A = lab && lab.still ? 0 : 420 * (0.7 + 0.6 * gust) * k, B = lab && lab.still ? 0 : 110 * k;
       const s1 = Math.sin(0.05 * X + a), c1 = Math.cos(0.05 * X + a), s2 = Math.sin(0.07 * y - 0.7 * a), c2 = Math.cos(0.07 * y - 0.7 * a);
       const s3 = Math.sin(0.11 * X + 1.3 - a), c3 = Math.cos(0.11 * X + 1.3 - a), s4 = Math.sin(0.13 * y - 0.9 * a), c4 = Math.cos(0.13 * y - 0.9 * a);
-      let vx = pace * calm * (1 + gust + LEAF_BANDS * gusting() * band(x)) * Math.abs(dir.f) + A * 0.07 * s1 * c2 + B * 0.13 * s3 * c4;   // (the steady wind as hard as it blows now)
-      let vy = -A * 0.05 * c1 * s2 - B * 0.11 * c3 * s4;
-      let curl = A * 0.0074 * s1 * s2 + B * 0.029 * s3 * s4;
+      let vx = A * 0.07 * s1 * c2 + B * 0.13 * s3 * c4, vy = -A * 0.05 * c1 * s2 - B * 0.11 * c3 * s4, curl = A * 0.0074 * s1 * s2 + B * 0.029 * s3 * s4;
+      if (tau < 0) { vx = -vx; curl = -curl; }   // (the mirror image of the frame it was worked out in)
+      vx += pace * calm * (1 + gust + LEAF_BANDS * gusting() * band(x)) * lam;   // (the steady wind as hard as it blows now)
       // eddies: each a vortex, still at its eye, swirling fastest a little way out, fading beyond; near it the air goes along with it.
       // While it lasts it draws what comes near onto a ring round its eye (so leaves are caught and go round), then flings them off.
+      swirl = 0;
       for (const d of eddies) {
         const dx = x - d.x, dy = y - d.y, q = (dx * dx + dy * dy) / (d.r * d.r);
         if (q > 6 || !d.on) continue;
         const near = Math.exp(-q * 0.5), f = d.spin * d.on * near * near / d.r, pull = d.on * near, out = Math.sqrt(q);
         const radial = (d.draw > 0 ? -d.draw * (out - 0.7) : -d.draw * 0.6 * out) * EDDY_DRAW * near * d.on / Math.max(out * d.r, 1);
-        vx += (d.vx - vx) * pull - dy * f + dx * radial;
+        vx += (d.vx - vx) * pull - dy * f + dx * radial;   // (its own drift: not the wind's turn, an eddy in progress goes on as it was)
         vy += (d.vy - vy) * pull + dx * f + dy * radial;
+        swirl += Math.hypot(-dy * f + dx * radial, dx * f + dy * radial);
         curl += 2 * f * (1 - q);
       }
       air[0] = vx; air[1] = vy; air[2] = curl;
       return air;
+    }
+    const strength = (lo, hi, v) => { const u = clamp((v - lo) / (hi - lo), 0, 1); return u * u * (3 - 2 * u); };
+    const EDDY_LO = 0.35, EDDY_HI = 0.9;   // (a leaf is in an eddy as a vortex's swirl on it is 0.35 to 0.9 times the mean wind's: smoothly)
+    // A leaf's air at (x, y, t) (worked downwind) in parts: the eddies' [vx, vy, curl], the mean wind's vx (its full strength), how
+    // much an eddy it is in (w, 0-1), and the leaf's mean wind now (on screen [vx, vy], px/s): where the wind goes straight, the
+    // straight scale of the flip (-1 to +1 along its line) and where it veers, its full speed turned by the veer's heading; the
+    // two blended by w. Returns [worked vx, worked vy, curl, w, straight, veer, mean] (the arrays fresh).
+    function leafAir(x, y, pace, t) {
+      const [ex, ey, ec] = airAt(x, y, pace, t, 0);
+      const e = [ex, ey, ec], swirling = swirl;
+      const full = airAt(x, y, pace, t, 1)[0] - e[0], speed = Math.abs(full);
+      const w = strength(EDDY_LO, EDDY_HI, swirling / Math.max(speed, 1e-6));
+      const h = veerAngle();
+      const straight = [dir.f * full, 0], veer = [speed * Math.cos(h), -speed * Math.sin(h)];
+      const mean = [straight[0] + (veer[0] - straight[0]) * w, straight[1] + (veer[1] - straight[1]) * w];
+      return [e[0] + dir.side * mean[0], e[1] + mean[1], e[2], w, straight, veer, mean];
     }
     const eddy = (d, anywhere) => {
       // (on narrow art, a phone's, an eddy's radius at most 0.3 of the art's narrower side, and drifting slower, so it lasts its life
@@ -1134,7 +1177,8 @@ const Sky = (() => {
       d.y = between(Math.max(H * 0.12, d.r * 0.6), Math.min(H * 0.88, H - d.r * 0.6));
       d.spin = (random() < 0.5 ? -1 : 1) * between(4.5, 6) * d.r;   // (its fastest swirl about 0.43 this, px/s: a turn in 2 s or so)
       d.v = DRIFT * between(0.6, 0.85) * narrow;   // (lagging the wind: swirling faster than it moves, so leaves loop)
-      d.vx = d.v; d.vy = 0;
+      d.sd = dir.target;   // (the way it drifts, on screen: leftward -1; worked out as downwind +x with the side now: see step)
+      d.vx = d.u = d.v; d.vy = 0;
       d.age = anywhere ? between(0, 4) : 0;
       d.life = between(5, 9);
       d.wander = between(0, 7);
@@ -1202,7 +1246,13 @@ const Sky = (() => {
                      leaves: flying.length + flood.count(),
                      // (each flying leaf as drawn last: [id, its lowest row's height over the flood's surface under it (null: no
                      // water under it), x, y on screen])
-                     flyers: flying.map((f) => { const gap = gapOf(f, lastT); return [f.id, gap < Infinity ? gap : null, sx(f.x), f.y]; })}),
+                     flyers: flying.map((f) => { const gap = gapOf(f, lastT); return [f.id, gap < Infinity ? gap : null, sx(f.x), f.y]; }),
+                     // (and each as it goes, on screen: where, its velocity, how much it is in an eddy 0-1, the mean wind it takes now (and
+                     // its straight and veering parts), and the veer's heading now (radians, 0 rightward, pi/2 up), and the way it bulges)
+                     leafStates: flying.map((f) => ({id: f.id, x: sx(f.x), y: f.y, vx: dir.side * f.vx, vy: f.vy, eddy: f.eddy, straight: f.straight,
+                                                     veer: f.veer, mean: f.mean, heading: veerAngle()})),
+                     veerAngle: veerAngle(), veerSide: dir.veer.side,
+                     eddyStates: eddies.map((d) => ({x: sx(d.x), y: d.y, r: d.r, spin: dir.side * d.spin}))}),
       // A drop of rain layer `layer` going from (x0, y0) to (x1, y1) this frame (its head, on screen, art px), at vx across and vy down
       // (px/s): if it hits a leaf as far off as itself, the leaf knocked (`hard` 0-1: how heavy the rain) and true (the drop ends)
       knock(layer, x0, y0, x1, y1, vx, vy, hard) {
@@ -1225,8 +1275,36 @@ const Sky = (() => {
         }
         return false;
       },
-      resize() { flying = []; eddies = []; wisps = []; splashes = []; },
-      forget() { flying = []; eddies = []; wisps = []; splashes = []; gust = 0; owed = 0; },   // (not those in a flood: the flood's now)
+      resize() { flying = []; eddies = []; wisps = []; splashes = []; lab = null; },
+      forget() { flying = []; eddies = []; wisps = []; splashes = []; gust = 0; owed = 0; lab = null; },
+      // (test-only) The air set up by hand, nothing random: `eddy` {x, y (on screen), r, spin (px/s a ring away, either sign), drift,
+      // u} a vortex held where it is (or, with `drift`, drifting on its own way at u px/s), or none; `leaf` {x, y (on screen), layer, pinned} the only leaf; `still` the turbulence off. gust 0.
+      // lab(null) puts the wind back to itself.
+      lab(spec) {
+        lab = spec ? {still: !!spec.still, hold: true} : null;
+        flying = []; eddies = []; wisps = []; splashes = []; gust = 0;
+        if (!spec) return;
+        if (spec.eddy) {
+          const e = spec.eddy, d = {};
+          eddy(d, true);
+          Object.assign(d, {x: sx(e.x), y: e.y, r: e.r || 36, spin: dir.side * (e.spin || 5 * (e.r || 36)), age: 5, life: 10, on: 1, draw: 1, vy: 0, u: e.u || 45, sd: dir.side, v: e.u || 45});
+          lab.drift = !!e.drift;
+          eddies.push(d);
+        }
+        if (spec.leaf) {
+          const f = {layer: spec.leaf.layer || 0};
+          spawn(f, false);
+          Object.assign(f, {x: sx(spec.leaf.x), y: spec.leaf.y, pinned: !!spec.leaf.pinned, sink: 0, spin: 0});
+          flying.push(f);
+        }
+      },
+      // (test-only) the air at screen (x, y) for a layer, in parts as a leaf takes them, on screen: the eddies' [vx, vy] and curl, the mean
+      // wind's at full strength, the eddy strength 0-1, the straight and veering mean wind and what the leaf takes of them
+      sample(x, y, layer, t = lastT) {
+        const [vx, vy, curl, w, straight, veer, mean] = leafAir(sx(x), y, LAYERS[layer].speed, t);
+        const [ex, ey, ec] = airAt(sx(x), y, LAYERS[layer].speed, t, 0);
+        return {eddy: [dir.side * ex, ey], curl: dir.side * ec, strength: w, straight, veer, mean, total: [dir.side * vx, vy]};
+      },   // (not those in a flood: the flood's now)
       // The wind has turned (its factor crossed 0: dir.side is the new side, the steady wind nothing just now): everything worked out
       // downwind turned over to it, standing where it was on screen: x to W - x, the leaves' speed along reversed, their sprites the
       // other way (those on the water or the bottom as they were)
@@ -1237,7 +1315,9 @@ const Sky = (() => {
           const set = leafSprites(dir.side)[f.layer];
           f.frames = set[f.i]; f.flat = set[f.i | 1];
         }
-        for (const d of eddies) { d.x = W - d.x; d.vx = -d.vx; }
+        // (the eddies' swirl is mirrored with the frame, so its spin is turned over to keep its sense on screen: undisturbed by the flip)
+        tau = -tau;
+        for (const d of eddies) { d.x = W - d.x; d.vx = -d.vx; d.spin = -d.spin; }
         for (const w of wisps) { w.x = W - 1 - w.x; w.trail = w.trail.map((v, i) => (i & 1 ? v : W - 1 - v)); }
         splashes = splashes.map((s) => ({...s, dx: -s.dx}));
       },
@@ -1269,7 +1349,7 @@ const Sky = (() => {
         calm = clamp(W / 360, CALM, 1);
         lastT = t;
         owed = Math.round(this.need() * share);
-        const n = Math.max(0, owed - flood.count());   // (those in a flood its share too)
+        const n = lab ? flying.length : Math.max(0, owed - flood.count());   // (those in a flood its share too)
         while (flying.length < n) {
           const k = flying.length / Math.max(n, 1);
           const f = {layer: k < LAYERS[0].share ? 0 : k < LAYERS[0].share + LAYERS[1].share ? 1 : 2};
@@ -1279,33 +1359,41 @@ const Sky = (() => {
         if (flying.length > n) flying.length = n;
         flying.sort((a, b) => a.layer - b.layer);
         // gusts: a sudden push now and then, dying away
-        if ((nextGust -= dt) <= 0) { gust += between(0.5, 1.1); nextGust = between(2.5, 6); }
+        if (lab) gust = 0;
+        else if ((nextGust -= dt) <= 0) { gust += between(0.5, 1.1); nextGust = between(2.5, 6); }
         gust *= Math.exp(-0.9 * dt);
         const m = Math.abs(dir.f);   // (how hard it blows: 1, or less as it turns)
-        travelled += DRIFT * calm * (1 + gust) * m * dt;
-        swept += (riding || DRIFT * calm * (1 + gust) * 1.15 * m) * dt;
+        tdrift += tau * DRIFT * calm * (1 + gust) * m * dt;
+        const slid = (riding || DRIFT * calm * (1 + gust) * 1.15 * m) * dt;
+        swept += slid;
+        lswept += tau * slid;
         riding = 0;
         const want = Math.max(4, Math.round(W * H / 30000));   // (at least four, a phone's too)
-        while (eddies.length < want) { const d = {}; eddy(d, true); eddies.push(d); }
+        while (eddies.length < want && !lab) { const d = {}; eddy(d, true); eddies.push(d); }
         for (const d of eddies) {
-          d.age += dt;
+          if (!lab || !lab.hold) d.age += dt;
           const k = clamp(d.age / d.life, 0, 1);
           d.on = Math.pow(Math.sin(Math.PI * k), 0.6);   // (spinning up, and down)
           d.draw = clamp((0.72 - k) * 6, -1, 1);          // (drawing in, then flinging off)
-          d.vx = d.v * (1 + 0.6 * gust) * m;
+          // (its drift the way the wind blew when it rose, whatever the wind does since: an eddy in progress isn't stopped or turned
+          // round by the wind turning, it drifts on to the end of its life, as swirling the same way; the leaves in it veer, see leafAir)
+          d.u = d.v * (1 + 0.6 * gust);
+          d.vx = d.sd * dir.side * d.u;
           d.vy = Math.sin(t * 0.5 + d.wander) * 6;
+          if (lab && lab.hold) { d.vy = 0; if (!lab.drift) d.vx = 0; }   // (a test's: it stays where it was put, or drifts on)
           d.x += d.vx * dt;
           d.y += d.vy * dt;
-          if (d.age >= d.life || d.x > W + 2 * d.r) eddy(d, false);
+          if (!lab && (d.age >= d.life || d.x > W + 2 * d.r || d.x < -2 * d.r)) eddy(d, false);
         }
         const flooded = flood.lift() > 0;
         for (const f of flying) {
           f.px = f.x;   // (where it was: if it crosses a flood's surface this frame, where it did)
-          const [vx, vy, curl] = airAt(f.x, f.y, LAYERS[f.layer].speed, t), ease = 1 - Math.exp(-dt / f.weight);
+          // (the eddies' swirl as it is; the mean wind straight along its line, or, in an eddy, veering round: see leafAir)
+          const [vx, vy, curl, w, straight, veer, mean] = leafAir(f.x, f.y, LAYERS[f.layer].speed, t), ease = 1 - Math.exp(-dt / f.weight);
+          f.eddy = w; f.straight = straight; f.veer = veer; f.mean = mean;
           f.vx += (vx - f.vx) * ease;
           f.vy += (vy + f.sink + f.batter - f.vy) * ease;
-          f.x += f.vx * dt;
-          f.y += f.vy * dt;
+          if (!f.pinned) { f.x += f.vx * dt; f.y += f.vy * dt; }
           f.turn += (f.spin + Math.min(Math.abs(curl) * 2.5, 14) + f.whirl) * dt;
           if (f.whirl) { f.whirl *= Math.exp(-1.6 * dt); f.batter *= Math.exp(-0.6 * dt); if (f.whirl < 0.05) f.whirl = f.batter = 0; }
           // (out of the window: blown in again; but below it in a flood only through the water, so the flood takes it: wade())
@@ -3651,6 +3739,7 @@ const Sky = (() => {
     const step = dt * 2 / DIR_S;
     dir.p += clamp(dir.target - dir.p, -step, step);
     dir.f = Math.sin(dir.p * Math.PI / 2);
+    dir.veer.u = Math.min(dir.veer.u + dt / dir.veer.dur, 1);
     const side = dir.f < 0 ? -1 : dir.f > 0 ? 1 : dir.side;
     if (side !== dir.side) {
       dir.side = side;
@@ -3663,10 +3752,21 @@ const Sky = (() => {
   // drawn, at once. The way it blows (the target): returned
   function setWind(d) {
     if (!(d < 0) && !(d > 0)) return dir.target;
+    const was = dir.target, v = dir.veer;
     dir.target = d < 0 ? -1 : 1;
+    const to = dir.target < 0 ? Math.PI : 0;   // (the heading the mean wind is going to)
     if (!alive()) {   // (nothing on screen: no one to see it turn)
       dir.p = dir.target;
       dir.f = dir.side = dir.target;
+      Object.assign(v, {u: 1, from: to, delta: 0});
+    } else if (dir.target !== was) {
+      // the mean wind's veer from its heading now to the new one, round through up on odd turns, down on even
+      const now = veerAngle(), tau = 2 * Math.PI;
+      v.side = ++v.count % 2 ? 1 : -1;
+      const plus = (((to - now) % tau) + tau) % tau;   // (counter-clockwise: up from rightward)
+      let delta = [plus, plus - tau].find((x) => Math.sin(now + x / 2) * v.side > 0);
+      if (delta === undefined || Math.abs(delta) < 0.2) delta = plus < Math.PI ? plus : plus - tau;
+      Object.assign(v, {from: now, delta, u: 0, dur: Math.max(VEER_S * Math.abs(delta) / Math.PI, 1)});
     }
     return dir.target;
   }
@@ -3826,7 +3926,7 @@ const Sky = (() => {
   }
 
   const running = () => DRIVEN ? animate && alive() : !!frame;
-  return {set, fling, tilt, level, setSun, setTime, setWind, timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
+  return {set, fling, tilt, level, setSun, setTime, setWind, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
           advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
           clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: running(), frames, cost, clock, size: [W, H, P],
@@ -3838,7 +3938,8 @@ const Sky = (() => {
                                      readings: grav.readings, raw: grav.raw && grav.raw.slice(), flat: grav.flat, pool: grav.pool, steep: grav.steep, epoch: grav.epoch},
                               humidity: effects.humidity.probe(), flood: effects.flood.probe(), heat: effects.heat.probe(), beam: beamState(),
                               gust: effects.gust.probe(),
-                              windDir: dir.side, windTarget: dir.target, windFactor: dir.f, windFlips: dir.flips})};
+                              windDir: dir.side, windTarget: dir.target, windFactor: dir.f, windFlips: dir.flips,
+                              windVeerSide: dir.veer.side, windVeerAngle: veerAngle(), windVeering: dir.veer.u < 1})};
 })();
 </script>
 <script>
