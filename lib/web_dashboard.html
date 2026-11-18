@@ -191,7 +191,7 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   sooner)}; animate false (the page's "stop", MCP_DASHBOARD_ANIMATIONS low or off, or reduced motion): nothing drawn (and
 //   anything blown across gone).
 //   Sky.setSun({rise, set, now, az, el}): the station's sunrise and sunset and the time of day now (minutes since its local midnight: the page's
-//   data's `sun`; az and el: the sun's real place there, degrees from north clockwise and above the horizon), which the UV's beams and the heat's wave lean with (the heat's the very same value, vertical with the sun down)
+//   data's `sun`; az and el: the sun's real place there, degrees from north clockwise and above the horizon), which the UV's beams lean with and the heat's rays follow (the very same value, vertical with the sun down), and by which the sun's limb (the heat) travels the window's border, its piece deepening with the sun's height
 //   (-atan(sin az / tan el), at most 75 degrees, toward the sun: down-left in the morning, down-right in the afternoon, straight down at solar
 //   noon; without az and el the sunrise-sunset curve: straight down at midday, 70 degrees by sunrise and sunset); Sky.setSunPosition(az, el)
 //   (test-only): the place pinned (null: unpinned); Sky.setTime(minutes) (test-only): the time of day fixed there for the curve
@@ -970,7 +970,7 @@ const Sky = (() => {
     };
   });
 
-  // ---------- the sun's place, and the lean of the beams and the heat's rays ----------
+  // ---------- the sun's place, and the lean of the beams and the heat's limb ----------
   // The sun's real place, from the station's latitude and longitude and its clock (the page's `sun` datum {rise, set, now, az, el}: az
   // degrees clockwise from north, el above the horizon; computed by the server, lib/solar.py: seasons and latitude in it; never the
   // viewer's own clock, which may be in another zone). Every UV beam leans with it: -atan(sin(az) / tan(el)), the sun's horizontal offset
@@ -1066,7 +1066,7 @@ const Sky = (() => {
   // long, bright): a sprite hanging straight down from its root, `long` rows below it, and BEAM_LEAD rows above it (the beam's start,
   // inside the sun's disc, which the beams are never drawn over: the start's edge is never seen); a beam is this drawn turned about
   // its root (beamDrawn(), below). A root on the limb outside the window has its beam enter from the window's edge along the same
-  // direction (its start where the ray crosses the edge), so the rays cover the whole width.
+  // direction (its start where the ray crosses the edge, fading in over BEAM_FADE, 20 rows, so that it does not start abruptly), so the rays cover the whole width.
   const BEAM_LEAD = 40;                // rows above a beam's root: deep enough in the disc that its start's edge, askew to the limb, stays hidden
   const W12 = 2 * Math.PI / 12;        // the 12 s cycle (rad/s) the breathing, swaying and shimmer of the limb and beams all follow
   const UV_LEAST = 0.3, UV_SWAY = 3 * Math.PI / 180;   // a beam's weakest, of its strongest; its sway each way (rad)
@@ -1153,24 +1153,29 @@ const Sky = (() => {
     return rad;
   };
 
-  // ---------- heat: the sun's limb, a granulated surface, its rim and halo, and one thick glowing band along the limb ----------
-  // The heat is the bottom of the sun's huge disc (see the limb, above): the part of the disc inside the window, drawn as a granulated
-  // ember surface (fine granulation, a few brighter yellow active patches, drifting and warping slowly, the cells brightening and
-  // dimming out of step), a bright orange rim along the limb (steady, crisp), a halo just outside it whose brightness and thickness
+  // ---------- heat: the sun's limb, a granulated surface, its rim and halo, one thick glowing band along the limb, and an ember wash ----------
+  // The heat is the tiny piece of the sun's huge disc in view (see the limb, above): the part of the disc inside the window, drawn as a
+  // granulated ember surface (fine granulation, a few brighter yellow active patches, drifting and warping slowly, the cells brightening
+  // and dimming out of step), a bright orange rim along the limb (steady, crisp), a halo just outside it whose brightness and thickness
   // shimmer along the edge in slow drifting waves (the limb line itself never moves), and one thick glowing band hugging the limb on the
-  // sun's side of it (inside the disc, BAND_T, 0.085, of the height thick, a little of its glow bleeding out past the limb): it is
+  // sun's side of it (inside the disc, BAND_T, 0.06, of the height thick, a little of its glow bleeding out past the limb): it is
   // translucent (added to the surface's colour at BAND_ALPHA, so the granulation shows through it), its edges feathered on both sides,
   // and it wobbles like a furnace: its brightness and its thickness drift along its length in two or three slow waves, and its thickness
-  // breathes by up to 22 % (calm at 35 C, lively at 43 C: scaled by the heat), its centreline always the limb's arc. Its heat h runs 0
-  // at 35 C (its level 0.3) to 1 at 43 C (level 1): the colour from a brownish ember (a little desaturated) to a vivid scarlet-orange
-  // with a hot core at the surface's middle, the wobble stronger with it. It shows while its level is above 0 (35 C outdoors, or
-  // feels-like), fading in and out over FADE_S; nothing in it moves faster than 0.5 Hz (the surface's cells 1/6 Hz, the waves up to 1/4).
+  // breathes by up to 22 % (calm at 35 C, lively at 43 C: scaled by the heat), its centreline always the limb's arc. Out of the visible
+  // piece flows a broad translucent ember wash along the rays' direction, reaching about WASH_REACH, 0.2, of the height, wider to the
+  // sides with the distance (a sigma of 0.16 of the width and 0.35 of the distance, so that it still reads when the piece is in a corner),
+  // its bands travelling slowly outward and drifting; it is drawn at half the resolution (art pixels two wide) in WASH_LEVELS shades,
+  // and made again every other frame. Its heat h runs 0 at 35 C (its level 0.3) to 1 at 43 C (level 1): the colour from a brownish ember
+  // (a little desaturated) to a vivid scarlet-orange with a hot core (CORE: strong, the piece being shallow) at the surface's middle
+  // by the apex, the wobble stronger with it. It shows while its level is above 0 (35 C outdoors, or feels-like), fading in and out
+  // over FADE_S; nothing in it moves faster than 0.5 Hz (the surface's cells 1/6 Hz, the waves and the wash's bands up to 1/4).
   // Dithered (the page's irregular dither, no grid). Drawn at the very bottom, under every other effect (the UV's beams over it: see
-  // ORDER), and behind the flood (nothing below its water), at a strength of its own under the brightness cap.
-  // What is baked once (bakeHeat, for the limb's geometry: the lists of the pixels of the surface, the rim, the halo and the band, each
-  // with its constants: depth, place along the limb, the irregular dither's thresholds) and what is worked out each time: the surface
-  // and the band on it only every other frame, the surface at half the width (art pixels two wide) and few noise octaves, the halo's and
-  // the band's brightness and thickness once for each place along the limb; only the pixels listed are touched.
+  // ORDER), and behind the flood (nothing below its water), at a strength of its own under the brightness cap; the wash and the piece
+  // are added on a canvas of their own and drawn once, so that no pixel is drawn stronger than that strength.
+  // What is baked once (bakeHeat, for the limb's geometry: the lists of the pixels of the surface, the rim, the halo, the band and the
+  // wash, each with its constants: depth, place along the limb, the irregular dither's thresholds) and what is worked out each time: the
+  // surface, the band on it and the wash only every other frame, the surface at half the width and few noise octaves, the halo's and the
+  // band's brightness and thickness once for each place along the limb; only the pixels listed are touched.
   const HEAT_STEPS = 48;               // the colour made again for each 48th of the heat's range (finer than the eye tells)
   const NL = 14, NR = 12;              // the shades of the surface and halo, and of the band
   const HALO_REACH = 26;               // the halo's pixels reach this far out from the limb (art px)
@@ -1415,7 +1420,7 @@ const Sky = (() => {
   });
 
 
-  // ---------- uv: beams of violet light leaving the sun's limb (see the heat's, above) ----------
+  // ---------- uv: beams of violet light leaving the sun's limb (see the heat's, above), or entering at the window's edge along the rays ----------
   const uv = effect((e) => {
     let pool = [], beams = [], placed = null;
     return {

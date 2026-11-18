@@ -11,7 +11,7 @@ Line numbers are approximate. Search for the named constant or function instead 
 | REAL-MODEL | A published formula or exact identity, used as published. Its error is the model's own. | NOAA sun position, unit conversions, `r^3` bead volume |
 | REAL-APPROX | The right physical idea in a simplified form. It tracks reality in some range and fails outside it; the limits are listed. | Rain slant `tan(angle) = wind / fall speed` with one fall speed |
 | TUNED | A number chosen by look or feel, or a rule of thumb, on a real quantity. It says "more of X, more of the effect", not how much. | Rain strength ramp, pressure arrow 0.3 hPa |
-| ARTISTIC | Made up for looks or behaviour. It estimates nothing. | Heat-wave brightness curve, eddy sizes, frog timing |
+| ARTISTIC | Made up for looks or behaviour. It estimates nothing. | Ember granulation and glow wobble, eddy sizes, frog timing |
 
 How to read the tables:
 
@@ -25,7 +25,7 @@ Key facts of the code as it is:
 
 - The rain is three drop-size classes (far 0.6, mid 1.0, near 1.5 times the median drop D0 of the live rain rate): each layer's lean is `tan(angle) = wind / (v_t * 3.6 km/h)` (cap 70 degrees), its vertical fall speed follows its terminal speed v_t (path speed `V / cos(angle)`), and `TEST_WIND = 11` is a test link's wind. Section 3.2.
 - Each wind eddy rests 5 to 9 s after its life before the next (row A8 and section 3.3).
-- The heat fills the top quarter of the window; the sun's lean (the UV beams' own value) leans its wide light bands parallel to the beams, from the top edge down. Section 4.2.
+- The heat is a vast sun of which only a tiny piece shows along the window's border: the piece's place and edge come from the sun's real direction (the UV beams' own lean), its depth from the sun's height, and the UV beams start at its edge. Section 4.2.
 - The haze's opacity follows the air sensor's PM2.5 (Beer-Lambert, `1 - exp(-0.01457*PM2.5)`, the viewing distance chosen). Section 4.1.
 - The flash flood is a leaky bucket run on the server (`flood_of`, tau 30 min, runoff share 0.5, full at 15 mm). Section 4.5.
 - The pressure arrow is the WMO 3-hour tendency in its classes (slow, moderate, quick, rapid). Section 7.3.
@@ -44,7 +44,9 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | S4 | Beam lean fallback curve (no sun position) | 2.2 | TUNED |
 | S5 | Sun position run-on between fetches | 2.2 | REAL-APPROX |
 | S6 | Sunrise and sunset fallback 06:00 / 18:00 (no station location only) | 2.2 | TUNED |
-| S7 | Beam, glow and shaft drawing | 2.2 | ARTISTIC |
+| S7 | Beam, root glow and shaft drawing | 2.2 | ARTISTIC |
+| S8 | The sun's limb: disc radius, centre, exit point on the border, apex on the ray toward the sun | 4.2 | REAL-APPROX |
+| S9 | The visible piece's depth by the sun's height (`0.04 + 0.06 sin(el)` of the height) | 4.2 | TUNED |
 | A1 | Effect levels from the readings (`conditionsOf`) | 3.1 | TUNED |
 | A2 | Wind side from wind direction | 3.1 | REAL-APPROX |
 | A3 | Rain slant law (per layer, by drop size) | 3.2 | REAL-APPROX |
@@ -62,8 +64,8 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | A14 | Leaf pace scale `k` from the wind speed | 3.3 | TUNED |
 | H1 | Haze band from AQI band edges; its opacity from PM2.5 (Beer-Lambert) | 4.1 | REAL-MODEL |
 | H2 | Haze texture, tint, palette, motes | 4.1 | ARTISTIC |
-| H3 | Heat level, colour ramp, period, peak | 4.2 | TUNED |
-| H4 | Heat wave phases, envelope, bands and horizontal front (the lean itself is S3) | 4.2 | ARTISTIC |
+| H3 | Heat level, colour ramp by heat, core strength, wash reach | 4.2 | TUNED |
+| H4 | Heat's ember surface, rim, halo, glow band and wobble, ember wash (the beams' lean itself is S3) | 4.2 | ARTISTIC |
 | H5 | UV trigger (UV index 11 and above) | 4.3 | REAL-MODEL |
 | H6 | Ice reach, growth and melt rates | 4.4 | TUNED |
 | H7 | Ice crystal forms | 4.4 | ARTISTIC |
@@ -124,10 +126,10 @@ Count per label (counted from the table above):
 | Label | Groups |
 |---|---|
 | REAL-MODEL | 20 |
-| REAL-APPROX | 17 |
-| TUNED | 30 |
+| REAL-APPROX | 18 |
+| TUNED | 31 |
 | ARTISTIC | 12 |
-| Total | 79 |
+| Total | 81 |
 
 Not computed here at all (the station or a provider supplies them): dew point, feels like, apparent temperature, VPD, pollen and thunderstorm-asthma levels, and the dashboard's heat index or wind chill (none exists in `lib/`).
 
@@ -159,8 +161,7 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 | Sunrise, sunset fallback | `SUN_FALLBACK` web_dashboard.py | 06:00 and 18:00 (360 and 1080 min) only with no station location | TUNED | Wrong by up to about 3 hours at Melbourne's solstices; used only while no location exists. |
 | Sunrise and sunset | `sun_times` solar.py, `sun_of` web_dashboard.py | The sunrise equation. Solar noon (UTC min) = `720 - 4 lon - eqtime` (eqtime and declination `dec` from the NOAA fits at that noon, refined twice); `w0 = acos((sin(-0.833 deg) - sin(lat) sin(dec)) / (cos(lat) cos(dec)))`; rise/set = noon -/+ `4 w0` min; plus the zone's UTC offset that date (DST), wrapped into the day, 0.01 min. -0.833 deg = refraction 0.567 + the disc's radius 0.266. An acos argument above 1: polar night (None, "no rise"); below -1: polar day (None, "no set"); `sun_of` then sends rise 0, set 1440 (day) or both null (night: no beams) | REAL-MODEL | Checked against the sun's own elevation crossing -0.833 deg (within a minute or two): Melbourne 2026-12-21 05:54 / 20:41 (the longitude puts solar noon at 13:18 DST), 2026-06-21 07:35 / 17:08; London 04:43 / 21:21 BST. The forecast's sunrise and sunset are not used. Ignores altitude and the horizon's real shape. |
 | Run-on | `setSun` :998, `placeNow` :986 | `rate = (new - last) / dt` for samples 30 s to 3600 s apart (azimuth difference the short way: `((d + 540) mod 360) - 180`); position runs on at that rate for at most 1800 s (`RUN_ON`) | REAL-APPROX | Linear extrapolation; accurate to a small fraction of a degree between the 60 s fetches. If data stops, the error grows (near transit in a Melbourne summer the azimuth moves roughly 50 degrees an hour). |
-| Beams | `uvShafts`, `beamOf` :1036-1067 | count `max(4, round(W/70))` plus off-screen ones; width 8 to 18 art px; length 0.4 to 0.9 of H; rotation about the top by the lean, width squeezed by `cos(lean)`; sway 0.85 to 1.65 px | ARTISTIC | Drawn only while the sun is up. |
-| Top glow | :1220 | height 16 % of H; alpha `0.6 * (1 - y/(0.16 H))^2.4` | ARTISTIC | |
+| Beams | `uvPool`, `placeBeams`, `beamOf`, `beamDrawn` (~1062-1160) | count `max(4, round(W/70))` and more at the sides so that the lane covers the window at any lean; width 8 to 18 art px; length 0.4 to 0.9 of H; each root on the limb's arc (section 4.2), the beam parallel to the rays' direction `d`; a root on the limb outside the window enters at the window's edge along `d`, fading in over `BEAM_FADE` 20 rows; sway `UV_SWAY` 3 degrees each way in 6 or 12 s; strength a 12 s cycle between `UV_LEAST` 0.3 and 1 (the core a quarter cycle on); a small orange glow (0.35 of the beam) at a root on the limb; drawn only outside the sun's disc and only while the sun is up | ARTISTIC | The direction is the sun's own (S3); the widths, lengths, sway and cycle are chosen. |
 
 ## 3. Wind, rain and the air (Sky)
 
@@ -172,7 +173,7 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 | Wind side | `windSideOf` :5456 | direction in (0, 180) gives leftward (-1); in (180, 360) gives rightward (+1); 0, 180, 360 or no reading keeps the last side | REAL-APPROX | Correct sign for a dial with east on the right: wind from the east blows toward the west. Only the side counts; 91 and 179 degrees behave the same. |
 | Direction easing | `steer`, `DIR_S` 4 s | `p` slides to its target at rate `2/DIR_S`; `f = sin(p*pi/2)`; the side flips when f crosses 0 and sprites are mirrored | ARTISTIC | |
 | Particle budget | `BUDGET` :289, `tick()` | budget = `W*H/400` particles (480 x 300 gives 360); `share = min(1, budget / sum of needs)`; each effect gets `round(need*share)`; humidity has its own limits; rain's count is the plain budget at every slant | TUNED | A performance and legibility cap. Max rain alone: need 360, exactly the budget. |
-| Brightness cap | `CAP` :290, `draw()` | `sum = total of strength_k * amount_k` over all effects except rain; `cap = min(1, 1.5 / sum)`; each effect drawn at `strength*amount*cap`. Strengths: rain `0.55 + 0.35*L` (outside the cap), haze 0.44/0.52/0.60/0.70/0.82 by band, heat `0.4 + 0.4*L`, uv 0.8, wind 0.8, flood 0.6, gust 0.45, ice `0.36 - 0.12*min(1, extent/(0.6*big))`, humidity 0.8 | TUNED | Looks only. |
+| Brightness cap | `CAP` :290, `draw()` | `sum = total of strength_k * amount_k` over all effects except rain; `cap = min(1, 1.5 / sum)`; each effect drawn at `strength*amount*cap`. Strengths: rain `0.55 + 0.35*L` (outside the cap), haze 0.44/0.52/0.60/0.70/0.82 by band, heat 0.8, uv 0.8, wind 0.8, flood 0.6, gust 0.45, ice `0.36 - 0.12*min(1, extent/(0.6*big))`, humidity 0.8 | TUNED | Looks only. |
 | Frame, fade | `FADE_S` 1.5 s, 30 fps cap | linear fade | ARTISTIC | |
 | Smoothstep | various | `u*u*(3 - 2*u)` | REAL-MODEL | A standard easing function (the use of it is for looks). |
 
@@ -222,19 +223,24 @@ Everything here is drawn in art px. The measured wind speed scales the leaves' p
 | Palette | `bake` | 8 shades; colour mix `u^0.85`, alpha `255*open*u^0.8`, `open` 0.7/0.7/0.8/0.9/1 by band | TUNED | |
 | Motes | ~878 | count `(W*H/1800)*(0.6 + 0.2*level)` moving at the pan speed | ARTISTIC | |
 
-### 4.2 Heat (`web_dashboard.html` ~998-1170)
+### 4.2 Heat (`web_dashboard.html` ~1031-1400)
+
+The heat is the tiny piece in view of a sun far larger than the window. `H` and `W` are the window's height and width in art px.
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Heat 0 to 1 | `heatOf` :1109 | `h = clamp((level - 0.3)/0.7, 0, 1)`, which is `(T - 35)/8` for 35 to 43 C | TUNED | Linear and chosen. Nothing relates it to heat's effect on a person. |
-| Colour ramp | `heatColours` :1116; `HEAT_HUE` [30, 4], `HEAT_SAT` [0.3, 1], `HEAT_LIGHT` :1092 | `hue = 30 - 26h` (30 to 4 degrees), `sat = 0.30 + 0.70h`, five lightnesses [0.3, 0.4, 0.48, 0.55, 0.68] plus `(1 - h)*0.14` | TUNED | Standard HSL conversion (REAL-MODEL), chosen ramp: pale amber to vivid scarlet. |
-| Period | `cycle` :1134; `HEAT_PERIOD` [14, 10] | `period = 14 - 4h` s (14 s at 35 C, 10 s at 43 C) | TUNED | At most 0.1 flashes a second, far under the 3 Hz limit of WCAG 2.3.1. |
-| Peak | `cycle`; `HEAT_PEAK` [0.7, 1] | `peak = 0.7 + 0.3h` | TUNED | |
-| Wave phases | `heatWave` :1124; `HEAT_BUILD` 0.55, `HEAT_HOLD` 0.7, `HEAT_GONE` 0.9, `HEAT_RISE` 0.08 | phase u in [0, 1): build to 0.55 with extent `1 - (1 - s)^2`, `s = u/0.55`, brightness `(0.55 + 0.45s)*smoothstep(min(1, u/0.08))`; hold to 0.7; fade to 0.9 with brightness `1 - smoothstep`; gap to 1 | ARTISTIC | A visual "heat radiating" metaphor. |
-| Lean | `wanted`, `draw` | the beams' lean (`beamState().lean`, section 2.2), 0 when the sun is down; the drawn lean catches up at `HEAT_SLEW` 20 degrees a second at most (`dt` capped at 0.1 s). It shears the bands (row `y` of the wash is shifted along by `round(y*tan(lean))`, wrapped round the width), so they lean from the top edge at the beams' own axis angle; the front stays horizontal | REAL-APPROX | The direction is the sun's own (S3, with its limits). The heat itself comes from the air temperature, not the sun: the lean says only which way the light runs down. Measured from pixels (`heatAngles` in `tests/web_dashboard_browser.js`), the bands' axis and the beams' agree within 3 degrees at leans from -60 to 60. |
-| Envelope and bands | `bake`, `band`; `HEAT_FADE` 0.25, `HEAT_TOP` 0.62, `HEAT_BANDS` 2.0 | `rows = ceil(0.25*H)`; sprite W by `rows`; coverage (which pixels are lit, by the blue-noise dither) follows `0.62*(0.5 + 0.5*cos(pi*y/rows))^1.25` alone; each lit pixel's shade (one of five lightnesses) is `clamp(floor(s + 0.8 + 2.0*b(x) + n), 0, 4)` with `s` the dithered shade of that coverage, `n` a per-pixel hash in [0, 1) and `b(x) = 0.8*sin(6*pi*x/W + 0.7) + 0.2*sin(4*pi*x/W + 2.1)` (three wide bands round the width and a fainter two); alpha `0.5*(0.55 + 0.45*level)`; dithered | ARTISTIC | A plain full-width rectangle: strongest at the top edge, 0 at a quarter of the height, no side or top edges of its own; the bands are in the light, not in the coverage, so every column is as covered as any other. |
-| Front | `draw`; `HEAT_SOFT` 0.4 | the front is at `y_f = extent*(rows + 0.4*rows)`, horizontal: rows below it are cleared and a linear mask over its last `0.4*rows` rows (a canvas linear gradient down the page) takes the wash from full to nothing. Along a band's ray the front is where the length `y/cos(lean)` equals `y_f/cos(lean)`, so each band lengthens from the top edge as the beams do | ARTISTIC | Driven past the reach by `0.4*rows`, so at the hold the whole quarter is lit evenly; no sideways travel. |
-
+| Heat 0 to 1 | `heatOf` | `h = clamp((level - 0.3)/0.7, 0, 1)`, which is `(T - 35)/8` for 35 to 43 C | TUNED | Linear and chosen. Nothing relates it to heat's effect on a person. |
+| Sun direction on the window | `limbOf`, `leanAt` | the beams' lean `a` (section 2.2, degrees from vertical, negative = the sun in the east); rays' direction `d = (sin a, cos a)` (x right, y down); `a = 0` with the sun down or no place | REAL-APPROX | The sun's direction projected on the east/up plane, with S3's limits (the north/south component dropped, the 3 degree floor and 75 degree cap). |
+| Exit point | `limbOf` | `M` the window's centre; `E = M - t*d` with `t = min((W/2)/abs(dx), (H/2)/abs(dy))`: where the ray from the centre toward the sun first leaves the window. At sunrise (`a` near -75) on the right edge, about a third of the way down; climbing the right edge to the top-right corner, along the top edge to its middle at solar noon (`a = 0`), the top-left corner, down the left edge at sunset | REAL-APPROX | The piece of the sun in view slides along the border as the sun's direction turns. The direction is real; the picture is not to scale (a real sun is half a degree wide). |
+| Limb | `limbOf`; `LIMB_R` 1.6 | disc radius `R = 1.6*W`; apex `P = E + depth*d`; centre `C = P - R*d`, so at `P` the limb's tangent is perpendicular to the beams' axis; only the part of the disc inside the window is drawn. Baked again only when `a` has moved by `LIMB_STEP` 0.5 degree, the depth by `DEPTH_STEP` 0.005 H, or the window resizes (a few px at a time through the day); it never moves otherwise | ARTISTIC | A huge circle arc used as a straight-looking edge. The 1.6 is a look. |
+| Depth | `depthOf`; `LIMB_FLOOR` 0.04, `LIMB_SWELL` 0.06 | `depth = (0.04 + 0.06*sin(el))*H`, `el` the sun's height (the sun down or no place: 45 degrees): about 0.048 H at sunrise, 0.08 H mid-morning, 0.098 H at a summer noon at Melbourne (el 76), 0.069 H at a winter noon (el 29); never under 0.04 H | TUNED | Fuller when the sun is higher, as the real sun's light is stronger; the numbers are chosen so that a sliver always shows. |
+| Surface | `bakeHeat`, `draw`; `SURFACE_EVERY` 0.05 s | granulation: value noise at two scales, warped by slow noise, drifting `5*sin(a)` px, each cell's brightness modulated `0.72 + 0.28*gm*sin(2a + phase)` (`a = 2*pi*t/12`, `gm = 0.6 + 0.4h`), a few brighter yellow patches (`smoothstep(0.58, 0.8, noise)`), dimmer deeper in (`0.75 + 0.25*exp(-q/45)`, `q` the depth below the limb); art pixels two wide; made every other frame | ARTISTIC | A real solar surface is granulated, with brighter active regions; this is a look. Nothing in it is faster than 1/6 Hz. |
+| Rim and halo | `RIM_DEEP` 1, `HALO_REACH` 26 | rim: the pixels within 1 px inside the limb, fixed at 0.95; halo: `0.9*exp(-dd/1.3)` plus a glow `0.42*exp(-dd/ext)*bri` outside the limb, `dd` the distance beyond it, with `bri = 1 + 0.82*(0.6 + 0.4h)*(0.2*w1 + 0.12*w2 + 0.1*w3)` and `ext` widening with `h`, each by slow travelling sine waves along the limb (up to 1/4 Hz): the limb line itself never moves | ARTISTIC | The sun's limb has a bright rim and a corona; the wobble is a look. |
+| Glow band | `BAND_T` 0.06, `BAND_AT` 0.42, `BAND_ALPHA` 0.5, `BAND_BREATH` 0.22; `bandWaves`, `profile` | a band `BAND_T*H` thick, its centreline `0.42` of its thickness inside the limb, a flat-topped bump `(1 - x^4)^2` (`x` the distance from the centre over the half-thickness); its colour added to the surface's at half strength (the granulation shows through); brightness `1 + 0.4*s*(0.5*w1 + 0.3*w2 + 0.2*w3)` and thickness `1 + 0.22*s*(...)` by slow waves along the limb, `s = 0.45 + 0.55h` | ARTISTIC | The furnace-like wobble: calm at 35 C, lively at 43 C; nothing faster than 0.5 Hz (the waves 1/4 Hz and under). |
+| Core | `CORE` 0.5 | added to the surface: `CORE*h*(0.8 + 0.2*sin(2a))*exp(-(u/(0.35W))^2)*exp(-q/28)` (`u` the place along the limb from the apex) | TUNED | The piece is shallow, so the hot core is strong. |
+| Colour ramp | `EMBER`, `SCARLET`, `WARM`, `WARM_HOT`, `rampOf`; `HEAT_STEPS` 48 | ramps mixed by `h` (a dim brownish ember at 0 to a scarlet-orange with a hot core at 1), read to `0.8 + 0.2h` of their length and desaturated to `0.65 + 0.35h`; `NL` 14 shades for the surface and halo, `NR` 12 for the band; the colour made again for each 48th of `h` | ARTISTIC | Hot iron darkens to a brownish red as it cools: a real cue (black-body colour), the ramps chosen by eye. |
+| Ember wash | `bakeHeat`, `draw`; `WASH_REACH` 0.2, `WASH_FADE` 0.05, `WASH_SIGMA` 0.16, `WASH_SPREAD` 0.35, `WASH_PERIOD` 0.13, `WASH_LEVELS` 20 | out of the piece along `d`: strength `exp(-d/Lw)*exp(-u^2/(2*sg^2))*smoothstep(3, 9, d)` with `Lw = 0.2H/ln(20)` (so it falls to 5 % at 0.2 H), `d` the distance beyond the limb, `sg = 0.16W + 0.35d`; bands travelling outward `0.5 + 0.5*cos(2*pi*(d/(0.13H) + 0.35*noise) - 3a)` (1/4 Hz), a drifting sideways ripple, a 12 s breathing, times `0.35 + 0.65h`; at half resolution, 20 shades, made every other frame; added to the piece on a canvas of its own | ARTISTIC | Heat shimmer and radiated glow flowing from a hot body; reach, spread and bands are looks. |
+| Brightness | `strength` 0.8, `CAP` | drawn at 0.8 of the page's cap; every pixel at most that | TUNED | Looks only. |
 
 ### 4.3 UV
 
@@ -516,7 +522,7 @@ Constants to grep when checking that the numbers here match the code:
 | Rain slant, drop size | `d0Of`, `vtOf`, `beadROf`, `RAIN_NOMINAL`, `LAYERS` (`size`, `near`), `MID_SPEED`, `CAP = 70`, `OLD_SLANT`, `PATH`, `STREAK_MOST`, `GUST_SHARE`, `effectiveSpeed`, `TAU_UP`, `TEST_WIND`, `STEPS = 20`, `PACE` / `paceOf` |
 | Effect levels | `conditionsOf`, `FLOOD_SHOW`, `FOG_ON`, `FOG_OFF`, `windSideOf`, `GUST_MARK`, `BUDGET`, `ART_PX`, `FADE_S` |
 | Haze | `PM_EXT`, `PM_CAP`, `PM_EDGES`, `pmOpacity`, `PAN_MAX`, `PAN_K`, `bakeTexture`, `HOLLOW` |
-| Heat | `heatOf`, `HEAT_STEPS`, `HEAT_PERIOD`, `HEAT_PEAK`, `heatWave`, `wanted`, `HEAT_SLEW`, `HEAT_FADE`, `HEAT_SOFT`, `HEAT_BANDS`, `band` |
+| Heat | `heatOf`, `limbOf`, `depthOf`, `LIMB_R`, `LIMB_FLOOR`, `LIMB_SWELL`, `LIMB_STEP`, `DEPTH_STEP`, `HEAT_STEPS`, `BAND_T`, `BAND_AT`, `BAND_BREATH`, `CORE`, `WASH_REACH`, `WASH_SIGMA`, `WASH_SPREAD`, `WASH_PERIOD`, `bandWaves`, `rampOf` |
 | UV and sun | `BEAM_MAX`, `BEAM_CURVE`, `EL_LOW`, `RUN_ON`, `SUN_FALLBACK`, `leanAt`, `leanOf` |
 | Ice, flood | `reachFor`, `growRate`, `MELT`, `RISE = 4`, `DRAIN`, `CALMS`, `PUSH`, `EDDY_REST`, `flood_of` |
 | Beads | `RUN_R`, `critOf`, `LEAN_FROM`, `BRAKE_S`, `GONE`, `TINY`, `SWELL`, `PACE`, `sized`, `HEAVY_RAIN`, `FOG_AT`, `FORM`, `CLEAR`, `THICKEN` |
