@@ -221,6 +221,52 @@ async def test_the_data_carries_the_sun_sunrise_sunset_and_the_time_now_by_the_s
     assert web_dashboard.sun_of(None, noon) == {"rise": 360, "set": 1080, "now": 750.25}
 
 
+async def test_the_sun_carries_its_real_azimuth_and_elevation_at_the_stations_location_and_clock_and_none_without_a_location(server, station):
+    """`sun` gains az (degrees clockwise from north) and el (above the horizon) from the station's latitude and longitude (the forecast's
+    when it has one: MCP_FORECAST_LAT and LON, else the station's own) and its zone's clock; with no location neither key (the page keeps to the
+    sunrise and sunset curve)."""
+    page = WebDashboard(server)
+    melbourne = (-37.81, 144.96)
+    noon = datetime(2026, 1, 15, 13, 15, tzinfo=TZ)           # (about solar noon in Melbourne's midsummer, daylight saving's clock)
+    sun = web_dashboard.sun_of(None, noon, melbourne)
+    assert set(sun) == {"rise", "set", "now", "az", "el"} and (sun["rise"], sun["set"], sun["now"]) == (360, 1080, 795), sun
+    assert 70 <= sun["el"] <= 80 and (sun["az"] < 15 or sun["az"] > 345), sun            # (high in the north)
+    winter = web_dashboard.sun_of(None, datetime(2026, 7, 15, 12, 20, tzinfo=TZ), melbourne)
+    assert 25 <= winter["el"] <= 32 and (winter["az"] < 15 or winter["az"] > 345), winter
+    morning = web_dashboard.sun_of(None, datetime(2026, 3, 20, 8, 0, tzinfo=TZ), melbourne)
+    assert 60 < morning["az"] < 110 and morning["el"] > 0, morning                      # (the east)
+    assert "az" not in web_dashboard.sun_of(None, noon) and "el" not in web_dashboard.sun_of(None, noon, None), "no location"
+    # the page's data: the forecast's location first, else the station's, else none
+    assert "az" not in (await page.data())["sun"]                                       # (neither here)
+    server.ctx.forecast = NS(days=[], location=melbourne)
+    assert {"az", "el"} <= set((await page.data())["sun"])
+    server.ctx.forecast = NS(days=[], location=None)
+    assert "az" not in (await page.data())["sun"]
+    station.eco.location = (51.5, -0.12)
+    got = (await page.data())["sun"]
+    assert {"az", "el"} <= set(got), got
+    server.ctx.forecast = NS(days=[], location=melbourne)                             # (a configured one beats the station's)
+    here = (await page.data())["sun"]
+    assert (here["az"], here["el"]) != (got["az"], got["el"]), (here, got)
+    assert web_dashboard.location_of(server.ctx) == melbourne
+    server.ctx.forecast = None
+    assert web_dashboard.location_of(server.ctx) == (51.5, -0.12)
+    station.eco.location = None
+    assert web_dashboard.location_of(server.ctx) is None
+
+
+def test_the_sun_days_file_is_what_the_solar_module_gives():
+    """tests/sun_days.json (the browser test's sun: Melbourne every 10 minutes on the solstices, while up) is lib/solar.py's own."""
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    from lib import solar
+    file = json.loads((Path(__file__).parent / "sun_days.json").read_text())
+    for name, (day, rows) in file["days"].items():
+        start = datetime.fromisoformat(day).replace(tzinfo=ZoneInfo(file["zone"]))
+        want = [[m, *(round(v, 3) for v in reversed(solar.sun_position(*file["place"], start + timedelta(minutes=m))))] for m in range(0, 1440, 10)]
+        assert rows == [r for r in want if r[2] > 0], name
+
+
 async def test_the_data_carries_todays_highest_of_the_wind_gust_rain_rate_sun_and_uv_and_the_gust_now(server, station):
     """The dials' thin red hands: each one's reading's highest today (the station's day; Wind: its gust), its tile's Daily figure (Max;
     the Wind's Gust), which counts the reading now in, so it rises with it; null with none. Nothing read from the file for it. And the
@@ -2542,8 +2588,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         # (no hard start at the top: the top row within 15 % of the second, the gradient already at its strong end there)
         assert abs(rows[0] - rows[1]) <= 0.15 * rows[1], rows[:4]
         # (warm, from the top: the top third's red over its green and blue, the whole width: nowhere bare, UV or not)
-        r, g, b = look["top"]["colour"]
-        assert r > 1.2 * b and r > g and 0.01 < look["top"]["alpha"] < 0.3, [(l["level"], l["top"], l["drawn"]) for l in looks]
+        r, g, b = look["top"]["colour"]   # (the top third's mean alpha under 0.4: the gradient reaches 0.64 of the height now, not 0.32)
+        assert r > 1.2 * b and r > g and 0.01 < look["top"]["alpha"] < 0.4, [(l["level"], l["top"], l["drawn"]) for l in looks]
         assert look["bare"] == 0, look["bare"]
         assert 0.35 < look["centroid"] < 0.65, look["centroid"]   # (broad lobes: spread across the width)
         assert look["beam"]["lean"] == 0 and look["beam"]["fixed"], look["beam"]   # (midday)
@@ -2580,7 +2626,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert (1 - hottest["pulse"]["min"]) >= 4 * (1 - cool["pulse"]["min"]) > 0.01, (cool["pulse"], hottest["pulse"])
     for look in looks:
         assert look["pulse"]["peaks"] < 3 and look["heat"]["flashes"] < 1 and look["pulse"]["steps"] < 0.1, look["pulse"]
-    assert hottest["pulse"]["peaks"] > cool["pulse"]["peaks"], (cool["pulse"], hottest["pulse"])
+    assert hottest["pulse"]["peaks"] >= cool["pulse"]["peaks"], (cool["pulse"], hottest["pulse"])   # (periods 10 s and 14 s: one peak each in the 12 s window)
     # ... dithered irregularly (no grid: under 100, as gridPeak sees it; ordered, about 200)
     assert hot["grid"] < 100, hot["grid"]
     # ... never leaning: the same at 08:00, 12:00 and 17:00 (06:00-18:00 here): the whole width covered at every angle (no bare column),
@@ -2598,7 +2644,9 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert over["errors"] == [] and over["looks"][0]["drawn"] < hottest["drawn"] and over["looks"][0]["drawn"] <= over["looks"][0]["cap"], over
     there = over["looks"][0]
     (ur, _, ub) = there["atUvDown"]["colour"]
-    assert ub > ur and there["atUvDown"]["alpha"] > 0.1, (there["atUvDown"], there["atUv"])
+    # (the heat's gradient is strong over the top 40 rows now, so down at the beams the violet shows as blue the heat alone has none of, and
+    # in their top rows blue over red)
+    assert ub > 40 and there["atUv"]["colour"][2] > there["atUv"]["colour"][0] and there["atUvDown"]["alpha"] > 0.1, (there["atUvDown"], there["atUv"])
     assert there["bare"] == 0 and all(l["bare"] == 0 and l["uv"] for l in over["leans"]), (there["bare"], over["leans"])
     # the UV's beams start well above the window: no start edge at its top whatever the lean (the top row as inked as those below it)
     for m, l in {l["minutes"]: l for l in got["uvStart"]["leans"]}.items():
@@ -2616,6 +2664,38 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert sun["sunrise"]["lean"] == pytest.approx(-70) and sun["midday"]["lean"] == pytest.approx(0, abs=1e-9), sun
     assert sun["later"]["minutes"] == pytest.approx(781, abs=0.05) and sun["later"]["lean"] > 0, sun["later"]
     assert sun["ignored"]["rise"] == 420 and sun["ignored"]["set"] == 1140, sun["ignored"]   # (a "day" that ends before it begins: ignored)
+    # the lean by the sun's real place (the station's latitude and longitude, lib/solar.py; no place: the curve above, which these pages
+    # have: no location): -atan(sin az / tan el) from vertical, east (az 90) on the screen's right so a morning sun leans down-left
+    place = hot["place"]
+    pts = place["points"]
+    assert pts["noon"]["lean"] == pytest.approx(0, abs=1e-9) and pts["south"]["lean"] == pytest.approx(0, abs=1e-9), pts   # (due north or south: straight down)
+    assert pts["east"]["lean"] == pytest.approx(-math.degrees(math.atan(1 / math.tan(math.radians(40)))), abs=1e-6) and pts["east"]["lean"] < 0, pts["east"]
+    assert pts["west"]["lean"] == pytest.approx(-pts["east"]["lean"]) and pts["west"]["lean"] > 0, pts
+    assert pts["lowEast"]["lean"] == -75 and pts["lowWest"]["lean"] == 75, pts      # (a low sun: the cap)
+    assert abs(pts["overhead"]["lean"]) < 2, pts["overhead"]                         # (overhead: nearly straight down)
+    assert pts["down"]["up"] is False and pts["noon"]["up"] and pts["noon"]["real"] and pts["noon"]["az"] == 0 and pts["noon"]["el"] == 70, pts
+    # ... the season: the noon azimuth off north (20 degrees), the lean larger at the lower winter elevation; none at az 0 in either
+    assert pts["off20high"]["lean"] < 0 and abs(pts["off20high"]["lean"]) < 10 < abs(pts["off20low"]["lean"]), (pts["off20high"], pts["off20low"])
+    # ... through each solstice's day at Melbourne (the sun every 10 minutes from lib/solar.py): rising from negative (morning, down-left)
+    # through about nothing at solar noon (the sun due north) to positive (afternoon), within the cap; in summer the sun's high: the
+    # lean at noon straight down and small most of the day (its median size well under winter's); in winter larger
+    days = json.loads((Path(__file__).parent / "sun_days.json").read_text())["days"]
+    summer, winter = [[p["lean"] for p in place["through"][d]] for d in ("summer", "winter")]
+    for name, leans in (("summer", summer), ("winter", winter)):
+        assert len(leans) == len(days[name][1]) and all(abs(l) <= 75 for l in leans), (name, leans)
+        assert leans[0] < 0 < leans[-1] and all(a <= b + 1e-9 for a, b in zip(leans, leans[1:])), (name, leans)
+        near = min(place["through"][name], key=lambda p: abs(p["az"] - 0 if p["az"] < 180 else p["az"] - 360))   # (the sun nearest due north)
+        assert abs(near["lean"]) < 3, (name, near)
+    mid = lambda leans: sorted(abs(l) for l in leans[len(leans) // 4: 3 * len(leans) // 4])[len(leans) // 4]
+    assert mid(summer) < mid(winter), (mid(summer), mid(winter))
+    # ... run on by the page's clock between the data's samples: no jump from one minute to the next of more than a degree (the day's
+    # lean up to its cap), none from a new sample to the page's own run on (under a degree); it ends where the last sample put it
+    for name in ("summer", "winter"):
+        run = place["run"][name]
+        assert max(abs(b - a) for a, b in zip(run["leans"], run["leans"][1:])) < 1.0, (name, max(abs(b - a) for a, b in zip(run["leans"], run["leans"][1:])))
+        assert max(run["jumps"]) < 1.0, (name, max(run["jumps"]))
+        assert run["ends"]["real"] and run["ends"]["el"] == pytest.approx(days[name][1][-1][2], abs=0.2), run["ends"]
+    assert place["curve"]["real"] is False and place["curve"]["lean"] == pytest.approx(0, abs=1e-9) and place["curve"]["az"] is None, place["curve"]   # (no place: the curve)
 
 def clean_glass(marks):
     """Nothing on the glass (Sky.state().humidity.marks()): no trail, no stain on its canvas, no bead, no fog"""

@@ -1805,6 +1805,42 @@ const sunSeen = (page) => page.evaluate(() => {
   Sky.setTime(720);
   return { curve, sunrise, midday, later, ignored };
 });
+// The beams' lean by the sun's real place (Sky.setSunPosition, tests/sun_days.json: Melbourne's sun every 10 minutes on the summer and
+// winter solstices, from lib/solar.py): `points` (az, el) -> lean; each day's lean through it pinned; then each day run on by the page's
+// own clock from the data's samples (Sky.setSun with az and el: a sample a minute after the first, then every 10 minutes, the page
+// advancing 60 s between): the lean each minute; then with no place (setSun without az, el) the curve again
+const placeSeen = (page, days) => page.evaluate((days) => {
+  const lean = (az, el) => { Sky.setSunPosition(az, el); const b = Sky.state().beam; return { lean: b.lean, az: b.az, el: b.el, up: b.up, real: b.real }; };
+  const points = {};
+  for (const [name, az, el] of [["noon", 0, 70], ["east", 90, 40], ["west", 270, 40], ["lowEast", 90, 2], ["lowWest", 270, 2], ["south", 180, 40], ["off20high", 20, 70], ["off20low", 20, 30], ["overhead", 90, 89], ["down", 90, -5]]) points[name] = lean(az, el);
+  const through = {};
+  for (const [name, [, rows]] of Object.entries(days)) through[name] = rows.map(([m, az, el]) => ({ m, az, el, ...lean(az, el) }));
+  Sky.setSunPosition(null, null);
+  Sky.setTime(null);
+  const run = {};
+  Sky.timeScale(60);   // (a frame: a second of the weather's time at 2 s: 30 frames, a minute)
+  for (const [name, [, rows]] of Object.entries(days)) {
+    const leans = [], jumps = [];
+    const sample = ([m, az, el]) => Sky.setSun({ rise: 300, set: 1200, now: m, az, el });
+    const [m0, az0, el0] = rows[0], [m1, az1, el1] = rows[1];
+    sample(rows[0]);
+    Sky.advance(30);
+    sample([m0 + 1, az0 + (az1 - az0) / 10, el0 + (el1 - el0) / 10]);   // (a minute on: the page has its rate)
+    let at = m0 + 1;
+    for (let i = 1; i < rows.length; i++) {
+      while (at < rows[i][0]) { Sky.advance(30); at++; leans.push(Sky.state().beam.lean); }   // (the page's own run, a minute at a time)
+      const before = Sky.state().beam.lean;
+      sample(rows[i]);
+      jumps.push(Math.abs(Sky.state().beam.lean - before));   // (what the new sample moved it)
+    }
+    run[name] = { leans, jumps, ends: Sky.state().beam };
+  }
+  Sky.timeScale(1);
+  Sky.setSun({ rise: 360, set: 1080, now: 720 });   // (no az, el: the curve's place again)
+  const curve = Sky.state().beam;
+  Sky.setTime(720);
+  return { points, through, run, curve };
+}, days);
 // uv's beams over 40 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame drawn 0.1 s on, Sky's
 // longest step): where each beam's halo was drawn (with uv alone, the glow, then each beam's halo and core), its least and greatest x
 // (art px), how many times it turned back (from going one way to the other), and how faint and bright it was
@@ -3053,7 +3089,7 @@ const WEATHER = {
       const times = SUN_TIMES;
       const p = await weatherPage(browser, url, { query: `?fx=${name}`, driven: true, context: { viewport: { width: 640, height: 480 } } });
       const seen = await heatSeen(p.page, levels, times);
-      if (name === "heat") seen.sun = await sunSeen(p.page);
+      if (name === "heat") { seen.sun = await sunSeen(p.page); seen.place = await placeSeen(p.page, require("./sun_days.json").days); }
       seen.grid = (await gridPeak(p.page)).ratio;   // (its shafts' dithering)
       seen.errors = p.errors;
       await p.context.close();

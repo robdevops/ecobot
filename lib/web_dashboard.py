@@ -26,10 +26,12 @@
     {"change": hPa, "way": "up", "down" or "steady"}, the file's newest reading less its reading nearest an hour before it; null with
     no reading about an hour old: tendency()), and
     the gust now (`gust`, km/h: over 99, a new
-    reading sends a cow, a barn or a chicken across behind the tiles), and the sun (`sun`: {rise, set, now}, minutes since the station's
-    local midnight, DST included: today's sunrise and sunset from the forecast (Open-Meteo's daily ones, in the station's zone), 06:00 and
-    18:00 without them, and the station's clock now), for the sky's UV beams to lean with the time of day by the station's clock,
-    not the viewer's own (sun_of());
+    reading sends a cow, a barn or a chicken across behind the tiles), and the sun (`sun`: {rise, set, now, az, el}: minutes since the
+    station's local midnight, DST included: today's sunrise and sunset from the forecast (Open-Meteo's daily ones, in the station's zone),
+    06:00 and 18:00 without them, and the station's clock now; and the sun's real place now at the station's latitude and longitude
+    (the forecast's MCP_FORECAST_LAT and LON when set, else the station's own), az degrees clockwise from north and el degrees above the
+    horizon, computed here (lib/solar.py), the two keys left out with no location), for the sky's UV beams to lean with the sun's real
+    place (the sunrise and sunset curve without it), by the station's clock, not the viewer's own (sun_of());
   - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading or the
     air sensor's latest change, told by the server's own change detection for ecobot://now/weather and ecobot://now/air
     (EcobotServer.publish_changes: nothing is fetched for it), so the page fetches the data again and moves its gauges in place. A
@@ -63,6 +65,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingR
 from starlette.routing import Route
 
 from . import gauge_sheet
+from .solar import sun_position
 from .airgradient.dashboard import AIR_GAUGES
 from .airgradient.metrics import value_of
 from .service.common import iso
@@ -106,10 +109,12 @@ def minutes_of(when: datetime) -> float:
     return round(when.hour * 60 + when.minute + when.second / 60, 2)
 
 
-def sun_of(forecast, now: datetime) -> dict:
-    """{rise, set, now}: minutes since the station's local midnight (`now`: the station's time, in its zone: the clock's DST in it): today's
+def sun_of(forecast, now: datetime, location: tuple[float, float] | None = None) -> dict:
+    """{rise, set, now} (and {az, el}, with a `location`): minutes since the station's local midnight (`now`: the station's time, in its zone: the clock's DST in it): today's
     sunrise and sunset from the forecast's day for that date (Open-Meteo's, as ISO local times), 06:00 and 18:00 with no forecast, none for
-    today, or times that don't make a day (set not after rise)."""
+    today, or times that don't make a day (set not after rise). With a `location` (lat, lon): the sun's real place there now, `el` its
+    elevation above the horizon and `az` its azimuth clockwise from north, in degrees (lib/solar.py, the station's zone's clock in it);
+    without one neither key (the page keeps to the sunrise and sunset curve)."""
     rise, set_ = SUN_FALLBACK
     for day in (getattr(forecast, "days", None) or []):
         if day.get("date") != now.date():
@@ -121,7 +126,21 @@ def sun_of(forecast, now: datetime) -> dict:
         if found[0] < found[1]:
             rise, set_ = found
         break
-    return {"rise": rise, "set": set_, "now": minutes_of(now)}
+    out = {"rise": rise, "set": set_, "now": minutes_of(now)}
+    if location and None not in location and now.utcoffset() is not None:
+        el, az = sun_position(location[0], location[1], now)
+        out.update(az=round(az, 3), el=round(el, 3))
+    return out
+
+
+def location_of(ctx) -> tuple[float, float] | None:
+    """The station's (lat, lon) for the sun's place: the forecast's (MCP_FORECAST_LAT and LON when set, else the station's own), else the
+    station's; None with neither."""
+    for source in (getattr(ctx, "forecast", None), getattr(ctx, "eco", None)):
+        found = getattr(source, "location", None)
+        if isinstance(found, tuple) and len(found) == 2 and None not in found:
+            return found
+    return None
 
 
 def readings_of(live: dict | None, indoor: bool = True) -> tuple | None:
@@ -231,7 +250,7 @@ class WebDashboard:
         out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": tiles, "look": look(),
                "rain_rate": rain_rate_of(result, live), "gust": now_of(result, live, GUST),
                "today_highs": today_highs(sheet.tiles if sheet else []),
-               "sun": sun_of(getattr(self.server.ctx, "forecast", None), datetime.now(self.server.ctx.zone))}
+               "sun": sun_of(getattr(self.server.ctx, "forecast", None), datetime.now(self.server.ctx.zone), location_of(self.server.ctx))}
         if sheet is None:
             out["unavailable"] = (result.get("unavailable") or {}).get("station") or NOT_ANSWERING
         return out

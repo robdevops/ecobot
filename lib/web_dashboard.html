@@ -190,11 +190,13 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   100 %), uv, wind: 0 or 1, heat: 0-1 (35 °C to 43 °C), ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
 //   sooner)}; animate false (the page's "stop", MCP_DASHBOARD_ANIMATIONS low or off, or reduced motion): nothing drawn (and
 //   anything blown across gone).
-//   Sky.setSun({rise, set, now}): the station's sunrise and sunset and the time of day now (minutes since its local midnight: the page's
-//   data's `sun`), which the UV's beams lean with (straight down at midday, to 70 degrees by sunrise and sunset, toward
-//   the sun: down-left in the morning, down-right in the afternoon); Sky.setTime(minutes) (test-only): the time of day fixed there
+//   Sky.setSun({rise, set, now, az, el}): the station's sunrise and sunset and the time of day now (minutes since its local midnight: the page's
+//   data's `sun`; az and el: the sun's real place there, degrees from north clockwise and above the horizon), which the UV's beams lean with
+//   (-atan(sin az / tan el), at most 75 degrees, toward the sun: down-left in the morning, down-right in the afternoon, straight down at solar
+//   noon; without az and el the sunrise-sunset curve: straight down at midday, 70 degrees by sunrise and sunset); Sky.setSunPosition(az, el)
+//   (test-only): the place pinned (null: unpinned); Sky.setTime(minutes) (test-only): the time of day fixed there for the curve
 //   (null: by the clock again; window.__skyTest.time: at the start). Sky.state().beam: {lean: degrees from vertical now, negative
-//   down-left (morning), positive down-right, minutes, rise, set, noon, fixed}.
+//   down-left (morning), positive down-right, az, el (null on the curve), up, real, minutes, rise, set, noon, fixed}.
 //   Sky.setWindSpeed(speed, gust): the live wind's speed and gust, km/h (the Wind tile's reading and the gust, from the page's data): the
 //   rain's slant follows them continuously (tan of its angle from vertical = speed / 18 km/h, the drops' fall; none at no wind: straight
 //   down; at most 65 degrees; the gust adding 0.3 of what it is over the speed; the speed eased, rising over about 2 s, falling over
@@ -880,30 +882,60 @@ const Sky = (() => {
   });
 
   // ---------- uv: soft beams of light coming in from the top, leaning with the sun, slowly swaying and breathing; heat: a red gradient behind ----------
-  // The sun by the station's clock (the page's `sun` datum {rise, set, now}, minutes since the station's local midnight; never the
-  // viewer's own clock, which may be in another zone): sunrise to sunset, the day's midpoint "midday". Every UV beam leans with it: straight
-  // down at midday, tilted toward the sun's side the more the further from it, 0 to BEAM_MAX degrees from vertical by sunrise or
-  // sunset, 70 * sin(pi/2 * h) for h = (time - midday) / (half the day), clamped to -1..1: smooth, slow (at most about 0.3 degrees a
-  // minute), no jump. East is on the right of the screen (as on the compass dial): in the morning the sun is in the east, the beams
-  // come from the upper right and lean down-left (a negative lean); in the afternoon from the upper left, down-right (positive).
-  // Without the page's data yet: midday. Test-only: Sky.setTime(minutes) (null: the clock again), or window.__skyTest.time.
-  const BEAM_MAX = 70;                 // degrees from vertical at sunrise and sunset, at the most
-  const sun = {rise: 360, set: 1080, now: null, at: 0};   // (now: the time of day, minutes, as of the weather's clock `at`, s)
-  let fixedTime = typeof TEST.time === "number" ? TEST.time : null;
+  // The sun's real place, from the station's latitude and longitude and its clock (the page's `sun` datum {rise, set, now, az, el}: az
+  // degrees clockwise from north, el above the horizon; computed by the server, lib/solar.py: seasons and latitude in it; never the
+  // viewer's own clock, which may be in another zone). Every UV beam leans with it: -atan(sin(az) / tan(el)), the sun's horizontal offset
+  // across the screen over its height, in degrees from vertical, at most BEAM_MAX either way (a low sun, under 3 degrees up, counts as 3
+  // high: at the cap, but where it is near due north or south). East is on the right of the screen (as on the compass dial): in the morning the sun is in the
+  // east, the beams come from the upper right and lean down-left (a negative lean); in the afternoon from the upper left, down-right
+  // (positive). At solar noon the sun is due north (southern hemisphere) or due south (northern), sin(az) = 0: straight down. In summer
+  // the sun stands high and the lean stays small most of the day, in winter it leans more. The page runs on from the last two samples
+  // (their rate, held for at most half an hour): no jump when the next arrives. Without az and el (the station has no location) the
+  // sun's sunrise and sunset curve as it was: the day (rise to set) from -BEAM_CURVE to BEAM_CURVE degrees by 70 * sin(pi/2 * h), h
+  // = (time - midday) / (half the day), clamped to -1..1; without the page's data yet: midday, straight down.
+  // Test-only: Sky.setSunPosition(az, el) pins the place (null: unpinned), Sky.setTime(minutes) (null: the clock again) pins the
+  // clock for the old curve, or window.__skyTest.time; the pinned place wins over the pinned time, which wins over the data's place.
+  const BEAM_MAX = 75;                 // degrees from vertical, at the most
+  const BEAM_CURVE = 70;               // the sunrise-sunset curve's lean at sunrise and sunset (without a place)
+  const EL_LOW = 3;                    // degrees: below this the sun's height counts as this, for the lean
+  const SAMPLE_GAP = 30, RUN_ON = 1800;   // seconds: samples nearer than this give no new rate; a rate runs on for this long at most
+  const sun = {rise: 360, set: 1080, now: null, at: 0, sample: null, rate: {az: 0, el: 0}};   // (now: the time of day, minutes, as of the weather's clock `at`, s)
+  let fixedTime = typeof TEST.time === "number" ? TEST.time : null, pinned = null;
   const minutesNow = () => fixedTime !== null ? fixedTime : sun.now === null ? (sun.rise + sun.set) / 2 : sun.now + (clock - sun.at) / 60;
   const leanOf = (minutes, rise = sun.rise, set = sun.set) => {
     const noon = (rise + set) / 2, h = clamp((minutes - noon) / ((set - rise) / 2), -1, 1);
-    return BEAM_MAX * Math.sin(Math.PI / 2 * h);
+    return BEAM_CURVE * Math.sin(Math.PI / 2 * h);
+  };
+  const leanAt = (az, el) => {   // the beams' lean for the sun at this azimuth and elevation (degrees)
+    const raw = -Math.atan(Math.sin(az * Math.PI / 180) / Math.tan(Math.max(el, EL_LOW) * Math.PI / 180)) * 180 / Math.PI;
+    return clamp(raw, -BEAM_MAX, BEAM_MAX);
+  };
+  const placeNow = () => {   // {az, el} now: the pinned, else the data's run on by its rate; null without one
+    if (pinned) return pinned;
+    if (!sun.sample || fixedTime !== null) return null;
+    const dt = clamp(clock - sun.at, 0, RUN_ON), {az, el} = sun.sample;
+    return {az: ((az + sun.rate.az * dt) % 360 + 360) % 360, el: el + sun.rate.el * dt};
   };
   const beamState = () => {
-    const minutes = minutesNow();
-    return {lean: leanOf(minutes), minutes, rise: sun.rise, set: sun.set, noon: (sun.rise + sun.set) / 2, fixed: fixedTime !== null};
+    const minutes = minutesNow(), place = placeNow(), noon = (sun.rise + sun.set) / 2, fixed = fixedTime !== null;
+    const state = {minutes, rise: sun.rise, set: sun.set, noon, fixed};
+    return place ? {...state, lean: leanAt(place.az, place.el), az: place.az, el: place.el, up: place.el > 0, real: true}
+                 : {...state, lean: leanOf(minutes), az: null, el: null, up: true, real: false};
   };
   function setSun(given) {   // the page's data's sun
     if (!given || ![given.rise, given.set, given.now].every(Number.isFinite) || given.set <= given.rise) return;
-    Object.assign(sun, {rise: given.rise, set: given.set, now: given.now, at: clock});
+    Object.assign(sun, {rise: given.rise, set: given.set, now: given.now});
+    if (!(Number.isFinite(given.az) && Number.isFinite(given.el))) { sun.sample = null; sun.rate = {az: 0, el: 0}; sun.at = clock; return; }
+    const last = sun.sample, dt = clock - sun.at;
+    if (last && dt >= SAMPLE_GAP && dt <= 3600) {   // (the rate from the last two samples; the azimuth the short way round)
+      sun.rate = {az: (((given.az - last.az + 540) % 360) - 180) / dt, el: (given.el - last.el) / dt};
+      sun.at = clock;
+    } else if (!last || dt > 3600) { sun.rate = {az: 0, el: 0}; sun.at = clock; }
+    else { sun.at = clock; }
+    sun.sample = {az: given.az, el: given.el};
   }
   function setTime(minutes) { fixedTime = Number.isFinite(minutes) ? minutes : null; }   // (test-only)
+  function setSunPosition(az, el) { pinned = Number.isFinite(az) && Number.isFinite(el) ? {az, el} : null; }   // (test-only)
 
   // Each beam a dithered band, widening and fading as it comes down; drawn twice, a wide faint halo and a narrow bright core, the two
   // breathing out of step, so it seems to waver. Each sways a pixel or so side to side about its own place along the top (very
@@ -1057,7 +1089,7 @@ const Sky = (() => {
         g.globalAlpha = alpha * 0.8;
         g.drawImage(glow, 0, 0);
         const lean = beamState().lean;
-        for (const s of shafts) beamDrawn(g, s, alpha, t, lean);
+        if (beamState().up) for (const s of shafts) beamDrawn(g, s, alpha, t, lean);   // (none with the sun down)
       },
     };
   });
@@ -3955,7 +3987,7 @@ const Sky = (() => {
   }
 
   const running = () => DRIVEN ? animate && alive() : !!frame;
-  return {set, fling, tilt, level, setSun, setTime, setWind, setWindSpeed, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
+  return {set, fling, tilt, level, setSun, setTime, setSunPosition, setWind, setWindSpeed, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
           advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
           clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: running(), frames, cost, clock, size: [W, H, P],
