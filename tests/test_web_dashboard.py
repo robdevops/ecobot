@@ -2505,17 +2505,46 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         # (much wider than the UV's: each at least 3 times the widest UV beam, and not all the same)
         assert min(s["wide"] for s in shafts) >= 3 * max(look["uvWide"]), (look["uvWide"], shafts)
         assert len({s["wide"] for s in shafts}) > 3, shafts
-        # (red, from the top: the top third warm (red over green and blue), the whole width: nowhere bare, UV or not)
+        # (warm, from the top: the top third's red over its green and blue, the whole width: nowhere bare, UV or not)
         r, g, b = look["top"]["colour"]
-        assert r > 1.5 * b and r > 1.5 * g and 0.01 < look["top"]["alpha"] < 0.3, [(l["level"], l["top"], l["drawn"]) for l in looks]
+        assert r > 1.2 * b and r > g and 0.01 < look["top"]["alpha"] < 0.3, [(l["level"], l["top"], l["drawn"]) for l in looks]
         assert look["bare"] == 0, look["bare"]
         assert look["beam"]["lean"] == 0 and look["beam"]["fixed"], look["beam"]   # (midday: straight down)
-        # (a deep, saturated crimson, infrared imagery's red, not an orange ember: the red far over the green, little blue)
-        for there in (look["atHeat"], look["atUv"]):
-            assert there["colour"][1] < 0.15 * there["colour"][0] and there["colour"][2] < 0.35 * there["colour"][0], there
+        # (never over the cap, nor the strongest single effect's brightness: the throb only dims from the beams' own peak)
+        assert look["drawn"] <= look["cap"] and look["drawn"] <= 0.8 + 1e-9 and look["pulse"]["max"] <= 1 + 1e-9, look
     # ... stronger the hotter, brighter
     cool, warm, hottest = looks
-    assert cool["drawn"] < warm["drawn"] < hottest["drawn"] and cool["top"]["alpha"] < warm["top"]["alpha"] < hottest["top"]["alpha"], looks
+    assert cool["drawn"] < warm["drawn"] < hottest["drawn"], looks
+    # ... the temperature in the colour and the pulse: at 43 °C a vivid scarlet red (saturated, the red far over the green, little blue,
+    # never maroon: bright enough), at 35 °C a pale, washed-out amber-orange; a smooth ramp between
+    def saturation(c):
+        hi, lo = max(c), min(c)
+        return (hi - lo) / hi
+
+    def hue(c):   # (degrees from pure red: 0 red, 30 orange)
+        r, g, b = c
+        return 60 * (g - b) / (max(c) - min(c)) % 360 if r == max(c) else 360
+
+    cold, mid, hot_c = (look["heat"]["colour"] for look in looks)
+    assert saturation(hot_c) >= 1.5 * saturation(cold) and saturation(hot_c) > 0.8, (cold, hot_c)
+    assert hue(hot_c) < hue(cold) and hue(hot_c) < 12 and 15 < hue(cold) < 45, (cold, hot_c)
+    assert hot_c[0] > 200 and hot_c[1] < 0.2 * hot_c[0] and hot_c[2] < 0.2 * hot_c[0], hot_c   # (clearly red, not maroon)
+    assert cold[0] > 180 and cold[1] > 0.6 * cold[0] and cold[2] > 0.5 * cold[0], cold                                        # (pale: light, a lot of green and blue)
+    assert saturation(cold) < saturation(mid) < saturation(hot_c) and hue(cold) > hue(mid) > hue(hot_c), (cold, mid, hot_c)
+    # ... what is drawn agrees (the canvas's pixels at the beams' tops): the hot ones more saturated and redder
+    sat = lambda there: saturation(there["atHeat"]["colour"])
+    assert sat(hottest) >= 1.5 * sat(cool) and hue(hottest["atHeat"]["colour"]) < hue(cool["atHeat"]["colour"]), (cool["atHeat"], hottest["atHeat"])
+    # ... the pulse deeper and quicker the hotter: depth at 43 °C at least 4 times that at 35 °C, its period at most half, and what the
+    # beams really do over 12 s: breathing barely at the cool end, a pronounced throb at the hot, never a flash faster than the
+    # 3 a second photosensitivity limit (here 0.4 at the most), moving smoothly from frame to frame, the beams out of step
+    assert hottest["heat"]["depth"] >= 4 * cool["heat"]["depth"] and hottest["heat"]["period"] <= 0.5 * cool["heat"]["period"], looks
+    assert hottest["heat"]["waver"] > cool["heat"]["waver"] and cool["heat"]["period"] == pytest.approx(7) and hottest["heat"]["period"] == pytest.approx(2.5)
+    assert cool["heat"]["depth"] == pytest.approx(0.05) and hottest["heat"]["depth"] == pytest.approx(0.3)
+    assert (1 - hottest["pulse"]["min"]) >= 4 * (1 - cool["pulse"]["min"]) > 0.01, (cool["pulse"], hottest["pulse"])
+    for look in looks:
+        assert look["pulse"]["peaks"] < 3 and look["heat"]["flashes"] < 1 and look["pulse"]["steps"] < 0.1, look["pulse"]
+        assert not look["pulse"]["lockstep"], look["pulse"]
+    assert hottest["pulse"]["peaks"] > cool["pulse"]["peaks"], (cool["pulse"], hottest["pulse"])
     # ... dithered irregularly (no grid: under 100, as gridPeak sees it; ordered, about 200)
     assert hot["grid"] < 100, hot["grid"]
     # ... swaying as the UV's: over 24 s each a pixel or so either side of its place, never more than a pixel a second, never drifting
@@ -2531,7 +2560,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # with the UV on too: the two interleaving, the heat's red wider and behind (warmer between the UV's beams, though the UV's violet glow along the top shows), the UV's violet crisp on top
     # (blue over red at its places), within the cap; the union covers the whole width at every angle too
     over = got["heatOver"]
-    assert over["errors"] == [] and over["looks"][0]["drawn"] < hottest["drawn"], over
+    assert over["errors"] == [] and over["looks"][0]["drawn"] < hottest["drawn"] and over["looks"][0]["drawn"] <= over["looks"][0]["cap"], over
     there = over["looks"][0]
     assert [s["x"] for s in there["shafts"]] == [s["x"] for s in hottest["shafts"]], there
     (hr, _, hb), (ur, _, ub) = there["atHeat"]["colour"], there["atUv"]["colour"]

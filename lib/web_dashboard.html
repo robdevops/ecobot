@@ -911,7 +911,8 @@ const Sky = (() => {
   // A beam's halo and core drawn (from the loop's draw()), turned about its top by the lean, breathing and swaying: its top's x as drawn.
   // Squeezed across by the lean's cosine so its width along the window's top, and the beams' overlap, stay as they are leaning.
   // Nearest-neighbour: the pixel art stays pixels. One wholly off the window isn't drawn.
-  const beamDrawn = (g, s, alpha, t, lean) => {
+  // `waver` (0 for the UV's): the beam's width wavering by this fraction (its edges), in step with `swing` (radians)
+  const beamDrawn = (g, s, alpha, t, lean, waver = 0, swing = 0) => {
     const x = Math.round(s.x + s.sway * Math.sin(t * s.swayRate + s.phase * 3));
     const rad = lean * Math.PI / 180, reach = s.long * Math.sin(rad), half = s.wide * 1.2 + 2;
     if (Math.max(x, x + reach) + half < 0 || Math.min(x, x + reach) - half > W) return x;
@@ -920,7 +921,7 @@ const Sky = (() => {
     g.imageSmoothingEnabled = false;
     g.translate(x, 0);
     g.rotate(-rad);
-    g.scale(Math.cos(rad), 1);
+    g.scale(Math.cos(rad) * (1 + waver * Math.sin(swing * 1.3 + s.phase)), 1);
     g.globalAlpha = alpha * (0.3 + 0.4 * Math.pow(Math.sin(t * s.rate + s.phase), 2));
     g.drawImage(s.halo, -Math.floor(s.halo.width / 2), 0);
     g.globalAlpha = alpha * (0.15 + 0.55 * Math.pow(Math.sin(t * s.rate * 1.7 + s.phase * 2), 4));
@@ -929,42 +930,80 @@ const Sky = (() => {
     return x;
   };
 
-  // ---------- heat: wide soft beams of faint red light from the top, as the UV's, behind them (with both on, the UV's stay crisp on top) ----------
+  // ---------- heat: wide soft beams of red light from the top, as the UV's, behind them (with both on, the UV's stay crisp on top) ----------
   // One in each gap between the UV's beams' places (halfway between two, and one half a spacing past the last), each 40 % longer than
   // the UV beam to its left, and much wider (at least HEAT_WIDER times the widest UV beam: about one and a half spacings and more), so
   // they cover all the width the UV's beams don't: where the UV's are, each fills the gap between them, overlapping under them; with
   // none (the UV off) they overlap each other's soft edges across the whole width, no bare gap, each its own width, breathing and
-  // sway (so irregular, not stripes). All on at any heat; the hotter (its level: 0.3 at 35 °C to 1 at 43 °C) the brighter. Leaning
-  // as the UV's do. Drawn behind the flood (nothing below its water).
-  const EMBER = ["#3A0503", "#6E0B05", "#B8160A", "#FF2A14", "#FF7A66"].map(rgb);   // scarlet, infrared imagery's red (no orange, hardly any blue), faint (the UV's violet's way)
+  // sway (so irregular, not stripes). All on at any heat. The temperature shows in the colour and the pulse, not in extra light (the
+  // strength, and with it the peak, is under the cap as before): its heat h runs 0 at 35 °C (its level 0.3) to 1 at 43 °C (level 1),
+  // smoothly: the colour from a pale, washed-out amber-orange (low saturation, light) to a vivid scarlet-red (never maroon), and the
+  // beams breathing in brightness from a barely felt +-5 % every 7 s to a throb of +-30 % every 2.5 s (0.4 flashes a second at most:
+  // photosensitivity), their edges wavering from 2 % to 10 % of their width, each beam a little out of step with the next (the phase
+  // is kept, so a change of heat never jumps). The throb only ever dims from the peak (its top is the beam's brightness as before).
+  // Leaning as the UV's do. Drawn behind the flood (nothing below its water).
+  const HEAT_HUE = [30, 4], HEAT_SAT = [0.3, 1], HEAT_LIGHT = [0.3, 0.4, 0.48, 0.55, 0.68];   // [at 35 °C, at 43 °C]; the five shades' lightness at the hottest (0.14 lighter at 35 °C)
+  const HEAT_DEPTH = [0.05, 0.3], HEAT_PERIOD = [7, 2.5], HEAT_WAVER = [0.02, 0.1];             // [at 35 °C, at 43 °C]: the pulse
+  const heatOf = (level) => clamp((level - 0.3) / 0.7, 0, 1);
+  const mixed = (pair, h) => pair[0] + (pair[1] - pair[0]) * h;
+  const hslToRgb = (hue, sat, light) => {
+    const c = (1 - Math.abs(2 * light - 1)) * sat, hp = (hue % 360) / 60, x = c * (1 - Math.abs(hp % 2 - 1)), m = light - c / 2;
+    const [r, g, b] = hp < 1 ? [c, x, 0] : hp < 2 ? [x, c, 0] : [0, x, c];
+    return [r, g, b].map((v) => Math.round(255 * (v + m)));
+  };
+  const heatColours = (h) => HEAT_LIGHT.map((l) => hslToRgb(mixed(HEAT_HUE, h), mixed(HEAT_SAT, h), l + (1 - h) * 0.14));
   const HEAT_LONGER = 1.4;             // each this much longer than a UV beam
   const HEAT_WIDER = 3.3;              // ... and at least this times the widest UV beam's width
+  const HEAT_STEPS = 48;               // the beams repainted for each 48th of the heat's range (finer than the eye tells)
   const heat = effect((e) => {
     const random = streamOf("heat"), between = random.between;   // (its own randomness)
-    let shafts = [];
+    let shafts = [], tint = -1, colours = heatColours(0), swing = 0, lastT = null;
+    const pulse = () => {
+      const h = heatOf(e.level);
+      return {heat: h, depth: mixed(HEAT_DEPTH, h), period: mixed(HEAT_PERIOD, h), waver: mixed(HEAT_WAVER, h)};
+    };
     return {
       strength: () => 0.4 + 0.4 * e.level,
       // (for the tests: the lean now, the UV's places (art px) and widths, and each heat beam {x: its place, wide, long (art px),
-      // uvLong: the UV beam's to its left, at: its top's x as last drawn (null: not drawn)}, the window's size)
-      probe: () => ({level: e.level, size: [W, H], lean: beamState().lean, uv: uvShafts().map((s) => s.x), uvWide: uvShafts().map((s) => s.wide),
-                     uvTops: uvShafts().map((u) => u.x),
-                     shafts: shafts.map((s) => ({x: s.x, wide: s.wide, long: s.long, uvLong: s.uvLong, at: s.at}))}),
+      // uvLong: the UV beam's to its left, at: its top's x as last drawn (null: not drawn)}, the window's size; the colour now
+      // ([r, g, b]: its brightest shade (a representative beam colour), and the five shades) and the pulse now {heat 0-1, depth: the
+      // brightness's swing each way (a fraction), period (s), waver: the edges' (a fraction of the width), flashes: a second})
+      probe: () => {
+        const p = pulse(), c = heatColours(p.heat);
+        return {level: e.level, size: [W, H], lean: beamState().lean, uv: uvShafts().map((s) => s.x), uvWide: uvShafts().map((s) => s.wide),
+                uvTops: uvShafts().map((u) => u.x), colour: c[3], colours: c, ...p, flashes: 1 / p.period,
+                shafts: shafts.map((s) => ({x: s.x, wide: s.wide, long: s.long, uvLong: s.uvLong, at: s.at, mult: s.mult}))};
+      },
       resize() {
         const uv = uvShafts();
+        tint = -1;
         shafts = uv.map((u, i) => {
           const next = uv[i + 1], x = next ? (u.x + next.x) / 2 : u.x + u.spacing / 2;
           const long = Math.round(u.long * HEAT_LONGER);
           const least = Math.max(Math.ceil(HEAT_WIDER * UV_WIDE[1]), Math.round(1.5 * u.spacing));
           const wide = Math.round(least * between(1, 1.25)), narrow = Math.max(3, Math.round(wide * 0.35));
-          return {x, long, uvLong: u.long, wide, narrow, at: null, colours: EMBER, bright: [0.3, 0.4],
+          return {x, long, uvLong: u.long, wide, narrow, at: null, colours, bright: [0.3, 0.4], mult: 1, throb: between(0, 2 * Math.PI),
                   phase: between(0, 7), rate: between(0.3, 0.55), sway: between(0.85, 1.65), swayRate: between(0.05, 0.08)};
         });
       },
-      forget() { for (const s of shafts) s.at = null; },
+      forget() { for (const s of shafts) s.at = null; lastT = null; },
       draw(g, alpha, t) {
-        const lean = beamState().lean;
+        const lean = beamState().lean, p = pulse();
+        const step = Math.round(p.heat * HEAT_STEPS);
+        if (step !== tint) {   // (repainted as the heat changes: the palette follows it smoothly)
+          tint = step;
+          colours = heatColours(step / HEAT_STEPS);
+          for (const s of shafts) { s.colours = colours; s.halo = s.core = null; }
+        }
+        const dt = lastT === null ? 0 : t - lastT;
+        lastT = t;
+        if (dt > 0 && dt < 1) swing += 2 * Math.PI * dt / p.period;
         flood.above(g, () => {
-          for (const s of shafts) s.at = beamDrawn(g, s, alpha * 0.4 * (0.55 + 0.45 * e.level), t, lean);   // (each beam fainter than a UV one: they overlap, and cover the width)
+          for (const s of shafts) {
+            // (the brightness 1 - depth to 1: its peak the beam's own brightness, as before, so the cap holds)
+            s.mult = (1 + p.depth * Math.sin(swing + s.throb)) / (1 + p.depth);
+            s.at = beamDrawn(g, s, alpha * 0.4 * (0.55 + 0.45 * e.level) * s.mult, t, lean, p.waver, swing + s.throb);   // (each beam fainter than a UV one: they overlap, and cover the width)
+          }
         });
       },
     };
