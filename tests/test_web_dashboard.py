@@ -19,6 +19,7 @@ moving smoothly) with the wind's Gust column.
 With ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
+import colorsys
 import base64
 import functools
 import html
@@ -1840,30 +1841,50 @@ def just_right_of_the_row(corner):
     assert motion["bottom"] == pytest.approx(row["bottom"], abs=0.5) and motion["top"] == pytest.approx(row["top"], abs=0.5), corner
 
 
+def _hue(rgb: list[float]) -> float:
+    """The hue (degrees, -180 to 180: red 0, yellow 60) of a colour [r, g, b] 0-255."""
+    hue = colorsys.rgb_to_hsv(*(v / 255 for v in rgb))[0] * 360
+    return hue - 360 if hue > 180 else hue
+
+
 @needs_browser
-async def test_the_haze_alone_in_each_band_clouds_dithered_lit_from_above_drifting_with_the_wind(server, station):
+async def test_the_haze_alone_in_each_band_a_toxic_smog_veil_tinted_by_the_band_streaming_with_the_wind(server, station):
     got = await weather(server, "haze")
-    # the haze (the particulates), each band alone: soft clouds over the whole window, more of it under them with each band (at
-    # Moderate a few scattered ones, under a quarter of it; at Hazardous most of it), and denser
+    # the haze (the particulates), each band alone: one translucent veil over the whole window (no clouds), more of it covered and
+    # more opaque with each band (at Moderate thin and patchy, at Hazardous nearly everywhere)
     levels = got["haze"]["levels"]
     assert [lv["level"] for lv in levels] == [1, 2, 3, 4, 5], levels
     covers = [round(lv["cover"], 3) for lv in levels]
-    assert 0.03 < covers[0] < 0.25 and covers[-1] > 0.6 and all(a * 1.15 < b for a, b in zip(covers, covers[1:])), covers
-    assert all(a["mean"] * 1.2 < b["mean"] for a, b in zip(levels, levels[1:])), [lv["mean"] for lv in levels]
-    # ... dithered irregularly: no grid in its pixels (its strongest fine frequency's power, over the median's: under 400; the even
-    # veil's ordered dither, 75000 and more)
+    assert 0.15 < covers[0] < 0.7 and covers[-1] > 0.9 and all(a < b for a, b in zip(covers, covers[1:])), covers
+    assert all(a["mean"] * 1.1 < b["mean"] for a, b in zip(levels, levels[1:])), [lv["mean"] for lv in levels]
+    # ... a sickly tint that deepens with the band, on the AQI gauge's own scale: a grey-yellow at Moderate (hue 40-70 degrees, pale
+    # and greyish), ochre and brown through the middle bands, a brown-red at Very Unhealthy and a maroon-brown at Hazardous (hue under
+    # 20 degrees, red's side), dark and murky: Hazardous darker than Moderate (by half or more), and never bright
+    hues = [_hue(lv["rgb"]) for lv in levels]
+    assert 40 <= hues[0] <= 70 and all(a > b for a, b in zip(hues, hues[1:])), hues
+    assert 25 <= hues[1] <= 55 and 15 <= hues[2] <= 40, hues
+    assert hues[4] < 20, hues
+    lums = [lv["lum"] for lv in levels]
+    assert lums[4] < 0.5 * lums[0] and lums[4] < 80 and all(a > b for a, b in zip(lums, lums[1:])), lums
+    # ... nothing lit from one side: no light tops over darker undersides, the upper half of what is drawn as bright as the lower
+    # (within 15 %)
+    assert all(abs(lv["upper"] / lv["lower"] - 1) < 0.15 for lv in levels), [(lv["upper"], lv["lower"]) for lv in levels]
+    # ... streaks: its density runs longer along the wind than across it (the autocorrelation summed over the first lags: 1.5 times)
+    assert all(lv["acrossX"] >= 1.5 * lv["acrossY"] for lv in levels), [(lv["acrossX"], lv["acrossY"]) for lv in levels]
+    # ... dithered irregularly: no grid in its pixels (its strongest fine frequency's power, over the median's: under 400; an ordered
+    # dither's, 75000 and more)
     assert all(lv["grid"] < 400 for lv in levels), [round(lv["grid"]) for lv in levels]
-    # ... each cloud lit from above: its upper half lighter than its lower (by 15 % or more: its lit top over its darker core and
-    # underside)
-    looks = [look for lv in levels for look in lv["looks"]]
-    assert all(len(lv["looks"]) >= 2 for lv in levels) and all(upper > 1.15 * lower for upper, lower in looks), looks
-    # ... drifting right to left, the wind's way: every cloud and mote leftward (about 3 px/s), its drift too; faster in the wind
+    # ... drifting right to left, the wind's way: every layer and mote leftward (about 3 px/s), its drift too, and the picture itself;
+    # faster in the wind
     calm, windy = got["haze"]["calm"], got["haze"]["windy"]
     assert calm["n"] >= 20 and calm["left"] == calm["n"] and 1.5 < calm["speed"] < 6 and calm["slide"] > 2, calm
     assert windy["n"] >= 20 and windy["left"] == windy["n"] and windy["speed"] > 2 * calm["speed"] and windy["slide"] > 2 * calm["slide"], windy
-    for clouds in (calm["clouds"], windy["clouds"]):
-        assert clouds["n"] >= 20 and clouds["left"] == clouds["n"] and clouds["speed"] > 1, clouds
-    assert windy["clouds"]["speed"] > 2 * calm["clouds"]["speed"], (calm, windy)
+    for layers in (calm["layers"], windy["layers"]):
+        assert layers["n"] == 3 and layers["left"] == 3 and layers["speed"] > 1, layers
+    assert windy["layers"]["speed"] > 2 * calm["layers"]["speed"], (calm, windy)
+    assert calm["picture"] > 1 and windy["picture"] > 2 * calm["picture"], (calm["picture"], windy["picture"])
+    # ... and cheap: Hazardous, the dearest, under 4 ms a frame
+    assert got["haze"]["cost"] < 4, got["haze"]["cost"]
 
 
 @needs_browser

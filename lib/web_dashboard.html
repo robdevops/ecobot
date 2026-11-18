@@ -588,83 +588,59 @@ const Sky = (() => {
     };
   });
 
-  // ---------- haze: the particulates the air sensor measures, as soft clouds drifting across the whole window; more, denser and redder with each AQI band ----------
-  // Billowing masses (rounded tops, soft undersides, their edges breaking up into wisps), three deep: the far ones smaller, fainter,
-  // flatter in tone and slower, the near ones larger. Lit from above (and a little from the left): the light falls off as it goes
-  // into the cloud (its density summed on the way), so their upper surfaces and thin rims are lighter, their thick cores and
-  // undersides darker;
-  // shaded in the band's ramp (six shades: ochre at Moderate to maroon at Hazardous), blue-noise dithered only where one shade meets
-  // the next, and their alpha in a few steps dithered the same at their edges (where they break up). How many and how thick follow
-  // the band: at Moderate a few thin scattered ones, at Hazardous dense masses over most of the window. They drift downwind (right to
-  // left, or left to right as the wind blows: dir, above; coming in at the upwind edge, their wisps trailing behind them): slowly in calm air, faster with the wind on, quickening in its gusts (wind.breeze()); and slowly change shape as they
-  // go (the noise in them rolling through, their puffs swelling and shrinking). A sparse grain of faint dust motes among them. In a
-  // flood, none below its surface. The band changing: those it no longer needs fading out, the more it does fading in. (Each cloud a
-  // sprite of its own, from its puffs and a place in its depth's noise (made once for the window's size); lit again every few
-  // seconds, a few thousand px of clouds a frame; gone off the left, it comes in again at the right as a new one. Its own
-  // randomness: the other effects' unchanged by it.)
-  const HAZE = [   // each band's six shades, dark (a core, an underside) to light (a lit top, a rim)
-    ["#1E1B10", "#2D2817", "#403920", "#5A512B", "#776A37", "#968750"],    // Moderate (ochre)
-    ["#221810", "#332417", "#48321F", "#664728", "#855E32", "#A47A47"],    // Unhealthy for Sensitive Groups (amber)
-    ["#21130F", "#311D17", "#44271F", "#5F342A", "#794334", "#945848"],    // Unhealthy (rust)
-    ["#1E1117", "#2C1922", "#3C222F", "#53303F", "#6A3D4F", "#845266"],    // Very Unhealthy (plum)
-    ["#1A0C12", "#271119", "#361722", "#4C1F2C", "#642939", "#7E3A4A"]].map((r) => r.map(rgb));   // Hazardous (maroon)
+  // ---------- haze: the particulates the air sensor measures, as a toxic smog: a translucent veil drifting across the whole window ----------
+  // No clouds and no sprites: one veil over the whole window, thickening and thinning unevenly, made of three depth layers of baked,
+  // domain-warped noise (value noise displaced by more noise, once, for the window's height: 512 px wide, wrapping, its features
+  // stretched four to eight to one along the wind). Each layer is read through the window at its own pace for parallax (the far one slowest,
+  // the near one fastest), each row sheared a little by the wind (the streaks lean, mirrored with the wind's side), each read twice
+  // (at two paces and heights) and blended slowly one into the other, so the banks roll past and also billow in place. A front, a
+  // thicker band, sweeps through now and then at twice the pace; a gust speeds the streaks and stretches them further. The three
+  // layers' density summed (denser cores more opaque and darker, thin edges clearer and lighter), and its shade chosen by the band
+  // (the AQI gauge's own scale, lib/gauge_look.py's EPA colours yellow, orange, red, purple and maroon, as smog: dulled with grey,
+  // pulled toward brown; Moderate a faint grey-yellow, Hazardous a dark murky maroon-brown), the same everywhere on the veil (no
+  // lit tops, no undersides: nothing is lit from any side). Blue-noise dithered between a few shades and opacities, no grid. How much
+  // of the window it covers and how opaque follow the band. It drifts the way the wind blows (dir, above): slowly in calm air,
+  // faster with the wind on, quickening in its gusts (wind.breeze()). A sparse grain of dust motes among it. In a flood, none below
+  // its surface. The band changing: its tint, cover and opacity eased to the new band's over a second or so. (Painted into a canvas
+  // of the window's size about every 50 ms: the density of each pixel row by row from the layers' textures, a quarter of a
+  // millisecond or two a frame. Its own randomness: the other effects' unchanged by it.)
+  const HAZE = [   // each band's look: its thin edge's tint, its dense core's (dark), the cut in the layers' summed texture (lo: 0-1, lower with the band: more of it past), how far above it takes to the thickest, its top opacity
+    {thin: [204, 200, 156], core: [150, 144, 86], lo: 0.50, span: 0.50, open: 0.7},   // Moderate (the gauge's yellow, grey and faint)
+    {thin: [216, 190, 100], core: [172, 140, 42], lo: 0.42, span: 0.55, open: 0.7},   // Unhealthy for Sensitive Groups (orange: sulphur-yellow, ochre)
+    {thin: [198, 148, 84], core: [146, 98, 38], lo: 0.32, span: 0.60, open: 0.8},     // Unhealthy (red: ochre-brown)
+    {thin: [176, 106, 80], core: [122, 58, 42], lo: 0.22, span: 0.65, open: 0.9},      // Very Unhealthy (purple: brown-red)
+    {thin: [136, 70, 64], core: [82, 30, 38], lo: 0.10, span: 0.70, open: 1}];          // Hazardous (maroon: dense, dark, murky)
   const haze = effect((e) => {
-    const random = streamOf("haze:motes"), between = random.between;   // (the dust motes' own randomness; the clouds', own below)
-    const COVER = [0.12, 0.27, 0.45, 0.65, 0.85];   // about how much of the window is under cloud, each band
-    const THICK = [0.75, 0.8, 0.86, 0.93, 1];      // ... and how opaque it is
-    const CALM = 3, BREEZE = 7;                    // the drift leftward, px/s (the middle depth's): in calm air; more for the wind (1-3)
-    const DEPTHS = [   // far to near: size (of across()), drift (of the middle's), alpha, share of the cover, contrast,
-      {size: 0.18, pace: 0.5, alpha: 0.6, share: 0.18, contrast: 0.55, relight: 4},      // how often lit again (s)
-      {size: 0.28, pace: 1, alpha: 0.82, share: 0.32, contrast: 0.8, relight: 3},
-      {size: 0.42, pace: 1.6, alpha: 1, share: 0.5, contrast: 1, relight: 2}];
-    const FILL = 0.45;                 // (a cloud's share of its sprite)
-    const LIGHTS = 6000;               // (the px of clouds lit again in a frame, about: the first whatever its size)
-    const ALPHA = [0, 0.35, 0.6, 0.82, 0.96];      // its alpha's steps, by density
+    const random = streamOf("haze:motes"), between = random.between;   // (the dust motes' own randomness)
+    const TW = 512, MASK = TW - 1;     // the textures' width (a power of two, wrapping)
+    const SHADES = 8;                 // the veil's steps of tint and opacity, dithered one into the next
+    const EVERY = 0.05;                // painted again this often (s of the weather's time)
+    const CALM = 3, BREEZE = 7;        // the drift: in calm air (px/s, the middle layer's); more for the wind (1-3)
+    const GREY = 0.14;                 // how much grey is mixed into the tint
+    const LAYERS = [   // far to near: its noise's cells [across, down] in three octaves, how much it adds, its pace (of the middle's), its shear (px across per px down), how fast the second read rises (px/s), its seed
+      {cells: [[128, 16], [64, 8], [32, 8]], weight: 0.6, pace: 0.5, shear: 0.07, rise: 0.8, seed: 7100},
+      {cells: [[256, 32], [128, 16], [64, 8]], weight: 0.85, pace: 1, shear: 0.12, rise: 1.2, seed: 7200},
+      {cells: [[256, 32], [256, 16], [128, 8]], weight: 1, pace: 1.7, shear: 0.18, rise: 1.6, seed: 7300}];
+    const OCTAVES = [0.55, 0.3, 0.15];
     const MOTES = [{pace: 0.55, alpha: 0.25, share: 0.45}, {pace: 1, alpha: 0.35, share: 0.35}, {pace: 1.6, alpha: 0.5, share: 0.2}];
-    const own = seeded((TEST.seed || 1115) + 38), within = (a, b) => a + (b - a) * own();
-    const across = () => Math.sqrt(W * H) * 1.155;   // (the clouds' sizes by: the window's width at 4:3, as wide on a tall phone)
-    let built = 0, clouds = [], slide = 0, speed = 0, motes = [], born = 0, made = 0, dust = [], lit = 0;
-    function shape(c) {   // a new cloud: its size, its puffs (along a base, biggest in the middle) and its place in the noise
-      const d = DEPTHS[c.depth];
-      c.id = ++made;
-      c.w = Math.max(16, Math.round(across() * d.size * within(0.7, 1.35)));
-      c.h = Math.max(8, Math.round(c.w * within(0.36, 0.52)));
-      c.base = c.h * within(0.62, 0.72);   // (its puffs sit on this; below it, the underside fades)
-      const n = 3 + Math.floor(own() * 4);
-      c.puffs = [];
-      for (let i = 0; i < n; i++) {   // (big ones on its base, each crowned with a few smaller: cauliflower tops)
-        const u = (i + 0.5 + within(-0.3, 0.3)) / n, r = c.h * (0.18 + 0.24 * Math.sin(Math.PI * clamp(u, 0, 1))) * within(0.85, 1.15);
-        const p = {x: c.w * (0.14 + 0.72 * u), y: c.base - r * within(0.3, 0.7), r};
-        c.puffs.push(p);
-        for (let k = Math.floor(within(1, 4)); k > 0; k--) {
-          const a = within(-2.7, -0.45), q = r * within(0.35, 0.6);
-          c.puffs.push({x: p.x + Math.cos(a) * (r - q * 0.5) * 1.15, y: p.y + Math.sin(a) * (r - q * 0.5), r: q});
-        }
-      }
-      for (const p of c.puffs) Object.assign(p, {beat: within(0.06, 0.12), rate: within(0.15, 0.3), phase: within(0, 7)});
-      // (its noise: a place in its depth's, rolling through it sideways for as long as it lasts)
-      c.place = own();   // (its place down its depth's noise, of what's free)
-      c.roll = within(0, 1e4);
-      c.spin = within(0.3, 0.7);       // (px/s its noise rolls through it, leftward: slower than it drifts)
-      c.ox = Math.floor(own() * 1024); c.oy = Math.floor(own() * 1024);   // (its dither's own)
-      c.age = within(0, 60);
-      c.sprite = canvasOf(c.w, c.h);
-      c.img = c.sprite.getContext("2d").createImageData(c.w, c.h);
-      c.next = -1;
-    }
-    const density = new Float32Array(1 << 15), sharp = new Float32Array(1 << 15);   // (scratch, reused)
-    // Each depth's noise, made once for the window's size, shared by its clouds (each at a place of its own in it): three octaves,
-    // wider than tall, wrapping sideways; and the wisps' (long strands). Its cell sized to the depth's clouds.
-    let textures = [];
-    function layered(out, w, h, octaves) {   // value noise as noise() makes it, octaves [cell across, cell down, weight, seed] added
-      // into `out` (w x h, wrapping sideways: w a whole number of cells across), faster: each row's and column's cells and weights once
+    const FRONT = {gap: 1.1, width: 0.28, pace: 2.2, push: 58, hollow: 10};   // a thicker band: the clear stretch between (of the window's width), its width (of the width), its pace (of the middle layer's), how far it lifts the texture (0-255), how far the rest drops
+    const FO = 64, LUTN = 256 + 2 * FO;   // (the texture's values, a front's lift added, looked up from FO below 0)
+    let built = 0, slide = 0, speed = 0, motes = [], born = 0, dust = [], renders = 0, since = 0, front = 0, stretch = 1;
+    let TH = 0, img = null, px = null, veil = null, veilG = null, thr = null, shift = null, textures = 0;
+    let now = null, to = null;         // the look as painted (eased), and the band's to be
+    const comb = new Float32Array(700);
+    const pal = new Uint32Array(SHADES);
+    const line = new Float32Array(2200);   // (a row's density at every other column)
+    const FR = new Int16Array(4096);   // (a front's lift at each column of the window, plus FO)
+    const layers = LAYERS.map((l, i) => ({...l, id: i + 1, tex: null, lut: new Uint8Array(LUTN), travel: 0, sa: 0, sb: 0, ya: 0, yb: 0, mix: 128, phase: i * 2.1}));
+    // Value noise added into `out` (w x h, wrapping both ways: its cells a whole number across and down): octaves [cell across, cell down, weight, seed]
+    function periodic(out, w, h, octaves) {
       for (const [cx, cy, weight, seed] of octaves) {
-        const across = Math.round(w / cx), ix = new Int32Array(w), sx = new Float32Array(w);
+        const across = Math.round(w / cx), down = Math.round(h / cy), ix = new Int32Array(w), sx = new Float32Array(w), lattice = new Float32Array(across * down);
         for (let x = 0; x < w; x++) { const u = x / cx, i = Math.floor(u), f = u - i; ix[x] = i % across; sx[x] = f * f * (3 - 2 * f); }
-        const down = Math.floor((h - 1) / cy) + 2, lattice = new Float32Array(across * down);
         for (let j = 0; j < down; j++) for (let i = 0; i < across; i++) lattice[j * across + i] = hash(i, j, seed);
         for (let y = 0; y < h; y++) {
-          const v = y / cy, j = Math.floor(v), g = v - j, sy = g * g * (3 - 2 * g), r0 = j * across, r1 = r0 + across;
+          const v = y / cy, j = Math.floor(v), g = v - j, sy = g * g * (3 - 2 * g), r0 = (j % down) * across, r1 = ((j + 1) % down) * across;
           for (let x = 0, o = y * w; x < w; x++, o++) {
             const i0 = ix[x], i1 = i0 + 1 === across ? 0 : i0 + 1, s = sx[x];
             const top = lattice[r0 + i0] + (lattice[r0 + i1] - lattice[r0 + i0]) * s, bottom = lattice[r1 + i0] + (lattice[r1 + i1] - lattice[r1 + i0]) * s;
@@ -673,100 +649,68 @@ const Sky = (() => {
         }
       }
     }
-    function texture(depth) {
-      if (textures[depth]) return textures[depth];
-      const d = DEPTHS[depth], most = across() * d.size * 1.35, cell = 2 * Math.max(3, Math.round(most * 0.44 / 6 / 1.15));
-      const w = Math.ceil(1.6 * most / (4 * cell)) * 4 * cell, h = Math.ceil(most * 0.52 * 1.4), seed = 7000 + depth * 10;
-      const t = {w, h, noise: new Float32Array(w * h), wisp: new Float32Array(w * h)};
-      layered(t.noise, w, h, [[2 * cell, cell, 0.5, seed], [cell, cell / 2, 0.32, seed + 1], [cell / 2, cell / 4, 0.18, seed + 2]]);
-      layered(t.wisp, w, h, [[2 * cell, cell / 1.5, 1, seed + 3]]);
-      return (textures[depth] = t);
+    // A layer's texture (TW x TH bytes): its noise displaced by two more (the domain warp), then its values evened out (every
+    // value as likely as any other), so a cut at some value covers exactly that share of it
+    function bake(l) {
+      const n = TW * TH, base = new Float32Array(n), wx = new Float32Array(n), wy = new Float32Array(n), warped = new Float32Array(n);
+      periodic(base, TW, TH, l.cells.map(([cx, cy], k) => [cx, cy, OCTAVES[k], l.seed + k]));
+      periodic(wx, TW, TH, [[l.cells[0][0], l.cells[0][1], 1, l.seed + 3]]);
+      periodic(wy, TW, TH, [[l.cells[0][0], l.cells[0][1], 1, l.seed + 4]]);
+      const ax = 1.2 * l.cells[0][0], ay = 3 * l.cells[0][1];
+      let lo = Infinity, hi = -Infinity;
+      for (let y = 0, o = 0; y < TH; y++) for (let x = 0; x < TW; x++, o++) {
+        const u = x + (wx[o] - 0.5) * 2 * ax, v = y + (wy[o] - 0.5) * 2 * ay;
+        const i = Math.floor(u), j = Math.floor(v), fx = u - i, fy = v - j;
+        const i0 = i & MASK, i1 = (i + 1) & MASK, j0 = (j & (TH - 1)) * TW, j1 = ((j + 1) & (TH - 1)) * TW;
+        const top = base[j0 + i0] + (base[j0 + i1] - base[j0 + i0]) * fx, bottom = base[j1 + i0] + (base[j1 + i1] - base[j1 + i0]) * fx;
+        const s = top + (bottom - top) * fy;
+        warped[o] = s;
+        if (s < lo) lo = s;
+        if (s > hi) hi = s;
+      }
+      const bins = new Uint32Array(1024), scale = 1023.999 / Math.max(hi - lo, 1e-9);
+      for (let o = 0; o < n; o++) bins[(((warped[o] - lo) * scale) | 0)]++;
+      const cdf = new Float32Array(1024);
+      for (let b = 0, sum = 0; b < 1024; b++) { sum += bins[b]; cdf[b] = sum / n; }
+      l.tex = new Uint8Array(n);
+      for (let o = 0; o < n; o++) l.tex[o] = Math.min(255, Math.round(255 * cdf[((warped[o] - lo) * scale) | 0]));
     }
-    function light(c) {   // the cloud's look now: its density, lit from above, into its band's shades
-      const tex = texture(c.depth), tw = tex.w, ty = Math.floor(c.place * Math.max(1, tex.h - c.h));
-      const {w, h} = c, d = DEPTHS[c.depth], ramp = HAZE[built - 1], px = c.img.data, dens = density.length >= w * h ? density : new Float32Array(w * h);
-      // (its shape: the most of its puffs' cones at each pixel, each puff's only over its own box: below -0.5 nothing shows)
-      const r0 = Math.floor(c.roll), f = c.roll - r0, under = h - c.base, shape = sharp.length >= w * h ? sharp : new Float32Array(w * h);
-      shape.fill(-0.5, 0, w * h);
-      for (const p of c.puffs) {
-        const r = p.r * (1 + p.beat * Math.sin(c.age * p.rate + p.phase)), rx = r * 1.25;
-        const x0 = Math.max(0, Math.floor(p.x - 1.5 * rx)), x1 = Math.min(w - 1, Math.ceil(p.x + 1.5 * rx));
-        const y0 = Math.max(0, Math.floor(p.y - 1.5 * r)), y1 = Math.min(h - 1, Math.ceil(p.y + 1.5 * r));
-        for (let y = y0; y <= y1; y++) {
-          const dy = (y - p.y) / r, dy2 = dy * dy;
-          for (let x = x0, i = y * w + x0; x <= x1; x++, i++) {
-            const dx = (x - p.x) / rx, v = 1 - Math.sqrt(dx * dx + dy2);
-            if (v > shape[i]) shape[i] = v;
-          }
-        }
-      }
-      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-        let s = shape[y * w + x];
-        if (s <= -0.5) { dens[y * w + x] = 0; continue; }
-        if (y > c.base) s -= 0.9 * (y - c.base) / under;   // (a soft underside)
-        const row = (y + ty) * tw, a = row + (x + r0) % tw, b = row + (x + r0 + 1) % tw, tn = tex.noise, tk = tex.wisp;
-        const n = tn[a] + (tn[b] - tn[a]) * f, k = tk[a] + (tk[b] - tk[a]) * f;
-        let v = 1.5 * s + 1.2 * (n - 0.5) - 0.05;
-        if (s > -0.45 && s < 0.2) v = Math.max(v, (k - 0.62) * 2.4 * (1 - Math.abs(s + 0.12) / 0.33) * (0.3 + (dir.side < 0 ? x / w : 1 - x / w)));   // (wisps about its edge, trailing
-        // most behind it, downwind: to the right going left, to the left going right)
-        const edge = Math.min(x + 1, w - x, y + 1, h - y) / 3;   // (nothing at the sprite's own edge)
-        dens[y * w + x] = clamp(v, 0, 1) * Math.min(1, edge);
-      }
-      // (the light from above and a little to the left: the density on the way in summed, half from straight above, half from up
-      // and to the left)
-      const deep = h * 0.16, tau = new Float32Array(w);
-      for (let y = 0; y < h; y++) {
-        let left = 0;
-        for (let x = 0; x < w; x++) {
-          const i = y * w + x, v = dens[i], o = i * 4, up = tau[x];
-          tau[x] = v + 0.5 * (up + left);
-          left = up;
-          if (v <= 0) { px[o + 3] = 0; continue; }
-          const t1 = dither(x + c.ox, y + c.oy), t2 = dither(x + c.ox + 517, y + c.oy + 211);
-          const step = Math.min(4, Math.max(0, Math.floor(v * 4.4 + (v < 0.3 ? 0.8 : 0.35) * (t2 - 0.5) + 0.35)));
-          if (!step) { px[o + 3] = 0; continue; }
-          // (its tone: the light left after the cloud on the way; thin parts, its rim, a touch lighter; the far ones' flatter)
-          let tone = 0.95 * Math.exp(-tau[x] / deep) + 0.2 * (1 - v) - 0.08;
-          tone = 0.45 + (tone - 0.45) * d.contrast;
-          const shade = Math.min(5, Math.max(0, Math.floor(tone * 6 + 0.4 * (t1 - 0.5))));
-          const col = ramp[shade];
-          px[o] = col[0]; px[o + 1] = col[1]; px[o + 2] = col[2]; px[o + 3] = Math.round(255 * ALPHA[step]);
-        }
-      }
-      c.sprite.getContext("2d").putImageData(c.img, 0, 0);
-      c.next = c.age + d.relight * within(0.8, 1.2);
-      lit++;
-    }
-    const counts = (level) => {   // how many clouds of each depth: their area together so that about COVER of the window is under one
-      const area = -Math.log(1 - COVER[level - 1]) * W * H;
-      return DEPTHS.map((d) => Math.max(1, Math.round(area * d.share / (FILL * (across() * d.size) ** 2 * 0.44))));
+    // The look for the band `level` (1-5) as numbers, for easing: thin and core tints (r, g, b each), lo, gain, open
+    const lookOf = (level) => {
+      const b = HAZE[level - 1], grey = (c) => { const y = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; return c.map((v) => v + (y - v) * GREY); };
+      return {thin: grey(b.thin), core: grey(b.core), lo: b.lo, span: b.span, open: b.open};
     };
-    function build(level) {   // the band's clouds: those there kept (lit in its shades), more fading in or some fading out
-      const fresh = !clouds.length;
+    // The tables the painting reads, from the look now: each layer's texture value to its density, the densities summed to a step, the steps to a colour
+    function tables() {
+      const {thin, core, lo, span, open} = now, total = layers.reduce((sum, l) => sum + l.weight, 0);
+      for (const l of layers) for (let i = 0; i < LUTN; i++) l.lut[i] = Math.round(Math.max(0, i - FO) * l.weight / total);   // (each layer's share of the sum)
+      for (let d = 0; d < comb.length; d++) {   // (the sum past the cut, eased in: thin edges first, the cores darker and more opaque)
+        const t = clamp((d / 255 - lo) / span, 0, 1);
+        comb[d] = (SHADES - 1) * 0.999 * t * t * (3 - 2 * t);
+      }
+      pal[0] = 0;
+      for (let k = 1; k < SHADES; k++) {
+        const u = k / (SHADES - 1), c = Math.pow(u, 0.85), a = Math.round(255 * open * Math.pow(u, 0.8));
+        const col = [0, 1, 2].map((j) => Math.round(thin[j] + (core[j] - thin[j]) * c));
+        pal[k] = ((a << 24) | (col[2] << 16) | (col[1] << 8) | col[0]) >>> 0;   // (little-endian RGBA)
+      }
+    }
+    const hex = (c) => `#${c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
+    function build(level) {   // the band's look to ease to (at once on the first)
+      const fresh = !built;
       built = level;
-      const want = counts(level), kept = [];
-      DEPTHS.forEach((d, depth) => {
-        const mine = clouds.filter((c) => c.depth === depth && !c.leaving), leaving = clouds.filter((c) => c.depth === depth && c.leaving);
-        if (mine.length > want[depth]) {   // (fewer: those kept spread across the window, the rest fading out)
-          mine.sort((a, b) => a.x - b.x);
-          const keep = new Set(Array.from({length: want[depth]}, (_, i) => mine[Math.floor((i + 0.5) * mine.length / want[depth])]));
-          for (const c of mine) if (!keep.has(c)) { c.leaving = true; leaving.push(c); }
-          mine.splice(0, mine.length, ...mine.filter((c) => keep.has(c)));
-        }
-        for (let k = 0, more = want[depth] - mine.length; k < more; k++) {
-          const c = {depth, shown: fresh ? 1 : 0};
-          shape(c);
-          // (spread across the window, the new ones among themselves, each at its own height)
-          c.x = Math.round(-0.6 * c.w + (W + 0.2 * c.w) * (k + own()) / more);
-          c.y = within(-0.3 * c.h, H - 0.7 * c.h);
-          mine.push(c);
-        }
-        kept.push(...mine, ...leaving);
-      });
-      clouds = kept;
-      for (const c of clouds) c.next = -1;   // (each lit in the band's shades as soon as can be: a few frames)
-      dust = [0.15, 0.28, 0.4].map((k) => `rgb(${HAZE[level - 1][5].map((v) => Math.round(v + (225 - v) * k)).join(",")})`);
-      if (fresh) slide = 0;
+      to = lookOf(level);
+      if (fresh || !now) { now = JSON.parse(JSON.stringify(to)); tables(); }
+      dust = [0.15, 0.28, 0.4].map((k) => `rgb(${to.core.map((v) => Math.round(v + (225 - v) * k)).join(",")})`);
+      if (fresh) { slide = 0; front = 0; }
+    }
+    function ease(dt) {   // the look as painted toward the band's: about a second
+      const k = Math.min(1, dt / 0.6);
+      let moved = false;
+      for (const key of ["thin", "core"]) for (let j = 0; j < 3; j++) { const d = to[key][j] - now[key][j]; if (Math.abs(d) > 0.2) { now[key][j] += d * k; moved = true; } else now[key][j] = to[key][j]; }
+      for (const key of ["lo", "span", "open"]) { const d = to[key] - now[key]; if (Math.abs(d) > 0.002) { now[key] += d * k; moved = true; } else now[key] = to[key]; }
+      if (moved) tables();
+      return moved;
     }
     const place = (m, anywhere) => {
       m.id = ++born;
@@ -775,71 +719,94 @@ const Sky = (() => {
       m.phase = between(0, 7);
       m.bob = between(0.6, 2);         // (px/s: a slow wander up and down)
     };
-    // (for the tests: a cloud's look as lit last: the mean luminance (by alpha) of the upper half of its rows that show anything,
-    // and of the lower half; the mean alpha (0-1) of the pixels its density puts deep inside (alpha's top step) and at its edges
-    // (the lowest step); or null)
-    function look(id) {
-      const c = clouds.find((c) => c.id === id);
-      if (!c) return null;
-      const px = c.img.data, rows = [];
-      for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) if (px[(y * c.w + x) * 4 + 3]) { rows.push(y); break; }
-      if (!rows.length) return null;
-      const mid = (rows[0] + rows[rows.length - 1] + 1) / 2, sum = [0, 0], weight = [0, 0];
-      for (let y = rows[0]; y <= rows[rows.length - 1]; y++) for (let x = 0; x < c.w; x++) {
-        const o = (y * c.w + x) * 4, a = px[o + 3] / 255, half = y < mid ? 0 : 1;
-        sum[half] += a * (0.2126 * px[o] + 0.7152 * px[o + 1] + 0.0722 * px[o + 2]);
-        weight[half] += a;
+    function size() {   // the painting's canvas and dither for the window's size
+      TH = 1 << Math.max(8, Math.ceil(Math.log2(Math.max(H, 2))));
+      veil = canvasOf(W, H);
+      veilG = veil.getContext("2d");
+      img = veilG.createImageData(W, H);
+      px = new Uint32Array(img.data.buffer);
+      thr = new Float32Array(W * H);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) thr[y * W + x] = dither(x, y);
+      shift = new Int32Array(W);
+      for (const l of layers) l.tex = null;
+      textures = 0;
+    }
+    // One painting: each pixel row's three layers read twice each, blended, a front's lift added, summed, stepped by the dither
+    function paint() {
+      const f = dir.f, cx = W / 2, cy = H / 2, lo0 = layers[0], lo1 = layers[1], lo2 = layers[2];
+      const t0 = lo0.tex, t1 = lo1.tex, t2 = lo2.tex, u0 = lo0.lut, u1 = lo1.lut, u2 = lo2.lut;
+      const m0 = lo0.mix, m1 = lo1.mix, m2 = lo2.mix, TM = TH - 1;
+      const step = stretch, half = cx * step;
+      // (a front's lift at each column: a bump, wrapping with the gaps between)
+      const fw = Math.max(1, W * FRONT.width), period = W + 3 * fw + W * FRONT.gap;
+      const at = W + 1.5 * fw - (((front % period) + period) % period);
+      for (let x = 0; x < W; x++) { const d = (x - at) / fw; FR[x] = Math.round(FO - FRONT.hollow + (FRONT.push + FRONT.hollow) * Math.exp(-d * d)); }
+      for (let y = 0; y < H; y++) {
+        const dy = y - cy, o = y * W;
+        const a0 = lo0.sa - half + lo0.shear * f * dy, b0 = lo0.sb - half + 0.7 * lo0.shear * f * dy, r0 = ((y + (lo0.ya | 0)) & TM) * TW, q0 = ((y + 97 + (lo0.yb | 0)) & TM) * TW;
+        const a1 = lo1.sa - half + lo1.shear * f * dy, b1 = lo1.sb - half + 0.7 * lo1.shear * f * dy, r1 = ((y + (lo1.ya | 0)) & TM) * TW, q1 = ((y + 61 + (lo1.yb | 0)) & TM) * TW;
+        const a2 = lo2.sa - half + lo2.shear * f * dy, b2 = lo2.sb - half + 0.7 * lo2.shear * f * dy, r2 = ((y + (lo2.ya | 0)) & TM) * TW, q2 = ((y + 29 + (lo2.yb | 0)) & TM) * TW;
+        for (let x = 0, j = 0; x < W + 2; x += 2, j++) {   // (the density at every other column, between them its mean: the veil is smooth along the wind)
+          const xs = x * step, fr = FR[x < W ? x : W - 1];
+          const s0 = (t0[r0 + ((a0 + xs) & MASK)] * (256 - m0) + t0[q0 + ((b0 + xs) & MASK)] * m0) >> 8;
+          const s1 = (t1[r1 + ((a1 + xs) & MASK)] * (256 - m1) + t1[q1 + ((b1 + xs) & MASK)] * m1) >> 8;
+          const s2 = (t2[r2 + ((a2 + xs) & MASK)] * (256 - m2) + t2[q2 + ((b2 + xs) & MASK)] * m2) >> 8;
+          line[j] = comb[u0[s0 + fr] + u1[s1 + fr] + u2[s2 + fr]];
+        }
+        for (let x = 0, j = 0; x < W; x += 2, j++) {
+          const i = o + x, c = line[j];
+          px[i] = pal[(c + thr[i]) | 0];
+          if (x + 1 < W) px[i + 1] = pal[((c + line[j + 1]) * 0.5 + thr[i + 1]) | 0];
+        }
       }
-      return {upper: sum[0] / Math.max(weight[0], 1e-6), lower: sum[1] / Math.max(weight[1], 1e-6), rows: rows.length};
+      veilG.putImageData(img, 0, 0);
+      renders++;
     }
     return {
       strength: () => [0.44, 0.52, 0.6, 0.7, 0.82][Math.max(1, built || e.level) - 1],
       need: () => (W * H / 1800) * (0.6 + 0.2 * Math.max(1, e.level || built)),   // (the motes: about 65 at Moderate on a laptop)
       count: () => motes.length,
-      forget() { motes = []; slide = 0; clouds = []; built = 0; },
-      // (the wind turned: each cloud lit again, its wisps trailing the other way)
-      flip() { for (const c of clouds) c.next = -1; },
-      resize() { built = 0; motes = []; clouds = []; textures = []; },
-      // (for the tests: its band as drawn, how far it has drifted leftward (px, the middle depth's), its drift now (px/s), its motes
-      // [id, x, y], its clouds [id, depth, x, y, w, h] (art px, on the window), how many times a cloud has been lit, how many on show
-      // are yet to be lit in its band's shades (a few frames after it changes), how many are fading in or out (FADE_S after),
-      // look(id))
-      probe: () => ({level: built, slide, speed, motes: motes.map((m) => [m.id, m.x, m.y]), lit, look,
-                     pending: clouds.filter((c) => c.next < 0 && c.x < W && c.x + c.w > 0).length,
-                     settling: clouds.filter((c) => c.leaving || c.shown < 1).length,
-                     clouds: clouds.map((c) => [c.id, c.depth, c.x, c.y, c.w, c.h])}),
+      forget() { motes = []; slide = 0; built = 0; now = to = null; veil = veilG = img = px = thr = null; for (const l of layers) l.tex = null; textures = 0; },
+      // (the wind turned: the veil as it is, drifting the other way)
+      flip() {},
+      resize() { built = 0; motes = []; now = to = null; veil = null; },
+      // (for the tests: its band as drawn, how far it has drifted leftward (px, the middle layer's), its drift now (px/s), its motes
+      // [id, x, y], its layers [id, depth, x (px, leftward negative: how far each has gone from where it began), pace], how many
+      // times it was painted, the textures yet to bake, whether its look is still easing to the band's, its tint as painted: the
+      // thin edge's and the dense core's colours (hex), its cover's cut, span and opacity, and the stretch along the wind (1: none; a gust, less))
+      probe: () => ({level: built, slide, speed, motes: motes.map((m) => [m.id, m.x, m.y]), renders,
+                     pending: veil ? LAYERS.length - textures : LAYERS.length, settling: !!now && JSON.stringify(now) !== JSON.stringify(to) ? 1 : 0,
+                     layers: layers.map((l) => [l.id, LAYERS.indexOf(LAYERS.find((x) => x.seed === l.seed)), -l.travel, l.pace]),
+                     tint: now ? {thin: hex(now.thin), core: hex(now.core)} : null, look: now && {lo: now.lo, span: now.span, open: now.open}, stretch}),
       step(dt, t, share) {
         if (e.level > 0 && e.level !== built) build(e.level);
         speed = CALM + BREEZE * wind.breeze();
         slide -= dir.f * speed * dt;   // (leftward positive: dir.f is -1 leftward)
-        for (const c of clouds) {
-          c.x += dir.f * speed * DEPTHS[c.depth].pace * dt;
-          c.age += dt;
-          c.roll -= dir.f * c.spin * dt;   // (its noise rolling the way it goes; kept above 0)
-          if (c.roll < 0) c.roll += 1e4;
-          c.shown = clamp(c.shown + (c.leaving ? -dt : dt) / FADE_S, 0, 1);   // (the band changed: fading in, or out)
-          if (c.x + c.w < 0 && !c.leaving && dir.f < 0) {   // (gone off the left: a new one coming in at the right, lit as it shows)
-            const right = c.x + c.w;
-            shape(c);
-            c.x = W + right + within(0, 0.3 * c.w);
-            c.y = within(-0.3 * c.h, H - 0.7 * c.h);
-          } else if (c.x > W && !c.leaving && dir.f > 0) {   // (and going right, gone off the right: a new one in at the left)
-            const over = c.x - W;
-            shape(c);
-            c.x = -c.w - over - within(0, 0.3 * c.w);
-            c.y = within(-0.3 * c.h, H - 0.7 * c.h);
+        if (built) {
+          if (!veil) size();
+          const target = 1 / (1 + 0.6 * clamp(wind.breeze() - 0.8, 0, 1));   // (a gust stretches the streaks)
+          stretch += (target - stretch) * Math.min(1, dt / 0.8);
+          for (const l of layers) {
+            const run = -dir.f * speed * l.pace * dt;   // (px of the screen, leftward positive)
+            l.travel += run;
+            l.sa += run * stretch;
+            l.sb += run * 0.82 * stretch;
+            l.ya += 0.35 * dt * (l.pace + 0.5);   // (the first read creeps down, the second climbs: billowing in place)
+            l.yb -= l.rise * dt;
+            l.sa = ((l.sa % TW) + TW) % TW;
+            l.sb = ((l.sb % TW) + TW) % TW;
+            l.ya = ((l.ya % TH) + TH) % TH;
+            l.yb = ((l.yb % TH) + TH) % TH;
+            l.mix = Math.round(128 + 100 * Math.sin(t * (0.17 + 0.05 * l.id) + l.phase));
           }
-        }
-        clouds = clouds.filter((c) => !c.leaving || (c.shown > 0 && (dir.f < 0 ? c.x + c.w > 0 : c.x < W)));   // (a leaving one gone once it's off downwind)
-        if (built) {   // (those due lit again, the longest due first, about LIGHTS px of them a frame)
-          const due = clouds.filter((c) => c.age >= c.next && c.x < W && c.x + c.w > 0).sort((a, b) => (a.next - a.age) - (b.next - b.age));
-          let spent = 0;
-          const most = due.length && due[0].next < 0 ? 4 * LIGHTS : LIGHTS;   // (more while some on show are yet to be lit at all)
-          for (const c of due) {
-            if (spent && (spent + c.w * c.h > most || !textures[c.depth])) break;   // (a depth's noise made: that frame's share)
-            light(c);
-            spent += c.w * c.h;
+          front -= dir.f * speed * FRONT.pace * dt;
+          if (textures < layers.length) {   // (one texture baked a frame)
+            bake(layers[textures]);
+            textures++;
           }
+          const moved = ease(dt);
+          since += dt;
+          if (textures === layers.length && (since >= EVERY || moved && since >= EVERY / 2 || !renders)) { since = 0; paint(); }
         }
         const n = Math.round(this.need() * share);
         while (motes.length < n) {   // (the depths in their shares, far first: drawn back to front)
@@ -857,12 +824,9 @@ const Sky = (() => {
       draw(g, alpha) {
         if (!built) return;
         flood.above(g, () => {
-          const thick = THICK[built - 1];
-          for (const c of clouds) {   // (far first: they're kept in depth order)
-            if (c.x >= W || c.x + c.w <= 0 || c.y >= H || c.y + c.h <= 0) continue;
-            if (!c.shown) continue;
-            g.globalAlpha = alpha * thick * DEPTHS[c.depth].alpha * c.shown;
-            g.drawImage(c.sprite, Math.round(c.x), Math.round(c.y));
+          if (veil && renders && textures === layers.length) {
+            g.globalAlpha = alpha;
+            g.drawImage(veil, 0, 0);
           }
           let depth = -1;
           for (const m of motes) {
