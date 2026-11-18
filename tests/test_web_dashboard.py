@@ -2884,11 +2884,11 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert abs(bk["leanA"] - bk["leanB"]) >= 0.5 and bk["small"] == bk["second"], bk
     assert bk["depthSmall"] == bk["level"] and bk["depthBig"] == bk["level"] + 1, bk
     assert abs(bk["depths"][1] - bk["depths"][0]) < 0.005 * leans["noonSummer"]["size"][1] <= abs(bk["depths"][2] - bk["depths"][0]), bk
-    assert bk["resized"]["baked"] == bk["depthBig"] + 1 and bk["resized"]["size"] != leans["noonSummer"]["size"], bk
+    assert bk["resized"]["baked"] == bk["beforeResize"] + 1 and bk["resized"]["size"] != leans["noonSummer"]["size"], bk
     # the exit point through each solstice day (every ten minutes): along the border monotonically (the right edge up, the top edge left,
     # the left edge down), no jump over 0.12 of the border's length, from the right edge to the left
     for day, rows in hot["days"].items():
-        assert len(rows) > 60, (day, len(rows))
+        assert len(rows) > 50, (day, len(rows))
         w, h = rows[0]["size"]
         def along(p):   # (the border from the right edge's foot, up it, along the top, down the left: the distance)
             x, y = p

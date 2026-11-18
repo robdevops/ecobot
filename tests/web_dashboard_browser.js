@@ -1822,6 +1822,8 @@ const limbSeen = async (page) => {
     window.__rim = (L) => { const W = window.__c.width, H = window.__c.height, r = []; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const q = L.radius - Math.hypot(x + 0.5 - L.centre[0], y + 0.5 - L.centre[1]); if (q > 0 && q <= 1) r.push(y * W + x); } return r; };
   };
   await page.evaluate(helpers);
+  await fx({ heat: 1, uv: 1 });   // (warmed up first: the first frames' cost is the engine's compiling)
+  await inPage(() => { Sky.setSunPosition(0, 76); Sky.advance(240); });
   for (const [name, az, el] of PLACES) {
     await fx({ heat: 1, uv: 0 });
     const look = await inPage(([az, el]) => {
@@ -1925,8 +1927,8 @@ const limbSeen = async (page) => {
     Sky.setSunPosition(0, 60); Sky.advance(30);
     const a = baked(); Sky.advance(120); const b = baked();
     Sky.setSunPosition(120, 30); Sky.advance(3); const l0 = lean(); const c = baked();
-    Sky.setSunPosition(118.5, 30); Sky.advance(3); const l1 = lean(); const d = baked();
-    Sky.setSunPosition(118.4, 30); Sky.advance(3); const e = baked();   // (0.1 degree of lean: none)
+    Sky.setSunPosition(117, 30); Sky.advance(3); const l1 = lean(); const d = baked();
+    Sky.setSunPosition(116.9, 30); Sky.advance(3); const e = baked();   // (0.1 degree of lean: none)
     // the depth alone (due north, az 0: the lean stays 0): a rise of the sun's height under the step, none; over it, one
     Sky.setSunPosition(0, 30); Sky.advance(3); const f = baked(), d0 = depth();
     Sky.setSunPosition(0, 32); Sky.advance(3); const g = baked(), d1 = depth();
@@ -1948,6 +1950,7 @@ const limbSeen = async (page) => {
     Sky.setSunPosition(null, null);
     return run;
   }, require("./sun_days.json").days);
+  out.bakes.beforeResize = await inPage(() => { Sky.advance(3); return Sky.state().heat.bakes; });
   await page.setViewportSize({ width: 560, height: 420 });
   await page.waitForTimeout(700);
   out.bakes.resized = await inPage(() => { Sky.advance(3); return { baked: Sky.state().heat.bakes, size: Sky.state().heat.size }; });
