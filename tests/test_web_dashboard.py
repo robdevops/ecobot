@@ -682,7 +682,8 @@ async def test_with_mcp_dashboard_indoor_off_no_indoor_reading_is_drawn_or_sent_
     assert set(INDOOR_TITLES) <= set(titles) and WebDashboard(server).indoor is True
     assert [t["title"] for t in off["tiles"]] == [t for t in titles if t not in INDOOR_TITLES]
     assert off["tiles"] == [t for t in on["tiles"] if t["title"] not in INDOOR_TITLES]
-    assert {k: v for k, v in off.items() if k != "tiles"} == {k: v for k, v in on.items() if k != "tiles"}
+    # (the sun block carries the clock, which ticks between the two reads: left out)
+    assert {k: v for k, v in off.items() if k not in ("tiles", "sun")} == {k: v for k, v in on.items() if k not in ("tiles", "sun")}
     assert "indoor" not in got[False].lower() and "23.7" not in got[False] and "indoor" in got[True].lower()
     assert pages[False] == pages[True] and "indoor" not in re.sub(r"<!--.*?-->|//[^\n]*", "", pages[False]).lower()
     assert events == ["readings"] and not any("indoor" in line.lower() or "24.9" in line or "52" in line for line in raw), raw
