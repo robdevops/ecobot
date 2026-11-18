@@ -1752,13 +1752,35 @@ const heatSeen = (page, levels, times = []) => page.evaluate(async ([levels, tim
   for (const detail of levels) {
     document.dispatchEvent(new CustomEvent("ecobot-fx", { detail }));
     Sky.advance(60);
+    Sky.heatPhase(0.62);   // (the hold: the whole reach, full brightness; the frames below are taken there)
+    Sky.advance(1);
     const h = Sky.state().heat, W = c.width, H = c.height, d = grab();
-    // (the pulse: 12 s of frames, the gradient's brightness factor each frame: its lowest, highest, and its peaks (flashes) a second)
-    const series = [];
-    for (let i = 0; i < 360; i++) { Sky.advance(1); series.push(Sky.state().heat.mult); }
+    const still = d;
+    // (the wave: one full cycle from its start, a sample every 3 frames: the phase, extent, lit rows, brightness factor, the alpha's
+    // centroid across (the whole canvas: heat alone here, the dither's noise aside) and the last row with any ink)
+    const wave = [], series = [];
+    let wrapped = false;
+    Sky.heatPhase(0);
+    Sky.advance(1);
+    for (let i = 0; i < 480; i++) {
+      Sky.advance(1);
+      const s = Sky.state().heat;
+      series.push(s.mult);
+      if (wave.length && s.phase < wave[wave.length - 1].u) wrapped = true;   // (the wave: the first cycle only)
+      if (i % 3 || wrapped) continue;
+      const dd = grab();
+      let sum = 0, at = 0, last = -1;
+      for (let y = 0; y < Math.ceil(H * 0.5); y++) for (let x = 0; x < W; x++) {
+        const a = dd[(y * W + x) * 4 + 3];
+        if (a > 0) { sum += a; at += a * x; last = y; }
+      }
+      wave.push({ u: s.phase, extent: s.extent, lit: s.lit, mult: s.mult, bright: s.bright, cx: sum ? at / sum / W : null, ink: sum, last });
+    }
+    // (the brightness factor over those 16 s: its lowest and highest, flashes (peaks) a second, the biggest step between frames)
     const peaks = series.filter((x, i) => i > 0 && i < series.length - 1 && x > series[i - 1] && x >= series[i + 1]).length;
-    const pulse = { min: Math.min(...series), max: Math.max(...series), peaks: peaks / 12, steps: Math.max(...series.map((x, i) => i ? Math.abs(x - series[i - 1]) : 0)) };
-    const still = grab();   // (a frame after the pulse: the rows' means)
+    const pulse = { min: Math.min(...series), max: Math.max(...series), peaks: peaks / 16, steps: Math.max(...series.map((x, i) => i ? Math.abs(x - series[i - 1]) : 0)) };
+    Sky.heatPhase(0.62);
+    Sky.advance(1);
     const mean = (inside) => {
       let n = 0, alpha = 0, rgb = [0, 0, 0];
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -1772,20 +1794,21 @@ const heatSeen = (page, levels, times = []) => page.evaluate(async ([levels, tim
     const tops = (xs) => mean((x, y) => y < 4 && xs.some((t) => Math.abs(x - t) <= 2));
     const there = (xs) => mean((x, y) => y < 40 && xs.some((t) => Math.abs(x - t) <= 2));
     looks.push({ level: detail.heat, size: h.size, uv: h.uv, uvWide: h.uvWide, gradient: h.gradient, drawn: Sky.state().drawn.heat, cap: Sky.state().cap,
-                 heat: { colour: h.colour, colours: h.colours, depth: h.depth, period: h.period, flashes: h.flashes, heat: h.heat }, pulse,
+                 heat: { colour: h.colour, colours: h.colours, peak: h.peak, period: h.period, flashes: h.flashes, heat: h.heat, reach: h.reach }, pulse, wave,
                  top: mean((x, y) => y < H / 3), atHeat: mean((x, y) => y < 4), atUv: tops(h.uvTops), atUvDown: there(h.uvTops), bare: bareOf(), beam: Sky.state().beam,
                  rowsAlpha: rowsOf(still), centroid: centroidOf(still) });
   }
   const leans = [];
   for (const minutes of times) {
     Sky.setTime(minutes);
+    Sky.heatPhase(0.6);   // (the hold)
     Sky.advance(10);
     const d = grab(), rows = rowsOf(d);
     leans.push({ minutes, beam: Sky.state().beam, bare: bareOf(), uv: Sky.state().effects.includes("uv"), centroid: centroidOf(d), rows: rows.slice(0, 8) });
   }
   Sky.setTime(720);
   Sky.advance(10);
-  return { looks, leans, cost: Sky.state().cost };
+  return { looks, leans, cost: Sky.state().cost, order: Sky.state().effects };
 }, [levels, times]);
 // The beams' lean through the day (Sky.setTime, no frames needed): `curve`, every minute of the day on the page's fallback day
 // (06:00-18:00), then a given day's (07:00-19:00, Sky.setSun): the lean at sunrise, at its midday, and 60 s of the weather's time after

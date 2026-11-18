@@ -1696,7 +1696,7 @@ async def test_several_effects_share_one_canvas_behind_the_see_through_tiles_zoo
     got = await weather(server, "several")
     # several at once: one canvas, one loop, at most 30 frames drawn a second
     several = got["several"]
-    assert several["effects"] == ["haze", "uv", "rain", "wind", "humidity", "ice"] and several["canvases"] == 3, several   # (the weather's canvas and its two margins: see test_the_weather_reaches_past...)
+    assert several["effects"] == ["uv", "haze", "rain", "wind", "humidity", "ice"] and several["canvases"] == 3, several   # (the weather's canvas and its two margins: see test_the_weather_reaches_past...)
     assert sorted(several["framed"]) == sorted({EFFECTS[k] for k in several["effects"]}) and several["ink"] > 0, several
     assert 20 <= several["drawn"] <= 32 and several["frames"] <= 64, several    # (a second's: one request a display frame, every other one drawn)
     # the canvas: filling the window, fixed, first, behind the tiles, never in the pointer's way, its pixels crisp
@@ -1873,7 +1873,7 @@ async def test_the_motion_setting_on_low_and_off_and_reduced_motion_as_off(serve
             assert hidden["moved"] == hidden["gliding"] == 0, (mode, hidden)
 
 
-EVERY = ["haze", "heat", "uv", "rain", "wind", "humidity", "ice"]
+EVERY = ["heat", "uv", "haze", "rain", "wind", "humidity", "ice"]
 # humidity's beads' colours, [r, g, b, alpha] (alpha 0-255): the glass's pale body (#A6D7F2, 34) and crescent (105), the white glint
 # (#EFFAFF, 240), the deep blue rim (#2C5573, 110); the faintest first
 BEAD_COLOURS = [[166, 215, 242, 34], [166, 215, 242, 105], [44, 85, 115, 110], [239, 250, 255, 240]]
@@ -1987,7 +1987,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert got["param"]["levels"] == {"gust": 0, "haze": 3, "heat": 0, "uv": 0, "rain": 0, "wind": 1, "humidity": 0, "flood": 0, "ice": 5}
     assert sorted(got["param"]["framed"]) == ["AQI", "Temperature", "Wind"] and got["param"]["errors"] == []
     # (the effects' earlier names, in links saved before, still work: as wind, uv, humidity, and smog4 as haze4)
-    assert got["paramOld"]["effects"] == ["haze", "uv", "wind", "humidity"] and got["paramOld"]["errors"] == [], got["paramOld"]
+    assert got["paramOld"]["effects"] == ["uv", "haze", "wind", "humidity"] and got["paramOld"]["errors"] == [], got["paramOld"]
     assert got["paramOld"]["levels"]["haze"] == 4, got["paramOld"]
     assert got["paramAll"]["effects"] == EVERY and got["paramRain"]["levels"]["rain"] == 1
     # the particles: uv's beams none (no motes); the wind's leaves alone within the shared budget
@@ -2570,31 +2570,50 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert frost["grown"]["extent"] > 0 and frost["grown"]["ink"] > 0, frost["grown"]
     started_afresh(frost["restarted"], "ice")
     assert frost["restarted"]["frost"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["restarted"]
-    # the heat (?fx=heat): one broad red gradient from above the window's top, fading out down the window, never leaning, all on at any
-    # heat, brighter the hotter
+    # the heat (?fx=heat): a red wave of radiated heat from above the window's top, reaching a quarter of the way down, never leaning
+    # or panning, all on at any heat, brighter the hotter (the frames below are taken on the wave's hold, its full extent)
     hot = got["heat"]
     assert hot["errors"] == [] and hot["cost"] < 4, hot
     looks = hot["looks"]
     for look in looks:
         grad, rows = look["gradient"], look["rowsAlpha"]
         height = len(rows)
-        # (a gradient description: vertical, strongest at the top edge, faded out by two thirds down at the most)
-        assert grad["vertical"] and 0 < grad["top"] <= 0.8 and 0.5 < grad["fade"] <= 0.66 and grad["rows"] <= 0.66 * height + 1, grad
-        # (the top row the strongest, the mean brightness falling down the window (within noise, in 10-row means), ~0 in the bottom third)
+        # (a gradient description: vertical, strongest at the top edge, faded out by a quarter of the way down)
+        assert grad["vertical"] and 0 < grad["top"] <= 0.8 and 0.2 < grad["fade"] <= 0.27 and grad["rows"] <= 0.26 * height + 1, grad
+        # (the top row the strongest, the mean brightness falling down the window (within noise, in 10-row means), ~0 below the reach)
         band = [sum(rows[i:i + 10]) / 10 for i in range(0, height - 9, 10)]
         assert rows[0] >= max(rows) * 0.85 and max(rows[:3]) >= max(rows) * 0.98, rows[:6]
         assert all(b <= a * 1.1 + 0.002 for a, b in zip(band, band[1:])), band
-        assert band[0] > 3 * band[len(band) // 2 - 1] and all(r < 0.01 for r in rows[int(height * 0.66):]), (band, rows[-5:])
+        assert band[0] > 3 * band[int(0.2 * height) // 10] and all(r < 0.01 for r in rows[int(height * 0.27):]), (band, rows[-5:])
         # (no hard start at the top: the top row within 15 % of the second, the gradient already at its strong end there)
         assert abs(rows[0] - rows[1]) <= 0.15 * rows[1], rows[:4]
         # (warm, from the top: the top third's red over its green and blue, the whole width: nowhere bare, UV or not)
-        r, g, b = look["top"]["colour"]   # (the top third's mean alpha under 0.4: the gradient reaches 0.64 of the height now, not 0.32)
+        r, g, b = look["top"]["colour"]   # (the top third's mean alpha under 0.4)
         assert r > 1.2 * b and r > g and 0.01 < look["top"]["alpha"] < 0.4, [(l["level"], l["top"], l["drawn"]) for l in looks]
         assert look["bare"] == 0, look["bare"]
         assert 0.35 < look["centroid"] < 0.65, look["centroid"]   # (broad lobes: spread across the width)
+        # (the wave: no horizontal drift over a whole cycle (the brightness's centroid across within 1 % of the width, once bright
+        # enough to measure); its extent growing from the top down to the reach on the build (monotonic, the eased: more than half
+        # the way in the first quarter of it), holding, then whole while it fades, nothing in the gap)
+        wave, reach = look["wave"], look["heat"]["reach"]
+        assert reach == pytest.approx(0.25), reach
+        cxs = [w["cx"] for w in wave if w["mult"] > 0.3 * look["heat"]["peak"] and w["cx"] is not None]
+        assert len(cxs) > 20 and max(cxs) - min(cxs) < 0.01, (min(cxs), max(cxs))
+        build = [w for w in wave if w["u"] < 0.55]
+        assert all(b["extent"] >= a["extent"] for a, b in zip(build, build[1:])) and build[0]["extent"] < 0.1, [w["extent"] for w in build]
+        assert next(w for w in build if w["u"] > 0.14)["extent"] > 0.25 and max(w["extent"] for w in build) > 0.97, [w["extent"] for w in build]   # (ease-out: quick at first)
+        assert all(w["extent"] == 1 and w["bright"] == 1 for w in wave if 0.56 <= w["u"] < 0.7), "the hold"
+        fade = [w for w in wave if 0.7 < w["u"] < 0.9]
+        assert all(w["extent"] == 1 for w in fade) and all(b["mult"] <= a["mult"] for a, b in zip(fade, fade[1:])) and fade[-1]["mult"] < 0.1 * look["heat"]["peak"], [w["mult"] for w in fade]
+        assert all(w["extent"] == 0 and w["mult"] == 0 and w["ink"] == 0 for w in wave if 0.91 <= w["u"] < 0.99), "the gap"
+        # (the lit rows really grow: the last inked row, from the top, never moves back during the build and ends at 0.25 of the height)
+        lasts = [w["last"] for w in build if w["ink"] > 0]
+        assert all(b >= a - 1 for a, b in zip(lasts, lasts[1:])) and lasts[0] < 0.5 * lasts[-1], lasts
+        end = next(w for w in wave if w["u"] >= 0.56)
+        assert abs(end["last"] - 0.25 * height) <= 0.1 * 0.25 * height + 2, (end["last"], 0.25 * height)
         assert look["beam"]["lean"] == 0 and look["beam"]["fixed"], look["beam"]   # (midday)
-        # (never over the cap, nor the strongest single effect's brightness: the throb only dims from the gradient's own peak)
-        assert look["drawn"] <= look["cap"] and look["drawn"] <= 0.8 + 1e-9 and look["pulse"]["max"] <= 1 + 1e-9, look
+        # (never over the cap, nor the strongest single effect's brightness: the wave only dims from the gradient's own peak)
+        assert look["drawn"] <= look["cap"] and look["drawn"] <= 0.8 + 1e-9 and look["pulse"]["max"] <= 1 + 1e-9 and look["heat"]["peak"] <= 1, look
     # ... stronger the hotter, brighter
     cool, warm, hottest = looks
     assert cool["drawn"] < warm["drawn"] < hottest["drawn"], looks
@@ -2617,16 +2636,15 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # ... what is drawn agrees (the canvas's pixels along the top): the hot more saturated and redder
     sat = lambda there: saturation(there["atHeat"]["colour"])
     assert sat(hottest) >= 1.5 * sat(cool) and hue(hottest["atHeat"]["colour"]) < hue(cool["atHeat"]["colour"]), (cool["atHeat"], hottest["atHeat"])
-    # ... the pulse deeper and quicker the hotter: depth at 43 °C at least 4 times that at 35 °C, its period shorter (never under 10 s), and what the
-    # gradient really does over 12 s (all of it together): breathing barely at the cool end, a pronounced throb at the hot, never a flash
-    # faster than the 3 a second photosensitivity limit (here 0.4 at the most), moving smoothly from frame to frame
-    assert hottest["heat"]["depth"] >= 4 * cool["heat"]["depth"] and hottest["heat"]["period"] < cool["heat"]["period"] and hottest["heat"]["period"] >= 10, looks
+    # ... the cycle quicker and the hold brighter the hotter: 14 s at 35 C to 10 s at 43 C (never under 10 s), the hold's brightness 0.7 to 1;
+    # and what the gradient really does over 16 s: no flash faster than 0.2 a second (0.1 at most, in fact), smoothly from frame to frame
+    assert hottest["heat"]["peak"] > cool["heat"]["peak"] and hottest["heat"]["period"] < cool["heat"]["period"] and hottest["heat"]["period"] >= 10, looks
     assert cool["heat"]["period"] == pytest.approx(14) and hottest["heat"]["period"] == pytest.approx(10)
-    assert cool["heat"]["depth"] == pytest.approx(0.05) and hottest["heat"]["depth"] == pytest.approx(0.3)
-    assert (1 - hottest["pulse"]["min"]) >= 4 * (1 - cool["pulse"]["min"]) > 0.01, (cool["pulse"], hottest["pulse"])
+    assert cool["heat"]["peak"] == pytest.approx(0.7) and hottest["heat"]["peak"] == pytest.approx(1)
+    assert hottest["pulse"]["max"] > cool["pulse"]["max"] and hottest["pulse"]["max"] <= 1 + 1e-9, (cool["pulse"], hottest["pulse"])
     for look in looks:
-        assert look["pulse"]["peaks"] < 3 and look["heat"]["flashes"] < 1 and look["pulse"]["steps"] < 0.1, look["pulse"]
-    assert hottest["pulse"]["peaks"] >= cool["pulse"]["peaks"], (cool["pulse"], hottest["pulse"])   # (periods 10 s and 14 s: one peak each in the 12 s window)
+        assert look["pulse"]["peaks"] < 0.2 and look["heat"]["flashes"] <= 0.1 + 1e-9 and look["pulse"]["steps"] < 0.1, look["pulse"]
+        assert all(w["u"] <= 1 for w in look["wave"]) and look["pulse"]["min"] == 0, look["pulse"]
     # ... dithered irregularly (no grid: under 100, as gridPeak sees it; ordered, about 200)
     assert hot["grid"] < 100, hot["grid"]
     # ... never leaning: the same at 08:00, 12:00 and 17:00 (06:00-18:00 here): the whole width covered at every angle (no bare column),
@@ -2642,6 +2660,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # covers the whole width at every angle too
     over = got["heatOver"]
     assert over["errors"] == [] and over["looks"][0]["drawn"] < hottest["drawn"] and over["looks"][0]["drawn"] <= over["looks"][0]["cap"], over
+    assert over["order"] == ["heat", "uv"], over["order"]   # (the bottom layer: the heat, then the UV over it, then everything else)
     there = over["looks"][0]
     (ur, _, ub) = there["atUvDown"]["colour"]
     # (the heat's gradient is strong over the top 40 rows now, so down at the beams the violet shows as blue the heat alone has none of, and
@@ -2808,14 +2827,14 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     drained = linked["drained"]
     assert 5 <= drained["took"] <= 7 and drained["wet"] == drained["all"] == 0 and drained["frog"] is None, drained
     assert drained["low"] == drained["n0"] == len(after), drained
-    assert drained["effects"] == ["haze", "heat", "uv", "humidity", "ice"], drained
+    assert drained["effects"] == ["heat", "uv", "haze", "humidity", "ice"], drained
     again = linked["again"]
     assert again["url"].endswith(",rain3") and again["leaves"]["all"] == 0 and again["leaves"]["wet"] == [], again
     # every effect on with the flood (full): as cheap as ever (the script's own time a frame, the main thread's CPU time, whatever else
     # the machine is doing: about 2 ms), within the budget (kept by every effect but humidity's beads, heavy rain's among them: their
     # own limits bound them)
     costly = linked["costly"]
-    assert costly["effects"] == ["haze", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"] and costly["cost"] < 8, costly
+    assert costly["effects"] == ["heat", "uv", "haze", "rain", "wind", "humidity", "flood", "ice"] and costly["cost"] < 8, costly
     assert sum(v for k, v in costly["particles"].items() if k != "humidity") <= costly["budget"] + 3, costly
 
 

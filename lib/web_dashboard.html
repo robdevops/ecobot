@@ -282,7 +282,7 @@ const Sky = (() => {
   const ART_PX = 480;                  // the art's width (or height, if taller) about this many pixels: P = 3 on a laptop, 4 on 1920
   const BUDGET = 1 / 400;              // the particles of every effect together: this many per art pixel² (480 x 300: 360)
   const CAP = 1.5;                     // ... and their strengths together at most this (one strong effect: about 0.8)
-  const ORDER = ["gust", "haze", "heat", "uv", "rain", "wind", "humidity", "flood", "ice"];   // back to front
+  const ORDER = ["heat", "uv", "gust", "haze", "rain", "wind", "humidity", "flood", "ice"];   // back to front: the heat and the UV the bottom layer (below everything else), then the rest
   const OWN_BUDGET = new Set(["humidity"]);   // (its beads outside the shared budget: their own limits keep their cost bounded)
   const OWN_STRENGTH = new Set(["rain"]);     // (drawn at its own strength whatever else is on: outside the cap)
   let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
@@ -881,7 +881,7 @@ const Sky = (() => {
     };
   });
 
-  // ---------- uv: soft beams of light coming in from the top, leaning with the sun, slowly swaying and breathing; heat: a red gradient behind ----------
+  // ---------- uv: soft beams of light coming in from the top, leaning with the sun, slowly swaying and breathing; heat (below) ----------
   // The sun's real place, from the station's latitude and longitude and its clock (the page's `sun` datum {rise, set, now, az, el}: az
   // degrees clockwise from north, el above the horizon; computed by the server, lib/solar.py: seasons and latitude in it; never the
   // viewer's own clock, which may be in another zone). Every UV beam leans with it: -atan(sin(az) / tan(el)), the sun's horizontal offset
@@ -988,20 +988,26 @@ const Sky = (() => {
     return x;
   };
 
-  // ---------- heat: one broad red gradient from above the window's top, fading out down the window, behind the UV's beams ----------
+  // ---------- heat: a red wave of radiated heat, building out from the window's top down a quarter of the way, then fading, then again ----------
   // A smooth wash across the whole width, never leaning or changing direction (vertical): at its strongest at the window's top edge
-  // (already so there: it starts above, in the margin, which mirrors the top rows, no start to see) and fading down, smoothly to nothing
-  // by HEAT_FADE of the height (nearly two thirds: as far down as the UV's beams mostly reach), with a gentle sideways variation, so it is not a flat band: two very broad soft lobes
-  // (brighter, dimmer) slowly drifting sideways round the width (the same lobes wrapped, so no seam), never a bare column (its
-  // dimmest part still over HEAT_LOBES' floor of its brightest). Dithered (the same irregular dither as the beams: no banding at its
-  // faint end, no grid). Drawn behind the UV's beams (with both on, the UV's stay crisp on top, leaning as they do with the sun) and
-  // behind the flood (nothing below its water). All on at any heat. The temperature shows in the colour and the pulse, not in extra light
-  // (the strength, and with it the peak, is under the cap as before): its heat h runs 0 at 35 °C (its level 0.3) to 1 at 43 °C (level 1),
-  // smoothly: the colour from a pale, washed-out amber-orange (low saturation, light) to a vivid scarlet-red (never maroon), and the
-  // whole gradient breathing in brightness together from a barely felt +-5 % every 14 s to a slow swell of +-30 % every 10 s (never quicker: a cycle of 10 s at least, 0.1 flashes
-  // a second at most: photosensitivity; the phase is kept, so a change of heat never jumps). The throb only ever dims from the peak.
-  const HEAT_HUE = [30, 4], HEAT_SAT = [0.3, 1], HEAT_LIGHT = [0.3, 0.4, 0.48, 0.55, 0.68];   // [at 35 °C, at 43 °C]; the five shades' lightness at the hottest (0.14 lighter at 35 °C)
-  const HEAT_DEPTH = [0.05, 0.3], HEAT_PERIOD = [14, 10];                                      // [at 35 °C, at 43 °C]: the pulse
+  // (already so there: it starts above, in the margin, which mirrors the top rows, no start to see) and thinning down, smoothly to
+  // nothing by HEAT_FADE (a quarter) of the height, with a fixed sideways variation (two very broad soft lobes, brighter and dimmer,
+  // in the same places always: no drift, no pan; never a bare column: its dimmest part still over HEAT_LOBES' floor of its brightest).
+  // Dithered (the same irregular dither as the beams: no banding at its faint end, no grid). It is not steady but a wave, a cycle of
+  // phase u in [0, 1) (the page's own clock; kept as the heat changes, so a change never jumps), implying a direction, heat radiating
+  // from above: BUILD (u 0 to HEAT_BUILD, 0.55): the lit extent grows from the top edge down to the reach, an ease-out (quick at first,
+  // slowing toward its end), the wash behind the front brightest at the top and thinning toward the front (a soft leading edge, HEAT_SOFT
+  // of the reach long, never a hard one), the brightness fading in over its first HEAT_RISE, rising from 0.55 to full as it goes; HOLD (to 0.7): the whole reach, full
+  // brightness; FADE (to 0.9): the brightness down to nothing over the whole extent (eased); GAP (to 1): nothing; then from the top
+  // again. Drawn at the very bottom, under every other effect (the UV's beams over it, crisp: see ORDER), and behind the flood
+  // (nothing below its water). All on at any heat. The temperature shows in the colour, the cycle and the peak, not in extra light
+  // (the strength, and with it the peak, is under the cap as before): its heat h runs 0 at 35 C (its level 0.3) to 1 at 43 C (level 1),
+  // smoothly: the colour from a pale, washed-out amber-orange (low saturation, light) to a vivid scarlet-red (never maroon), the
+  // cycle from 14 s to 10 s (never quicker: 0.1 flashes a second at most: photosensitivity), the hold's brightness from 0.7 to 1 of
+  // the gradient's own full. The wave only ever dims from the peak.
+  const HEAT_HUE = [30, 4], HEAT_SAT = [0.3, 1], HEAT_LIGHT = [0.3, 0.4, 0.48, 0.55, 0.68];   // [at 35 C, at 43 C]; the five shades' lightness at the hottest (0.14 lighter at 35 C)
+  const HEAT_PEAK = [0.7, 1], HEAT_PERIOD = [14, 10];                                          // [at 35 C, at 43 C]: the brightness at the hold, the cycle (s)
+  const HEAT_BUILD = 0.55, HEAT_HOLD = 0.7, HEAT_GONE = 0.9;                                   // the cycle's phases: the build ends, the hold ends, the fade ends (then the gap)
   const heatOf = (level) => clamp((level - 0.3) / 0.7, 0, 1);
   const mixed = (pair, h) => pair[0] + (pair[1] - pair[0]) * h;
   const hslToRgb = (hue, sat, light) => {
@@ -1010,19 +1016,27 @@ const Sky = (() => {
     return [r, g, b].map((v) => Math.round(255 * (v + m)));
   };
   const heatColours = (h) => HEAT_LIGHT.map((l) => hslToRgb(mixed(HEAT_HUE, h), mixed(HEAT_SAT, h), l + (1 - h) * 0.14));
-  const HEAT_FADE = 0.64;              // the gradient's end, as a fraction of the window's height: it reaches well down from the top (the UV's beams reach 0.4-0.9)
+  const HEAT_FADE = 0.25;              // the reach, as a fraction of the window's height: a quarter of the way down from the top
   const HEAT_TOP = 0.62;               // its brightness at the top edge (0-1, the dither's input; the shades are then dithered about it)
   const HEAT_LOBES = 0.7;              // its dimmest column's brightness over its brightest's
-  const HEAT_DRIFT = 2.5;              // the lobes drifting round, art px a second
+  const HEAT_RISE = 0.08;              // the cycle's start: the brightness fades in over this much of it (no pop)
+  const HEAT_SOFT = 0.4;               // the leading edge's length, of the reach
   const HEAT_STEPS = 48;               // repainted for each 48th of the heat's range (finer than the eye tells)
+  // The wave at phase u: {extent: how far down it is lit (0-1 of the reach), bright: its brightness (0-1 of the peak)}
+  const heatWave = (u) => {
+    if (u < HEAT_BUILD) { const s = u / HEAT_BUILD; const r = Math.min(1, u / HEAT_RISE); return {extent: 1 - (1 - s) * (1 - s), bright: (0.55 + 0.45 * s) * r * r * (3 - 2 * r)}; }   // (faded in over the first HEAT_RISE: no pop)
+    if (u < HEAT_HOLD) return {extent: 1, bright: 1};
+    if (u < HEAT_GONE) { const f = (u - HEAT_HOLD) / (HEAT_GONE - HEAT_HOLD); return {extent: 1, bright: 1 - f * f * (3 - 2 * f)}; }
+    return {extent: 0, bright: 0};
+  };
   const heat = effect((e) => {
-    let wash = null, tint = -1, colours = heatColours(0), swing = 0, lastT = null, mult = 1, rows = 1;
-    const pulse = () => {
+    let wash = null, buf = null, bufG = null, tint = -1, colours = heatColours(0), phase = 0, lastT = null, mult = 0, extent = 0, rows = 1;
+    const cycle = () => {
       const h = heatOf(e.level);
-      return {heat: h, depth: mixed(HEAT_DEPTH, h), period: mixed(HEAT_PERIOD, h)};
+      return {heat: h, peak: mixed(HEAT_PEAK, h), period: mixed(HEAT_PERIOD, h)};
     };
     const washAlpha = () => 0.5 * (0.55 + 0.45 * e.level);   // (the gradient's own strength, of the effect's)
-    // The lobes' variation across: 1 at the brightest to HEAT_LOBES at the dimmest, two broad lobes round the width (periodic in it)
+    // The lobes' variation across: 1 at the brightest to HEAT_LOBES at the dimmest, two broad lobes round the width, fixed
     const lobe = (x) => {
       const u = 2 * Math.PI * x / W, v = 0.5 + 0.32 * Math.sin(u + 0.7) + 0.18 * Math.sin(2 * u + 2.1);
       return HEAT_LOBES + (1 - HEAT_LOBES) * clamp(v, 0, 1);
@@ -1030,42 +1044,60 @@ const Sky = (() => {
     return {
       strength: () => 0.4 + 0.4 * e.level,
       // (for the tests: the UV's places (art px) and widths, the window's size, the lean now; the colour now ([r, g, b]: its brightest
-      // shade, and the five shades) and the pulse now {heat 0-1, depth: the brightness's swing each way (a fraction), period (s),
-      // flashes: a second}, mult: the brightness factor now (1 - 2 depth / (1 + depth) to 1); gradient: {top: its strength at the top
-      // edge (the draw alpha of its peak), rows: the row it has faded out by (art px), fade: that as a fraction of the height, vertical:
-      // true (it never leans)})
+      // shade, and the five shades) and the cycle now {heat 0-1, peak: the brightness at the hold (0.7 to 1), period (s), phase: u,
+      // extent: how far down it is lit, a fraction of the reach, lit: that in art px (rows), reach: the reach as a fraction of the
+      // height, bright: the brightness now (0-1 of the peak), flashes: a second}, mult: the brightness factor now (peak times bright,
+      // 0 to 1); gradient: {top: its strength at the top edge (the draw alpha of its peak), rows: the row it has faded out by (art px),
+      // fade: that as a fraction of the height, vertical: true (it never leans)})
       probe: () => {
-        const p = pulse(), c = heatColours(p.heat), lean = beamState().lean;
+        const p = cycle(), c = heatColours(p.heat), lean = beamState().lean, w = heatWave(phase);
         return {level: e.level, size: [W, H], lean, uv: uvShafts().map((s) => s.x), uvWide: uvShafts().map((s) => s.wide),
-                uvTops: uvShafts().map((u) => u.x), colour: c[3], colours: c, ...p, flashes: 1 / p.period, mult,
+                uvTops: uvShafts().map((u) => u.x), colour: c[3], colours: c, ...p, phase, extent: w.extent, bright: w.bright,
+                lit: Math.min(rows, w.extent * rows * (1 + HEAT_SOFT)), reach: HEAT_FADE, flashes: 1 / p.period, mult,
                 gradient: {top: HEAT_TOP * washAlpha(), rows, fade: rows / H, vertical: true}};
       },
-      resize() { tint = -1; wash = null; rows = Math.min(H, Math.ceil(H * HEAT_FADE)); },
+      seek(u) { phase = ((u % 1) + 1) % 1; },   // (test-only: the cycle's phase set)
+      resize() {
+        tint = -1; wash = null;
+        rows = Math.min(H, Math.ceil(H * HEAT_FADE));
+        buf = document.createElement("canvas"); buf.width = W; buf.height = rows; bufG = buf.getContext("2d");
+      },
       forget() { lastT = null; },
       draw(g, alpha, t) {
-        const p = pulse(), step = Math.round(p.heat * HEAT_STEPS);
+        const p = cycle(), step = Math.round(p.heat * HEAT_STEPS);
         if (step !== tint || !wash) {   // (repainted as the heat changes: the palette follows it smoothly)
           tint = step;
           colours = heatColours(step / HEAT_STEPS);
           // (the brightness falls from HEAT_TOP at row 0 to 0 at `rows`, smoothly (a cosine-eased square: no kink where it ends))
           wash = painted(W, rows, (x, y) => {
-            const k = y / rows, fall = Math.pow(0.5 + 0.5 * Math.cos(Math.PI * k), 1.5);
+            const k = y / rows, fall = Math.pow(0.5 + 0.5 * Math.cos(Math.PI * k), 1.25);
             const s = shadeOf(HEAT_TOP * fall * lobe(x), x, y, colours.length);
             return s < 0 ? null : colours[s];
           });
         }
         const dt = lastT === null ? 0 : t - lastT;
         lastT = t;
-        if (dt > 0 && dt < 1) swing += 2 * Math.PI * dt / p.period;
-        // (the brightness 1 - depth to 1: its peak the gradient's own brightness, as before, so the cap holds)
-        mult = (1 + p.depth * Math.sin(swing)) / (1 + p.depth);
+        if (dt > 0 && dt < 1) phase = (phase + dt / p.period) % 1;
+        const w = heatWave(phase);
+        mult = p.peak * w.bright;
+        extent = w.extent;
+        if (mult <= 0 || extent <= 0) return;
+        // (the wave's front: the wash, then masked by a vertical ramp, full to `front - soft` and nothing from `front`, so the front is soft)
+        const soft = rows * HEAT_SOFT, front = extent * (rows + soft);
+        bufG.globalCompositeOperation = "source-over";
+        bufG.clearRect(0, 0, W, rows);
+        bufG.drawImage(wash, 0, 0);
+        const ramp = bufG.createLinearGradient(0, Math.max(front - soft, 0), 0, Math.max(front, 1));
+        ramp.addColorStop(0, "rgba(0,0,0,1)");
+        ramp.addColorStop(1, "rgba(0,0,0,0)");
+        bufG.globalCompositeOperation = "destination-in";
+        bufG.fillStyle = ramp;
+        bufG.fillRect(0, 0, W, rows);
         flood.above(g, () => {
           g.save();
           g.imageSmoothingEnabled = false;
           g.globalAlpha = alpha * washAlpha() * mult;
-          const at = Math.round(t * HEAT_DRIFT) % W;   // (the lobes drifting: the wash drawn twice, wrapped, so no seam)
-          g.drawImage(wash, at, 0);
-          g.drawImage(wash, at - W, 0);
+          g.drawImage(buf, 0, 0);
           g.restore();
         });
       },
@@ -3988,7 +4020,7 @@ const Sky = (() => {
 
   const running = () => DRIVEN ? animate && alive() : !!frame;
   return {set, fling, tilt, level, setSun, setTime, setSunPosition, setWind, setWindSpeed, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
-          advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
+          heatPhase: (u) => effects.heat.seek(u), advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
           clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: running(), frames, cost, clock, size: [W, H, P],
                               particles: Object.fromEntries(ORDER.map((k) => [k, effects[k].count()])), budget: W * H * BUDGET,
