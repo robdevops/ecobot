@@ -2882,7 +2882,6 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert a["travelFrames"] >= 6 and a["drawn"] == pytest.approx(a["lean"], abs=0.01), a
         assert abs(max(a["cx"]) - a["cxHold"]) < 0.03 and abs(min(a["cx"]) - a["cxHold"]) < 0.03, (a["lean"], a["cx"], a["cxHold"])
         assert all(abs(c / a["cols"][0] - 1) < 0.03 for c in a["cols"]) or a["lean"] != 0, a["cols"]
-        assert a["cost"] < 4, a["cost"]
     assert by[60]["grid"] < 400 and by[-60]["grid"] < 400 and by[0]["grid"] < 400, [(l["lean"], l["grid"]) for l in hot["byLean"]]
     assert all(l["cost"] < 4 for l in hot["byLean"]), [l["cost"] for l in hot["byLean"]]
     # with the UV on too: the gradient behind, the UV's violet crisp on top (blue over red at its places), within the cap; the union

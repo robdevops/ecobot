@@ -1948,7 +1948,7 @@ const heatLeans = async (page, places) => {
 // the same read down the build, a front at a time (u 0.1 to 0.5 every 0.04): where the bands are at the front's depth, frame to frame (the
 // direction the wash's light travels as the front moves down), `cx`: the alpha's centroid across (a fraction of the width) at those
 // frames, `cols`: at lean 0, the sums of the alpha over the band in sixths of the width, at u 0.15 over the hold's (the front's
-// evenness), and the probe's lean, the cost.
+// evenness), and the probe's drawn lean.
 const heatAngles = (page, leans) => page.evaluate(async (leans) => {
   const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), W = c.width, H = c.height, band = Math.ceil(H * 0.25);
   const grab = () => g.getImageData(0, 0, W, H).data;
@@ -2029,7 +2029,6 @@ const heatAngles = (page, leans) => page.evaluate(async (leans) => {
     const sixths = (dd) => Array.from({ length: 6 }, (_, k) => { let a = 0; for (let y = 0; y < band; y++) for (let x = Math.floor(k * W / 6); x < Math.floor((k + 1) * W / 6); x++) a += dd[(y * W + x) * 4 + 3]; return a; });
     const hold = sixths(frame(0.62)), early = sixths(frame(0.15));
     r.cols = early.map((v, k) => v / hold[k]);
-    r.cost = Sky.state().cost;
     out.push(r);
   }
   Sky.setSunPosition(null, null);
