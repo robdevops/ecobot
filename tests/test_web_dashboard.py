@@ -3007,12 +3007,12 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # the ball: a blown-out white ball with no disc edge: its brightness (the mean at each whole pixel of distance from the centre) never
     # rises going out and no step of one pixel is more than a sixth of the full scale (a disc's rim would be), white at its centre at
     # 43 C (every channel high) and cream at 35 C, the ball much larger at 43 C than 35 C (the radius of half its brightness), its glow
-    # reaching 3.4 R to 6 R (R (3.4 + 2.6 heat)) and gone beyond that
+    # reaching 4.76 R to 8.4 R (1.4 R (3.4 + 2.6 heat): the halo 1.4 times as wide) and gone beyond that
     cool, hotter = hot["balls"]
     assert cool["level"] == pytest.approx(0.3) and hotter["level"] == 1 and cool["drawn"] <= cool["cap"] and hotter["drawn"] <= hotter["cap"], hot["balls"]
     for ball in hot["balls"]:
         lum = ball["lum"]
-        assert ball["Rh"] == pytest.approx(ball["r"] * (3.4 + 2.6 * ball["level"])), ball["Rh"]
+        assert ball["Rh"] == pytest.approx(1.4 * ball["r"] * (3.4 + 2.6 * ball["level"])), ball["Rh"]
         assert all(b <= a + 4 for a, b in zip(lum, lum[1:])), lum                                  # (never rising outward: the dither's grain aside)
         assert max(a - b for a, b in zip(lum, lum[1:])) < 0.4 * 255, lum                          # (no rim: a ball 1.6 art px across its core falls over a few pixels, no step over 0.4 of the scale)
         assert max(ball["centre"]) > 240 and max(lum[int(ball["Rh"]) + 4:]) < 3, (lum, ball["centre"])   # (bright at the middle; nothing past the reach)
@@ -3052,6 +3052,13 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert look == hot["alike"][0], (look, hot["alike"][0])
     lens = [b["length"] for b in hot["alike"][0]]
     assert max(lens) < 1.3 * min(lens) and max(b["bright"] for b in hot["alike"][0]) < 1.3 * min(b["bright"] for b in hot["alike"][0]), hot["alike"][0]
+    # the strength: a beam's at its root at most 0.3 (0.6 of the old 0.5) at its jitter's top, 0.3 times its 0.9 to 1.1 at the UV's full and the heat's
+    capped = hot["capped"]
+    assert capped["n"] > 1000 and 0.2 < min(capped["bright"]) and max(capped["bright"]) <= 0.3 * 1.1 + 1e-9, capped["bright"]
+    # ... the violet capped: away from the glow nothing drawn is above the cap's colour (ramp level 0.7 of the violet ramp: about rgb(121, 77, 231),
+    # the page's own colour #14191D added), so no overlap of beams climbs to lavender or white, and the beams do reach the cap's blue
+    assert capped["r"] <= 121 + 20 + 1 and capped["g"] <= 78 + 25 + 1 and capped["b"] <= 232 + 29 + 1, capped
+    assert capped["b"] > 200 and capped["r"] > 90, capped
     # the ends: blunt, their brightness falling smoothly to zero over the last 35 % of the length (never rising again from 0.4 on: no hard
     # cut-off), nothing at the very end, in the picture too (the violet along the longest: fainter toward the end, none past it)
     ends = hot["ends"]

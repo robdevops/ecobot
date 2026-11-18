@@ -1867,7 +1867,7 @@ const sunLook = async (page) => {
     await fx({ heat: level, uv: 0 });
     out.balls.push(await inPage(() => {
       __day(354.36, 1241.24, 75.61, 798); Sky.advance(150);
-      const st = Sky.state(), s = st.heat.sun, d = __grab(), W = __c.width, n = Math.ceil(s.r * 6) + 8, sum = new Float64Array(n * 3), cnt = new Float64Array(n);
+      const st = Sky.state(), s = st.heat.sun, d = __grab(), W = __c.width, n = Math.ceil(s.r * 8.4) + 8, sum = new Float64Array(n * 3), cnt = new Float64Array(n);
       for (let y = Math.max(0, Math.floor(s.y - n)); y <= Math.min(__c.height - 1, Math.ceil(s.y + n)); y++) for (let x = Math.max(0, Math.floor(s.x - n)); x <= Math.min(W - 1, Math.ceil(s.x + n)); x++) {
         const q = Math.floor(Math.hypot(x + 0.5 - s.x, y + 0.5 - s.y)); if (q >= n) continue;
         const i = (y * W + x) * 4; for (let k = 0; k < 3; k++) sum[q * 3 + k] += d[i + k]; cnt[q]++;
@@ -1965,6 +1965,21 @@ const sunLook = async (page) => {
     }
     return { prof, R, lean: b.lean, longest: Math.max(...b.beams.map((x) => x.length)), y: s.y, r: s.r, h: __c.height };
   });
+  // the violet's cap: with the UV alone at its fullest and the sun at noon, no pixel beyond the glow's reach (Rh + 4 from the sun) is
+  // above the cap's colour (the brightest blue and red drawn there, less the page's own colour added), and the beams' strengths
+  await fx({ heat: 0, uv: 1 });
+  out.capped = await inPage(() => {
+    __day(354.36, 1241.24, 75.61, 798); Sky.setSunPosition(0, 75); Sky.advance(150);
+    const st = Sky.state(), b = st.beam, s = st.heat.sun, W = __c.width, H = __c.height, d = __grab(), reach = (st.heat.ball ? st.heat.ball.Rh : 0) + 4;
+    let r = 0, g = 0, bl = 0, n = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      if (d[i + 3] === 0 || Math.hypot(x - s.x, y - s.y) <= reach) continue;
+      n++; r = Math.max(r, d[i]); g = Math.max(g, d[i + 1]); bl = Math.max(bl, d[i + 2]);
+    }
+    return { r, g, b: bl, n, reach, bright: b.beams.map((x) => x.bright) };
+  });
+  await fx({ heat: 1, uv: 1 });
   await page.setViewportSize({ width: 640, height: 480 });
   await page.waitForTimeout(700);
   // the window's outer ring (one pixel): no violet there (the beams fade out over 34 px short of the edge)
