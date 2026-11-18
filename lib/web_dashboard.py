@@ -28,7 +28,7 @@
     the gust now (`gust`, km/h: over 99, a new
     reading sends a cow, a barn or a chicken across behind the tiles), and the sun (`sun`: {rise, set, now}, minutes since the station's
     local midnight, DST included: today's sunrise and sunset from the forecast (Open-Meteo's daily ones, in the station's zone), 06:00 and
-    18:00 without them, and the station's clock now), for the sky's UV and heat beams to lean with the time of day by the station's clock,
+    18:00 without them, and the station's clock now), for the sky's UV beams to lean with the time of day by the station's clock,
     not the viewer's own (sun_of());
   - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading or the
     air sensor's latest change, told by the server's own change detection for ecobot://now/weather and ecobot://now/air

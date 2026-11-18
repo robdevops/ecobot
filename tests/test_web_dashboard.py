@@ -2491,26 +2491,30 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert frost["grown"]["extent"] > 0 and frost["grown"]["ink"] > 0, frost["grown"]
     started_afresh(frost["restarted"], "ice")
     assert frost["restarted"]["frost"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["restarted"]
-    # the heat (?fx=heat): wide soft beams of faint red light from the top, one in each gap between the UV's places (halfway between
-    # two, one past the last), each 40 % longer than the UV's to its left, all on at any heat, brighter the hotter
+    # the heat (?fx=heat): one broad red gradient from above the window's top, fading out down the window, never leaning, all on at any
+    # heat, brighter the hotter
     hot = got["heat"]
     assert hot["errors"] == [] and hot["cost"] < 4, hot
     looks = hot["looks"]
     for look in looks:
-        uv, shafts = look["uv"], look["shafts"]
-        assert len(shafts) == len(uv) >= 4, look
-        assert all(a < s["x"] < b for a, s, b in zip(uv, shafts, uv[1:])) and shafts[-1]["x"] > uv[-1], (uv, shafts)
-        assert all(s["long"] == round(1.4 * s["uvLong"]) for s in shafts), shafts
-        assert all(s["at"] is not None for s in shafts), shafts   # (every one drawn, however hot: no gaps between)
-        # (much wider than the UV's: each at least 3 times the widest UV beam, and not all the same)
-        assert min(s["wide"] for s in shafts) >= 3 * max(look["uvWide"]), (look["uvWide"], shafts)
-        assert len({s["wide"] for s in shafts}) > 3, shafts
+        grad, rows = look["gradient"], look["rowsAlpha"]
+        height = len(rows)
+        # (a gradient description: vertical, strongest at the top edge, faded out by the top third at the most)
+        assert grad["vertical"] and 0 < grad["top"] <= 0.8 and 0.2 < grad["fade"] <= 0.34 and grad["rows"] <= height / 3 + 1, grad
+        # (the top row the strongest, the mean brightness falling down the window (within noise, in 10-row means), ~0 in the bottom third)
+        band = [sum(rows[i:i + 10]) / 10 for i in range(0, height - 9, 10)]
+        assert rows[0] >= max(rows) * 0.85 and max(rows[:3]) >= max(rows) * 0.98, rows[:6]
+        assert all(b <= a * 1.1 + 0.002 for a, b in zip(band, band[1:])), band
+        assert band[0] > 3 * band[len(band) // 3 - 1] and all(r < 0.01 for r in rows[int(height * 2 / 3):]), (band, rows[-5:])
+        # (no hard start at the top: the top row within 15 % of the second, the gradient already at its strong end there)
+        assert abs(rows[0] - rows[1]) <= 0.15 * rows[1], rows[:4]
         # (warm, from the top: the top third's red over its green and blue, the whole width: nowhere bare, UV or not)
         r, g, b = look["top"]["colour"]
         assert r > 1.2 * b and r > g and 0.01 < look["top"]["alpha"] < 0.3, [(l["level"], l["top"], l["drawn"]) for l in looks]
         assert look["bare"] == 0, look["bare"]
-        assert look["beam"]["lean"] == 0 and look["beam"]["fixed"], look["beam"]   # (midday: straight down)
-        # (never over the cap, nor the strongest single effect's brightness: the throb only dims from the beams' own peak)
+        assert 0.35 < look["centroid"] < 0.65, look["centroid"]   # (broad lobes: spread across the width)
+        assert look["beam"]["lean"] == 0 and look["beam"]["fixed"], look["beam"]   # (midday)
+        # (never over the cap, nor the strongest single effect's brightness: the throb only dims from the gradient's own peak)
         assert look["drawn"] <= look["cap"] and look["drawn"] <= 0.8 + 1e-9 and look["pulse"]["max"] <= 1 + 1e-9, look
     # ... stronger the hotter, brighter
     cool, warm, hottest = looks
@@ -2531,41 +2535,41 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert hot_c[0] > 200 and hot_c[1] < 0.2 * hot_c[0] and hot_c[2] < 0.2 * hot_c[0], hot_c   # (clearly red, not maroon)
     assert cold[0] > 180 and cold[1] > 0.6 * cold[0] and cold[2] > 0.5 * cold[0], cold                                        # (pale: light, a lot of green and blue)
     assert saturation(cold) < saturation(mid) < saturation(hot_c) and hue(cold) > hue(mid) > hue(hot_c), (cold, mid, hot_c)
-    # ... what is drawn agrees (the canvas's pixels at the beams' tops): the hot ones more saturated and redder
+    # ... what is drawn agrees (the canvas's pixels along the top): the hot more saturated and redder
     sat = lambda there: saturation(there["atHeat"]["colour"])
     assert sat(hottest) >= 1.5 * sat(cool) and hue(hottest["atHeat"]["colour"]) < hue(cool["atHeat"]["colour"]), (cool["atHeat"], hottest["atHeat"])
     # ... the pulse deeper and quicker the hotter: depth at 43 °C at least 4 times that at 35 °C, its period at most half, and what the
-    # beams really do over 12 s: breathing barely at the cool end, a pronounced throb at the hot, never a flash faster than the
-    # 3 a second photosensitivity limit (here 0.4 at the most), moving smoothly from frame to frame, the beams out of step
+    # gradient really does over 12 s (all of it together): breathing barely at the cool end, a pronounced throb at the hot, never a flash
+    # faster than the 3 a second photosensitivity limit (here 0.4 at the most), moving smoothly from frame to frame
     assert hottest["heat"]["depth"] >= 4 * cool["heat"]["depth"] and hottest["heat"]["period"] <= 0.5 * cool["heat"]["period"], looks
-    assert hottest["heat"]["waver"] > cool["heat"]["waver"] and cool["heat"]["period"] == pytest.approx(7) and hottest["heat"]["period"] == pytest.approx(2.5)
+    assert cool["heat"]["period"] == pytest.approx(7) and hottest["heat"]["period"] == pytest.approx(2.5)
     assert cool["heat"]["depth"] == pytest.approx(0.05) and hottest["heat"]["depth"] == pytest.approx(0.3)
     assert (1 - hottest["pulse"]["min"]) >= 4 * (1 - cool["pulse"]["min"]) > 0.01, (cool["pulse"], hottest["pulse"])
     for look in looks:
         assert look["pulse"]["peaks"] < 3 and look["heat"]["flashes"] < 1 and look["pulse"]["steps"] < 0.1, look["pulse"]
-        assert not look["pulse"]["lockstep"], look["pulse"]
     assert hottest["pulse"]["peaks"] > cool["pulse"]["peaks"], (cool["pulse"], hottest["pulse"])
     # ... dithered irregularly (no grid: under 100, as gridPeak sees it; ordered, about 200)
     assert hot["grid"] < 100, hot["grid"]
-    # ... swaying as the UV's: over 24 s each a pixel or so either side of its place, never more than a pixel a second, never drifting
-    columns = list(zip(*hot["moving"]))
-    assert all(max(c) - min(c) <= 4 and all(abs(a - b) <= 1 for a, b in zip(c, c[1:])) for c in columns), columns
-    assert any(max(c) > min(c) for c in columns), columns
-    # ... leaning with the sun (06:00-18:00 here): straight down at midday, more and more toward the sun's side to sunrise and sunset,
-    # the whole width covered at every angle (no bare triangle at a side)
+    # ... never leaning: the same at 08:00, 12:00 and 17:00 (06:00-18:00 here): the whole width covered at every angle (no bare column),
+    # the brightness's centroid across moving by under 3 % of the width, the top rows as strong
     leans = {l["minutes"]: l for l in hot["leans"]}
     assert all(l["bare"] == 0 for l in leans.values()), [(m, l["bare"]) for m, l in leans.items()]
     assert leans[720]["beam"]["lean"] == 0 and leans[360]["beam"]["lean"] == pytest.approx(-70) and leans[1080]["beam"]["lean"] == pytest.approx(70)
     assert leans[480]["beam"]["lean"] < leans[600]["beam"]["lean"] < 0 < leans[840]["beam"]["lean"] < leans[960]["beam"]["lean"]
-    # with the UV on too: the two interleaving, the heat's red wider and behind (warmer between the UV's beams, though the UV's violet glow along the top shows), the UV's violet crisp on top
-    # (blue over red at its places), within the cap; the union covers the whole width at every angle too
+    centroids = [leans[m]["centroid"] for m in (480, 720, 1020)]
+    assert max(centroids) - min(centroids) < 0.03, centroids
+    assert all(l["rows"][0] > 0 and abs(l["rows"][0] - l["rows"][1]) <= 0.15 * l["rows"][1] for l in leans.values()), [l["rows"] for l in leans.values()]   # (the top as strong at every angle)
+    # with the UV on too: the gradient behind, the UV's violet crisp on top (blue over red at its places), within the cap; the union
+    # covers the whole width at every angle too
     over = got["heatOver"]
     assert over["errors"] == [] and over["looks"][0]["drawn"] < hottest["drawn"] and over["looks"][0]["drawn"] <= over["looks"][0]["cap"], over
     there = over["looks"][0]
-    assert [s["x"] for s in there["shafts"]] == [s["x"] for s in hottest["shafts"]], there
-    (hr, _, hb), (ur, _, ub) = there["atHeat"]["colour"], there["atUv"]["colour"]
-    assert ub > ur and hr / hb > 1.1 * ur / ub and there["atUv"]["alpha"] > 0.1, (there["atHeat"], there["atUv"])
+    (ur, _, ub) = there["atUvDown"]["colour"]
+    assert ub > ur and there["atUvDown"]["alpha"] > 0.1, (there["atUvDown"], there["atUv"])
     assert there["bare"] == 0 and all(l["bare"] == 0 and l["uv"] for l in over["leans"]), (there["bare"], over["leans"])
+    # the UV's beams start well above the window: no start edge at its top whatever the lean (the top row as inked as those below it)
+    for m, l in {l["minutes"]: l for l in got["uvStart"]["leans"]}.items():
+        assert l["rows"][0] >= 0.85 * l["rows"][4] > 0, (m, l["rows"])
     # the lean through the day: a smooth curve, 70 degrees at most, no jump (under a degree a minute), the sun's side east (right of the
     # screen): negative (down-left) in the morning, positive (down-right) in the afternoon, rising all day
     curve = hot["sun"]["curve"]

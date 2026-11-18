@@ -1673,16 +1673,18 @@ const rainSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
   const begun = () => Sky.clock().frames >= 50 ? look() : __next(begun);
   begun();
 }), ms);
-// The heat's red beams on a driven page, with each of `levels` in turn (the effects on: {heat: its strength, 0.3 at 35 °C to 1
-// at 43 °C, and any others}), each 60 frames after it's set (at midday, the beams straight down): Sky's heat probe (the UV's places and
-// widths, the heat's beams), the canvas's mean alpha (0-1) and colour (alpha-weighted) over the window's top third, and its mean alpha and
-// colour in the top 4 rows within 2 px of each UV beam's place and of each heat beam's (the middle of the gap between two UV's); the
-// columns bare (no ink in the window's top 12 %: bareOf); the heat's colour and pulse (the probe's: colour, depth, period, waver) and, over 12 s
-// of frames, each beam's brightness factor (its lowest and highest, peaks a second, the biggest step between frames, all in lockstep?); then, at the last level, `times` (minutes of the day, Sky.setTime): the beams
-// then (Sky.state().beam) and the columns bare there; then 24 looks a second apart: each beam's top's x as drawn
+// The heat's red gradient on a driven page, with each of `levels` in turn (the effects on: {heat: its strength, 0.3 at 35 °C to 1
+// at 43 °C, and any others}), each 60 frames after it's set (at midday): Sky's heat probe (the UV's places and widths, the gradient's
+// description), the canvas's mean alpha (0-1) and colour (alpha-weighted) over the window's top third, and in the top 4 rows and within
+// 2 px of each UV beam's place; the mean alpha of each row down the window (`rowsAlpha`) and its centroid across; the columns bare
+// (no ink in the window's top 12 %: bareOf); the heat's colour and pulse (the probe's: colour, depth, period) and, over 12 s of frames,
+// the gradient's brightness factor (its lowest and highest, peaks a second, the biggest step between frames); then, at the last level,
+// `times` (minutes of the day, Sky.setTime): the lean then (Sky.state().beam), the columns bare there, the gradient's centroid across
+// (the top third's alpha, as a fraction of the width) and the top rows' ink; then the mean alpha of rows 0, 1 and 4 (the start edge)
 const heatSeen = (page, levels, times = []) => page.evaluate(async ([levels, times]) => {
   const c = document.querySelector("#sky canvas"), g = c.getContext("2d");
   const looks = [];
+  const grab = () => g.getImageData(0, 0, c.width, c.height).data;
   const bareOf = () => {   // (the columns with no ink in the window's top 12 %)
     const W = c.width, rows = Math.ceil(c.height * 0.12), d = g.getImageData(0, 0, W, rows).data;
     let bare = 0;
@@ -1693,16 +1695,27 @@ const heatSeen = (page, levels, times = []) => page.evaluate(async ([levels, tim
     }
     return bare;
   };
+  const rowsOf = (d) => {   // (the mean alpha of each row, 0-1)
+    const W = c.width, H = c.height, out = [];
+    for (let y = 0; y < H; y++) { let a = 0; for (let x = 0; x < W; x++) a += d[(y * W + x) * 4 + 3]; out.push(a / 255 / W); }
+    return out;
+  };
+  const centroidOf = (d) => {   // (the alpha's centroid across the top third, a fraction of the width)
+    const W = c.width, H = c.height;
+    let sum = 0, at = 0;
+    for (let y = 0; y < Math.floor(H / 3); y++) for (let x = 0; x < W; x++) { const a = d[(y * W + x) * 4 + 3]; sum += a; at += a * x; }
+    return at / Math.max(sum, 1) / W;
+  };
   for (const detail of levels) {
     document.dispatchEvent(new CustomEvent("ecobot-fx", { detail }));
     Sky.advance(60);
-    const h = Sky.state().heat, W = c.width, H = c.height, d = g.getImageData(0, 0, W, H).data;
-    // (the pulse: 12 s of frames, each beam's brightness factor each frame: its lowest, highest, and its peaks (flashes) a second)
-    const series = h.shafts.map(() => []);
-    for (let i = 0; i < 360; i++) { Sky.advance(1); Sky.state().heat.shafts.forEach((s, j) => series[j].push(s.mult)); }
-    const all = series.flat(), peaks = series.map((v) => v.filter((x, i) => i > 0 && i < v.length - 1 && x > v[i - 1] && x >= v[i + 1]).length);
-    const pulse = { min: Math.min(...all), max: Math.max(...all), peaks: Math.max(...peaks) / 12, steps: Math.max(...series.map((v) => Math.max(...v.map((x, i) => i ? Math.abs(x - v[i - 1]) : 0)))),
-                    lockstep: series.every((v) => v.every((x, i) => Math.abs(x - series[0][i]) < 1e-9)) };
+    const h = Sky.state().heat, W = c.width, H = c.height, d = grab();
+    // (the pulse: 12 s of frames, the gradient's brightness factor each frame: its lowest, highest, and its peaks (flashes) a second)
+    const series = [];
+    for (let i = 0; i < 360; i++) { Sky.advance(1); series.push(Sky.state().heat.mult); }
+    const peaks = series.filter((x, i) => i > 0 && i < series.length - 1 && x > series[i - 1] && x >= series[i + 1]).length;
+    const pulse = { min: Math.min(...series), max: Math.max(...series), peaks: peaks / 12, steps: Math.max(...series.map((x, i) => i ? Math.abs(x - series[i - 1]) : 0)) };
+    const still = grab();   // (a frame after the pulse: the rows' means)
     const mean = (inside) => {
       let n = 0, alpha = 0, rgb = [0, 0, 0];
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -1714,24 +1727,22 @@ const heatSeen = (page, levels, times = []) => page.evaluate(async ([levels, tim
       return { alpha: alpha / Math.max(n, 1), colour: rgb.map((v) => Math.round(v / Math.max(alpha * 255, 1))) };
     };
     const tops = (xs) => mean((x, y) => y < 4 && xs.some((t) => Math.abs(x - t) <= 2));
-    looks.push({ level: detail.heat, size: h.size, uv: h.uv, uvWide: h.uvWide, shafts: h.shafts, drawn: Sky.state().drawn.heat, cap: Sky.state().cap,
-                 heat: { colour: h.colour, colours: h.colours, depth: h.depth, period: h.period, waver: h.waver, flashes: h.flashes, heat: h.heat }, pulse,
-                 top: mean((x, y) => y < H / 3), atHeat: tops(h.shafts.map((s) => s.x)), atUv: tops(h.uvTops), bare: bareOf(), beam: Sky.state().beam });
+    const there = (xs) => mean((x, y) => y < 40 && xs.some((t) => Math.abs(x - t) <= 2));
+    looks.push({ level: detail.heat, size: h.size, uv: h.uv, uvWide: h.uvWide, gradient: h.gradient, drawn: Sky.state().drawn.heat, cap: Sky.state().cap,
+                 heat: { colour: h.colour, colours: h.colours, depth: h.depth, period: h.period, flashes: h.flashes, heat: h.heat }, pulse,
+                 top: mean((x, y) => y < H / 3), atHeat: mean((x, y) => y < 4), atUv: tops(h.uvTops), atUvDown: there(h.uvTops), bare: bareOf(), beam: Sky.state().beam,
+                 rowsAlpha: rowsOf(still), centroid: centroidOf(still) });
   }
   const leans = [];
   for (const minutes of times) {
     Sky.setTime(minutes);
     Sky.advance(10);
-    leans.push({ minutes, beam: Sky.state().beam, bare: bareOf(), uv: Sky.state().effects.includes("uv") });
+    const d = grab(), rows = rowsOf(d);
+    leans.push({ minutes, beam: Sky.state().beam, bare: bareOf(), uv: Sky.state().effects.includes("uv"), centroid: centroidOf(d), rows: rows.slice(0, 8) });
   }
   Sky.setTime(720);
   Sky.advance(10);
-  const moving = [];
-  for (let i = 0; i < 24; i++) {
-    Sky.advance(30);
-    moving.push(Sky.state().heat.shafts.map((s) => s.at));
-  }
-  return { looks, leans, moving, cost: Sky.state().cost };
+  return { looks, leans, cost: Sky.state().cost };
 }, [levels, times]);
 // The beams' lean through the day (Sky.setTime, no frames needed): `curve`, every minute of the day on the page's fallback day
 // (06:00-18:00), then a given day's (07:00-19:00, Sky.setSun): the lean at sunrise, at its midday, and 60 s of the weather's time after
@@ -2993,9 +3004,9 @@ const WEATHER = {
       await uv.context.close();
       return [seen, frost];
     })();
-    // the heat's red shafts at 35 °C, between and at 43 °C; and at 43 °C with the UV's shafts on too (small: cheap)
+    // the heat's red gradient at 35 °C, between and at 43 °C; and at 43 °C with the UV's beams on too; and the UV's alone (small: cheap)
     const SUN_TIMES = [360, 420, 480, 600, 720, 840, 960, 1020, 1080];   // (6:00 sunrise to 18:00 sunset, with the fallback day)
-    const hot = Promise.all([["heat", [{ heat: 0.05 }, { heat: 0.65 }, { heat: 1 }]], ["heat,uv", [{ heat: 1, uv: 1 }]]].map(async ([name, levels]) => {
+    const hot = Promise.all([["heat", [{ heat: 0.05 }, { heat: 0.65 }, { heat: 1 }]], ["heat,uv", [{ heat: 1, uv: 1 }]], ["uv", [{ uv: 1 }]]].map(async ([name, levels]) => {
       const times = SUN_TIMES;
       const p = await weatherPage(browser, url, { query: `?fx=${name}`, driven: true, context: { viewport: { width: 640, height: 480 } } });
       const seen = await heatSeen(p.page, levels, times);
@@ -3226,7 +3237,7 @@ const WEATHER = {
     [out.humidity.alone, out.humidity.windy, out.humidityLight] = await beading;
     out.stillBeads = await counting;   // ([light, heavy])
     out.rainBeads = await sticking;
-    [out.heat, out.heatOver] = await hot;
+    [out.heat, out.heatOver, out.uvStart] = await hot;
     [out.rain.alone, out.rain.windy, out.rain.phone] = await raining;
     [out.bare, out.barePhone] = await bare;
     out.errors = [];
