@@ -124,7 +124,8 @@ def sun_of(now: datetime, location: tuple[float, float] | None = None) -> dict:
     """{rise, set, now} (and {az, el, noon_el}, with a `location`): minutes since the station's local midnight (`now`: the station's time, in its zone: the clock's DST in it).
     With a `location` (lat, lon): today's sunrise and sunset from the sunrise equation there (lib/solar.py sun_times, the zone's DST in it; the
     forecast's are not used), and the sun's real place now, `el` its elevation above the horizon and `az` its azimuth clockwise from north,
-    in degrees, and `noon_el` the day's highest elevation, at solar noon (the sun's arc on the page rises with it; none in polar night). Polar day (no set): rise 0 and set 1440; polar night (no rise): both None, the beams absent (the sun's el is below the
+    in degrees, and `noon_el` the day's highest elevation, at solar noon (the sun's arc on the page rises with it; none in polar night).
+    Polar day (no set): rise 0 and set 1440; polar night (no rise): both None, the beams absent (the sun's el is below the
     horizon all day). With no location: 06:00 and 18:00, and neither az nor el (the page keeps to the sunrise and sunset curve)."""
     rise, set_ = SUN_FALLBACK
     out = {"now": minutes_of(now)}
