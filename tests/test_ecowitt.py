@@ -949,8 +949,23 @@ def test_the_wind_line_and_compass_render_with_and_without_speed():
 # ---------- weather_link: rain against pressure, read together ----------
 def test_rain_per_slot_comes_from_the_rise_in_the_daily_total_and_its_midnight_reset():
     from lib.rain import rain_slots
-    daily = {0: 0.0, 1800: 0.4, 3600: 0.4, 5400: 1.0, 7200: 0.2, 20000: 0.7}     # 7200 is after the reset; 20000 follows a hole
-    assert rain_slots(daily) == {1800: 0.4, 3600: 0.0, 5400: 0.6, 7200: 0.2}
+    daily = {0: 0.0, 1800: 0.4, 3600: 0.4, 5400: 1.0, 7200: 0.1, 20000: 0.7}     # 7200 is after the reset; 20000 follows a hole
+    assert rain_slots(daily) == {1800: 0.4, 3600: 0.0, 5400: 0.6, 7200: 0.1}
+
+
+def test_a_drop_in_the_daily_total_is_the_reset_only_when_it_is_plausibly_the_reset():
+    from datetime import timezone
+    from lib import rain
+    from lib.rain import rain_slots
+    before = rain.glitches
+    assert rain_slots({0: 12.0, 1800: 12.4, 3600: 3.1, 5400: 12.4, 7200: 12.9}) == {1800: 0.4, 3600: 0.0, 5400: 0.0, 7200: 0.5}   # a glitch, then back
+    assert rain.glitches == before + 1
+    assert rain_slots({0: 12.4, 1800: 3.1, 3600: 3.6, 5400: 12.5}) == {1800: 0.0, 3600: 0.0, 5400: 0.1}   # (the baseline stays 12.4)
+    assert rain_slots({0: 12.4, 1800: 0.2, 3600: 0.6}) == {1800: 0.2, 3600: 0.4}                         # a normal reset (0.2 < 10 % of 12.4)
+    tz = timezone.utc
+    assert rain_slots({82800: 5.0, 84600: 5.0, 86400 + 3600: 0.5}, tz)[86400 + 3600] == 0.5             # 01:00, within 2 hours of midnight: the reset even above 10 %
+    assert rain_slots({84600: 5.0, 86400 + 600: 0.5}, tz) == {86400 + 600: 0.5}                          # just after midnight: the reset
+    assert rain_slots({43200: 5.0, 44400: 0.9}, tz) == {44400: 0.0}                                     # at noon: a glitch
 
 
 def synthetic_days(falling_rain: bool):

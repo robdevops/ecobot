@@ -72,7 +72,7 @@ def link(read, mac: str, tz: tzinfo, args: dict, now: datetime) -> tuple[dict, C
     group, field, unit = reading.group, reading.field, reading.unit
     lo, hi = day_bounds(first, tz)[0], day_bounds(last, tz, last_second=True)[1]
     driver, lows, highs, daily = read(link_on, mac, name, lo, hi)
-    rain = rain_slots(daily)
+    rain = rain_slots(daily, tz)
     out = {"period": f"{day_text(first)} - {day_text(last)}", "driver": f"{name} ({unit})",
            "resolution": "30-minute readings (not averaged to days)",
            "how_to_read": ("by_change_before groups each 30-minute slot by how the reading had changed over the previous 3 "

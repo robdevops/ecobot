@@ -188,7 +188,7 @@ def _points(r: Reader, m: Metric, sensor: int, start: int, end: int, width: int)
     return out
 
 
-def _blocks(points: dict[str, list[tuple]], m: Metric, marks: list[int], start: int) -> dict[int, tuple]:
+def _blocks(points: dict[str, list[tuple]], m: Metric, marks: list[int], start: int, tz: tzinfo | None = None) -> dict[int, tuple]:
     """{interval start: (value, low, high)} of the intervals that have readings. A mean takes one value per 30-minute slot, the finer
     readings where a slot has them (lines.summary_by, as the charts do); gusts take the highest; a compass point the last; rain the mm
     that fell (the rise of the running daily total, its midnight reset included: lib/rain.rain_slots)."""
@@ -205,7 +205,7 @@ def _blocks(points: dict[str, list[tuple]], m: Metric, marks: list[int], start: 
                 if i == len(have) or have[i] >= t + span:
                     total[t] = v
         out: dict[int, tuple] = {}
-        for t, mm in rain_slots(total).items():
+        for t, mm in rain_slots(total, tz).items():
             if t >= start:
                 got = out.get(key(t), (0.0, None, None))
                 out[key(t)] = (got[0] + mm, None, None)
@@ -250,7 +250,7 @@ def read_intervals(r: Reader, m: Metric, sensor: int, interval: str, marks: list
     width = INTERVALS[interval]
     first = marks[0] - (MAX_GAP if m.rain else 0)   # rain: the reading before the first interval, for its first rise
     points = _points(r, m, sensor, first, end, width)
-    blocks = _blocks(points, m, marks, marks[0])
+    blocks = _blocks(points, m, marks, marks[0], tz)
     ranged = m.how == "mean"
     rows = []
     for t in marks:

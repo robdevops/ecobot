@@ -5,15 +5,15 @@ Every air gauge is a dial whose coloured bands are its categories, each band an 
 them), the needle placed in proportion within its band: so the bands that matter are as easy to read as the rest, and a scale that runs
 to 500 (or 600 µg/m³) doesn't squeeze "good" and "moderate" into a sliver. The numbers round the dial are the categories' breakpoints.
 
-  - AQI, titled so on the dashboard but the US AQI (the higher of PM2.5's and PM10's now, as AirNow gives it, by the service's own lib/airgradient/metrics.py us_aqi, its band
+  - AQI, titled so on the dashboard but the US AQI (the higher of PM2.5's and PM10's now (one reading, not AirNow's NowCast or 24-hour average), by the service's own lib/airgradient/metrics.py us_aqi, its band
     saying "(PM10)" when PM10 sets it; not the AirGradient's `aqi_us`, of PM2.5 alone and of the lower of the last two readings, so a dial
     of it could disagree with the PM2.5 and PM10 dials beside it): 0-500, the EPA's six categories and colours;
   - PM2.5 (µg/m³): the EPA's 2024 breakpoints, 0-9.0, 9.1-35.4, 35.5-55.4, 55.5-125.4, 125.5-225.4, 225.5+ (to 325.4, AQI 500);
   - PM10 (µg/m³): the EPA's breakpoints, 0-54, 55-154, 155-254, 255-354, 355-424, 425+ (to 604, AQI 500);
   - PM1 (µg/m³): no standard sets bands for it (not the US, Australia or the WHO); it is drawn on PM2.5's, as many air-quality apps do:
     PM1 is part of PM2.5, so its reading is never above PM2.5's and the scale is a fair, if lenient, guide, not an official rating;
-  - CO2 (ppm): there is no EPA standard for it; the bands are the usual US indoor guidance, from ASHRAE's (ventilation keeps a room
-    within about 700 ppm of outdoors): under 800 good, 800-1000 fair, 1000-1500 poor, 1500-2000 bad, 2000+ very bad, on a 400-2500 dial
+  - CO2 (ppm): there is no EPA standard for it; the bands are common indoor-air guidance thresholds (no standards body sets them;
+    ASHRAE's 700 ppm above outdoors is only a ventilation rule of thumb): under 800 good, 800-1000 fair, 1000-1500 poor, 1500-2000 bad, 2000+ very bad, on a 400-2500 dial
     (400: outdoor air);
   - VOC index and NOx index: Sensirion's indices the AirGradient reports (1-500, learnt from this sensor's own air): VOC's 100 is its
     average, so under 100 low, 100-150 average, 150-250 elevated, 250-400 high, 400-500 very high (green, a paler green, then
@@ -24,13 +24,13 @@ to 500 (or 600 µg/m³) doesn't squeeze "good" and "moderate" into a sliver. The
 Each table has a Max and a Min column, but the US AQI's and the particles' (PM2.5, PM10, PM1): their Max alone (`lowest`), as the
 UV index's: how clean the air got says little beside how bad it got.
 
-Left out: PM1 (no US standard for it), and the sensor's own temperature and humidity (it is outdoors: the station's outdoor gauges show
+Left out: the sensor's own temperature and humidity (it is outdoors: the station's outdoor gauges show
 the same air).
 """
 
 from dataclasses import dataclass
 
-from .metrics import PM25_AQI
+from .metrics import PM25_AQI, truncate
 
 # The EPA's colours for the AQI's categories, good to hazardous, and their names
 EPA = ("#00E400", "#FFFF00", "#FF7E00", "#FF0000", "#8F3F97", "#7E0023")
@@ -57,6 +57,16 @@ class AirGauge:
         return f"air.{self.column}"
 
     @property
+    def truncates(self) -> bool:
+        """The particles' concentrations (not the AQI) are cut down to the table's resolution (0.1 or 1 µg/m³) before the lookup, as the
+        EPA does: the needle and the band name both use this value (`seen`), so they always agree."""
+        return not self.aqi and self.column in ("pm2_5", "pm10", "pm1")
+
+    def seen(self, value: float | None) -> float | None:
+        """The value the dial and its band go by: a particle's concentration truncated to the step, any other as it is."""
+        return truncate(value, self.step) if value is not None and self.truncates else value
+
+    @property
     def low(self) -> float:
         return self.bounds[0]
 
@@ -68,6 +78,7 @@ class AirGauge:
         """The name of the band a reading is in (None for none)."""
         if value is None:
             return None
+        value = self.seen(value)   # (a multiple of the step: so "below the next edge + step" is "at or below the edge")
         return next((name for edge, name in zip(self.bounds[1:], self.names) if value < edge + self.step), self.names[-1])
 
 

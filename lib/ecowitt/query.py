@@ -470,7 +470,7 @@ class HistoryQuery:
         daily = dict(held.rain)
         after = max(daily) + SLOT if daily else lo
         daily.update({t: s.value for t, s in self.store.get("rainfall.daily", {}).get("pts", {}).items() if t >= after and s.seconds in (300, 1800)})
-        rain = rain_slots(daily)
+        rain = rain_slots(daily, self.tz)
         days = {local_date(t, self.tz) for t in rain}
         for t, mm in held.rain_daily.items():   # a daily bucket is dated by the local day its 10am start falls on
             day = local_date(t, self.tz)

@@ -4,8 +4,8 @@ The bot's prompt told the model how to read the station for this (lib/prompt.py,
 the last 3 hours for it (intent.model_prefetch). Here the same rules are worked out in code, from the station's 5-minute readings of
 the last 3 hours (as Ecowitt.recent reads them) and its reading now, so any model gets the same read:
 
-  - Pressure tendency (relative pressure over the 3 hours): falling when its highest came before its lowest, rising when the lowest
-    came first; the change is the highest minus the lowest. Down more than 3 hPa: rain likely; down 1 to 3 hPa: possible; under
+  - Pressure tendency (relative pressure over the 3 hours): the change from its first reading to its last: falling when down
+    1 hPa or more, rising when up 1 hPa or more, else steady (a fall that recovers is steady). Down more than 3 hPa: rain likely; down 1 to 3 hPa: possible; under
     1 hPa (steady) or rising: unlikely.
   - Each of these moves that a step towards rain: pressure under 1005 hPa (unsettled); moist air, humidity 90% or more or the
     temperature within 2 °C of the dew point; wind picking up while the pressure falls. Pressure over 1020 hPa (settled) moves it a
@@ -135,14 +135,12 @@ def _over(seconds: float) -> str:
 
 def _pressure(points: list[tuple[int, float]]) -> dict | None:
     """{hpa, change_hpa, tendency, level, text}: the pressure now, its change over the readings (signed: down is negative), whether it
-    is falling (its highest came before its lowest), rising or steady (a change under STEADY_HPA), and its level."""
+    is falling (down STEADY_HPA or more from the first reading to the last), rising (up as much) or steady, and its level."""
     if len(points) < 2:
         return None
-    high = max(points, key=lambda p: p[1])   # (the first, where several are as high)
-    low = min(points, key=lambda p: p[1])
-    size = round(high[1] - low[1], 1)
-    falling = high[0] < low[0]
-    tendency = "steady" if size < STEADY_HPA else "falling" if falling else "rising"
+    delta = round(points[-1][1] - points[0][1], 1)   # (start to end, not the swing in between)
+    size, falling = abs(delta), delta < 0
+    tendency = "falling" if delta <= -STEADY_HPA else "rising" if delta >= STEADY_HPA else "steady"
     over = _over(points[-1][0] - points[0][0])
     change = (f"down {size:.1f} hPa in {over}" if tendency == "falling" else f"up {size:.1f} hPa in {over}" if tendency == "rising"
               else "steady")
@@ -229,7 +227,7 @@ DESCRIPTION = (
     "for today and tomorrow. For \"will it rain?\", \"do I need an umbrella?\", \"what's it doing later?\": {}. Takes no arguments.\n"
     "Not for: the days ahead (forecast); rain that fell (summary for a period's total, days for the wettest day); whether rain follows "
     "pressure over weeks (relate).\n"
-    "The rules: pressure over the 3 hours is falling when its high came before its low; down more than 3 hPa: likely; down 1 to 3 hPa: "
+    "The rules: pressure over the 3 hours is falling when it is down 1 hPa or more from the start to now, rising when up as much, steady otherwise; down more than 3 hPa: likely; down 1 to 3 hPa: "
     "possible; under 1 hPa or rising: unlikely. A step towards rain for each of: pressure under 1005 hPa (unsettled); humidity 90% or "
     "more, or the temperature within 2 °C of the dew point; wind picking up while pressure falls. A step away: pressure over 1020 hPa "
     "(settled). A rain rate above 0 now, or rain in the last hour, makes it likely: showers tend to go on.\n"

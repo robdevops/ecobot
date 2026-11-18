@@ -192,14 +192,14 @@ def stretch_figures(r: Reader, kind: str, sensor: Sensor | int, first: date, las
     got = r.part_days(kind, [(sensor, day, start, end - 1, res) for day, (res, start, end) in plans.items()], columns).get(sensor)
     if got is not None:
         got.complete = [True] * len(got.day)   # (each held whole at the resolution it was read at)
-        _rain(r, kind, sensor, got, plans)
+        _rain(r, kind, sensor, got, plans, tz)
         out.days = got
     read = set(out.days.day)
     out.missing = [day for day in plans if day not in read]
     return out
 
 
-def _rain(r: Reader, kind: str, sensor: int, days: Days, plans: dict[date, tuple[str, int, int]]):
+def _rain(r: Reader, kind: str, sensor: int, days: Days, plans: dict[date, tuple[str, int, int]], tz: tzinfo | None = None):
     """The rain counters' figures over each stretch: the mm that fell in it, from the running daily total whichever counter it is (in
     `hi`, where a day row has the day's total), and when the last of it fell (`hi_ts`; None when none did). A total has no mean or
     lowest."""
@@ -216,13 +216,14 @@ def _rain(r: Reader, kind: str, sensor: int, days: Days, plans: dict[date, tuple
                 values += got.values["daily"]
         totals[res] = ts, values
     for i, day in enumerate(days.day):
-        mm, when = _fell(totals, *plans[day])
+        mm, when = _fell(totals, *plans[day], tz)
         for c in counters:
             days.mean[c][i] = days.lo[c][i] = days.lo_ts[c][i] = None
             days.hi[c][i], days.hi_ts[c][i] = mm, when
 
 
-def _fell(totals: dict[str, tuple[list[int], list[float]]], res: str, start: int, end: int) -> tuple[float | None, int | None]:
+def _fell(totals: dict[str, tuple[list[int], list[float]]], res: str, start: int, end: int,
+          tz: tzinfo | None = None) -> tuple[float | None, int | None]:
     """(the mm that fell in [start, end), when the last of it fell) from the running daily totals read at `res`: its rise from the last
     reading before the stretch (at the other resolution where `res` has none close enough) to its last reading in it. None for a stretch
     with no totals."""
@@ -237,7 +238,7 @@ def _fell(totals: dict[str, tuple[list[int], list[float]]], res: str, start: int
         if k >= 0 and before[k] >= start - MAX_GAP:
             running[before[k]] = held[k]
             break
-    fell = {t: mm for t, mm in rain_slots(running).items() if t >= start}
+    fell = {t: mm for t, mm in rain_slots(running, tz).items() if t >= start}
     return round(sum(fell.values()), 3), max((t for t, mm in fell.items() if mm > 0), default=None)
 
 

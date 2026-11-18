@@ -467,22 +467,22 @@ Wrong or misleading comments and numbers:
 4. (Fixed: comment corrected.) Swell comment: `web_dashboard.html:1618` says tiny beads pass `TINY` "in about a minute or two on a heavy fog (as felt, about 0.4)". At felt fog 0.4 the formula gives about 3.6 minutes (86 s only at f = 1).
 5. (Fixed: comment corrected.) Bead speed comment: `web_dashboard.html:1565` says speed is "its water (r^3) times SPEED"; that is only the branch for r of 2.8 and above (below it the law is `x^5`).
 6. (Fixed: comment corrected.) Smoothstep thresholds "5 and 40 degrees" are applied to `sin(theta)`, so the ramp midpoint is theta 21.4 degrees, not 22.5 (`web_dashboard.html:4006`).
-7. Air-gauge header: `lib/airgradient/dashboard.py:27` says "Left out: PM1", but `AIR_GAUGES` includes a PM1 dial. Its CO2 note (`:15`) attributes 800/1000/1500/2000 ppm to ASHRAE, who set no such bands. Line 8 says "as AirNow gives it", but the value is from the latest reading, not NowCast.
+7. (Fixed: wording corrected.) Air-gauge header: `lib/airgradient/dashboard.py:27` says "Left out: PM1", but `AIR_GAUGES` includes a PM1 dial. Its CO2 note (`:15`) attributes 800/1000/1500/2000 ppm to ASHRAE, who set no such bands. Line 8 says "as AirNow gives it", but the value is from the latest reading, not NowCast.
 8. (Fixed: the comment says it is by design.) `web_dashboard.html:4116` `TABLE_TOP = 372` with comment "(table(): 378)": the two numbers differ by design (a 6 px margin) but read like a typo.
 
 Formulas that diverge from the standard they cite:
 
-9. PM2.5 rounding: `metrics.py:115` uses `round(conc, 1)` where the EPA truncates to 0.1. 9.05 gives AQI 51 (EPA: 9.0, AQI 50); 35.45 gives 101 (EPA: 35.4, AQI 100). The error is one AQI point at band edges. PM10 uses `floor`, which is right.
+9. (Fixed: truncated to 0.1, by the 2024 EPA breakpoints.) PM2.5 rounding: `metrics.py:115` uses `round(conc, 1)` where the EPA truncates to 0.1. 9.05 gives AQI 51 (EPA: 9.0, AQI 50); 35.45 gives 101 (EPA: 35.4, AQI 100). The error is one AQI point at band edges. PM10 uses `floor`, which is right.
 10. Instantaneous AQI: the AQI is computed from one reading, not a 24-hour average or NowCast (the EPA definition).
-11. Needle and band name can disagree: for PM2.5 and PM1 between 9.0 and 9.1 the needle is already in "Moderate" but `band()` says "Good" (`value < 9.0 + 0.1`).
+11. (Fixed: both go by the truncated value.) Needle and band name can disagree: for PM2.5 and PM1 between 9.0 and 9.1 the needle is already in "Moderate" but `band()` says "Good" (`value < 9.0 + 0.1`).
 12. (Fixed: twelve slices on the WHO categories.) UV dial colours: six equal slices of 2 UV (edges 2, 4, 6, 8, 10) do not match the WHO categories whose starts are the ticks 3, 6, 8, 11. UV 4 is drawn orange where WHO says moderate; UV 8 is the start of the purple band where WHO says very high; the dial stops at 12 while UV can exceed it.
 13. Fahrenheit thermometer: ticks every 20 F from 40 no longer line up with the colour band edges at 32, 50, 68, 86, 104.
 14. Inch dials span a slightly different range from metric: wind 0 to 60 mph is 96.6 km/h, pressure 28 to 31 inHg is 948.2 to 1049.8 hPa.
 15. Pressure arrow direction uses the unrounded change but the JSON `change` is rounded to 0.1, so 0.29 can be reported as 0.3 with "steady". No visible effect today.
 16. Pressure arrow versus outlook: the arrow uses 1 hour and 0.3 hPa, the outlook uses 3 hours and 1.0 hPa for "steady"; the arrow can fire on the daily pressure tide.
-17. Outlook `_pressure` (`outlook.py:136`): "falling" whenever the high came before the low, sized by `max - min`, so a fall followed by a near-full recovery still scores as falling.
+17. (Fixed: the change from the window's start to its end, 1.0 hPa threshold.) Outlook `_pressure` (`outlook.py:136`): "falling" whenever the high came before the low, sized by `max - min`, so a fall followed by a near-full recovery still scores as falling.
 18. Magnus fallback: poor at very low RH ((35 C, 10 %) gives -1.17 C). Dormant while the station supplies a dew point.
-19. Rain counter: `rain_slots` treats any drop in the daily counter as the midnight reset and adds the whole new value; a mid-day glitch adds a spurious amount, and the reset is the station's, not local midnight.
+19. (Fixed: a drop is the reset only if under 2 mm and within 2 h after local midnight or at most 10 % of the total before; else a counted, ignored glitch.) Rain counter: `rain_slots` treats any drop in the daily counter as the midnight reset and adds the whole new value; a mid-day glitch adds a spurious amount, and the reset is the station's, not local midnight.
 20. Sunrise fallback: `SUN_FALLBACK` (06:00 and 18:00) is wrong by up to about 3 hours at Melbourne's solstices, and the dashboard falls back silently. The sun's azimuth and elevation are unaffected.
 21. Clear-sky model: Cooper declination and no Earth-Sun distance term shift the "sunny" cut-offs near 0.80 by a few percent.
 

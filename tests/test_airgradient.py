@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta
 
+import math
 import httpx
 import pytest
 
@@ -30,6 +31,30 @@ def test_aqi_and_ratings_follow_the_us_scale():
     assert pm25_aqi(9.0) == (50, "good")
     assert pm25_aqi(55.5)[0] == 151 and pm25_aqi(55.5)[1] == "unhealthy"
     assert rating("pm2_5", 5).endswith("good") and rating("pm2_5", 55.5).endswith("very poor")
+
+
+def test_pm25_aqi_truncates_to_a_tenth_as_the_epa_does():
+    assert [pm25_aqi(c) for c in (9.0, 9.05, 9.1, 35.4, 35.45, 55.4, 55.45)] == [
+        (50, "good"), (50, "good"), (51, "moderate"), (100, "moderate"), (100, "moderate"), (150, "unhealthy for sensitive groups"),
+        (150, "unhealthy for sensitive groups")]
+    assert pm25_aqi(35.5)[0] == 101
+
+
+def test_the_needle_and_the_band_name_agree_on_the_truncated_value():
+    from lib.airgradient.dashboard import AIR_GAUGES, EPA_NAMES
+    from lib.gauge_look import share
+    for g in (x for x in AIR_GAUGES if x.title in ("PM2.5", "PM1", "PM10")):
+        for v in (9.0, 9.05, 9.1, 35.4, 35.45, 35.5, 55.4, 55.45, 54.5, 55.0):
+            seen = g.seen(v)
+            n = len(g.bounds) - 1
+            at = next(i for i, (lo, hi) in enumerate(zip(g.bounds, g.bounds[1:])) if seen <= hi)   # the needle's band, by gauge_look.share
+            assert max(math.ceil(share_of(g, seen) * n - 1e-9) - 1, 0) == at
+            assert g.band(v) == EPA_NAMES[at], (g.title, v)
+
+
+def share_of(g, v):
+    from lib.gauge_look import Tile, share
+    return share(Tile("x", "", v, "dial", g.low, g.high, g.colours, (), {}, g.bounds, 1, g.bounds, None), v)
 
 
 def test_pm10_has_its_own_aqi_and_the_us_aqi_is_the_higher_of_the_two():

@@ -65,12 +65,15 @@ def test_the_pressure_tendency_over_3_hours_sets_the_verdict(pressure, verdict, 
     assert out["pressure"]["level"] == "normal" and out["pressure"]["hpa"] == pressure[1]
 
 
-def test_falling_or_rising_is_whether_the_high_or_the_low_came_first_not_where_it_ends():
+def test_falling_or_rising_is_the_change_from_the_start_to_now_not_the_swing_between():
     dip = lambda i: 1012.0 - 3.5 * min(i, 30) / 30 + (0.5 if i > 30 else 0)   # down 3.5 hPa, then back up a little at the end
     out = outlook(pressure=dip)
-    assert out["pressure"]["tendency"] == "falling" and out["pressure"]["change_hpa"] == -3.5 and out["verdict"] == "likely"
+    assert out["pressure"]["tendency"] == "falling" and out["pressure"]["change_hpa"] == -3.0 and out["verdict"] == "possible"
     rise = lambda i: 1008.5 + 3.5 * min(i, 30) / 30 - (0.5 if i > 30 else 0)    # up 3.5, then down a little
     assert outlook(pressure=rise)["pressure"]["tendency"] == "rising" and outlook(pressure=rise)["verdict"] == "unlikely"
+    back = lambda i: 1012.0 - 3.5 * min(i, 30) / 30 + (3.0 if i > 30 else 0)   # a fall, then a near-full recovery
+    out = outlook(pressure=back)
+    assert out["pressure"]["tendency"] == "steady" and out["verdict"] == "unlikely"
 
 
 def test_the_reason_cites_one_or_two_readings_ready_to_quote():
@@ -343,7 +346,7 @@ async def test_just_after_midnight_the_last_3_hours_are_yesterdays_evening_read_
 def test_it_is_offered_only_with_a_station_and_its_description_carries_the_rules():
     assert tools(Context(tz=TZ)) == []
     assert len(DESCRIPTION) < 1500 and PARAMETERS == {"type": "object", "properties": {}}
-    for rule in ("high came before its low", "more than 3 hPa", "1005 hPa", "1020 hPa", "humidity 90%", "within 2 °C of the dew point",
+    for rule in ("down 1 hPa or more", "more than 3 hPa", "1005 hPa", "1020 hPa", "humidity 90%", "within 2 °C of the dew point",
                  "wind picking up", "rain rate above 0 now", "forecast", "summary", "relate"):
         assert rule in DESCRIPTION, rule
     assert set(GROUPS) == {"outdoor", "pressure", "rainfall", "rainfall_piezo", "wind"}   # (the prefetch's groups)

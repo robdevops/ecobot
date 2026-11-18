@@ -1,11 +1,14 @@
 """Rain from the station's running daily total, at 30-minute slots: how much fell in each, which slots make up a
 spell, and the bars a chart draws. Shared by the analyses and the charts."""
 
+import logging
 from bisect import bisect_right
 from datetime import date, timedelta, tzinfo
 
 from .specs import Bars, calendar_bars
 from .timeutil import SLOT, at_hour, day_bounds, to_local
+
+log = logging.getLogger(__name__)
 
 SPELL_GAP = 6                  # slots: 3 dry hours end a rain spell
 SPELL_MM = 1.0                 # a spell needs this much rain to count as an event
@@ -13,15 +16,42 @@ MAX_GAP = 3 * SLOT             # a longer hole in the readings is not counted as
 CHART_BARS = ((4, 3600), (31, 6 * 3600), (10 ** 6, 86400))  # (up to this many days, seconds per bar)
 
 
-def rain_slots(daily: dict[int, float]) -> dict[int, float]:
-    """Rain per slot from the day's running rain total: the rise since the previous reading, or the whole total
-    after the midnight reset. A long hole in the readings gives 0 rather than a guess."""
+RESET_MM = 2.0                 # a drop in the daily total is the midnight reset only if the new total is under this
+RESET_SHARE = 0.1              # ... and, where the clock is not known, no more than this share of the total before it
+RESET_HOURS = 2                # ... or, where it is, the reading is within this many hours after local midnight
+glitches = 0                   # drops of the daily total ignored as glitches (not a reset), since the process began
+
+
+def _is_reset(prev: float, v: float, t: int, tz: tzinfo | None) -> bool:
+    """Is a drop of the running daily total from `prev` to `v` (at epoch t) the station's midnight reset? Only when the new total is
+    small (under RESET_MM) and either it is within RESET_HOURS after local midnight (the station's day boundary; when `tz` is given) or
+    it is at most RESET_SHARE of the total before. Any other drop is a glitch."""
+    if v >= RESET_MM:
+        return False
+    return v <= RESET_SHARE * prev or (tz is not None and to_local(t, tz).hour < RESET_HOURS)
+
+
+def rain_slots(daily: dict[int, float], tz: tzinfo | None = None) -> dict[int, float]:
+    """Rain per slot from the day's running rain total: the rise since the previous reading, or the whole total after the midnight
+    reset (a drop that is plausibly the reset: _is_reset). Any other drop is a glitch: it adds nothing, the total before it stays the
+    baseline (so a return to it adds nothing, and a rise past it counts from there), and it is counted in `glitches` and logged at debug.
+    A long hole in the readings gives 0 rather than a guess."""
+    global glitches
     out: dict[int, float] = {}
     prev_t = prev = None
     for t in sorted(daily):
         v = daily[t]
         if prev is not None and t - prev_t <= MAX_GAP:
-            out[t] = round(v - prev if v >= prev else v, 3)
+            if v >= prev:
+                out[t] = round(v - prev, 3)
+            elif _is_reset(prev, v, t, tz):
+                out[t] = round(v, 3)
+            else:
+                glitches += 1
+                log.debug("rain total fell from %s to %s mm at %s: not the midnight reset, ignored", prev, v, t)
+                out[t] = 0.0
+                prev_t = t
+                continue
         prev_t, prev = t, v
     return out
 

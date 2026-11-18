@@ -94,6 +94,7 @@ def _tile(gauge: Gauge | AirGauge, entry: dict) -> Tile | None:
         if band and entry.get("from") == "PM10":
             band = f"{band} (PM10)"
         ticks = gauge.bounds
+        now = gauge.seen(now)   # (a particle's concentration truncated to the table's step, as the EPA does: the needle sits in the band named)
         return Tile(gauge.title, gauge.unit, now, "dial", gauge.low, gauge.high, gauge.colours, ("Max", "Min") if gauge.lowest else ("Max",), rows, ticks,
                     gauge.decimals, gauge.bounds, band)
     columns = ("Max", "Total") if gauge.total else ("Max", "Min") if gauge.lowest else ("Max", "Gust") if gauge.gust else ("Max",)

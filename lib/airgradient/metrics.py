@@ -110,14 +110,20 @@ def _aqi(table: list, c: float) -> tuple[int, str]:
     return 500, "hazardous"
 
 
+def truncate(conc: float, step: float) -> float:
+    """A concentration cut down (not rounded) to a multiple of `step` (0.1 or 1), as the EPA does before the breakpoint lookup:
+    9.05 -> 9.0, 35.45 -> 35.4. (The 1e-9 keeps float error, 35.4 * 10 = 353.99999999999994, from cutting a tenth too far.)"""
+    return math.floor(conc / step + 1e-9) * step if step >= 1 else math.floor(conc * round(1 / step) + 1e-9) / round(1 / step)
+
+
 def pm25_aqi(conc: float) -> tuple[int, str]:
-    """PM2.5's US AQI and band (its sub-index)."""
-    return _aqi(PM25_AQI, round(conc, 1))
+    """PM2.5's US AQI and band (its sub-index), by the EPA's 2024 revised breakpoints (PM25_AQI), the concentration truncated to 0.1."""
+    return _aqi(PM25_AQI, truncate(conc, 0.1))
 
 
 def pm10_aqi(conc: float) -> tuple[int, str]:
     """PM10's US AQI and band (its sub-index)."""
-    return _aqi(PM10_AQI, math.floor(conc))
+    return _aqi(PM10_AQI, truncate(conc, 1))
 
 
 def particle_aqi(name: str, conc: float) -> tuple[int, str]:

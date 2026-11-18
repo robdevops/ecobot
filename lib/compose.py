@@ -161,7 +161,7 @@ class Composer:
         first, last = period
         series, notes = await self.air_series([metric], first, last)
         air_panel, _ = await self._panel(metric, "line", first, last, series[metric])
-        rain = rain_slots(await self.weather("rainfall", "daily", first, last))
+        rain = rain_slots(await self.weather("rainfall", "daily", first, last), self.tz)
         result = analyse_air(series[metric][0], rain, RATINGS[metric], self.tz, LABELS[metric])
         out = {"period": f"{first} to {last}", "metric": f"{LABELS[metric]} ({CHART_UNITS[metric]})",
                "resolution": "30-minute slots (air readings averaged, rain from the weather station's cache)",
@@ -195,7 +195,7 @@ class Composer:
         if "pressure" in weather:  # falling pressure often comes with stagnant or changing air
             weather["pressure_change"] = {t: v - weather["pressure"][t - 6 * SLOT] for t, v in weather["pressure"].items()
                                           if t - 6 * SLOT in weather["pressure"]}
-        rain = rain_slots(await self.weather("rainfall", "daily", first, last))
+        rain = rain_slots(await self.weather("rainfall", "daily", first, last), self.tz)
         if rain:
             weather["rain"] = rain
         direction, speed = await self.weather("wind", "wind_direction", first, last), weather.get("wind_speed")
@@ -225,7 +225,7 @@ class Composer:
         if name in WEATHER:
             reading = WEATHER[name]
             if name == "rain":
-                bars = rain_bars(rain_slots(await self.weather(reading.group, reading.field, first, last)), self.tz, first, last)
+                bars = rain_bars(rain_slots(await self.weather(reading.group, reading.field, first, last), self.tz), self.tz, first, last)
                 return (panel_for("rain", bars=bars) if bars.x else None,
                         {"series": name, "total_mm": round(sum(bars.y), 1), "wet_bars": len(bars.y)})
             values, lows, highs = await self.eco.storage.read(reading_slots, self.eco.mac, name, *self._span(first, last))
