@@ -3,4 +3,4 @@
 pytest
 pytest-asyncio
 pytest-timeout
-pytest-xdist>=3.2
+pytest-xdist>=3.8.0
