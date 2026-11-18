@@ -2,7 +2,8 @@
 
   - GET /dashboard (and /dashboard/, the same page): one self-contained HTML5 page (web_dashboard.html: no framework, nothing fetched from elsewhere) whose script draws
     the gauges as inline SVG, with HTML titles and tables, in lib/gauge_look.py's colours and sizes, as the Status picture's PNG
-    (lib/gauges.py) draws its three, without the tables; its tiles laid out to fill the window, portrait or landscape;
+    (lib/gauges.py) draws its three, without the tables; its tiles laid out to fill the window, portrait or landscape, and arranged
+    in the browser (dragged to reorder, hidden, reset; kept in its localStorage by the tiles' titles, nothing told to the server);
   - GET /dashboard/icon.png: the page's sun (its original, at ICON_SIZE px: lib/web_dashboard_icon.png) as a file, the page's own
     icon (favicon and apple-touch-icon), named relative to the path the page was asked for (/dashboard: "dashboard/icon.png",
     /dashboard/: "icon.png"), so it is right whatever path a proxy serves the page at. A file, not a data: URI in the page, because a
@@ -13,11 +14,34 @@
     for it. Only link previews fetch og:image: a browser opening the page fetches nothing from elsewhere;
   - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, answered
     from what is held (fetch off: a request never asks the station; the keep-warm keeps the live reading), as the Status picture's, each
-    tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`) and the look;
+    tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`: the newer of the two devices'), each
+    device's own (`devices`: {"station", "air"}: its reading's time, ISO in the station's zone, null with none held; a device not
+    configured is not there), for the strip's stalled device greyed out, the look, and the station's rain rate now
+    (`rain_rate`, mm/h: its rain gauge's, or its piezo gauge's where that's the one reporting, which no tile shows; null with
+    neither), for the page's rain behind the tiles; today's highest of the dials with a thin red hand (`today_highs`, by title,
+    the station's day in its zone: Wind's gust, Rain rate's, Solar radiation's, UV index's: their tiles' Daily Max, the Wind's its
+    Daily Gust, the reading now counted in: today_highs()), the Wind direction tile's `rose` (today's
+    share of the wind's direction from each of the 16 compass points, N first, clockwise, from the file's readings, calm ones left out;
+    [] with none: rose()), the Atmospheric pressure tile's `tendency` (its change over the past hour, for the arrow after its reading:
+    {"change": hPa, "way": "up", "down" or "steady"}, the file's newest reading less its reading nearest an hour before it; null with
+    no reading about an hour old: tendency()), and
+    the gust now (`gust`, km/h: over 99, a new
+    reading sends a cow, a barn or a chicken across behind the tiles);
   - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading or the
     air sensor's latest change, told by the server's own change detection for ecobot://now/weather and ecobot://now/air
     (EcobotServer.publish_changes: nothing is fetched for it), so the page fetches the data again and moves its gauges in place. A
     comment every HEARTBEAT_SECONDS keeps a proxy from closing it.
+
+MCP_DASHBOARD_ANIMATIONS: the page served with data-animations="on", "low" or "off" on its <html> (ANIMATIONS), for every viewer.
+On: the gauges sweep to their readings, the weather drawn behind them (its canvas, "stop", the test links), the zoom and the tiles'
+reflow animated. Low: the gauges sweep and the tiles reflow as on, but no weather at all (nothing drawn, no loop, no "stop" or test
+links) and the zoom at once. Off: no weather, and the gauges' needles and readings straight at their new place, the zoom and the reflow
+at once. A browser asking for reduced motion gets off's, whatever the setting.
+
+MCP_DASHBOARD_INDOOR off (privacy: the page needs no token): no indoor reading leaves the server through it. Its tiles (Indoor temperature,
+Indoor humidity: any gauge of the indoor sensor's group, gauge_sheet.INDOOR) are left out of /dashboard/data's sheet, as if the station had
+no indoor sensor, and /dashboard/events counts none of them in, so an indoor change alone sends no event (nor tells one happened). The bot,
+the MCP tools, the Status picture and the alerts are as ever.
 
 No token is asked for (it is the weather and air readings only) and the Host isn't checked: a browser opens it by the machine's name. The MCP
 endpoint keeps both. MCP_DASHBOARD off: none of the four routes is served (404). `close()` ends the open streams, so uvicorn's
@@ -27,6 +51,8 @@ import asyncio
 import html
 import json
 import logging
+import time
+from datetime import datetime
 from pathlib import Path
 
 from starlette.requests import Request
@@ -36,8 +62,11 @@ from starlette.routing import Route
 from . import gauge_sheet
 from .airgradient.dashboard import AIR_GAUGES
 from .airgradient.metrics import value_of
-from .ecowitt.dashboard import GAUGES, live_value
+from .service.common import iso
+from .ecowitt.dashboard import GAUGES, GUST, live_value
+from .ecowitt.reads import directions_on, pressure_on
 from .gauge_look import look, tile_json
+from .timeutil import day_bounds, local_date
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +74,8 @@ PAGE = Path(__file__).with_name("web_dashboard.html")
 ICON = Path(__file__).with_name("web_dashboard_icon.png")   # the page's sun, drawn large (its original, 534 px, at 512): WhatsApp asks 300 px, Facebook 200
 ICON_NAME, ICON_SIZE = "icon.png", 512
 ICON_URL = "https://raw.githubusercontent.com/robdevops/ecobot/main/lib/web_dashboard_icon.png"   # og:image: ICON as GitHub serves it (https, image/png)
+ANIMATIONS = 'data-animations="on"'   # on the page's <html>: "off" or "low" there as MCP_DASHBOARD_ANIMATIONS is
+MOTIONS = ("on", "off", "low")
 PREVIEW = "<!--link preview-->"   # where the page's Open Graph tags go: first in its head, before its icons (Slack reads 32 KB of it)
 TITLE = "Weather Dashboard"
 DESCRIPTION = "The weather station's and the air sensor's gauges, live."
@@ -52,14 +83,78 @@ HEARTBEAT_SECONDS = 25.0     # a comment on an idle stream this often
 RETRY_MS = 5000              # how soon a browser connects again after its stream ends
 QUEUED = 4                   # events waiting on a stream that isn't read: more are dropped (one says it all: fetch again)
 NOT_ANSWERING = "The weather station isn't answering right now."
+RAIN_RATES = ("rainfall", "rainfall_piezo")   # where the station's rain rate is (current's groups): its rain gauge's first, then the piezo's
+ROSE_SECONDS = 60           # the wind rose (today's directions) read from the file at most this often (the data asked for again sooner: the same)
+ROSE_DECIMALS = 4           # its shares rounded so
+TENDENCY_TITLE = "Atmospheric pressure"   # the tile with an arrow after its reading: its change over the past hour (`tendency`: tendency())
+TENDENCY_SECONDS = 60       # the past hour's pressure read from the file at most this often (as the rose)
+TENDENCY_AGO = (45 * 60, 60 * 60, 75 * 60)   # ... the reading it is told from: the one nearest an hour before the newest, 45 to 75 min before it
+TENDENCY_READ = 90 * 60     # ... read from this long before now (the newest more than 45 min old: no reading about an hour before it read)
+TENDENCY_STEADY = 0.3       # ... a change under this (hPa) either way: steady (no arrow)
+RED_HANDS = {g.title: "Gust" if g.gust else "Max" for g in GAUGES if g.high_hand}   # the dials with a red hand at today's highest,
+# and the column of their table whose Daily figure it is (the Wind's: its highest gust)
 
 
-def readings_of(live: dict | None) -> tuple | None:
-    """What the gauges show now of a live reading ({group: {field: {value, ...}}}): each gauge's reading, and the gust counted into the
-    wind's Max. None without one."""
+def readings_of(live: dict | None, indoor: bool = True) -> tuple | None:
+    """What the gauges show now of a live reading ({group: {field: {value, ...}}}): each gauge's reading (the wind's direction's, its
+    compass, too; the indoor ones only with `indoor`), those their red hands count in (the wind's: the gust, counted into its Gust too),
+    and the piezo gauge's rain rate (the page's rain behind the tiles). None without one."""
     if not live:
         return None
-    return tuple(live_value(live, where) for g in GAUGES for where in (g.live, *([g.counted] if g.counted else [])))
+    gauges = [g for g in GAUGES if indoor or not gauge_sheet.is_indoor(g)]
+    return (*(live_value(live, where) for g in gauges for where in dict.fromkeys((g.live, *([g.high_hand] if g.high_hand else [])))),
+            live_value(live, ("rainfall_piezo", "rain_rate")))   # (the piezo gauge's rain rate: the page's rain, with no gauge of its own)
+
+
+def rain_rate_of(result: dict, live: dict | None = None) -> float | None:
+    """The station's rain rate now (mm/h): in current's result, its rain gauge's, or, with no reading there, its piezo gauge's; then the
+    piezo gauge's in the station's kept live reading (`live`), which current gives only when it is named. None with none of them."""
+    sensors = result.get("sensors") or {}
+    for group in RAIN_RATES:
+        try:
+            return float(((sensors.get(group) or {}).get("rain_rate") or {})["value"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return live_value(live or {}, ("rainfall_piezo", "rain_rate"))
+
+
+def now_of(result: dict, live: dict | None, where: tuple[str, str]) -> float | None:
+    """A reading of the station's now: in the kept live reading (`live`), else in current's result. None with neither."""
+    got = live_value(live or {}, where)
+    if got is None:
+        try:
+            got = float((((result.get("sensors") or {}).get(where[0]) or {}).get(where[1]) or {})["value"])
+        except (KeyError, TypeError, ValueError):
+            return None
+    return got
+
+
+def today_highs(tiles) -> dict[str, float | None]:
+    """{title: today's highest} of these tiles' dials with a thin red hand (RED_HANDS: Wind's gust, Rain rate's, Solar radiation's, UV
+    index's): their table's Daily figure (the Max; the Wind's Gust), which current gives for the station's day in its zone with the
+    reading now counted in, so the hand rises with it; None with none. Nothing read for it: the sheet already holds it."""
+    out = {}
+    for tile in tiles:
+        if tile.title in RED_HANDS:
+            daily = dict(zip(tile.columns, tile.rows.get("Daily") or ()))
+            out[tile.title] = daily.get(RED_HANDS[tile.title])
+    return out
+
+
+def tendency_of(readings: list[tuple[int, float]]) -> dict | None:
+    """The pressure's change over the past hour from readings ([(epoch, hPa)], oldest first): {"change": the newest less the reading
+    nearest an hour (TENDENCY_AGO) before it, hPa to a tenth, "way": "up" (risen TENDENCY_STEADY or more), "down" (fallen as much) or
+    "steady"}; None with no reading 45 to 75 minutes before the newest."""
+    if not readings:
+        return None
+    newest, now = readings[-1]
+    lo, mid, hi = TENDENCY_AGO
+    then = [(abs(newest - mid - t), v) for t, v in readings if lo <= newest - t <= hi]
+    if not then:
+        return None
+    change = now - min(then, key=lambda p: p[0])[1]
+    way = "up" if change >= TENDENCY_STEADY - 1e-9 else "down" if change <= -TENDENCY_STEADY + 1e-9 else "steady"
+    return {"change": round(change, 1), "way": way}
 
 
 def air_readings_of(row: dict | None) -> tuple | None:
@@ -72,34 +167,116 @@ def air_readings_of(row: dict | None) -> tuple | None:
 
 class WebDashboard:
     """The page, its data and its event streams over an EcobotServer (its service's `current`, its bus and its context); `uris` the
-    resources whose updates are the station's live reading's and the air sensor's (ecobot://now/weather, ecobot://now/air)."""
+    resources whose updates are the station's live reading's and the air sensor's (ecobot://now/weather, ecobot://now/air);
+    `animations` (MCP_DASHBOARD_ANIMATIONS: "on", "off" or "low"; True and False are "on" and "off") off: the page draws no weather
+    behind its gauges and nothing moves on it; low: no weather and the zoom at once, the gauges and the tiles moving as on. `indoor`
+    (MCP_DASHBOARD_INDOOR) False: no indoor reading in its data or its events."""
 
-    def __init__(self, server, uris: tuple[str, ...] = ("ecobot://now/weather", "ecobot://now/air")):
-        self.server, self.uris = server, tuple(uris)
+    def __init__(self, server, uris: tuple[str, ...] = ("ecobot://now/weather", "ecobot://now/air"), animations: bool | str = "on",
+                 indoor: bool = True):
+        self.server, self.uris, self.indoor = server, tuple(uris), bool(indoor)
+        self.animations = ("on" if animations else "off") if isinstance(animations, bool) else animations
+        if self.animations not in MOTIONS:
+            raise ValueError(f"animations: {animations!r} is not one of {', '.join(MOTIONS)}")
         self._streams: set[asyncio.Queue] = set()
+        self._rose: tuple[float, int, list[float]] | None = None   # (when read, the day's start, its shares): rose()'s, kept ROSE_SECONDS
+        self._tendency: tuple[float, dict | None] | None = None   # (when read, the past hour's change): tendency()'s, kept TENDENCY_SECONDS
         self._shown = self._readings()
         self.closed = False
         server.bus.subscribe(self._on_event)
 
     # ---------- the data ----------
     async def data(self) -> dict:
-        """{as_of, tiles, look}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
+        """{as_of, devices, tiles, look, rain_rate, gust, today_highs}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
         (fetch off): an open request on the LAN never asks the station (the keep-warm keeps the live reading, and the events come from it)."""
         tool = self.server.service.get("current")
         result = json.loads(await tool.call(gauge_sheet.call(), {"fetch": False})) if tool else {"error": "no current"}
-        sheet = gauge_sheet.sheet(result)
-        out = {"as_of": result.get("as_of"), "tiles": [tile_json(t) for t in sheet.tiles] if sheet else [], "look": look()}
+        sheet = gauge_sheet.sheet(result, indoor=self.indoor)   # (indoor off: no indoor tile, nothing indoor sent)
+        live = self._kept_live()
+        tiles = [tile_json(t) for t in sheet.tiles] if sheet else []
+        for tile in tiles:
+            if tile["kind"] == "compass":   # (the wind's direction: today's rose under its needle)
+                tile["rose"] = await self.rose()
+            elif tile["title"] == TENDENCY_TITLE:   # (the pressure: an arrow after its reading, its past hour's way)
+                tile["tendency"] = await self.tendency()
+        out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": tiles, "look": look(),
+               "rain_rate": rain_rate_of(result, live), "gust": now_of(result, live, GUST),
+               "today_highs": today_highs(sheet.tiles if sheet else [])}
         if sheet is None:
             out["unavailable"] = (result.get("unavailable") or {}).get("station") or NOT_ANSWERING
         return out
+
+    async def rose(self) -> list[float]:
+        """Today's wind rose (the station's day, in its zone): the share of today's readings of the wind's direction (its 5-minute
+        readings and minutes in the file, calm ones left out: directions_on) from each of the 16 compass points, N first, clockwise;
+        [] with none (or no file, or an error reading it). Read at most every ROSE_SECONDS (and again as the day turns), else kept."""
+        eco, now = self.server.ctx.eco, time.time()
+        start = day_bounds(local_date(int(now), self.server.ctx.zone), self.server.ctx.zone)[0]
+        if self._rose and self._rose[1] == start and now - self._rose[0] < ROSE_SECONDS:
+            return self._rose[2]
+        shares: list[float] = []
+        if getattr(eco, "storage", None) is not None and getattr(eco, "mac", None):
+            try:
+                counts = await eco.storage.read(directions_on, eco.mac, start, int(now) + 60)
+                total = sum(counts)
+                shares = [round(n / total, ROSE_DECIMALS) for n in counts] if total else []
+            except Exception as e:   # (no rose drawn)
+                log.warning("Dashboard: couldn't read today's wind directions: %s: %s", type(e).__name__, e)
+        self._rose = (now, start, shares)
+        return shares
+
+    async def tendency(self) -> dict | None:
+        """The pressure's change over the past hour (tendency_of): the file's newest reading (its 5-minute readings and the minutes they
+        don't cover: pressure_on, as the station keeps it, in hPa) less its reading nearest an hour before that; None with none about an
+        hour old (or no file, or an error reading it). Read at most every TENDENCY_SECONDS, else kept."""
+        eco, now = self.server.ctx.eco, time.time()
+        if self._tendency and now - self._tendency[0] < TENDENCY_SECONDS:
+            return self._tendency[1]
+        got = None
+        if getattr(eco, "storage", None) is not None and getattr(eco, "mac", None):
+            try:
+                got = tendency_of(await eco.storage.read(pressure_on, eco.mac, int(now) - TENDENCY_READ, int(now) + 60))
+            except Exception as e:   # (no arrow drawn)
+                log.warning("Dashboard: couldn't read the past hour's pressure: %s: %s", type(e).__name__, e)
+        self._tendency = (now, got)
+        return got
+
+    def device_times(self) -> dict[str, str | None]:
+        """{"station", "air"}: the time of each configured device's reading as it is held (the station's: its newest reading's own time
+        in the kept live reading, else when that was kept; the air sensor's: its latest row's timestamp, else when that was fetched), ISO
+        in the station's zone; None for one holding none. A device not configured has no entry."""
+        ctx, out = self.server.ctx, {}
+        if ctx.eco is not None:
+            kept = getattr(ctx.eco, "_live", None)
+            at = 0
+            for fields in (kept[1] if kept else {}).values():
+                for obj in (fields.values() if isinstance(fields, dict) else ()):
+                    try:
+                        at = max(at, int(obj.get("time") or 0) if isinstance(obj, dict) else 0)
+                    except (TypeError, ValueError):
+                        pass
+            out["station"] = iso(at or kept[0], ctx.zone) if kept else None
+        if ctx.air is not None:
+            held = getattr(ctx.air, "_current", None)
+            at = None
+            if held:
+                try:
+                    at = datetime.fromisoformat(str(held[0]["timestamp"]).replace("Z", "+00:00")).timestamp()
+                except (KeyError, TypeError, ValueError):
+                    at = held[1]
+            out["air"] = iso(at, ctx.zone) if at else None
+        return out
+
+    def _kept_live(self) -> dict | None:
+        kept = getattr(self.server.ctx.eco, "_live", None)
+        return kept[1] if kept else None
 
     # ---------- the events ----------
     def _readings(self):
         """(the station's gauges' readings, the air sensor's) as they are kept."""
         try:
-            kept = getattr(self.server.ctx.eco, "_live", None)
             air = getattr(self.server.ctx.air, "_current", None)
-            return readings_of(kept[1] if kept else None), air_readings_of(air[0] if air else None)
+            return readings_of(self._kept_live(), self.indoor), air_readings_of(air[0] if air else None)
         except Exception as e:   # (never stops the publishing)
             log.warning("Dashboard: couldn't read the live reading: %s: %s", type(e).__name__, e)
             return None
@@ -159,6 +336,7 @@ class WebDashboard:
     # ---------- the routes ----------
     async def page(self, request: Request):
         page = PAGE.read_text(encoding="utf-8").replace(PREVIEW, self.preview(request.url.path), 1)
+        page = page.replace(ANIMATIONS, f'data-animations="{self.animations}"', 1)
         return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
     async def icon(self, request: Request):
@@ -184,4 +362,5 @@ class WebDashboard:
                 Route(f"{path}/events", self.events, methods=["GET"])]
 
 
-__all__ = ["WebDashboard", "air_readings_of", "readings_of"]
+__all__ = ["RED_HANDS", "ROSE_SECONDS", "WebDashboard", "air_readings_of", "now_of", "rain_rate_of", "readings_of", "tendency_of",
+           "today_highs"]

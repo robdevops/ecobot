@@ -55,14 +55,18 @@ def gauges_result(live: dict, values: dict, today, air: dict | None = None, air_
     import json
     from lib.airgradient.metrics import pm25_aqi
     from lib.ecowitt.dashboard import GAUGES, live_value
+    from lib.ecowitt.direction import point
     from lib.series import AIR
     from lib.service.current import air_context_of, air_entry, context_of
     sensors: dict = {}
     for gauge in GAUGES:
         value, beside = live_value(live, gauge.live), context_of(gauge.reading, live, values, {}, today, TZ)
-        if value is not None or beside:
+        sent = gauge.live[1] in (live.get(gauge.live[0]) or {})   # (the compass, with no figures: there whenever the station sends it)
+        if value is not None or beside or (gauge.kind == "compass" and sent):
             group, name = gauge.reading.split(".", 1)
             sensors.setdefault(group, {})[name] = {"value": value, "unit": gauge.unit, **beside}
+            if gauge.kind == "compass" and value is not None:   # (as station_entry gives the wind's direction: its compass point)
+                sensors[group][name]["compass"] = point(value)
     for column, metric in AIR.items() if air is not None or air_values else ():
         entry = dict((air or {}).get(column) or {})
         now = entry.get("value")

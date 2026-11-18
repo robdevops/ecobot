@@ -256,15 +256,15 @@ def test_the_heading_has_the_time_of_the_reading_with_its_day_when_that_isnt_tod
 # ---------- context: the gauges' figures ----------
 async def gauge_rows(eco, data: dict) -> dict:
     """{title: {row: figures}}: each gauge's rows as the station's own dashboard drew them before step 2 (dashboard.figures over the
-    year's day rows, the live reading counted in; today's rain the gauge's own reading)."""
-    from lib.ecowitt.dashboard import GAUGES, PERIODS, figures, live_value, periods_of
+    year's day rows, the live reading counted in, the wind's gust into its Gust; today's rain the gauge's own reading)."""
+    from lib.ecowitt.dashboard import GAUGES, GUST, PERIODS, figures, live_value, periods_of
     days = periods_of(eco.now().date())
-    names = sorted({n for g in GAUGES for n in (g.highest, g.lowest) if n})
+    names = sorted({n for g in GAUGES for n in (g.highest, g.lowest, g.gust) if n})
     values, _ = await eco.storage.read(day_values_on, eco.mac, names, days["Yearly"])
     out = {}
     for g in GAUGES:
-        now = live_value(data, g.counted or g.live)
-        out[g.title] = {row: figures(g, values, days[row], None if g.total else now) for row in PERIODS}
+        now, gust = live_value(data, g.live), live_value(data, GUST) if g.gust else None
+        out[g.title] = {row: figures(g, values, days[row], None if g.total else now, gust) for row in PERIODS}
         if g.total and now is not None:
             out[g.title]["Daily"] = (None, now)
     return out
@@ -287,7 +287,10 @@ async def test_context_is_the_gauges_figures_with_when_each_happened(tmp_path, d
     assert s["outdoor"]["temperature"]["year"]["high_text"] == f"{s['outdoor']['temperature']['year']['high']:.1f} °C"
     assert s["outdoor"]["humidity"]["year"]["low_text"] == f"{s['outdoor']['humidity']['year']['low']:.0f} %"
     wind = s["wind"]["wind_speed"]
-    assert [wind[k]["high_gust"] for _, k in cur.PERIODS] == [tiles["Wind"][row][0] for row, _ in cur.PERIODS]
+    assert tiles["Wind"]["Yearly"][1] > tiles["Wind"]["Yearly"][0]                        # (a gust is above the speed's highest)
+    assert [wind[k]["high"] for _, k in cur.PERIODS] == [tiles["Wind"][row][0] for row, _ in cur.PERIODS]        # Max: its speed's
+    assert [wind[k]["high_gust"] for _, k in cur.PERIODS] == [tiles["Wind"][row][1] for row, _ in cur.PERIODS]   # Gust: its gusts'
+    assert WHEN.match(wind["today"]["high_when"]) and WHEN.match(wind["today"]["high_gust_when"]), wind["today"]
     assert s["wind"]["wind_gust"]["year"]["high"] == wind["year"]["high_gust"]           # the gusts' own: the same figure
     rain = s["rainfall"]["rain"]
     assert rain["today"] == {"total": 6.3, "total_text": "6.3 mm"}                       # the gauge's own reading
@@ -353,6 +356,7 @@ async def test_just_after_midnight_the_highest_gust_is_the_gust_now_not_the_wind
     for key in rows:
         assert s["wind_speed"][key]["high_gust"] == s["wind_gust"][key]["high"] == 31.0, key
         assert s["wind_speed"][key]["high_gust_when"] == f"at {clock_text(when, whole_hours=True)}"
+        assert s["wind_speed"][key]["high"] >= 14.0, key                     # (its own highest: the speed now counted in, not the gust)
     await close(tool)
 
 

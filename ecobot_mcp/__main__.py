@@ -59,7 +59,8 @@ async def main():
                               chart_base_url=cfg.mcp_chart_base_url, chart_link_hours=cfg.mcp_chart_link_hours)
         hosts = tuple(dict.fromkeys(("127.0.0.1", "localhost", socket.gethostname(), *cfg.mcp_allowed_hosts)))   # (its own name too: a container's hostname)
         app = http_app(server, tokens=tokens, allowed_hosts=hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}",
-                       dashboard=cfg.mcp_dashboard)
+                       dashboard=cfg.mcp_dashboard, dashboard_animations=cfg.mcp_dashboard_animations,
+                       dashboard_indoor=cfg.mcp_dashboard_indoor)
         core.log_startup()
         running = core.start_alerts()
         core.start_warmers()
@@ -81,7 +82,10 @@ async def main():
                  f"{len(tokens)} token(s) from AUTH_TOKENS" if cfg.auth_tokens else f"the token in {auth_token.path(cfg.state_path.parent)}",
                  ", ".join(hosts))
         if cfg.mcp_dashboard:
-            log.info("Dashboard: http://%s:%d/dashboard (read-only, no token, any Host; MCP_DASHBOARD=off turns it off)", shown, port)
+            log.info("Dashboard: http://%s:%d/dashboard (read-only, no token, any Host; MCP_DASHBOARD=off turns it off)%s", shown, port,
+                     {"off": "; no weather behind its gauges, nothing animated (MCP_DASHBOARD_ANIMATIONS=off)",
+                      "low": "; no weather behind its gauges, the zoom at once (MCP_DASHBOARD_ANIMATIONS=low)"}.get(cfg.mcp_dashboard_animations, "")
+                     + ("" if cfg.mcp_dashboard_indoor else "; no indoor readings (MCP_DASHBOARD_INDOOR=off)"))
         log.info("Chart links (?charts=link): %s/<id>.png, kept %d h in memory (no token: an id is its key)",
                  cfg.mcp_chart_base_url or f"http://{shown}:{port}/charts (or as the MCP request reached it)", cfg.mcp_chart_link_hours)
         waiting = asyncio.create_task(stop.wait())

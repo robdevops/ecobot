@@ -8,13 +8,15 @@ A reading is a lines.Sample (its value, its band where it has one, the seconds i
 catalogue's decimals: a 5-minute mean of the bot's live readings is drawn as the station would have sent it).
 """
 
+import bisect
 from dataclasses import dataclass, field
 
 from ..lines import Plotted, Sample
 from ..storage.catalogue import BY_NAME, KINDS, column_of, field_of
 from ..storage.read import Reader
-from ..storage.schema import some_value
+from ..storage.schema import q, some_value
 from .api import cycle_seconds
+from .direction import sector
 from .period import Period, period_on
 
 type Store = dict[str, dict]   # "group.field" -> {"unit": str, "pts": {epoch: Sample}}
@@ -62,6 +64,49 @@ def first_minute_on(r: Reader, mac: str, groups: list[str], start: int, end: int
                           f"AND {some_value([c.name for c in KINDS[kind]])}", (*ids, start, end)).fetchone()[0]
              for kind in dict.fromkeys(s.kind for s in sensors) for ids in [[s.id for s in sensors if s.kind == kind]]]
     return min((t for t in found if t is not None), default=None)
+
+
+def directions_on(r: Reader, mac: str, start: int, end: int) -> list[int]:
+    """How long the wind blew from each of the 16 compass points (direction.sector: N first, clockwise) from start to end, in minutes, of
+    the wind's 5-minute readings (5 each) and its minutes (1 each) where no 5-minute reading covers them (300 s either side), in one query;
+    a calm reading (its speed 0) left out, one with no speed counted. All 0 with none (the web page's wind rose: today's)."""
+    counts = [0] * 16
+    sensor = r.sensor(mac, "wind")
+    if sensor is None or sensor.kind != "wind":
+        return counts
+    got = r.db.execute(f"SELECT res, ts, {q('wind_direction')}, {q('wind_speed')} FROM wind WHERE sensor = ? AND res IN ('1min', '5min') "
+                       f"AND ts BETWEEN ? AND ? AND {q('wind_direction')} IS NOT NULL ORDER BY ts", (sensor.id, start, end)).fetchall()
+    fives = [ts for res, ts, _, _ in got if res == "5min"]
+    for res, ts, degrees, speed in got:
+        if speed is not None and speed <= 0:
+            continue
+        if res == "1min":
+            i = bisect.bisect_left(fives, ts - 299)
+            if i < len(fives) and fives[i] < ts + 300:
+                continue
+        counts[sector(degrees)] += 5 if res == "5min" else 1
+    return counts
+
+
+def pressure_on(r: Reader, mac: str, start: int, end: int) -> list[tuple[int, float]]:
+    """The relative pressure (hPa) from start to end, oldest first, [(epoch, hPa)]: its 5-minute readings and its minutes where no 5-minute
+    reading covers them (300 s either side, as directions_on), in one query; [] with none, or no pressure sensor (the web page's pressure
+    arrow: its change over the past hour)."""
+    sensor, place = r.sensor(mac, "pressure"), column_of("pressure", "relative")
+    if sensor is None or sensor.kind not in KINDS or place is None:
+        return []
+    column = q(place[0])
+    got = r.db.execute(f"SELECT res, ts, {column} FROM {sensor.kind} WHERE sensor = ? AND res IN ('1min', '5min') AND ts BETWEEN ? AND ? "
+                       f"AND {column} IS NOT NULL ORDER BY ts", (sensor.id, start, end)).fetchall()
+    fives = [ts for res, ts, _ in got if res == "5min"]
+    out = []
+    for res, ts, value in got:
+        if res == "1min":
+            i = bisect.bisect_left(fives, ts - 299)
+            if i < len(fives) and fives[i] < ts + 300:
+                continue
+        out.append((ts, float(value)))
+    return out
 
 
 def newest_minute_on(r: Reader, mac: str) -> int | None:
@@ -160,5 +205,5 @@ def history_on(r: Reader, mac: str, groups: list[str], plan: list[tuple[str, int
     return held
 
 
-__all__ = ["Held", "Store", "buckets_on", "counts_on", "first_minute_on", "history_on", "newest_minute_on", "readings_on", "rows_on",
+__all__ = ["Held", "Store", "buckets_on", "counts_on", "directions_on", "first_minute_on", "history_on", "newest_minute_on", "pressure_on", "readings_on", "rows_on",
            "slot_values_on"]

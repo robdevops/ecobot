@@ -5,6 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("TZ", "Australia/Melbourne")
+import time  # noqa: E402
+time.tzset()   # (in this process too, not only in the workers it starts: `-n0`'s hour-named archive is the hour the workers name)
 from tests import clocks   # noqa: E402  (ECOBOT_CLOCK: the whole suite at another time; before anything of lib/ is imported)
 CLOCK = clocks.install()
 
@@ -24,11 +26,72 @@ SLOW = {line.strip() for line in (Path(__file__).parent / "slow_tests.txt").read
 @pytest.hookimpl(tryfirst=True)   # (before -m deselects by the marks)
 def pytest_collection_modifyitems(items):
     """The slow tests (tests/slow_tests.txt, every parameter of one) marked `slow`: plain `pytest` leaves them out (pytest.ini). Then the
-    files with the slowest tests go first, so with several workers (pytest-xdist) none is left running one of them at the end."""
+    files with the slowest tests go first, so with several workers (pytest-xdist) none is left running one of them at the end; and the
+    browser's (BROWSER) dealt out ahead of them, one at the head of each worker's share: the zoom's (ZOOM_TIMED) first, so they run
+    together at the start, before any of the weather's pages (theirs drawing every frame, some on a fast clock) are open to slow the
+    zoom's start on a busy machine."""
     for item in items:
         if item.nodeid.split("[")[0] in SLOW:
             item.add_marker(pytest.mark.slow)
     items.sort(key=lambda item: (item.path.name not in HEAVY, HEAVY.index(item.path.name) if item.path.name in HEAVY else 0))
+    deal_out(items, sorted((item for item in items if browser_test(item)), key=lambda item: not zoom_timed(item)))
+
+
+def pytest_xdist_auto_num_workers(config):
+    """`-n auto` (pytest.ini): twice as many workers as there are CPUs. The browser's tests mostly wait on the page (its animations, a
+    long press, a swipe's end), and many of the rest on a server, a subprocess or a timeout, so a worker in one leaves its CPU mostly free
+    for the extra workers' tests (on 4 CPUs: 8 workers, about 4 s sooner than 6 as measured; 10, no sooner, more CPU)."""
+    return max(2, (os.cpu_count() or 1) * 2)
+
+
+BROWSER = "test_web_dashboard.py"   # its slow tests drive the page in Chromium: seconds each, mostly waiting on the page
+
+
+def browser_test(item) -> bool:
+    return item.path.name == BROWSER and item.nodeid.split("[")[0] in SLOW
+
+
+# The browser's zoom tests: two time the zoom's 200 ms (within 330 ms, on its animations' own timeline), all of them follow its frames
+ZOOM_TIMED = ("test_a_click_on_a_gauge_zooms_", "test_zoomed_the_last_tile_", "test_a_double_click_esc_", "test_zoomed_the_gallery_")
+
+
+def zoom_timed(item) -> bool:
+    return item.name.startswith(ZOOM_TIMED)
+
+
+_niced = False
+
+
+def pytest_runtest_setup(item):
+    """With several workers, a worker done with its browser tests (dealt out first) runs the rest at a lower priority (nice 10, for
+    good: a process can't raise its own again), so the pages still being driven, whose tests time their animations frame by frame,
+    get a CPU when they ask while the others keep every CPU busy. The run takes as long; only who waits changes."""
+    global _niced
+    if not _niced and not browser_test(item) and os.environ.get("PYTEST_XDIST_WORKER") and hasattr(os, "nice"):
+        os.nice(10)
+        _niced = True
+
+
+def deal_out(items: list, first: list) -> None:
+    """`first` dealt out across the workers (as many as there are CPUs), one at the head of each worker's share of the run in turn, the
+    rest after them: so they start together, each on its own worker, rather than queue on one. (pytest-xdist's worksteal gives each worker a run of the list
+    as it starts, the first len // workers to the first and so on, and a worker with nothing left takes from the end of another's.)"""
+    workers = int(os.environ.get("PYTEST_XDIST_WORKER_COUNT", "0"))   # (set in each worker; all of them collect the same order)
+    if workers < 2 or not first:
+        return
+    taken = set(map(id, first))
+    rest = [item for item in items if id(item) not in taken]
+    shares, left = [], len(items)
+    for w in range(workers):   # (each share's length, as worksteal cuts them)
+        shares.append(left // (workers - w))
+        left -= shares[-1]
+    browsers = min(workers, os.cpu_count() or 1)   # (no more pages driven at once than there are CPUs: their timings stay true)
+    heads = [first[w::browsers] for w in range(browsers)] + [[]] * (workers - browsers)
+    out = []
+    for size, head in zip(shares, heads):
+        out += head + rest[:size - len(head)]
+        rest = rest[size - len(head):]
+    items[:] = out + rest
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +117,14 @@ def the_log_levels_as_they_were():
     yield
     for name, level in levels.items():
         logging.getLogger(name).setLevel(level)
+
+
+@pytest.fixture
+def ha_states_unshared(monkeypatch):
+    """Home Assistant's /api/states asked afresh each time (lib/ecowitt/homeassistant.py STATES_SHARE_SECONDS 0; a request already out
+    is still shared): for the tests whose fake Home Assistant changes what it says from one request to the next, a few ms apart."""
+    from lib.ecowitt import homeassistant
+    monkeypatch.setattr(homeassistant, "STATES_SHARE_SECONDS", 0)
 
 
 @pytest.fixture

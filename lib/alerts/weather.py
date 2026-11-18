@@ -108,8 +108,8 @@ class WeatherMonitor:
         self.state.save()
 
     async def check_rain(self):
-        """Look at the rain alone, on a live reading that has just come in (the station is polled every few seconds, so this is the alert
-        within a few seconds of the gauge, not at the next minute's check)."""
+        """Look at the rain alone, on a live reading that has just come in (the station is polled every 30 seconds, so this is the alert
+        within 30 seconds of the gauge's report, not at the next minute's check)."""
         rows = await self.station.recent(3)
         live = await self.station.live_rain() if rows else None
         if rows and live and live[0] > rows[-1][0]:

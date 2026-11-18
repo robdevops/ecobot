@@ -5,10 +5,12 @@
   - history: Home Assistant's buckets; those it has none of (before it began recording, while it or its Ecowitt integration was down) are
     asked of the cloud in one request for the span they cover, and the cloud's readings fill the gaps (Home Assistant's are kept where both
     have one). The cloud is never asked for a cycle only Home Assistant has (the minute's), or for a bucket that has not begun;
-  - devices: the cloud's, which knows the station's own address (the cache is keyed by it) and when it was made, else Home Assistant's.
+  - devices: the cloud's, which knows the station's own address (the cache is keyed by it) and when it was made, else Home Assistant's
+    (both asked at once).
 A failure of either is logged once for as long as it lasts. If both fail the error is raised, as for any one of them.
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime
@@ -83,19 +85,18 @@ class FallbackAPI:
         self.trouble[which].ok()
 
     async def devices(self) -> list[dict]:
-        cloud, ours, failure = [], [], None
-        try:
-            cloud = await self.second.devices()
-            self._fine("second")
-        except EcowittError as e:
-            self._failed("second", "the device list", e)
-            failure = e
-        try:   # (asked either way: it finds the station's entities and when its first reading was)
-            ours = await self.first.devices()
-            self._fine("first")
-        except EcowittError as e:
-            self._failed("first", "the device list", e)
-            failure = failure or e
+        async def ask(which: str, api) -> list[dict] | EcowittError:
+            try:
+                found = await api.devices()
+            except EcowittError as e:
+                self._failed(which, "the device list", e)
+                return e
+            self._fine(which)
+            return found
+        # (Home Assistant's asked either way, beside the cloud's: it finds the station's entities)
+        cloud, ours = await asyncio.gather(ask("second", self.second), ask("first", self.first))
+        failure = next((r for r in (cloud, ours) if isinstance(r, EcowittError)), None)
+        cloud, ours = [r if isinstance(r, list) else [] for r in (cloud, ours)]
         if not (cloud or ours):
             raise failure or EcowittError("no Ecowitt device", transient=False)
         return cloud or ours

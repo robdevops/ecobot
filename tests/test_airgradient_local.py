@@ -77,10 +77,13 @@ async def test_the_air_source_uses_the_device_and_the_clouds_name_and_falls_back
     air = AirGradient(config(tmp_path, airgradient_local_url=URL), transport=transport)
     up = [True]
     air.local, _ = sensor(lambda request: httpx.Response(200, json=DEVICE) if up[0] else httpx.Response(500))
-    await air.start()
+    await air.start(wait=False)                                                         # (ecobot-mcp's: nothing asked of the network)
+    assert calls == [] and air.startup_lines() == [] and air._current is None and not air.local.address   # nothing kept yet
+    await air.settle()                                                                  # (its start, in the warm-up)
     reading = (await air.latest()).reading
     assert reading["sensor"] == "Outdoor" and reading["pm2_5"]["value"] == 2.5 and reading["pm10"]["value"] == 6.0   # the device's figures
-    assert calls.count("current") == 1                                                  # the cloud was asked once, at start, for the name
+    assert calls.count("current") == 1                                                  # the cloud was asked once, after start, for the name
+    assert air.startup_lines()[0].startswith("AirGradient: 'Outdoor' (42): ") and "/cloud (60s)" in air.startup_lines()[0]
     up[0] = False
     reading = (await air.latest()).reading                                              # (the reading is reused for a few minutes)
     assert reading["pm2_5"]["value"] == 2.5

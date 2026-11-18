@@ -4,24 +4,37 @@ top left 0, 0. Nothing here imports Pillow."""
 
 from dataclasses import asdict
 
+from .ecowitt.direction import POINTS   # (the compass's 16 points, for the page to name a direction as its needle moves)
 from .specs import Tile
 
 BG = "#14191D"
 INK = "#E8EAED"             # the titles, the figures
 SOFT = "#B8BDC2"            # scale numbers, outlines
 CHIP = "#3A4046"            # the row names' backing
-MAX_CHIP, MIN_CHIP, TOTAL_CHIP = "#C62828", "#4FB3F6", "#5BC8F0"
-CHIPS = {"Max": MAX_CHIP, "Min": MIN_CHIP, "Total": TOTAL_CHIP}
-MARKS = {"Max": "▲", "Min": "▼", "Total": "+"}   # in front of a column's name
+MAX_CHIP, MIN_CHIP, TOTAL_CHIP, GUST_CHIP = "#C62828", "#4FB3F6", "#5BC8F0", "#7C8790"
+CHIPS = {"Max": MAX_CHIP, "Min": MIN_CHIP, "Total": TOTAL_CHIP, "Gust": GUST_CHIP}
+MARKS = {"Max": "▲", "Min": "▼", "Total": "+", "Gust": "»"}   # in front of a column's name
+HIGH_HAND = "#FF3B30"       # a dial's red mark at its reading's highest today (the web page's: the wind's gust a thin hand; rain rate,
+                            # sun and UV a limit mark, a small triangle outside the coloured band, pointing in)
+HIGH_HAND_WIDTH = 1.4       # ... the hand: how wide (pixels)
+LIMIT_MARK = (118, 138, 8.5)   # ... the triangle: its tip's and its base's radius, its base's half-width (pixels; the band ends at 130,
+                               # the outline at 138)
+
 FILL = "#D32F27"            # the thermometer's mercury
 TUBE_HALF, BULB_RADIUS = 28, 38   # the thermometer: half the tube's width, the bulb's radius (pixels, to the outline)
 MERCURY_GAP = 7             # the gap between the outline and the red, the same round the bulb as up the tube
 BAR_WIDTH, BAR_GAP = 13, 12   # the scale's coloured blocks beside a thermometer or beaker: how wide, and how far from its outline
 RING_OUTER, BAND_WIDTH = 130, 22   # a dial's coloured scale: its outer radius and how wide it is (the outline is at 138)
 LABEL_RADIUS = 84           # where a dial's numbers sit, just inside its scale
-BAND_Y, BAND_SIZE = 157, 19  # a dial's band name ("Moderate"): how far below its centre (under its outline), and its size
+COMPASS = (240, 188, 130)   # the wind's direction, a compass: its centre and outline's radius (above the table's place: it has none)
+COMPASS_LABEL_Y = 346       # ... its reading ("99° E") under it
+COMPASS_BAND = "#262E34"    # ... its ring, under the ticks and the letters N, E, S and W
 WATER = "#4FB3F6"           # the rain beaker's water
 NEEDLE = "#3E86C0"
+RISING, FALLING = NEEDLE, HIGH_HAND   # the web page's pressure arrow after its reading (its way over the past hour): up, in the
+                                     # needle's blue; down, in the red hands' red (steady: none)
+WIND_CHIPS = {**CHIPS, "Max": NEEDLE, "Gust": HIGH_HAND}   # the web page's Wind table: its Max the needle's colour (the speed
+                                                           # it shows), its Gust its limit mark's red (today's highest gust)
 CELL_W, CELL_H, MARGIN = 480, 575, 20
 FADE = 0.4                  # how much of its colour a tile with no reading keeps
 SWEEP, START = 250.0, 215.0   # the dial runs clockwise from START degrees (0 = right, 90 = up) through SWEEP degrees
@@ -60,10 +73,11 @@ def share(tile: Tile, value: float) -> float:
 
 def look() -> dict:
     """The figures above as JSON, for the web page to draw with."""
-    return {"bg": BG, "ink": INK, "soft": SOFT, "chip": CHIP, "chips": CHIPS, "marks": MARKS, "fill": FILL, "water": WATER,
-            "needle": NEEDLE, "tube_half": TUBE_HALF, "bulb_radius": BULB_RADIUS, "mercury_gap": MERCURY_GAP, "bar_width": BAR_WIDTH,
+    return {"bg": BG, "ink": INK, "soft": SOFT, "chip": CHIP, "chips": CHIPS, "wind_chips": WIND_CHIPS, "marks": MARKS, "fill": FILL, "water": WATER,
+            "needle": NEEDLE, "rising": RISING, "falling": FALLING, "high_hand": HIGH_HAND, "high_hand_width": HIGH_HAND_WIDTH, "limit_mark": list(LIMIT_MARK), "tube_half": TUBE_HALF, "bulb_radius": BULB_RADIUS, "mercury_gap": MERCURY_GAP, "bar_width": BAR_WIDTH,
             "bar_gap": BAR_GAP, "ring_outer": RING_OUTER, "band_width": BAND_WIDTH, "label_radius": LABEL_RADIUS,
-            "band_y": BAND_Y, "band_size": BAND_SIZE, "cell": [CELL_W, CELL_H],
+            "cell": [CELL_W, CELL_H], "compass": list(COMPASS),
+            "compass_label_y": COMPASS_LABEL_Y, "compass_band": COMPASS_BAND, "points": list(POINTS),
             "fade": FADE, "sweep": SWEEP, "start": START, "rows": list(ROWS)}
 
 

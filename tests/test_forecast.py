@@ -6,6 +6,7 @@ import pytest
 from lib.forecast import Forecast
 from lib.forecast.source import WMO, day_label, describe_day, temps
 from tests.fakes import TZ, config
+from tests.test_pollen import started
 
 
 def ensemble_body(per_day):
@@ -77,7 +78,7 @@ def test_days_after_today_are_named_by_their_weekday():
 
 async def test_today_and_the_next_days_come_from_open_meteo_by_local_date(tmp_path):
     forecast, calls = make(tmp_path)
-    await forecast.start()
+    await started(forecast)
     today = datetime.now(TZ).date()
     assert forecast.lines() == ["Today: 🌧️ Rain. 11–16°C, 50% chance of at least 1 mm",
                                 f"{today + timedelta(days=1):%A}: ☀️ Clear. 12–20°C, 0% chance of at least 1 mm"]
@@ -90,7 +91,7 @@ async def test_today_and_the_next_days_come_from_open_meteo_by_local_date(tmp_pa
 
 async def test_the_place_is_the_configured_name(tmp_path):
     forecast, _ = make(tmp_path, place="Geelong")
-    await forecast.start()
+    await started(forecast)
     assert forecast.place == "Geelong"
     assert forecast.fetched_at                                                           # when it was fetched, for the text's heading
     await forecast.close()
@@ -98,7 +99,7 @@ async def test_the_place_is_the_configured_name(tmp_path):
 
 async def test_the_forecast_is_fetched_only_in_the_day_and_not_again_while_young(tmp_path):
     forecast, calls = make(tmp_path, hour=22)
-    await forecast.start()
+    await started(forecast)
     n = len(calls)
     assert n > 0
     await forecast.warm(True)
@@ -124,7 +125,7 @@ async def test_the_station_location_is_used_when_none_is_configured_and_without_
 
 async def test_the_lines_are_every_day_open_meteo_gave_unless_fewer_are_asked_for(tmp_path):
     forecast, _ = make(tmp_path)
-    await forecast.start()
+    await started(forecast)
     assert len(forecast.lines(7)) == 3                                                   # every day Open-Meteo gave (the test data has three)
     assert len(forecast.lines(2)) == 2
     assert len(forecast.lines(30)) == 3
@@ -136,7 +137,7 @@ async def test_the_chance_of_at_least_1_mm_is_the_share_of_ensemble_members_to_t
            1: [1.0] + [0.0] * 6,                                        # 1 of 7: 14.3 -> 15
            2: [None, None, 5.0, 5.0]}                                   # members with no data are not counted: 2 of 2 -> 100
     forecast, calls = make(tmp_path, ensemble=odd)
-    await forecast.start()
+    await started(forecast)
     assert [d["rain_1mm_pct"] for d in forecast.days] == [50, 15, 100]
     asked = next(c for c in calls if isinstance(c, dict))
     assert asked["hourly"] == "precipitation" and asked["models"] == "ecmwf_ifs025" and asked["latitude"] == "-37.8"
@@ -145,7 +146,7 @@ async def test_the_chance_of_at_least_1_mm_is_the_share_of_ensemble_members_to_t
 
 async def test_a_day_the_ensemble_has_too_few_hours_for_keeps_open_meteos_own_figure(tmp_path):
     forecast, _ = make(tmp_path, ensemble={0: [0.0, 2.0]})               # only today; the other two days have no members
-    await forecast.start()
+    await started(forecast)
     today, tomorrow = forecast.days[0], forecast.days[1]
     assert today["rain_1mm_pct"] == 50 and "rain_1mm_pct" not in tomorrow
     assert describe_day(tomorrow).endswith("0% chance of rain")
@@ -154,6 +155,6 @@ async def test_a_day_the_ensemble_has_too_few_hours_for_keeps_open_meteos_own_fi
 
 async def test_when_the_ensemble_is_down_the_forecast_still_works_with_open_meteos_own_figure(tmp_path):
     forecast, _ = make(tmp_path, ensemble=None)
-    await forecast.start()
+    await started(forecast)
     assert forecast.lines()[0] == "Today: 🌧️ Rain. 11–16°C, 40% chance of rain"
     await forecast.close()

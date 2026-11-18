@@ -210,7 +210,7 @@ def _text(value, unit: str) -> str:
 class _HeldOnly(Fetcher):
     """A Fetcher that asks Ecowitt for nothing: request _meta fetch false answers from what is held."""
 
-    async def _fetch(self, cycle, start, end, groups):
+    async def _fetch(self, cycle, start, end, groups, urgency=None):
         return None
 
     def sibling(self, groups: list[str]) -> "Fetcher":

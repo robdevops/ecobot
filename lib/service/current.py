@@ -9,8 +9,8 @@ weather_now and air_quality without dates (and the gauges' figures), on their en
     band, and its text as the report writes it;
   - `context` is the gauges' figures (lib/ecowitt/dashboard.py figures(), over the day rows of the year so far,
     lib/ecowitt/days.day_values_on, the live reading counted in for today's highs and lows), each high and low with when it happened (the
-    day row's own time of it, worded as weather_history words a record) and its day; rain as its totals and its wettest day, wind as its
-    highest gust. With no readings named, every gauge's reading the station sends now is there, those its file hasn't recorded yet (not
+    day row's own time of it, worded as weather_history words a record) and its day; rain as its totals and its wettest day, wind
+    speed as its highest and its highest gust. With no readings named, every gauge's reading the station sends now is there, those its file hasn't recorded yet (not
     in the catalogue: unrecorded()) too, so a client lays out the gauges (lib/gauge_sheet.py) from this result alone. The air sensor's
     air-quality readings (not its own temperature and humidity) have their highs and lows too, from its day rows (air_context_of: each
     with its day, but not its time of day), so a reading it lacks now is there with its figures alone, as the station's are.
@@ -30,8 +30,8 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 
 from ..airgradient.metrics import EXTRA as AIR_OWN_METRICS
-from ..ecowitt.api import MINUTE, unit_text
-from ..ecowitt.dashboard import GAUGES, Gauge, figures, live_value, periods_of
+from ..ecowitt.api import MINUTE, NotInYet, unit_text
+from ..ecowitt.dashboard import GAUGES, GUST, Gauge, figures, live_value, periods_of
 from ..ecowitt.days import FIELDS, PARTS, day_values_on
 from ..ecowitt.direction import point
 from ..ecowitt.extremes import describe_time
@@ -52,6 +52,7 @@ ANOTHER_TIME = ("period", "start", "end")   # a call about another time than now
 HEADINGS = {STATION: "Weather station", AIR_DEVICE: "Air quality"}       # the report's sections (the old lib/report.py SECTIONS)
 NOT_AVAILABLE = "• not available right now"                              # ... and a section whose device didn't answer
 UNAVAILABLE = {STATION: "The weather station isn't answering right now.", AIR_DEVICE: "The air sensor isn't answering right now."}
+NOT_IN_YET = "The weather station's reading isn't in yet: ecobot-mcp has just started and is still finding the station."
 NOTHING_HELD = {STATION: "No reading of the weather station is held (and `fetch` is off).",
                 AIR_DEVICE: "No reading of the air sensor is held (and `fetch` is off)."}
 PERIODS = (("Daily", "today"), ("Monthly", "month"), ("Yearly", "year"))   # a gauge's rows, as the result names them
@@ -285,10 +286,12 @@ def station_entry(live: dict, now: dict, reading: Reading, field: str) -> dict:
 # ---------- the gauges' figures (context) ----------
 def gauge_of(name: str) -> Gauge | None:
     """The gauge a reading's context comes from: the one whose live reading it is (rainfall.rain: the Rain gauge's "daily"); the gusts
-    get the Wind gauge's highest, with the live gust counted in."""
+    get the Wind gauge's Gust column as their highest, with the live gust counted in. None for a reading with no gauge, or whose gauge has
+    no figures (the wind's direction: its compass)."""
     if name == "wind.wind_gust":
-        return replace(next(g for g in GAUGES if g.live == ("wind", "wind_speed")), live=("wind", "wind_gust"), counted=None)
-    return next((g for g in GAUGES if g.reading == name), None)
+        wind = next(g for g in GAUGES if g.live == ("wind", "wind_speed"))
+        return replace(wind, live=GUST, highest=wind.gust, gust=None, high_hand=None)
+    return next((g for g in GAUGES if g.reading == name and g.highest), None)
 
 
 def _times_on(r: Reader, mac: str, names: list[str], days: list[date]) -> dict[str, dict[date, tuple[int, str]]]:
@@ -365,16 +368,17 @@ def _extreme(key: str, value: float, figure: str, days: list[date], values: dict
 def context_of(name: str, live: dict, values: dict, times: dict, today: date, tz: tzinfo) -> dict:
     """{today, month, year} beside one reading: the figures its gauge's rows give (dashboard.figures, the live reading counted in for its
     highs and lows, today's rain the gauge's own reading), each high and low with when it happened and its day; rain's totals and wettest
-    day; wind speed's highest as `high_gust`. {} for a reading with no gauge, or none of whose figures are held."""
+    day; wind speed's highest (`high`) and its highest gust (`high_gust`, the gauge's Gust column, the live gust counted in). {} for a
+    reading with no gauge, or none of whose figures are held."""
     gauge = gauge_of(name)
     if gauge is None:
         return {}
     days, unit = periods_of(today), gauge.unit
     now = Live(live, gauge)
-    counted = Live(live, replace(gauge, live=gauge.counted)) if gauge.counted else now   # (wind: the gust now, not the speed)
+    gust = Live(live, replace(gauge, live=GUST)) if gauge.gust else None   # (wind: the gust now, counted into its Gust)
     out = {}
     for row, key in PERIODS:
-        got = figures(gauge, values, days[row], None if gauge.total else counted.value)
+        got = figures(gauge, values, days[row], None if gauge.total else now.value, gust.value if gust else None)
         if gauge.total and row == "Daily" and now.value is not None:   # today's rain is the gauge's own reading (as the gauge shows it)
             got = (None, now.value)
         entry: dict = {}
@@ -386,11 +390,11 @@ def context_of(name: str, live: dict, values: dict, times: dict, today: date, tz
                 day = next(d for d in days[row] if values.get(gauge.highest, {}).get(d) == wettest)
                 entry["wettest_day"] = {"rain": wettest, "text": _figure_text(gauge, gauge.highest, wettest, unit), "date": day_text(day)}
         else:
-            high = "high_gust" if name == "wind.wind_speed" else "high"
-            pairs = [(high, gauge.highest, got[0])] + ([("low", gauge.lowest, got[1])] if gauge.lowest else [])
-            for key_, figure, value in pairs:
+            pairs = [("high", gauge.highest, got[0], now)] + ([("low", gauge.lowest, got[1], now)] if gauge.lowest else [])
+            pairs += [("high_gust", gauge.gust, got[-1], gust)] if gauge.gust else []
+            for key_, figure, value, held in pairs:
                 if value is not None:
-                    entry.update(_extreme(key_, value, figure, days[row], values, times, counted, gauge, unit, tz,
+                    entry.update(_extreme(key_, value, figure, days[row], values, times, held, gauge, unit, tz,
                                           dated=row != "Daily"))
         if entry:
             out[key] = entry
@@ -492,6 +496,8 @@ class CurrentTool:
             live = await self._live(station, named, meta)
         except NothingHeld:
             return Part.down(STATION, NOTHING_HELD[STATION], today)
+        except NotInYet:
+            return Part.down(STATION, NOT_IN_YET, today)
         except Exception as e:
             log.warning("current: the weather station's reading failed: %s", e)
             return Part.down(STATION, UNAVAILABLE[STATION], today)
@@ -585,11 +591,11 @@ class CurrentTool:
             if getattr(self.ctx.air, "_current", None) is None:
                 raise NothingHeld()
             return await self.ctx.air.latest(extras, held=True)
-        return await self.ctx.air.latest(extras)
+        return await self.ctx.air.latest(extras, kept=True)   # (just after a start, the reading kept from before it: as of its time)
 
     async def _context(self, station: list[Reading]) -> tuple[dict, dict]:
         """The gauges' figures for the readings that have a gauge (context_on): their day rows of the year so far, in one read."""
-        names = sorted({n for r in station if (g := gauge_of(r.name)) for n in (g.highest, g.lowest) if n})
+        names = sorted({n for r in station if (g := gauge_of(r.name)) for n in (g.highest, g.lowest, g.gust) if n})
         if not names:
             return {}, {}
         eco = self.ctx.eco

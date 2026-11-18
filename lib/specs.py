@@ -231,17 +231,18 @@ class Tile:
     title: str
     unit: str
     value: float | None                    # now; None (no reading now) draws it dimmed, at its floor
-    kind: str                              # "thermometer", "dial" or "beaker"
+    kind: str                              # "thermometer", "dial", "beaker" or "compass" (the wind's direction: no table, its band
+                                           # the compass point, its scale 0 to 360 degrees clockwise from north)
     low: float                             # the scale's ends
     high: float
     colours: tuple[str, ...]               # the scale's bands, from the low end to the high one
-    columns: tuple[str, ...] = ()          # what the table under the gauge lists: "Max", "Min" or "Total"
+    columns: tuple[str, ...] = ()          # what the table under the gauge lists: "Max", "Min", "Gust" (wind) or "Total"
     rows: dict[str, tuple[float | None, ...]] = field(default_factory=dict)   # "Daily" / "Monthly" / "Yearly" -> a figure per column
     ticks: tuple[float, ...] = ()          # the scale's labels
     decimals: int = 1
     bounds: tuple[float, ...] = ()         # the bands' edges, when each band is an equal share of the scale (the air gauges' categories);
                                            # none: the scale is even, low to high
-    band: str | None = None                # the name of the band the reading is in, shown under it
+    band: str | None = None                # the name of the band the reading is in, shown under it (a compass: its compass point)
 
 
 @dataclass

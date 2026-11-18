@@ -22,9 +22,11 @@ class Source(ABC):
         return [self.summary] if self.summary else []
 
     @abstractmethod
-    async def start(self):
+    async def start(self, wait: bool = True):
         """Get ready: find the device, read the first page. A failure that leaves the source of no use raises (the bot then runs
-        without it); one that only means "not yet" is logged, and the next refresh tries again."""
+        without it); one that only means "not yet" is logged, and the next refresh tries again. wait False (ecobot-mcp's start, so the
+        port opens at once): nothing is asked of the network, the source starts from what the data folder kept of it, and what it would
+        have asked for is the warm-up's (ecobot_mcp/core.py Core.warm_up)."""
 
     @abstractmethod
     async def warm(self, fresh: bool = True) -> str:

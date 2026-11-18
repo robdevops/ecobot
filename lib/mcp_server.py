@@ -89,7 +89,7 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
                   "label, unit) and the words people use for them; each source's mode and how far back its history goes; the alert "
                   "kinds, each with its rule and thresholds; the AirGradient dashboard link. Pushed when the readings change.", None),
     WEATHER_URI: ("now/weather", "The weather now", "The weather station's live reading: {as_of, sensors: {sensor: {reading: {value, "
-                  "unit, text, [emoji], [compass]}}}, lines, heading}. Pushed on each new reading (every 5 s with Home Assistant, 60 s "
+                  "unit, text, [emoji], [compass]}}}, lines, heading}. Pushed on each new reading (polled every 30 s with Home Assistant, 60 s "
                   "from the cloud).", "eco"),
     AIR_URI: ("now/air", "The air now", "The air sensor's latest reading, with each reading's rating, PM2.5's and PM10's US AQI and band (the US AQI is the higher): {as_of, "
               "sensors: {air: {reading: {value, unit, text, [rating], [aqi_us, band]}}}, lines, heading}. Pushed on each new reading.",
@@ -503,14 +503,17 @@ def prompt(name: str, arguments: dict | None = None) -> types.GetPromptResult:
 
 
 def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "localhost"), issuer_url: str = "http://127.0.0.1:8765",
-             path: str = "/mcp", dashboard: bool = True):
+             path: str = "/mcp", dashboard: bool = True, dashboard_animations: bool | str = "on",
+             dashboard_indoor: bool = True):
     """The Streamable HTTP app (Starlette) at `path`: the Host header checked against `allowed_hosts`, and, with `tokens` (AUTH_TOKENS),
     every request's bearer token (TokenCheck). `issuer_url` is required by the SDK with auth but unused: no OAuth metadata is published
     (resource_server_url=None). With `dashboard` (MCP_DASHBOARD), the gauges' live page beside it at /dashboard (lib/web_dashboard.py):
-    read-only, no token, any Host; `app.state.closing` ends its event streams at shutdown. Always, the chart links' pictures at
+    read-only, no token, any Host, its weather behind the gauges only with `dashboard_animations` on, nothing animated with "off" (MCP_DASHBOARD_ANIMATIONS);
+    with `dashboard_indoor` False (MCP_DASHBOARD_INDOOR off) no indoor reading on it, drawn or sent;
+    `app.state.closing` ends its event streams at shutdown. Always, the chart links' pictures at
     /charts/<id>.png (EcobotServer.chart_picture): no token, any Host either."""
     check = TokenCheck(tokens) if tokens else None
-    web = WebDashboard(server, (WEATHER_URI, AIR_URI)) if dashboard else None
+    web = WebDashboard(server, (WEATHER_URI, AIR_URI), animations=dashboard_animations, indoor=dashboard_indoor) if dashboard else None
     app = server.server.streamable_http_app(
         streamable_http_path=path, transport_security=host_settings(allowed_hosts),
         auth=AuthSettings(issuer_url=issuer_url, resource_server_url=None) if check else None, token_verifier=check,

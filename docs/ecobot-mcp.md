@@ -219,8 +219,8 @@ rain is summarised.
 
 **`current`'s result:** `{as_of, sensors: {"outdoor": {"temperature": {value, unit, text: "12.3 °C", [emoji], [today: {low, low_text,
 low_when, high…}], [month…], [year…]}}, "rainfall": {"rain": {…, [today: {total}], [month: {total, wettest_day}], [year…]}}, "wind":
-{"wind_speed": {…, [today: {high_gust…}]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`: with `context`, everything the
-bot's gauges show (rain as totals and its wettest day, wind's highest gust); with `context` and no readings named, every gauge's reading
+{"wind_speed": {…, [today: {high…, high_gust…}]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`: with `context`, everything the
+bot's gauges show (rain as totals and its wettest day, wind speed's highest and its highest gust); with `context` and no readings named, every gauge's reading
 the station sends now, those its file hasn't recorded yet (outside the catalogue) too, as the gauges show them. The air sensor's
 air-quality readings have their highs and lows with `context` too (from its day rows, with their day but no time of day), so a
 reading it lacks now, or the sensor not answering, still gives its figures with `value` null.
@@ -631,8 +631,8 @@ Each step ships on its own, with the tests and evals green and the bot working t
      `ToolsListChanged` when the file's catalogue gains a reading (read every minute; the tools and instructions are then built again).
      `http_app`: `streamable_http_app` with `TransportSecuritySettings` over `MCP_ALLOWED_HOSTS` and the `TokenCheck` verifier over
      `AUTH_TOKENS` (`AuthSettings(issuer_url=…, resource_server_url=None)`). `ecobot_mcp/`: `core.py` is the service's startup
-     (`start_sources`, `Core`: the alert log, the tools, the alert rules, the keep-warm, and `warm_up`, the first fetch, the weather
-     rules, the live poll, the archive, the backfill and Home Assistant's imports, each loop's last success and failure kept for
+     (`start_sources`, each source started from what the data folder kept, nothing asked of the network before the port opens; `Core`: the alert log, the tools, the alert rules, the keep-warm, and `warm_up`, the first fetch (the station's device list in the background, its live reading first, then its history, the 5-minute and 30-minute tails first, a fetch a question waits for hurried to the urgent line; the air sensor's reading and the rest of its start; the forecast and pollen page if due), the weather
+     and particulates rules once their device has been read, the live poll, the archive, the backfill and Home Assistant's imports, each loop's last success and failure kept for
      `ecobot://health`), which `ecobot.py` now calls in-process, its behaviour unchanged; `__main__.py` runs it with the server under
      uvicorn (`MCP_BIND`; at first it refused a non-loopback address without tokens, and now it always has one, `AUTH_TOKENS` or the generated one); `lib/upstream.py` is the bot's one supervised
      client, pinned to 2026-07-28, that discovers by hand, listens and re-listens after a backoff (a stdio bridge was built on it and later removed). The image ships `ecobot_mcp/` and
@@ -720,9 +720,11 @@ Each step ships on its own, with the tests and evals green and the bot working t
      sizes) from `/dashboard/data` (gauge_sheet's tiles from `current` with context) and redrawing them on each `/dashboard/events`
      event (Server-Sent Events, on the gauges' readings changing in ecobot://now/weather's and ecobot://now/air's change detection).
      Read-only, so no token and no Host check; `/mcp` keeps both. After the station's gauges come the air sensor's
-     (`lib/airgradient/dashboard.py`, on US standards: the US AQI and PM2.5 on the EPA's 2024 categories, PM10 on the EPA's, CO2 on
+     (`lib/airgradient/dashboard.py`, on US standards: the US AQI (its tile titled "AQI") and PM2.5 on the EPA's 2024 categories, PM10 on the EPA's, CO2 on
      the usual ASHRAE-based indoor guidance, the VOC and NOx indices on bands of Sensirion's index); a tile with no reading now is
-     dimmed at its floor.
+     dimmed at its floor. The UV index's, the AQI's and the particles' tables have a Max column alone (no Min); the Wind's,
+     Rain rate's, Solar radiation's and UV index's dials carry a thin red hand at today's highest (`/dashboard/data`'s
+     `today_highs`: their Daily Max, the Wind's Daily Gust, rising with the reading now).
    - **6b. Client only.** `BOT_MCP_URL` is required: the in-process mode (`LocalWeather`, the bot starting the sources, the syncers,
      the alert rules and the alert log itself) is deleted. Under systemd, `ecobot.service` wants and starts after `ecobot-mcp.service`;
      in Docker this is already the layout. The bot's image installs only its own packages (python-telegram-bot, openai, mcp, httpx).

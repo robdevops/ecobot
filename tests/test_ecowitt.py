@@ -253,6 +253,14 @@ async def test_a_questions_requests_go_before_the_background_ones_and_the_refres
     assert marked and not any(marked)   # a chart drawn ahead: nobody is waiting for it
 
 
+async def test_the_keep_warm_asks_for_the_last_hours_and_days_first(station):
+    eco, fake = station
+    await eco.warm(True)
+    asked = [c["cycle_type"] for c in fake.calls if c["path"] == "history"]
+    first = list(dict.fromkeys(asked))
+    assert first[:2] == ["5min", "30min"] and set(first) == {"5min", "30min", "4hour", "1day"}
+
+
 async def test_the_refresh_builds_no_result_it_would_not_read(station, monkeypatch):
     from lib.ecowitt import fetch
     eco, fake = station
@@ -1331,6 +1339,87 @@ async def test_a_waiting_person_goes_before_the_background_requests_queued_ahead
     assert order[-1] == "after" and not lock._locked
 
 
+async def test_a_background_request_hurried_while_it_waits_moves_to_the_urgent_line():
+    from lib.ecowitt.api import Urgency, _TurnLock
+    lock, order = _TurnLock(), []
+    hurried = Urgency()
+
+    async def use(name, urgent=False):
+        await lock.acquire(urgent)
+        try:
+            order.append(name)
+            await asyncio.sleep(0.01)
+        finally:
+            lock.release()
+    running = asyncio.create_task(use("in flight"))
+    await asyncio.sleep(0)
+    tasks = [asyncio.create_task(use(name, urgent)) for name, urgent in
+             (("background 0", False), ("person", True), ("background 1", False), ("waited for", hurried))]
+    await asyncio.sleep(0)
+    hurried.hurry()                                     # a question has come to wait for it
+    await asyncio.gather(running, *tasks)
+    assert order == ["in flight", "person", "waited for", "background 0", "background 1"]   # behind the person already waiting
+    assert hurried and hurried._queued is None and not lock._locked
+
+
+async def test_a_hurried_waiter_that_is_cancelled_leaves_no_trace_in_the_urgent_line():
+    from lib.ecowitt.api import Urgency, _TurnLock
+    lock, urgency = _TurnLock(), Urgency()
+    await lock.acquire()
+    waiting = asyncio.create_task(lock.acquire(urgency))
+    await asyncio.sleep(0)
+    urgency.hurry()
+    waiting.cancel()
+    await asyncio.gather(waiting, return_exceptions=True)
+    assert not lock._queues[True] and not lock._queues[False]
+    lock.release()
+    await asyncio.wait_for(lock.acquire(), 1)
+    lock.release()
+
+
+async def test_a_question_waiting_for_a_background_fetch_hurries_its_requests_ahead_of_the_other_background_ones(station):
+    eco, fake = station
+    now = eco.now()
+    start = now - timedelta(days=2)
+    await eco.api._turn.acquire()                       # a request in flight: everything after it queues
+    background = [asyncio.create_task(eco.fetcher(["outdoor"]).get(cycle, start, now, load=False))
+                  for cycle in ("4hour", "1day", "30min")]
+    await asyncio.sleep(0.01)                           # each holds its cycle, its request queued in the background line
+    fake.calls.clear()
+    question = eco.fetcher(["outdoor"], urgent=True)
+    asked = asyncio.create_task(question.get("30min", start, now))
+    await asyncio.sleep(0.01)                           # waiting for the background 30-minute fetch
+    eco.api._turn.release()
+    rows = await asyncio.wait_for(asked, 2)
+    assert [c["cycle_type"] for c in fake.calls][:1] == ["30min"]   # the fetch it waits for went first
+    assert rows and question.calls == 0                 # and it brought what the question reads
+    await asyncio.gather(*background)
+    assert sorted(c["cycle_type"] for c in fake.calls) == ["1day", "30min", "4hour"]
+
+
+async def test_a_background_fetch_taking_a_cycle_while_a_question_waits_for_it_is_hurried_too(tmp_path):
+    from lib.ecowitt.fetch import Recent
+    recent, seen = Recent(), []
+    first = recent.turn("m", "5min", False)
+    held = await first.__aenter__()                      # a background fetch holds the cycle
+    behind = asyncio.create_task(_hold(recent, False, seen))    # another background one waits for it ...
+    await asyncio.sleep(0)
+    question = asyncio.create_task(_hold(recent, True, seen))   # ... then a question
+    await asyncio.sleep(0)
+    assert held                                          # the holder was hurried
+    await first.__aexit__(None, None, None)
+    await asyncio.gather(behind, question)
+    assert seen == [True, True]                          # the background one taking it next sends urgently: the question waits on it
+    async with recent.turn("m", "5min", False) as later:  # nobody waiting any more
+        assert not later
+
+
+async def _hold(recent, urgent: bool, seen: list):
+    async with recent.turn("m", "5min", urgent) as urgency:
+        seen.append(bool(urgency))
+        await asyncio.sleep(0)
+
+
 async def test_a_cancelled_waiter_does_not_block_the_lock():
     from lib.ecowitt.api import _TurnLock
     lock = _TurnLock()
@@ -1543,3 +1632,78 @@ def test_a_reading_with_figures_but_no_readings_in_the_window_draws_no_line_rath
     q = object.__new__(HistoryQuery)
     q.drawing, q.store, q.units = ("raw", 0), {}, {"outdoor.temperature": "°C"}
     assert q._series_entry("outdoor.temperature") is None
+
+
+class HeldLive:
+    """The station's real_time requests held until let go: (urgent, groups) of each one asked, and a gate to answer them all."""
+
+    def __init__(self, eco, fail: Exception | None = None):
+        self.asked, self.gate, self.fail, self.real = [], asyncio.Event(), fail, eco.api.realtime
+        eco.api.realtime = self.realtime
+
+    async def realtime(self, mac, groups, urgent=False):
+        self.asked.append((urgent, groups))
+        await self.gate.wait()
+        if self.fail:
+            raise self.fail
+        return await self.real(mac, groups, urgent=urgent)
+
+
+async def started(*coros):
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    for _ in range(5):
+        await asyncio.sleep(0)   # (each is in flight or waiting on one)
+    return tasks
+
+
+async def test_a_question_awaits_the_live_reading_already_being_asked_for_rather_than_asking_again(station):
+    from lib.ecowitt.source import LIVE_GROUPS
+    eco, _ = station
+    held = HeldLive(eco)
+    first, question, second = await started(eco.first_live(), eco._live_data(["outdoor"]), eco._live_data(LIVE_GROUPS))
+    assert held.asked == [(True, ",".join(LIVE_GROUPS))]                 # the start's urgent request, every group; the questions wait on it
+    held.gate.set()
+    await first
+    out, every = await question, await second
+    assert list(out) == ["outdoor"] and out["outdoor"] == eco._live[1]["outdoor"] and every == eco._live[1]
+    assert len(held.asked) == 1
+
+
+async def test_a_question_does_not_wait_on_a_background_live_reading_but_a_background_check_does(station):
+    from lib.ecowitt.source import LIVE_GROUPS
+    eco, _ = station
+    held = HeldLive(eco)
+    rain, = await started(eco.live_rain())                         # the minute check's request is out
+    check, question = await started(eco._fetch_live(LIVE_GROUPS), eco._live_data(["outdoor"], max_age=0))
+    assert [urgent for urgent, _ in held.asked] == [False, True]   # the minute check's, then the question's own, ahead of the queue
+    held.gate.set()
+    await rain                                                     # (the fake station has no rain gauge: None, and logged)
+    assert await check == eco._live[1] and list(await question) == ["outdoor"]
+    assert len(held.asked) == 2
+
+
+async def test_a_caller_that_gives_up_leaves_the_live_reading_to_the_others_and_it_is_kept(station):
+    from lib.ecowitt.source import LIVE_GROUPS
+    eco, _ = station
+    held = HeldLive(eco)
+    gives_up, waits = await started(eco._fetch_live(LIVE_GROUPS, urgent=True), eco._live_data(["outdoor"]))
+    gives_up.cancel()
+    await asyncio.sleep(0)
+    held.gate.set()
+    assert list(await waits) == ["outdoor"] and eco._live is not None and len(held.asked) == 1
+    with pytest.raises(asyncio.CancelledError):
+        await gives_up
+
+
+async def test_a_failed_live_reading_fails_each_waiting_caller_and_the_next_asks_again(station, caplog):
+    from lib.ecowitt.source import LIVE_GROUPS
+    eco, _ = station
+    held = HeldLive(eco, fail=ecowitt_api.EcowittError("busy", transient=True))
+    first, question = await started(eco.first_live(), eco._live_data(["outdoor"]))
+    held.gate.set()
+    await first                                                            # the start's own failure is only logged
+    with pytest.raises(ecowitt_api.EcowittError):
+        await question
+    assert "Live reading at start failed: EcowittError: busy" in caplog.text and eco._live is None
+    held.fail = None
+    assert "outdoor" in await eco._live_data(LIVE_GROUPS) and len(held.asked) == 2

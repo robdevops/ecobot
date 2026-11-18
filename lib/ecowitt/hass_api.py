@@ -2,13 +2,14 @@
 
 The rest of the bot never knows the difference: the cache, the archive, the charts and the alerts all take what `EcowittAPI` gives, in the
 shapes it gives them (api.py; hass_history.py tells how the history is cut). What differs: its live reading is a request to a machine
-on the network, so it is asked for every few seconds, not once a minute (source.watch_live); it has a "1min" history cycle (Ecowitt has
+on the network, so it is asked for every 30 seconds, not once a minute (source.watch_live); it has a "1min" history cycle (Ecowitt has
 none); and empty_is_final is False, since Home Assistant only has what it recorded, so an answer with nothing in it does not prove there
 was nothing to know (the cloud may have it): the storage does not remember such a range as fetched, and a fallback asks the cloud for it.
 It is up as long as Home Assistant is: a failure is an EcowittError, as the cloud's are, passing (a network error, a restart) or not (a
 refused token).
 """
 
+import asyncio
 import logging
 import math
 import time
@@ -56,7 +57,8 @@ class HomeAssistantAPI:
         self.ha = HomeAssistant(url, token, transport)
         self.tz, self.mac, self.clock = tz, mac, clock
         self.earliest: float | None = None   # when its first state of the station is (nothing is asked for before it)
-        self._looked = False                  # ... and whether that has been looked for
+        self._looked = False                  # ... and whether that has been looked for (or was known: the station keeps it in its file)
+        self._looking = asyncio.Lock()        # (looked for once, whoever asks first)
         self.requests = 0
 
     async def close(self):
@@ -81,23 +83,35 @@ class HomeAssistantAPI:
         except ValueError as e:   # a reply that is not JSON
             raise EcowittError(f"Home Assistant gave an unreadable reply ({e})", transient=True) from None
 
+    def known_earliest(self, earliest: float):
+        """When its first state of the station is, as kept from an earlier start (it doesn't change): not looked for again."""
+        self.earliest, self._looked = earliest, True
+
+    @property
+    def looked(self) -> bool:
+        return self._looked
+
     async def devices(self) -> list[dict]:
-        """The station, as Ecowitt's device list gives one: its name, time zone, place and when its first reading was."""
-        config = await self._asked(self.ha.config())
-        prefix = await self._asked(self.ha.station())
-        await self._look(prefix)
+        """The station, as Ecowitt's device list gives one: its name, time zone and place (its settings and its states, asked for
+        together), and when its first reading was if that is known (look() finds it: a long history query, left out of the start)."""
+        config, prefix = await asyncio.gather(self._asked(self.ha.config()), self._asked(self.ha.station()))
         model = prefix.removeprefix("sensor.").strip("_").upper() or "Ecowitt"
         return [{"mac": self.mac, "name": model, "date_zone_id": config.get("time_zone"), "latitude": config.get("latitude"),
                  "longitude": config.get("longitude"), **({"createtime": int(self.earliest)} if self.earliest else {})}]
 
-    async def _look(self, prefix: str):
-        """Find when Home Assistant's first state of the station is (its outdoor temperature's), once."""
-        if not self._looked:
-            now = self.clock()
-            name = prefix + ENTITIES["outdoor.temperature"].suffix
-            found = await self._asked(self.ha.history([name], now - LOOKBACK_DAYS * 86400, now))
-            self.earliest = found[name][0][0] if name in found else None
-            self._looked = True
+    async def look(self) -> float | None:
+        """When Home Assistant's first state of the station is (its outdoor temperature's): looked for once, LOOKBACK_DAYS back."""
+        return await self._look(await self._asked(self.ha.station()))
+
+    async def _look(self, prefix: str) -> float | None:
+        async with self._looking:
+            if not self._looked:
+                now = self.clock()
+                name = prefix + ENTITIES["outdoor.temperature"].suffix
+                found = await self._asked(self.ha.history([name], now - LOOKBACK_DAYS * 86400, now))
+                self.earliest = found[name][0][0] if name in found else None
+                self._looked = True
+        return self.earliest
 
     async def realtime(self, mac: str, groups: str, urgent: bool = False) -> dict:
         prefix = await self._asked(self.ha.station())

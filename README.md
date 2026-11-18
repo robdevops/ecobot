@@ -258,10 +258,10 @@ the internet), and fits every tile on the screen in portrait or landscape where 
 updates by itself when a new reading arrives, and says "reconnecting…" while ecobot-mcp is away. This page is the dashboard: the
 Telegram bot has none of its own (its Status button sends a picture of the temperature, humidity and rain gauges alone).
 
-Temperature, humidity, pressure, rain, UV index and the US AQI come first; then the weather station's other gauges, then the air
+Temperature, humidity, pressure, rain, UV index and the AQI come first; then the weather station's other gauges, then the air
 sensor's (when there is one). The air sensor's bands are on US standards:
 
-- **US AQI**, the higher of PM2.5's and PM10's (as AirNow gives it; "(PM10)" after the category when PM10 sets it), on a 0-500 dial with the EPA's six categories and colours (Good 0-50 green, Moderate 51-100 yellow,
+- **AQI** (the tile's title; it is the US AQI, which the bot and ecobot-mcp's tools still call it), the higher of PM2.5's and PM10's (as AirNow gives it; "(PM10)" after the category when PM10 sets it), on a 0-500 dial with the EPA's six categories and colours (Good 0-50 green, Moderate 51-100 yellow,
   Unhealthy for Sensitive Groups 101-150 orange, Unhealthy 151-200 red, Very Unhealthy 201-300 purple, Hazardous 301-500 maroon), the
   category's name under the number;
 - **PM2.5** (µg/m³) on the EPA's 2024 breakpoints (9.0, 35.4, 55.4, 125.4, 225.4) and **PM10** on the EPA's (54, 154, 254, 354,
@@ -274,7 +274,7 @@ sensor's (when there is one). The air sensor's bands are on US standards:
 
 On the air dials every category gets an equal share of the dial (as AirNow's AQI dial draws them), so "good" and "moderate" aren't
 squeezed into a sliver of a scale that runs to 500; the numbers round the dial are the breakpoints. The monitor's own temperature and
-humidity repeat the station's outdoor ones, so they have no gauge. The US AQI and each category's name are of the reading now, so they
+humidity repeat the station's outdoor ones, so they have no gauge. The AQI and each category's name are of the reading now, so they
 always agree with the needle and with the PM2.5 and PM10 dials (the alerts and the bot's words rate PM2.5 and PM10 on the last two
 readings, so a passing spike isn't called poor). The page's data never asks the air sensor: with its reading
 stale it shows the one it holds.
@@ -283,10 +283,53 @@ A tile whose reading is missing just now (the station or the air sensor not send
 scale's low end where 0 isn't on it: pressure 950 hPa, CO₂ 400 ppm) with its highs and lows still beside it; when the reading comes
 back the tile brightens and its gauge rises in place. A reading the station or the monitor has never sent has no tile.
 
+The tiles can be arranged to taste. Drag a tile by its gauge to move it (with a mouse, from anywhere on it but its title, its reading
+and its table, which stay selectable for copying; on a touch screen, a long press picks it up, with a short buzz on Android); the
+others make room. Its ×, shown on mouseover (or after a long press), hides it, as does dropping it on the "remove" zone that slides
+down from the top while dragging. With a tile hidden, "reset preferences" beside the time at the bottom brings every tile back in the
+usual order (and the units below back to metric). Fewer tiles grow to fill the window (a single one fills it), never smaller than the whole dashboard's. The arrangement
+is kept in the browser (its local storage, per browser and device); nothing is sent to ecobot-mcp. A gauge added later takes its
+usual place among yours.
+
+Four small switches at the bottom right, left of the time (just above it on a phone), choose the units: "°C | °F" for every
+temperature tile (Temperature, Dew point, Feels like, Indoor temperature), "km/h | mph" for the Wind's, "hPa | inHg" for Atmospheric
+pressure and "mm | in" for Rain and Rain rate (mm/h becomes in/h), the one in use lit (buttons, so Tab and Enter or Space work too).
+The tile's reading, its scale and the numbers on it (0-40 °C becomes 32-104 °F, 0-100 km/h 0-60 mph, 950-1050 hPa 28-31 inHg, the
+rain's 0-100 mm 0-4 in and its rate's 0-50 mm/h 0-2 in/h), its Daily, Monthly and Yearly figures, its unit and the red hand (the
+Wind's gust, the rain rate's high) all change in place, with the same decimals (two in inHg and inches); the pressure's arrow (after
+its reading: up and blue when it rose 0.3 hPa or more over the past hour, down and red when it fell as much, none when
+steady (under 0.3 hPa either way) or with less than about an hour of readings) points the same way. ecobot-mcp still sends metric and the browser converts. The wind's direction stays in degrees. Each browser keeps its
+choice with the arrangement, and "reset preferences" (shown while any is not metric) puts all four back to metric. The weather
+behind the gauges goes by the metric readings whatever is shown (heat from 35 °C, leaves above 15 km/h, a flood above 30 mm/h).
+
+A click or tap on a gauge (or Enter or Space on a tile reached with Tab) zooms its title and gauge (its table hidden until you go
+back) to fill the window, a single tile shown too. Zoomed, page through the tiles like a photo gallery, each still live: ← and →, Space (next) and Backspace (previous), a
+swipe, a drag on the gauge, or a two-finger sideways swipe on a trackpad; it stops at the first and the last (with one tile, paging just nudges it and back). A click or tap (not on the text) or Esc goes back.
+
+Behind the gauges, the weather is drawn as faint pixel art while the readings call for it: rain while it rains, hazy clouds drifting across from the US
+AQI's Moderate band up, UV beams at a UV index of 11, the glass fogging over at 90 % humidity (heavier to 100 %), beads condensing in the fog and running down it, wiping clear tracks, leaves blowing past
+above 15 km/h of wind, faint red beams between the UV's from 35 °C (more and brighter to 43 °C) and ice below 0 °C. "stop" at the bottom left stops and clears them for that page view only, and ends any effect a temporary test link turned on;
+nothing is saved, so a reload brings them back. `MCP_DASHBOARD_ANIMATIONS` sets how much moves, for everyone: `on` (the default)
+animates everything; `low` keeps the gauges sweeping and the tiles rearranging animated but draws no weather (no "stop" or test links)
+and zooms at once; `off` draws no weather and animates nothing (the gauges jump to each new reading, zooming and rearranging happen at
+once). A browser asking for reduced motion gets `off`'s.
+
+On a phone or tablet the humidity's beads run downhill as it tilts: the page reads the motion sensor (gravity, turned for the screen's
+rotation, so the true downhill whichever way it is held), smoothed; they run off whichever edge is lowest, and the steeper the
+tilt the faster (sin of the angle off level: none under 5 degrees, rising smoothly to full speed at 40, which holds through upright, then
+easing off again from 140 degrees). Lying flat, face up or face down (under 5 degrees), the water pools instead: nothing runs, no trails
+are laid, and beads that touch (or sit a few px apart: a slight pull draws them together) keep merging into ever larger blobs, with no
+size limit. Android's Chrome and Firefox give the sensor freely and it starts by itself; an iPhone's or
+iPad's Safari asks first, so a small "tilt" link appears at the bottom left (a tap asks; gone once answered). Desktop browsers have no
+sensor, so nothing changes there, and with `low` or `off` (or reduced motion) the sensor is never read. The browser needs the page
+served over HTTPS for the sensor (behind a TLS proxy, not plain `http://` on the LAN, except on localhost).
+
 It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
 Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To
-turn it off, set `MCP_DASHBOARD=off`.
+turn it off, set `MCP_DASHBOARD=off`. To keep your home's own readings off it (privacy), set `MCP_DASHBOARD_INDOOR=off`: the indoor
+tiles (Indoor temperature, Indoor humidity) are then neither drawn nor sent, and nothing indoor leaves ecobot-mcp through the dashboard.
+The bot, the MCP tools, the Status picture and the alerts still have them.
 
 To put it on a site of its own behind a reverse proxy, map the site's root to `/dashboard/` (it answers there too), e.g. with nginx
 `location / { proxy_pass http://deb1:8765/dashboard/; }`. The live updates need nothing more: they tell nginx not to buffer them.

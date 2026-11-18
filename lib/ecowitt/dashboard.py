@@ -20,6 +20,7 @@ WIND = ("#E8E8E8", "#C8CDD2", "#A2ABB4", "#7C8790", "#56626C")
 SUN = ("#FBE79A", "#F5D45A", "#F2A53C", "#D27A2A", "#A9501F")
 UV = ("#A9E34B", "#F7E04A", "#F4A93B", "#E8562A", "#9A1F5A", "#7A2CF0")
 DEGREES = (40, 30, 20, 10, 0)          # a thermometer's scale as it starts (THERMOMETER), before it widens to take in the reading
+GUST = ("wind", "wind_gust")            # the live gust: the Wind gauge's Gust column's, and its red hand's (today's highest gust)
 THERMOMETER = (0, 40, 10)               # a thermometer's scale: its ends and its step, in °C; widened a step at a time to the reading
 
 
@@ -33,6 +34,8 @@ def degree_colour(lower: float) -> str:
 
 @dataclass(frozen=True)
 class Gauge:
+    """A gauge: a thermometer, a dial, a rain beaker or a compass (the wind's direction: where it comes from, in degrees clockwise from
+    north, its needle pointing there; no figures beside it, as highs and lows of a direction mean nothing: lib/ecowitt/direction.py)."""
     title: str
     unit: str
     kind: str
@@ -41,12 +44,14 @@ class Gauge:
     colours: tuple[str, ...]
     ticks: tuple[float, ...]
     live: tuple[str, str]                 # the live reading: (group, field)
-    highest: str                          # the day figure (days.FIELDS) whose highest is its Max
+    highest: str | None                   # the day figure (days.FIELDS) whose highest is its Max (none: no table at all, the compass)
     lowest: str | None = None             # ... whose lowest is its Min (none: no Min column)
     decimals: int = 1
     total: bool = False                   # rain: the Total column, the sum of the days' figures (its Max is the wettest day's)
-    counted: tuple[str, str] | None = None   # the live reading counted into its Max and Min, when not `live` (wind: the gust, as its
-                                             # Max is the highest gust: the speed now would stand in for it before a day row has one)
+    gust: str | None = None               # wind: the day figure whose highest is its Gust column (where Min usually is), the live gust
+                                          # (GUST) counted in, as the speed now is into its Max
+    high_hand: tuple[str, str] | None = None  # the live reading whose highest today the web page's thin red hand shows (its table's
+                                              # Daily Max; wind: the gust, its Daily Gust; rain rate, solar radiation and UV: their own)
 
     @property
     def reading(self) -> str:
@@ -60,15 +65,19 @@ GAUGES = (
     Gauge("Temperature", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "temperature"), "temp_max", "temp_min"),
     Gauge("Humidity", "%", "dial", 0, 100, WATER, (0, 20, 40, 60, 80, 100), ("outdoor", "humidity"), "humidity_max", "humidity_min", 0),
     Gauge("Atmospheric pressure", "hPa", "dial", 950, 1050, PRESSURE, (950, 970, 990, 1010, 1030, 1050), ("pressure", "relative"),
-          "pressure_max", "pressure_min"),
+          "pressure_max", "pressure_min", 0),   # (whole hPa on the dashboard: "1026"; the bot's and the tools' figures keep the catalogue's)
     Gauge("Dew point", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "dew_point"), "dew_point_max", "dew_point_min"),
     Gauge("Feels like", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "feels_like"), "feels_like_max", "feels_like_min"),
-    Gauge("Wind", "km/h", "dial", 0, 100, WIND, (0, 20, 40, 60, 80, 100), ("wind", "wind_speed"), "wind_gust", None, 0,
-          counted=("wind", "wind_gust")),
+    Gauge("Wind", "km/h", "dial", 0, 100, WIND, (0, 20, 40, 60, 80, 100), ("wind", "wind_speed"), "wind_speed_max", None, 0,
+          gust="wind_gust", high_hand=GUST),
+    Gauge("Wind direction", "°", "compass", 0, 360, WIND, (0, 90, 180, 270), ("wind", "wind_direction"), None, None, 0),
     Gauge("Rain", "mm", "beaker", 0, 100, WATER, (100, 80, 60, 40, 20, 0), ("rainfall", "daily"), "rain", None, 1, True),
-    Gauge("Rain rate", "mm/h", "dial", 0, 50, WATER, (0, 10, 20, 30, 40, 50), ("rainfall", "rain_rate"), "rain_rate_max"),
-    Gauge("Solar radiation", "W/m²", "dial", 0, 1500, SUN, (0, 300, 600, 900, 1200, 1500), ("solar_and_uvi", "solar"), "solar_max", None, 0),
-    Gauge("UV index", "", "dial", 0, 12, UV, (0, 3, 6, 8, 11), ("solar_and_uvi", "uvi"), "uv_max"),
+    Gauge("Rain rate", "mm/h", "dial", 0, 50, WATER, (0, 10, 20, 30, 40, 50), ("rainfall", "rain_rate"), "rain_rate_max",
+          high_hand=("rainfall", "rain_rate")),
+    Gauge("Solar radiation", "W/m²", "dial", 0, 1500, SUN, (0, 300, 600, 900, 1200, 1500), ("solar_and_uvi", "solar"), "solar_max", None, 0,
+          high_hand=("solar_and_uvi", "solar")),
+    Gauge("UV index", "", "dial", 0, 12, UV, (0, 3, 6, 8, 11), ("solar_and_uvi", "uvi"), "uv_max",
+          high_hand=("solar_and_uvi", "uvi")),
     Gauge("Indoor temperature", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("indoor", "temperature"), "indoor_temp_max", "indoor_temp_min"),
     Gauge("Indoor humidity", "%", "dial", 0, 100, WATER, (0, 20, 40, 60, 80, 100), ("indoor", "humidity"), "indoor_humidity_max",
           "indoor_humidity_min", 0),
@@ -110,8 +119,9 @@ def live_value(live: dict, where: tuple[str, str]) -> float | None:
         return None
 
 
-def figures(gauge: Gauge, values: dict, days: list[date], now: float | None) -> tuple[float | None, ...]:
-    """A row of a gauge's table: Max, then Min or Total, over these days (the live reading counted in for today's highs and lows)."""
+def figures(gauge: Gauge, values: dict, days: list[date], now: float | None, gust: float | None = None) -> tuple[float | None, ...]:
+    """A row of a gauge's table: Max, then Min, Gust or Total, over these days (the live reading counted in for today's highs and lows,
+    the live gust for the wind's Gust)."""
     highs = [values[gauge.highest][d] for d in days if d in values.get(gauge.highest, {})]
     if gauge.total:
         return (max(highs) if len(days) > 1 and highs else None, round(sum(highs), 1) if highs else None)
@@ -120,4 +130,7 @@ def figures(gauge: Gauge, values: dict, days: list[date], now: float | None) -> 
     if gauge.lowest:
         lows = [values[gauge.lowest][d] for d in days if d in values.get(gauge.lowest, {})] + ([now] if now is not None else [])
         row.append(min(lows) if lows else None)
+    if gauge.gust:
+        gusts = [values[gauge.gust][d] for d in days if d in values.get(gauge.gust, {})] + ([gust] if gust is not None else [])
+        row.append(max(gusts) if gusts else None)
     return tuple(row)

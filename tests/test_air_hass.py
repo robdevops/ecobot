@@ -5,12 +5,15 @@ import time
 from datetime import datetime, timezone
 
 import httpx
+import pytest
 
 from lib.airgradient import AirGradient
 from lib.airgradient.homeassistant import checked, entity_ids, find_prefix, ranges
 from lib.ecowitt.homeassistant import HomeAssistant
 from lib.timeutil import naive_local
 from tests.fakes import air_transport, config
+
+pytestmark = pytest.mark.usefixtures("ha_states_unshared")   # (its fake Home Assistant changes between requests)
 
 PREFIX = "sensor.open_air_"
 
@@ -82,6 +85,7 @@ async def air_with(tmp_path, fake):
     transport, _ = air_transport(rows_per_day=288)
     air = AirGradient(config(tmp_path), transport=transport, ha=HomeAssistant("http://ha", "tok", httpx.MockTransport(fake)))
     await air.start()
+    await air.settle()   # (the rest of its start, in the warm-up: Home Assistant's entities of it, the cloud's name for it)
     return air
 
 

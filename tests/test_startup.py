@@ -118,6 +118,18 @@ async def test_ecobot_mcp_starts_warms_archives_and_shuts_down_cleanly(tmp_path,
     assert "Alerts NOT running" not in log and "Telegram" not in log
 
 
+async def test_the_stations_live_reading_is_asked_for_first_after_start_ahead_of_the_history(tmp_path, monkeypatch, caplog):
+    """The dashboard's tiles and the first "weather now" wait on it: it goes before the warm-up's history requests (a second or more
+    apart), not after them."""
+    eco_t, fake = ecowitt_transport(history_days=10)
+    eco_init = core.Ecowitt.__init__
+    ecobot_mcp_settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(core.Ecowitt, "__init__", lambda self, c, transport=None, **kw: eco_init(self, c, eco_t, **kw))
+    await run_ecobot_mcp_until_archived(caplog)
+    paths = [call.get("path") for call in fake.calls]
+    assert paths[:3] == ["list", "real_time", "history"] and "Live reading at start failed" not in caplog.text
+
+
 async def test_the_weather_alerts_that_could_not_start_are_named_as_not_running(tmp_path, monkeypatch, caplog):
     from lib.alerts.weather import WeatherMonitor
     caplog.set_level("INFO")
@@ -162,7 +174,12 @@ async def test_a_source_that_cannot_even_be_made_is_left_out_and_the_others_star
     assert [s.name for s in sources] == ["Ecowitt"] and "AirGradient couldn't start (OSError: the cache folder is read-only) - continuing without it" in caplog.text
 
 
-async def test_pollen_and_forecast_start_only_when_switched_on_and_the_forecast_uses_the_stations_location(tmp_path, monkeypatch):
+async def test_pollen_and_forecast_start_only_when_switched_on_from_their_last_fetch_and_the_warm_up_fetches(tmp_path, monkeypatch, caplog):
+    """They start from what the file kept (nothing asked before the port opens); the warm-up fetches them when that is due again, and
+    logs their lines anew. The forecast uses the station's location."""
+    import contextlib
+    from lib.warm import Tasks
+    caplog.set_level("INFO")
     from lib.forecast import Forecast
     from lib.pollen import Pollen
     from tests.test_forecast import transport as forecast_transport
@@ -178,10 +195,27 @@ async def test_pollen_and_forecast_start_only_when_switched_on_and_the_forecast_
     assert [s.name for s in off] == ["Ecowitt"]
     for s in off:
         await s.close()
-    on, _ = await core.start_sources(config(tmp_path, airgradient_token="", airgradient_location="", pollen=True, forecast=True))
+    cfg = config(tmp_path, airgradient_token="", airgradient_location="", pollen=True, forecast=True)
+    on, cfg = await core.start_sources(cfg)
     assert [s.name for s in on] == ["Ecowitt", "Pollen", "Forecast"]
-    assert on[2].location == (-37.8, 145.0) and on[2].lines() and on[1].lines()
+    assert on[2].location is None and calls == [] and not on[2].lines() and not on[1].lines()   # nothing kept yet, nothing asked
+    await on[0].refresh_device()                                         # (the warm-up's: the station's device list gives its place)
+    assert on[2].location == (-37.8, 145.0)
+    assert [s.summary for s in on[1:]] == ["Melbourne Pollen: no page of this season kept yet (1800s)", "Open-Meteo: none kept yet (every 900s)"]
+    async with contextlib.AsyncExitStack() as stack:
+        tasks = Tasks()
+        warm = await core.Core.open(cfg, on, stack, tasks)
+        stack.push_async_callback(tasks.close)
+        await warm.warm_up([])
+    assert on[2].lines() and on[1].lines() and calls                     # the page, the forecast and its ensemble
+    assert "Open-Meteo: 3 days (every 900s)" in caplog.text and "Melbourne Pollen: Grass pollen" in caplog.text
+    assert {"Forecast refresh", "Pollen refresh"} <= set(warm.health.loops)
     for s in on:
+        await s.close()
+    calls.clear()
+    again, _ = await core.start_sources(cfg)                             # a restart: from the last fetch, nothing asked
+    assert again[2].lines() and again[1].lines() and calls == [] and again[2].summary == "Open-Meteo: 3 days (every 900s)"
+    for s in again:
         await s.close()
 
 
@@ -192,7 +226,15 @@ async def test_the_other_sources_run_in_the_weather_station_s_time_zone(tmp_path
     for cls, transport in ((core.Ecowitt, eco_t), (core.AirGradient, air_t)):
         monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setenv("TZ", "UTC")
+    caplog.set_level("INFO")
     sources, cfg = await core.start_sources(config(tmp_path, tz=ZoneInfo("UTC")))   # TZ says UTC; the station is in Melbourne
+    assert str(cfg.tz) == "UTC" and not sources[0].mac   # a first start: the station is found after the port opens (its device list)
+    await sources[0].refresh_device()
+    assert sources[0].mac and str(sources[0].tz) == "UTC"   # ... this run keeps the configured zone, the next takes the station's
+    assert "the station's time zone is Australia/Melbourne; this run keeps UTC (the configured one)" in caplog.text
+    for s in sources:
+        await s.close()
+    sources, cfg = await core.start_sources(config(tmp_path, tz=ZoneInfo("UTC")))   # the restart: from the device kept in the file
     for s in sources:
         await s.close()
     assert [s.name for s in sources] == ["Ecowitt", "AirGradient"] and str(cfg.tz) == "Australia/Melbourne"

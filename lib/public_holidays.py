@@ -20,10 +20,12 @@ class PublicHolidays:
         region = REGIONS.get(getattr(tz, "key", ""))
         self.region = region
         self.available = bool(holidays and region)
-        self._calendar = holidays.country_holidays(region[0], subdiv=region[1]) if self.available else {}
+        self._calendar = None   # built on the first name(): the package loads every country's module (~0.05 s, ~0.4 s uncompiled)
 
     def name(self, day: date) -> str | None:
         """The holiday's name (e.g. "Australia Day"), or None on an ordinary day."""
+        if self._calendar is None:
+            self._calendar = holidays.country_holidays(self.region[0], subdiv=self.region[1]) if self.available else {}
         return self._calendar.get(day)
 
     def problem(self) -> str:
