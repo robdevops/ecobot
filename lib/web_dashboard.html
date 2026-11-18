@@ -198,9 +198,12 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   (null: by the clock again; window.__skyTest.time: at the start). Sky.state().beam: {lean: degrees from vertical now, negative
 //   down-left (morning), positive down-right, az, el (null on the curve), up, real, minutes, rise, set, noon, fixed}.
 //   Sky.setWindSpeed(speed, gust): the live wind's speed and gust, km/h (the Wind tile's reading and the gust, from the page's data): the
-//   rain's slant follows them continuously (tan of its angle from vertical = speed / 24 km/h, real rain's: 25 km/h about 46 degrees; none at no wind: straight
+//   rain's slant follows them continuously (per layer, tan of its angle from vertical = speed / its drops' terminal speed, see Sky.setRainRate: 25 km/h at 5 mm/h about 66, 55 and 48 degrees far, mid, near; none at no wind: straight
 //   down; at most 70 degrees; the gust adding 0.3 of what it is over the speed; the speed eased, rising over about 2 s, falling over
 //   about 4); the haze's sideways pan follows them too (about 0.4 px/s at 3 km/h to 2.6 at 40: none at no wind). The wind's leaves follow it too: their pace (and the gust bands', the turbulence's and the eddies' drift) is scaled by k = clamp(0.4 + 0.024 s, 0.5, 1.6), s the same effective speed eased the same way (25 km/h: the old pace, 1); a third argument true (the test links', over a real speed under their 11 km/h) holds k at 1. Sky.state().wind: {k, speed (the eased s), ...}.
+//   Sky.setRainRate(rate): the live rain rate, mm/h (the gauge's; none: a nominal 5): the median drop D0 = 0.9 R^0.21 mm (R clamped 0.5-100, Marshall-Palmer)
+//   sizes the layers (0.6, 1, 1.5 times D0), each with its terminal speed v_t = 9.65 - 10.3 exp(-0.6 D) m/s, its fall speed and its lean; the heavy rain's beads on the glass grow with D0 (2.6 to 2.97 px).
+//   Sky.state().rain also has rate, d0, beadR and layers: [{angle (radians), angleDeg, vt, D, v (px/s)}] far to near (slant, slantDeg: the mid layer's).
 //   Sky.state().rain: {slant (radians from vertical, positive leftward), slantDeg, speed (the eased km/h), target (the speed it
 //   heads for), tilts (the streak sprites' steps in use, of tiltSteps: 21, 3.5 degrees apart), vxMax (the fastest drop across)}.
 //   Sky.setWind(d): the way the wind blows, -1 leftward (the default: a reading from the east side, 0 < degrees < 180) or +1
@@ -330,10 +333,20 @@ const Sky = (() => {
                veer: {u: 1, from: Math.PI, delta: 0, dur: VEER_S, side: 0, count: 0}};   // (angles: radians on screen, 0 rightward, pi/2 up)
   const smoothU = (u) => u * u * (3 - 2 * u);
   // The live wind's speed and gust (km/h, as the page's data gives them: setWindSpeed(), below), which the rain's slant follows
-  const gale = {speed: 0, gust: 0, forced: false};   // (forced: a test link's wind is on and the real speed is under its own: the leaves blow at their usual pace)
+  const gale = {speed: 0, gust: 0, forced: false, rain: 0};   // (forced: a test link's wind is on and the real speed is under its own: the leaves blow at their usual pace)
   const TAU_UP = 1, TAU_DOWN = 2;   // (s: the eased speeds rise over about 2 s and fall over about 4)
   const GUST_SHARE = 0.3;   // how much of a gust over the speed counts (the one share, for the rain's slant, the haze's pan and the leaves' pace)
   const effectiveSpeed = () => gale.speed + GUST_SHARE * Math.max(gale.gust - gale.speed, 0);   // km/h
+  // The rain's drops by their size (the rain's layers are three size classes, see the rain). R: the live rain rate, mm/h (the rain gauge's:
+  // Sky.setRainRate; none, a test link's rain over a dry gauge: RAIN_NOMINAL), clamped to 0.5-100. The median drop diameter D0 (mm)
+  // from the Marshall-Palmer drop size distribution, D0 = 0.9 R^0.21 (0.9 mm at 1 mm/h, 1.5 at 10, 2.1 at 50); a drop's terminal
+  // speed v_t(D) = 9.65 - 10.3 exp(-0.6 D) m/s (Gunn and Kinzer's, fitted: 3.65 m/s at 0.9 mm, 5.5 at 1.5, 6.7 at 2.1, 8 at 3);
+  // the beads the heavy rain leaves on the glass (the humidity's) grow with D0, from 2.6 px (D0 0.9 mm) to 2.97 (2.2 mm or more).
+  const RAIN_NOMINAL = 5;
+  const rainRate = () => clamp(gale.rain > 0 ? gale.rain : RAIN_NOMINAL, 0.5, 100);
+  const d0Of = (R) => 0.9 * Math.pow(R, 0.21);
+  const vtOf = (D) => 9.65 - 10.3 * Math.exp(-0.6 * D);
+  const beadROf = (d0) => 2.6 + 0.37 * clamp((d0 - 0.9) / 1.3, 0, 1);
   const veerAngle = () => dir.veer.from + dir.veer.delta * smoothU(dir.veer.u);
   // A sprite's exact mirror image (its pixels reversed along each row)
   function flipped(img) {
@@ -478,29 +491,43 @@ const Sky = (() => {
   const RAIN = ["#2A4560", "#3A6688", "#5A90B8", "#8FC2E2", "#D6F0FF"].map(rgb);
   const rain = effect((e) => {
     const random = streamOf("rain"), between = random.between;   // (its own randomness)
-    // The slant follows the live wind speed, continuously: tan(angle) = speed / FALL (24 km/h: real rain, which is about 46 degrees
-    // from vertical in a 25 km/h wind), so no wind: straight down, 5 km/h about 12 degrees, 10 km/h 23, 25 km/h 46, 40 km/h 59, 60 km/h
-    // 68, never past CAP (70 degrees from vertical: a storm's). The speed used is the reading's plus 0.3 of the gust over it,
+    // The three layers are DROP SIZES (see the rain's physics() below): far 0.6, mid 1.0, near 1.5 times the median drop D0 of the live rain
+    // rate. Each layer's slant follows the live wind speed, continuously: tan(angle) = speed / (its drops' terminal speed v_t, km/h), so at
+    // no wind straight down, and the small far drops lean furthest (25 km/h at 5 mm/h: about 66 degrees far, 55 mid, 48 near), heavy rain
+    // less than drizzle, never past CAP (70 degrees from vertical: a storm's). The speed used is the reading's plus 0.3 of the gust over it,
     // low-passed (rising over about 2 s, falling over about 4: TAU_UP, TAU_DOWN) so the 16 s readings' jitter doesn't wobble the rain.
     // The drops' VERTICAL fall speed doesn't change with the slant (wind pushes a drop sideways, it doesn't slow its fall): it is
-    // its layer's speed (what the old fixed slant's, 0.45, 24 degrees, fell at), its speed across that times tan(angle), and so its
-    // speed along its path that over cos(angle): 1.1 times at 24 degrees, 1.4 at 46, 1.9 at 59, 2.9 at the 70 degree cap. A faster
+    // its layer's speed (following v_t: about 150, 230 and 300 px/s at 5 mm/h), its speed across that times tan(angle), and so its
+    // speed along its path that over cos(angle). A faster
     // drop leaves a longer streak: its length grows with the path speed, to at most STREAK_MOST (1.6) times the calm length (see
-    // streak()). The landing rate per area is the same at every angle (the same fall speed: the same count in flight).
-    const FALL = 24, CAP = 70 * Math.PI / 180, TAN_CAP = Math.tan(CAP);
+    // streak()). The landing rate per area is the same at every angle (the same fall speed: the same count in flight); each layer
+    // spawns over its own lean's extent.
+    const CAP = 70 * Math.PI / 180, TAN_CAP = Math.tan(CAP);
     const OLD_SLANT = 0.45, PATH = Math.sqrt(1 + OLD_SLANT * OLD_SLANT);   // (the old default's path over its vertical: 1.097, the calm streak's length over its (n - 1) rows)
     const STREAK_MOST = 1.6;           // a streak grows with the path speed to at most this many times its calm length
     const cosOf = (slant) => 1 / Math.sqrt(1 + slant * slant);   // (the cosine of the angle whose tangent is `slant`)
     const STEPS = 20;                  // the streaks drawn at STEPS + 1 slants, evenly in angle from vertical to CAP (3.5 degrees apart)
     const SLANTS = Array.from({length: STEPS + 1}, (_, i) => Math.tan(CAP * i / STEPS));
     let speed = 0, seeded = false;     // the smoothed speed (km/h) the slant follows
-    const slantOf = (kmh) => Math.min(TAN_CAP, Math.max(kmh, 0) / FALL);   // px across for each px down
     const effective = effectiveSpeed;
-    const FASTEST = 330;               // the near layer's speed: the wind's air full strength on it; slower layers, further off, less
-    const LAYERS = [                   // far (short, dim, slow) to near; [tail, body, head] shades
-      {speed: 150, length: [3, 4], alpha: 0.55, shades: [0, 1, 2], share: 0.45, ripple: 0.3},   // (ripple: a flood's, where it lands,
-      {speed: 230, length: [5, 6], alpha: 0.8, shades: [1, 2, 3], share: 0.33, ripple: 0.6},    // ... px down)
-      {speed: 330, length: [8, 10], alpha: 1, shades: [1, 3, 4], share: 0.22, splash: true, ripple: 1.1}];
+    const LAYERS = [                   // far (short, dim, small drops) to near (large); [tail, body, head] shades
+      // (size: the layer's drop diameter over D0; near: how near it is, 0-1, the wind's air at that strength on it (the old speeds
+      // over the fastest's: 150 / 330, 230 / 330, 1); ripple: a flood's, where it lands, px down)
+      {size: 0.6, near: 150 / 330, length: [3, 4], alpha: 0.55, shades: [0, 1, 2], share: 0.45, ripple: 0.3},
+      {size: 1.0, near: 230 / 330, length: [5, 6], alpha: 0.8, shades: [1, 2, 3], share: 0.33, ripple: 0.6},
+      {size: 1.5, near: 1, length: [8, 10], alpha: 1, shades: [1, 3, 4], share: 0.22, splash: true, ripple: 1.1}];
+    // The layers' physics for the rain rate now (R, from gale.rain): D0, each layer's drop size D = size * D0 (mm) and terminal speed
+    // v_t (m/s), its fall speed (px/s, art: the old defaults 150 / 230 / 330 were these at the mid layer's 230 for R = 5 mm/h, in
+    // the v_t ratios, the whole scaled by the mid layer's v_t over its v_t at 5 mm/h, 0.7 to 1.3: drizzle slower, a downpour faster),
+    // and its lean: tan(angle) = wind / v_t (the wind in km/h, v_t * 3.6), so small drops lean further than big ones, and heavy rain
+    // (larger drops, faster) less than drizzle; capped at CAP below.
+    const MID_SPEED = 230, REF_VT = vtOf(d0Of(RAIN_NOMINAL));
+    const physics = () => {
+      const R = rainRate(), d0 = d0Of(R), vts = LAYERS.map((l) => vtOf(l.size * d0)), scale = clamp(vts[1] / REF_VT, 0.7, 1.3);
+      return {R, d0, beadR: beadROf(d0), layers: LAYERS.map((l, k) => ({D: l.size * d0, vt: vts[k], fall: vts[k] * 3.6, v: MID_SPEED * scale * vts[k] / vts[1]}))};
+    };
+    let phys = physics();
+    const slantOf = (kmh, k) => Math.min(TAN_CAP, Math.max(kmh, 0) / phys.layers[k].fall);   // px across for each px down, of layer k
     // A streak: its bright head at the bottom left, its tail fading up to the right
     // (n: the rows it has at the old default's slant; its length along its path is (n - 1) * PATH when calm, growing with the path
     // speed (1 / cos(angle)) to STREAK_MOST times that: rows and columns from that length's cosine and sine)
@@ -523,7 +550,7 @@ const Sky = (() => {
     };
     // The drops' count is the plain budget (need() times the share) at every slant: the fall speed is the same, and a drop blown out of
     // the window's side starts again (step), so the landing rate per area is too.
-    const push = () => slantOf(speed) / OLD_SLANT;   // (the wind effect's push and bands, in proportion to the slant: none at no wind, as the gusts are of the wind's own strength; the old fixed slant's as 1)
+    const push = (k) => slantOf(speed, k) / OLD_SLANT;   // (the wind effect's push and bands, in proportion to the slant: none at no wind, as the gusts are of the wind's own strength; the old fixed slant's as 1)
     // A splash, frame by frame: a bead, a crown, droplets thrown wider, falling back ([dx, dy, shade] from where the drop landed)
     const SPLASH = [[[0, 0, 4], [0, -1, 3]],
                     [[0, 0, 2], [-1, -1, 4], [1, -2, 3]],
@@ -537,14 +564,15 @@ const Sky = (() => {
       const l = LAYERS[d.layer];
       d.li = random() < 0.5 ? 0 : 1;   // (its length: the shorter or the longer)
       d.flip = dir.f > 0;
-      tilt(d, slantOf(speed));
-      d.v = l.speed * between(0.85, 1.15);   // (its vertical fall speed, the same at every slant)
+      tilt(d, slantOf(speed, d.layer));
+      d.jit = between(0.85, 1.15);
+      d.v = phys.layers[d.layer].v * d.jit;   // (its vertical fall speed, its layer's, the same at every slant)
       d.y = anywhere ? between(-10, H) : between(-H * 0.25, -10);
       // Where it comes in: over the top edge, or, the wind blowing it across, in over the upwind side (right, or left blowing
       // rightward), each in proportion to the air they let in (the top's width, the side's height times the lean: its slant, and with the wind effect its steady push on this drop), so the rain falls evenly across the
       // whole window whatever the slant and none is wasted off to the side: the spawn extent grows with the slant. (Starting out, over
       // the window itself, evenly.)
-      const lean = (slantOf(speed) + wind.steady(l.speed / FASTEST) * push() / (d.v * (0.8 + 0.4 * e.level))) * Math.abs(dir.f);
+      const lean = (slantOf(speed, d.layer) + wind.steady(l.near) * push(d.layer) / (d.v * (0.8 + 0.4 * e.level))) * Math.abs(dir.f);   // (this layer's own lean: the most leaning layer's region covers the width)
       const u = anywhere ? 0 : between(0, W + H * lean);
       if (anywhere) d.x = between(0, W);
       else if (u < W) d.x = u - dir.side * Math.max(-d.y, 0) * lean;   // (over the top: back along its path from where it crosses the top edge)
@@ -552,7 +580,7 @@ const Sky = (() => {
         d.x = dir.side < 0 ? W + 1 : -1;
         d.y = (u - W) / lean;
       }
-      d.vy = d.v * (0.8 + 0.4 * e.level); d.vx = dir.f * d.vy * slantOf(speed);   // (as it falls from its first frame)
+      d.vy = d.v * (0.8 + 0.4 * e.level); d.vx = dir.f * d.vy * slantOf(speed, d.layer);   // (as it falls from its first frame)
       d.floor = l.splash ? between(H * 0.8, H + 2) : H + 12;
     };
     return {
@@ -561,7 +589,7 @@ const Sky = (() => {
       count: () => drops.length,
       // (for the tests: where the drops are across, on screen in the window's lower half (art px), and their mean speed across, px/s,
       // negative leftward)
-      probe: () => ({landed,   // (the drops that have landed in the window: on the floor or a flood)
+      probe: () => (phys = physics(), {landed,   // (the drops that have landed in the window: on the floor or a flood)
                      // the mean path speed and downward speed of the drops over their layer's vertical speed (1 / cos(angle) and 1), and
                      // the mean length of their streaks along the path over (n - 1) (px; PATH when calm)
                      pathRatio: drops.reduce((m, d) => m + Math.hypot(d.vx, d.vy) / (d.v * (0.8 + 0.4 * e.level)), 0) / Math.max(drops.length, 1),
@@ -573,7 +601,12 @@ const Sky = (() => {
                      // the slant now (the base, without its breathing): radians and degrees from vertical, positive leftward (negative
                      // rightward); the smoothed speed (km/h) it follows, and the speed it is heading for; the streak tilts in use (of 21);
                      // the most any drop moves across (px/s)
-                     slant: -dir.f * Math.atan(slantOf(speed)), slantDeg: -dir.f * Math.atan(slantOf(speed)) * DEG, speed, target: effective(),
+                     slant: -dir.f * Math.atan(slantOf(speed, 1)), slantDeg: -dir.f * Math.atan(slantOf(speed, 1)) * DEG, speed, target: effective(),
+                     // the drop sizes now: the rain rate R (mm/h), the median diameter d0 (mm), the landing bead's radius (px), and each layer's
+                     // (far to near) lean angle (radians from vertical, positive leftward, and in degrees), terminal speed vt (m/s), drop
+                     // diameter D (mm) and vertical fall speed v (art px/s); slant and slantDeg are the mid layer's
+                     rate: phys.R, d0: phys.d0, beadR: phys.beadR,
+                     layers: phys.layers.map((l, k) => ({angle: -dir.f * Math.atan(slantOf(speed, k)), angleDeg: -dir.f * Math.atan(slantOf(speed, k)) * DEG, vt: l.vt, D: l.D, v: l.v})),
                      tilts: [...new Set(drops.map((d) => d.tilt))].sort((a, b) => a - b), tiltSteps: STEPS + 1,
                      vxMax: drops.reduce((m, d) => Math.max(m, Math.abs(d.vx)), 0),
                      vx: drops.reduce((sum, d) => sum + d.vx, 0) / Math.max(drops.length, 1)}),
@@ -596,22 +629,26 @@ const Sky = (() => {
         speed = seeded ? speed + (goal - speed) * (1 - Math.exp(-dt / (goal > speed ? TAU_UP : TAU_DOWN))) : goal;
         if (Math.abs(goal - speed) < 0.02) speed = goal;   // (all the way there in the end: no wind is exactly straight down)
         seeded = true;
-        const base = slantOf(speed), gain = push();
-        const pace = 0.8 + 0.4 * e.level, sway = base * (1 + 0.12 * Math.sin(t * 0.37)), windy = wind.amount > 0;
+        phys = physics();   // (the rain rate's drop sizes, speeds and leans now)
+        const gains = LAYERS.map((_, k) => push(k));
+        const pace = 0.8 + 0.4 * e.level, breath = 1 + 0.12 * Math.sin(t * 0.37), windy = wind.amount > 0;
+        const sways = LAYERS.map((_, k) => slantOf(speed, k) * breath);   // (each layer's own lean)
         // (the wind's gust bands, one air with the leaves', carried along as fast as the middle drops go across; each layer reads
         // them as carried along at its own pace across (rate), so each bunches, whatever the slant: the layers' speeds across
         // spread further apart the steeper it is)
-        const carried = (k) => LAYERS[k].speed * pace * sway + wind.steady(LAYERS[k].speed / FASTEST) * gain;   // (how fast layer k goes across)
+        const carried = (k) => phys.layers[k].v * pace * sways[k] + wind.steady(LAYERS[k].near) * gains[k];   // (how fast layer k goes across)
         const ridden = Math.max(carried(1), 1);
         if (windy) wind.ride(carried(1));   // (sideways, whichever way it blows)
         // (how hard a drop knocks a leaf it hits: light rain's barely, heavy rain's a bash)
         const hard = 0.04 + 0.96 * Math.pow(e.level, 2.5);
         for (const d of drops) {
+          const k = d.layer, sway = sways[k], gain = gains[k];
+          d.v = phys.layers[k].v * d.jit;
           const x0 = d.x, y0 = d.y + d.sprite.height - 1, down = d.v * pace;   // (its head, where it was; its fall speed)
           if (windy) {   // (the wind's air where it is, leftward px/s; the streak leaning to match: sideways over down)
             // (in a lull it can blow back against the drop's own lean, so they fall almost straight down; never back up the window)
             // (it leans over by the air's push on top of its own across, its fall as it was)
-            const own = down * sway, air = Math.max(wind.across(d.x, LAYERS[d.layer].speed / FASTEST, carried(d.layer) / ridden) * gain, -0.7 * own);
+            const own = down * sway, air = Math.max(wind.across(d.x, LAYERS[d.layer].near, carried(d.layer) / ridden) * gain, -0.7 * own);
             const lean = (own + air) / down;   // (leftward: dir.f -1, rightward +1; between, it swings over)
             d.vy = down;
             d.vx = dir.f * down * lean;
@@ -1218,7 +1255,7 @@ const Sky = (() => {
       }));
     }))));
     const sx = (x) => dir.side < 0 ? W - x : x;          // (downwind x to the screen's, a leaf's, an eddy's; and back: the same)
-    let flying = [], eddies = [], gust = 0, nextGust = 0, tdrift = 0, tau = 1, lswept = 0, calm = 1, swept = 0, riding = 0, lab = null;
+    let rises = 0, flying = [], eddies = [], gust = 0, nextGust = 0, tdrift = 0, tau = 1, lswept = 0, calm = 1, swept = 0, riding = 0, lab = null;
     let splashes = [], hits = 0, pushed = 0, kicked = 0, born = 0, lastT = 0, owed = 0;
     const KNOCK = 60;                  // a heavy drop's push on a near leaf (px/s, along its fall); farther leaves less (parallax)
     // A splash on a leaf, frame by frame: a bead where the drop struck, then two droplets thrown up off it, falling away ([dx, dy, shade])
@@ -1300,8 +1337,12 @@ const Sky = (() => {
       d.age = anywhere ? between(0, 4) : 0;
       d.life = between(5, 9);
       d.wander = between(0, 7);
-      d.on = 0; d.draw = 1;
+      d.on = 0; d.draw = 1; d.rest = 0;
     };
+    // An eddy's cycle: its life (5 to 9 s, 7 on average), then a REST (5 to 9 s, as long again on average: nothing of it, no swirl, drawn or
+    // counted) before the next rises, so a new eddy spawns half as often as it did (a mean interval of 14 s a slot, not 7; the page's
+    // slots, `want` of them, as before). A page opening is part way through: half the slots resting, for a random part of one.
+    const EDDY_REST = [5, 9];
     const spawn = (f, anywhere) => {
       const set = leafSprites(dir.side)[f.layer], i = Math.floor(random() * set.length);
       f.i = i;
@@ -1363,7 +1404,8 @@ const Sky = (() => {
                      leafStates: flying.map((f) => ({id: f.id, x: sx(f.x), y: f.y, vx: dir.side * f.vx, vy: f.vy, eddy: f.eddy, straight: f.straight,
                                                      veer: f.veer, mean: f.mean, heading: veerAngle()})),
                      veerAngle: veerAngle(), veerSide: dir.veer.side,
-                     eddyStates: eddies.map((d) => ({x: sx(d.x), y: d.y, r: d.r, spin: dir.side * d.spin}))}),
+                     eddyRises: rises, eddySlots: eddies.length,   // (the eddies risen after a rest so far, and the slots they rise in: for the tests)
+                     eddyStates: eddies.filter((d) => !(d.rest > 0)).map((d) => ({x: sx(d.x), y: d.y, r: d.r, spin: dir.side * d.spin}))}),
       // A drop of rain layer `layer` going from (x0, y0) to (x1, y1) this frame (its head, on screen, art px), at vx across and vy down
       // (px/s): if it hits a leaf as far off as itself, the leaf knocked (`hard` 0-1: how heavy the rain) and true (the drop ends)
       knock(layer, x0, y0, x1, y1, vx, vy, hard) {
@@ -1485,8 +1527,9 @@ const Sky = (() => {
         lswept += tau * slid;
         riding = 0;
         const want = Math.max(4, Math.round(W * H / 30000));   // (at least four, a phone's too)
-        while (eddies.length < want && !lab) { const d = {}; eddy(d, true); eddies.push(d); }
+        while (eddies.length < want && !lab) { const d = {}; eddy(d, true); if (random() < 0.5) d.rest = between(0, EDDY_REST[1]); eddies.push(d); }
         for (const d of eddies) {
+          if (d.rest > 0 && !lab) { d.rest -= dt; d.on = 0; if (d.rest <= 0) rises++; continue; }   // (between eddies: none there)
           if (!lab || !lab.hold) d.age += dt;
           const k = clamp(d.age / d.life, 0, 1);
           d.on = Math.pow(Math.sin(Math.PI * k), 0.6);   // (spinning up, and down)
@@ -1499,7 +1542,7 @@ const Sky = (() => {
           if (lab && lab.hold) { d.vy = 0; if (!lab.drift) d.vx = 0; }   // (a test's: it stays where it was put, or drifts on)
           d.x += d.vx * dt;
           d.y += d.vy * dt;
-          if (!lab && (d.age >= d.life || d.x > W + 2 * d.r || d.x < -2 * d.r)) eddy(d, false);
+          if (!lab && (d.age >= d.life || d.x > W + 2 * d.r || d.x < -2 * d.r)) { eddy(d, false); d.rest = between(...EDDY_REST); }
         }
         const flooded = flood.lift() > 0;
         for (const f of flying) {
@@ -1553,7 +1596,7 @@ const Sky = (() => {
   // for POP s; one of the largest (GULP_R up, the sprite sizes) taking in a tiny one swells a moment, GULP bigger, its own clock). A bead not running (under 1 px/s) and a tiny one close below it the same; a running one takes in any tiny one
   // beside or above it as it passes. Only large ones (RUN_R and up: about sixteen tiny ones' water) run (as below); smaller ones stay
   // put (snapping as tiny ones do), a small one growing on the fog till it's large enough. Heavy rain (HEAVY_RAIN or more, the humidity high or not): now and
-  // then (LANDING a second, RAIN_MOST on the glass at most) a drop sticks, landing at once as a large bead (RAIN_R), hard: squashed
+  // then (LANDING a second, RAIN_MOST on the glass at most) a drop sticks, landing at once as a large bead (rainR), hard: squashed
   // flat and wide for a frame or two, wobbling back to round (SQUASH), with a splash (a ring of tiny droplets (THROWN), some of them
   // short spray streaks, bursting out fast, lopsided (LEAN), falling a little and fading in a few frames, a few of them (STAY) thrown
   // out to varied distances and left there as tiny beads; all of it harder in heavier rain: from then on tiny beads like any other, the humidity on or not, drying away (DRYING) on glass with no fog shown
@@ -1563,7 +1606,7 @@ const Sky = (() => {
   //   through the fog, or wet on clear glass) or DRY (clear glass, no trail).
   //   Its speed: none under RUN_R; from there (for r of 2.8 and above its water, r³; below that x^5) times SPEED times the glass's PACE (dry slowest, fog quicker, a trail
   //   fastest: water on water); so it rises gradually with its size (tiny and small ones not at all, large ones creeping extremely slowly at
-  //   first, larger ones faster and faster: no fastest); on a trail, never slower than a freshly landed rain bead (RAIN_R's least)
+  //   first, larger ones faster and faster: no fastest); on a trail, never slower than a freshly landed rain bead (rainR's least (2.6))
   //   would go there, however small (from RUN_R: a condensed one as quick as a rain one down a track), each
   //   stretch of a run a little quicker or slower than that, stop-start (a pause after a stretch now and then, most often on dry
   //   glass; none for the biggest beads, r from STEADY_R, on fog or in a trail: they run on), wandering a little (a kink here, a slant there, kept a while; never more than MEANDER px from where it began); on dry
@@ -1648,7 +1691,7 @@ const Sky = (() => {
     const HEAVY_RAIN = 0.75;           // rain this strong or more (about 5 mm/h): heavy, a drop sticking to the glass now and then ...
     const LANDING = 0.35;              // ... about this many a second (one in 3 s) ...
     const RAIN_MOST = 14;              // ... a dozen or so on the glass at most ...
-    const RAIN_R = [2.6, 2.97];        // ... each landing this big (its radius) ...
+    const rainR = () => beadROf(d0Of(rainRate()));   // ... each landing this big (its radius, 2.6 px for drizzle's 0.9 mm median drop to 2.97 for a cloudburst's, 2.2 mm or more: grows with the rain's drops, see d0Of) ...
     const SQUASH = [0.5, 0.75];        // ... landing squashed flat and wide (this much wider at first, as much shorter: its water
                                        // ... kept), held a frame or two (HOLD s), then wobbling back to round (a little taller and
     const HOLD = 0.05;                 // ... narrower, then wider again, less and less) over SQUASH_S in all ...
@@ -2043,7 +2086,7 @@ const Sky = (() => {
     const settled = (b) => { shows(b); b.shown = APPEAR; all.push(b); return b; };   // (shown at once)
     function land(most) {   // heavy rain: a drop sticking to the glass, a large bead at once, with a splash
       const landed = ++counts.rain, drop = streamOf(`humidity:drop:${landed}`), splash = streamOf(`humidity:splash:${landed}`);   // (this landing's own)
-      const r = drop.between(...RAIN_R), x = Math.round(drop.between(Math.ceil(r) + 2, W - 3 - Math.ceil(r))), y = drop.between(6, H * 0.7);
+      const r = rainR(), x = Math.round(drop.between(Math.ceil(r) + 2, W - 3 - Math.ceil(r))), y = drop.between(6, H * 0.7);
       const b = settled(numbered({id: ++made, kind: "rain", x, y, r, life: drop.between(...LIFE)}, landed));
       // (the harder the rain, the harder it hits (hard: 0 at HEAVY_RAIN, 1 at the heaviest): squashed flatter, more droplets thrown
       // faster and further, more of them left)
@@ -4062,6 +4105,8 @@ const Sky = (() => {
   }
 
   // setWindSpeed(speed, gust, forced): the live wind's speed and gust, km/h (null or none: 0), which the rain's slant, the haze's pan and the leaves' pace follow (see the rain, the haze, the wind); forced: a test link's wind, the leaves at their usual pace
+  // setRainRate(rate): the live rain rate, mm/h (the rain gauge's; null or none: 0, and the rain's drop sizes use RAIN_NOMINAL, 5, as a test link's rain over a dry gauge shows), which the rain's drop sizes, speeds and leans, and its beads on the glass, follow
+  function setRainRate(rate) { gale.rain = Number.isFinite(rate) && rate > 0 ? rate : 0; }
   function setWindSpeed(speed, gust, forced = false) {
     gale.speed = Number.isFinite(speed) && speed > 0 ? speed : 0;
     gale.gust = Number.isFinite(gust) && gust > 0 ? gust : 0;
@@ -4069,7 +4114,7 @@ const Sky = (() => {
   }
 
   const running = () => DRIVEN ? animate && alive() : !!frame;
-  return {set, fling, tilt, level, setSun, setTime, setSunPosition, setWind, setWindSpeed, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
+  return {set, fling, tilt, level, setSun, setTime, setSunPosition, setWind, setWindSpeed, setRainRate, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
           heatPhase: (u) => effects.heat.seek(u), advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
           clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: running(), frames, cost, clock, size: [W, H, P],
@@ -4851,6 +4896,7 @@ const Sky = (() => {
     real = conditionsOf(data);
     realSide = windSideOf(data) || realSide;   // (a reading due north or south, or none: the way it was)
     const speedNow = conditionsOfWind(data); realSpeed = speedNow.speed; realGust = speedNow.gust;
+    realRate = typeof data.rain_rate === "number" ? data.rain_rate : 0;
     Sky.setSun(data.sun);   // (the beams lean with the station's time of day)
     weather();
     gusting(data);
@@ -5352,7 +5398,7 @@ const Sky = (() => {
     const t = (data.tiles || []).find((tile) => idOf(tile) === "Wind");
     return {speed: t && typeof t.value === "number" ? t.value : 0, gust: typeof data.gust === "number" ? data.gust : 0};
   }
-  let realSpeed = 0, realGust = 0;
+  let realSpeed = 0, realGust = 0, realRate = 0;
   const TEST_WIND = 11;   // (km/h: what a test link's wind effect blows at, about 24 degrees of slant, like the old fixed default's: the readings' being what they are)
   let realSide = 0;   // (the last side a reading gave: -1 leftward, +1 rightward, 0 none yet)
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop" shows)
@@ -5369,6 +5415,7 @@ const Sky = (() => {
     const was = calling();
     conditions = Object.fromEntries(Object.keys(CALLED_BY).map((k) => [k, Math.max(real[k] || 0, simulated[k] || 0)]));
     Sky.setWindSpeed(Math.max(realSpeed, simulated.wind > 0 ? TEST_WIND : 0), Math.max(realGust, simulated.wind > 0 ? TEST_WIND : 0), simulated.wind > 0 && realSpeed < TEST_WIND);   // (a link's wind over a calmer real one: the leaves at their usual pace)
+    Sky.setRainRate(realRate);   // (the gauge's, mm/h; a test link's rain over a dry one: Sky's nominal 5)
     Sky.setWind(simulated.windDir || realSide);   // (a test link's way, else the reading's: 0 holds it; first, so with nothing yet drawn it's the way from the start)
     Sky.set(conditions, animated());
     const framed = new Set(Object.keys(CALLED_BY).filter((k) => conditions[k] > 0).map((k) => CALLED_BY[k]));

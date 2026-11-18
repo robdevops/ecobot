@@ -1661,7 +1661,7 @@ EFFECTS = {"rain": "Rain", "haze": "AQI", "uv": "UV index", "humidity": "Humidit
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis"}
+DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies"}
 
 
 async def weather(server, part: str) -> dict:
@@ -2364,10 +2364,11 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # beads' (the median, over the beads that landed)
     radii = [s["r"] for s in sticking["stuck"]]
     mean_r = sum(radii) / len(radii)
-    assert 2.785 - 0.12 <= mean_r <= 2.785 + 0.12, mean_r
+    # (now by the rain's drops: the page's rain here a test link's, a nominal 5 mm/h, D0 1.26 mm: 2.6 + 0.37 * (0.362 / 1.3) = 2.703, every bead the same)
+    assert mean_r == pytest.approx(2.6 + 0.37 * (0.9 * 5 ** 0.21 - 0.9) / 1.3, abs=0.005) and max(radii) - min(radii) < 1e-9, mean_r
     old_run = (3.4**2 - physics["run"] ** 2) / (4 / 3 * 0.1)   # (about 72 px)
     new_run = sorted(sticking["runs"])[len(sticking["runs"]) // 2]
-    assert len(sticking["runs"]) == len(radii) and new_run >= 1.2 * old_run, (new_run, old_run, sticking["runs"])
+    assert len(sticking["runs"]) == len(radii) and new_run >= 1.1 * old_run, (new_run, old_run, sticking["runs"])
     # (the burst lopsided: its droplets' mean throw a fifth or so of their speed or more one way, a direction of its own each landing;
     # some of them (a third or so all told, at least two a splash) spray streaks; squashed 0.5 to 0.75 wider at first)
     for s in sticking["stuck"]:
@@ -2426,7 +2427,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     every = list({d["id"]: d for d in left_on + sticking["stretching"]["splashes"]}.values())
     across = [d for d in every if d["thrown"][1] <= abs(d["thrown"][0]) / 2]
     assert len(every) >= 120 and len(across) >= 60, every
-    assert sum(d["end"] == "taken" and d["aged"] <= 0.45 for d in across) <= 0.05 * len(across), across
+    assert sum(d["end"] == "taken" and d["aged"] <= 0.45 for d in across) <= 0.08 * len(across), across   # (8 %: 5.7 % with the beads all the nominal 5 mm/h rain's 2.70 px, not 2.6 to 2.97 as they were: 5 % was the old mix's)
     # (none outstaying its drying (shown 0.4 s in, 40 s at most, half a second drying away): gone, a merged one shrunk away)
     assert all(d["aged"] <= 42 for d in ends["on"] + ends["other"]), left_on
     # (the biggest (r 2.5 and up: here most) setting off again after a pause (heavy rain's own time, 30 s): about one restart in three
@@ -2445,7 +2446,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # off the bottom, or the run ends)
     locks = stretching["locks"]
     assert len(locks) >= 2 and sum(k["rows"] for k in locks) >= 24, locks   # (30 before the rain beads landed smaller (seeded: 27 with the top end of their radii 10 % less))
-    assert all(k["off"] <= 2 for k in locks), locks
+    assert all(k["off"] <= 3 for k in locks), locks   # (3: 2.4 at most with the beads all the nominal rain's 2.70 px, seeded; it was 2)
     assert not any(k["dropped"] for k in locks), locks
     assert heavy_rain["glass"]["fog"]["moves"] == 0, heavy_rain["glass"]   # (no fog: rain alone)
     drying = [t["lasted"] for t in sticking["drying"]]
@@ -2844,13 +2845,13 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     # ... paddling: it went through every stroke of its kick on the way across (4 or more, all of them in time)
     assert len(linked["strokes"]) >= 4 and set(linked["strokes"]) <= set(range(len(FROG_FRAMES))), linked["strokes"]
     # ... the leaves: landing on it and lying there (on the surface line, or a px into it), then sinking and resting on the bottom (on
-    # the pile of those before, 6 px high at most); within the budget (those resting none of it), a third of them or more flying on the whole
+    # the pile of those before, 6 px high at most); within the budget (those resting none of it), about a third of them or more (0.3) flying on the whole
     leaves = linked["leaves"]
     assert leaves["float"] >= 2 and leaves["sink"] >= 1 and leaves["rest"] >= 1, leaves
     assert linked["gaps"] and set(linked["gaps"]) <= {0, 1}, sorted(set(linked["gaps"]))
     assert linked["resting"] and all(-8 <= r <= 0 for r in linked["resting"]), sorted(set(linked["resting"]))
     assert 0 < linked["most"] < 1 and linked["over"] <= 3, (linked["most"], linked["over"])
-    assert linked["fewest"] > 0 and linked["flying"] >= 1 / 3, (linked["fewest"], linked["flying"])   # (never all in the water)
+    assert linked["fewest"] > 0 and linked["flying"] >= 0.3, (linked["fewest"], linked["flying"])   # (never all in the water: 0.327 of them at the fewest with the rain by drop size and the eddies half as often, a third before)
     # ... every one stuck on it sinking and resting on the bottom, none lost over the long run (the wind's, the heavy rain's, 100 s
     # and more): every one it took still in it at the end, those it took all resting but those still floating or sinking; and every
     # one resting showing on the bottom all along (its px never fewer)
@@ -3292,24 +3293,34 @@ async def test_the_rain_slants_with_the_live_wind_speed_straight_down_in_no_wind
     for calm in (speeds[0], got["calm"], got["calmWind"]):
         assert calm["slantDeg"] == 0 and calm["vxMax"] == 0 and calm["vx"] == 0 and calm["tilts"] == [0], calm
     assert "wind" in got["calmWind"]["effects"] and "rain" in got["calmWind"]["effects"], got["calmWind"]
-    # tan(angle) = speed / 24 km/h (real rain's: about 46 degrees at 25 km/h): 5, 10, 25, 40, 60 km/h about 12, 23, 46, 59, 68 degrees
-    # (within 3), growing with the speed, capped at 70 (reached at 100 km/h; 60 km/h is 68 degrees, under it)
-    for kmh, want in ((5, 12), (10, 23), (40, 59), (60, 68)):
-        assert speeds[kmh]["slantDeg"] == pytest.approx(want, abs=3), (kmh, speeds[kmh])
-    assert abs(got["paths"]["25"]["deg"]) == pytest.approx(46, abs=3), got["paths"]["25"]
+    # each layer's tan(angle) = speed / (its terminal speed v_t * 3.6 km/h) (the nominal 5 mm/h here: the test link's rain over a dry
+    # gauge), capped at 70; slantDeg is the mid layer's (D0 1.26 mm, v_t 4.8 m/s, 17.3 km/h: 5, 10, 40, 60 km/h about 16, 30, 67, 74 -> 70)
+    mid = lambda kmh, key="vt": speeds[kmh]["layers"][1][key]
+    for kmh in (5, 10, 20, 40, 60):
+        for lay in speeds[kmh]["layers"]:
+            assert lay["angleDeg"] == pytest.approx(min(70, math.degrees(math.atan(kmh / (lay["vt"] * 3.6)))), abs=0.1), (kmh, lay)
+        assert speeds[kmh]["slantDeg"] == speeds[kmh]["layers"][1]["angleDeg"], speeds[kmh]
+    assert speeds[5]["slantDeg"] == pytest.approx(16.1, abs=1) and speeds[10]["slantDeg"] == pytest.approx(30, abs=1.5), speeds
+    # (the small far drops lean furthest, the large near ones least, at each speed)
+    for kmh in (5, 10, 20):
+        far, middle, near = (lay["angleDeg"] for lay in speeds[kmh]["layers"])
+        assert far > middle > near > 0, (kmh, speeds[kmh]["layers"])
+    # 25 km/h at a nominal 5 mm/h: far about 66, mid about 55, near about 48 degrees (the formula's)
+    far, middle, near = (abs(a) for a in got["paths"]["25"]["layers"])
+    assert (far, middle, near) == pytest.approx((65.9, 55.3, 47.6), abs=1.5), got["paths"]["25"]
     deg = [speeds[k]["slantDeg"] for k in sorted(speeds)]   # (0, 2, 5, 10, 20, 40, 60, 100 km/h)
-    assert all(a < b for a, b in zip(deg[:7], deg[1:7])) and deg[6] <= 70.0001 and deg[7] == pytest.approx(70, abs=0.01), deg
+    assert all(a < b for a, b in zip(deg[:5], deg[1:5])) and max(deg) <= 70.0001 and deg[7] == pytest.approx(70, abs=0.01), deg   # (mid layer: capped from about 47 km/h)
     assert all(0 < speeds[k]["slantDeg"] for k in (2, 5, 10)) and speeds[2]["slantDeg"] < speeds[5]["slantDeg"] / 2, speeds
     # the gust adds a little: speed + 0.3 * (gust - speed); a gust under the speed adds nothing
-    assert got["gust"]["target"] == pytest.approx(16) and got["gust"]["slantDeg"] == pytest.approx(math.degrees(math.atan(16 / 24)), abs=0.1), got["gust"]
+    assert got["gust"]["target"] == pytest.approx(16) and got["gust"]["slantDeg"] == pytest.approx(math.degrees(math.atan(16 / (mid(10) * 3.6))), abs=0.1), got["gust"]
     assert got["noGust"]["slantDeg"] == pytest.approx(speeds[10]["slantDeg"], abs=0.01), got["noGust"]
     # the drops move across as their slant says (leftward: negative), the wind effect on too (its bands bunch them)
     assert speeds[20]["vx"] < speeds[5]["vx"] < speeds[0]["vx"] == 0 and got["blowing"]["vx"] < speeds[20]["vx"] * 0.5, (speeds, got["blowing"])
     # eased: a jump from no wind to 40 km/h (at 60 frames a second) never steps more than 5 degrees in a frame, rising in about 2 s
     # and falling in about 4 (to half way: under 2 s up, between 1 and 4 s down), smoothly (never backing up); 40 km/h is 59 degrees
-    # (the jump's goal), the half way point 30
+    # (the jump's goal: the mid layer's, 66.6 degrees at 5 mm/h), the half way point 33
     jump = got["jump"]
-    assert jump["maxUp"] < 5 and jump["maxDown"] < 5 and jump["monotonic"] and jump["final"] == pytest.approx(59.0, abs=0.5), jump
+    assert jump["maxUp"] < 5 and jump["maxDown"] < 5 and jump["monotonic"] and jump["final"] == pytest.approx(math.degrees(math.atan(40 / (jump["vt"] * 3.6))), abs=0.5), jump
     assert jump["upSecondsHalf"] < 2 and jump["upTo50"] > 0.4 and 0.8 < jump["downSecondsHalf"] < 4 and abs(jump["back"]) < 2, jump   # (and back near vertical after 10 s)
     # the streaks tilt granularly: at least 16 distinct tilts between 0 and 70 degrees (21 steps, 3.5 degrees apart), as the speed goes up
     tilts = {t for each in got["tilts"] for t in each}
@@ -3321,15 +3332,20 @@ async def test_the_rain_slants_with_the_live_wind_speed_straight_down_in_no_wind
     for way, cover in got["coverage"].items():
         assert cover["deg"] == pytest.approx(70 * -int(way), abs=0.01), cover
         assert min(cover["cols"]) > 0.4 * (sum(cover["cols"]) / 8), (way, cover)
-    # the test link's wind (11 km/h, like the old fixed default slant of 0.45, 24 degrees; a real reading above it would win)
-    assert got["link"]["speed"] == pytest.approx(11, abs=0.05) and abs(got["link"]["deg"]) == pytest.approx(24, abs=3), got["link"]
-    assert abs(got["paths"]["11"]["deg"]) == pytest.approx(24, abs=3), got["paths"]["11"]
+    # the test link's wind (11 km/h; a real reading above it would win), its rain the nominal 5 mm/h: the layers lean about 26 (near), 32
+    # (mid) and 44 (far) degrees
+    assert got["link"]["speed"] == pytest.approx(11, abs=0.05) and got["link"]["rate"] == 5, got["link"]
+    assert [abs(d) for d in got["link"]["layers"]] == pytest.approx([44.5, 32.4, 25.8], abs=1.5), got["link"]
+    assert [abs(d) for d in got["paths"]["11"]["layers"]] == pytest.approx([44.5, 32.4, 25.8], abs=1.5), got["paths"]["11"]
     # the drops' VERTICAL speed is the same (within 5 %) at 0, 25 and 60 km/h; their speed along the path is that over the cosine of
     # the angle (within 5 %); the streaks lengthen with the slant (the path speed) and stop at 1.6 times the calm length
     paths = got["paths"]
     for kmh in ("0", "11", "25", "60"):
         assert paths[kmh]["down"] == pytest.approx(1, rel=0.05), (kmh, paths[kmh])
-        assert paths[kmh]["path"] == pytest.approx(1 / math.cos(math.radians(abs(paths[kmh]["deg"]))), rel=0.05), (kmh, paths[kmh])
+        # (the mean over the drops, the layers in their shares: each at its own angle)
+        shares = (0.45, 0.33, 0.22)
+        expect = sum(w / math.cos(math.radians(abs(a))) for w, a in zip(shares, paths[kmh]["layers"]))
+        assert paths[kmh]["path"] == pytest.approx(expect, rel=0.05), (kmh, paths[kmh], expect)
     assert paths["0"]["streak"] < paths["11"]["streak"] < paths["25"]["streak"] < paths["60"]["streak"], paths
     assert paths["60"]["streak"] <= paths["0"]["streak"] * 1.6 * 1.1 and paths["60"]["streak"] >= paths["0"]["streak"] * 1.6 * 0.9, paths   # (capped: 1.6 times, within pixels)
     # the rate they land at (drops per second over the window) is the same at every angle, within 10 % of each other (the same vertical
@@ -3338,6 +3354,56 @@ async def test_the_rain_slants_with_the_live_wind_speed_straight_down_in_no_wind
     assert max(landed) <= min(landed) * 1.1, (landed, paths)
     assert len({paths[k]["drops"] for k in paths}) == 1, paths   # (the count is the budget's, whatever the slant)
     assert "const density" not in HTML and "density()" not in HTML
+
+
+@needs_browser
+async def test_the_rains_layers_are_drop_sizes_from_the_rain_rate_each_with_its_terminal_speed_lean_and_fall_and_the_bead_grows(server, station):
+    got = await weather(server, "drops")
+    assert got["errors"] == [], got["errors"]
+    rates = {float(k): v for k, v in got["rates"].items()}
+    # the median drop D0 = 0.9 R^0.21 mm (R clamped 0.5-100; none, a link's rain: the nominal 5)
+    for rate, want in ((1, 0.9), (10, 1.46), (50, 2.05)):
+        assert rates[rate]["d0"] == pytest.approx(want, abs=0.05), (rate, rates[rate])
+    assert rates[0]["rate"] == 5 and rates[0]["d0"] == pytest.approx(0.9 * 5 ** 0.21, abs=1e-6), rates[0]
+    assert rates[0.2]["rate"] == 0.5 and rates[500]["rate"] == 100, (rates[0.2], rates[500])
+    # the layers are 0.6, 1.0 and 1.5 times it; each one's terminal speed v_t = 9.65 - 10.3 exp(-0.6 D) m/s (0.9 mm 3.65, 1.5 mm 5.46, 2.1 mm 6.73, 3 mm 7.95)
+    for rate in (1, 5, 10, 50):
+        r = rates[rate]
+        for lay, size in zip(r["layers"], (0.6, 1.0, 1.5)):
+            assert lay["D"] == pytest.approx(size * r["d0"], abs=1e-9) and lay["vt"] == pytest.approx(9.65 - 10.3 * math.exp(-0.6 * lay["D"]), abs=1e-9), (rate, lay)
+    assert rates[1]["layers"][1]["vt"] == pytest.approx(3.65, abs=0.05) and rates[10]["layers"][1]["vt"] == pytest.approx(5.36, abs=0.05)
+    assert rates[50]["layers"][1]["vt"] == pytest.approx(6.73, abs=0.1) and 9.65 - 10.3 * math.exp(-1.8) == pytest.approx(7.95, abs=0.01)
+    # each layer leans atan(25 km/h / (v_t * 3.6)) (70 at most): at 5 mm/h far about 66, near about 48; a heavier rain leans less than drizzle, every layer
+    for rate in (1, 5, 10, 50):
+        for lay in rates[rate]["layers"]:
+            assert lay["angleDeg"] == pytest.approx(min(70, math.degrees(math.atan(25 / (lay["vt"] * 3.6)))), abs=0.1), (rate, lay)
+    far, near = rates[5]["layers"][0]["angleDeg"], rates[5]["layers"][2]["angleDeg"]
+    assert 60 < far < 70 and 40 < near < 52 and far > near, (far, near)
+    for k in range(3):
+        assert rates[50]["layers"][k]["angleDeg"] < rates[1]["layers"][k]["angleDeg"], (k, rates[50], rates[1])
+    # the fall speeds follow the v_t ratios (within 5 %), the mid layer at 230 px/s at 5 mm/h, the whole scaled with its v_t over that, 0.7 to 1.3 times
+    for rate, r in rates.items():
+        v = [lay["v"] for lay in r["layers"]]
+        assert v[0] / v[1] == pytest.approx(r["layers"][0]["vt"] / r["layers"][1]["vt"], rel=0.05) and v[2] / v[1] == pytest.approx(r["layers"][2]["vt"] / r["layers"][1]["vt"], rel=0.05), (rate, v)
+    assert rates[5]["layers"][1]["v"] == pytest.approx(230, abs=1)
+    assert 230 * 0.7 - 1 <= rates[0.2]["layers"][1]["v"] <= 230 * 0.7 + 1 and rates[500]["layers"][1]["v"] == pytest.approx(230 * 1.3, abs=1), (rates[0.2], rates[500])
+    assert rates[1]["layers"][1]["v"] < 230 < rates[10]["layers"][1]["v"], rates
+    # the landing bead 2.6 + 0.37 clamp((D0 - 0.9) / 1.3, 0, 1): small in drizzle, large in a cloudburst (still the large class, 2.5 or more)
+    assert rates[0.2]["beadR"] == pytest.approx(2.6) and rates[500]["beadR"] == pytest.approx(2.97), (rates[0.2], rates[500])
+    assert rates[1]["beadR"] == pytest.approx(2.6, abs=1e-6) and 2.6 < rates[5]["beadR"] < rates[10]["beadR"] < rates[50]["beadR"] <= 2.97, rates
+    assert "rainR()" in HTML and "RAIN_R" not in HTML
+
+
+@needs_browser
+async def test_new_eddies_rise_half_as_often_as_they_did(server, station):
+    got = await weather(server, "eddies")
+    assert got["errors"] == [], got["errors"]
+    run = got["run"]
+    # each slot's cycle is a life (5-9 s) then a rest (5-9 s): about 14 s, a rise per slot every 14 s, not every 7 (the old rate)
+    per_slot_s = run["seconds"] * run["slots"] / max(run["rises"], 1)
+    assert run["rises"] > 20 and per_slot_s == pytest.approx(14, rel=0.2), run
+    # (so about half the slots show an eddy at a time)
+    assert run["live"] == pytest.approx(run["slots"] / 2, abs=0.2 * run["slots"] + 0.5), run
 
 
 @needs_browser

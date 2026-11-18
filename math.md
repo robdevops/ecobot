@@ -23,7 +23,8 @@ How to read the tables:
 
 Status (as of 96e255f):
 
-- The rain slant law `tan(angle) = speed / 24 km/h` (cap 70 degrees), the constant vertical fall speed (path speed `V0 / cos(angle)`) and `TEST_WIND = 11` are in the code. No 18 km/h law remains.
+- The rain is three drop-size classes (far 0.6, mid 1.0, near 1.5 times the median drop D0 of the live rain rate): each layer's lean is `tan(angle) = wind / (v_t * 3.6 km/h)` (cap 70 degrees), its vertical fall speed follows its terminal speed v_t (path speed `V / cos(angle)`), and `TEST_WIND = 11` is in the code. The old one-for-all `tan(angle) = speed / 24 km/h` law (`FALL`) is gone. Section 3.2.
+- The wind's eddies rise half as often: each slot rests 5 to 9 s after its eddy before the next (row A8 and section 3.3).
 - The heat fills the top quarter of the window; the sun's lean (the UV beams' own value) sets only the direction its front travels. Section 4.2.
 - Issues in section 9 carry a status: FIXED (with the commit), LEFT BY DECISION (the user chose to leave it), or N/A.
 
@@ -42,9 +43,9 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | S7 | Beam, glow and shaft drawing | 2.2 | ARTISTIC |
 | A1 | Effect levels from the readings (`conditionsOf`) | 3.1 | TUNED |
 | A2 | Wind side from wind direction | 3.1 | REAL-APPROX |
-| A3 | Rain slant law | 3.2 | REAL-APPROX |
+| A3 | Rain slant law (per layer, by drop size) | 3.2 | REAL-APPROX |
 | A4 | Rain effective speed and smoothing | 3.2 | TUNED |
-| A5 | Rain fall speed (constant vertical speed, path speed `V0 / cos`) | 3.2 | REAL-APPROX |
+| A5 | Rain fall speed (per layer by terminal speed, path speed `V / cos`); A5a drop size from rain rate (Marshall-Palmer D0) and Gunn-Kinzer terminal speed | 3.2 | REAL-APPROX |
 | A5b | Rain layer speeds, streak length, landing, splash | 3.2 | ARTISTIC |
 | A6 | Rain drop count and density | 3.2 | TUNED |
 | A7 | Leaf wind: stream function turbulence | 3.3 | ARTISTIC |
@@ -172,15 +173,17 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Slant law | `slantOf` :497; `FALL` 24, `CAP` 70 deg | `tan(angle) = min(tan 70 deg, v / 24)`, v in km/h (across per down). The cap is reached at v = 65.9 km/h. Checks: 5 km/h gives 11.8 degrees, 10 gives 22.6, 25 gives 46.2, 40 gives 59.0, 60 gives 68.2 | REAL-APPROX | The real law is `tan(angle) = u_wind / v_terminal`, so the form is right. 24 km/h is 6.7 m/s, a fair raindrop terminal speed (drizzle about 4 m/s, a 2 mm drop 6.5, a 5 mm drop 9). It uses one fall speed for all drops, ignores the wind profile with height (the anemometer is a few metres up) and turbulence. There is no real cap: at 100 km/h the true angle is 76 degrees. The 70 degree cap bites only above 66 km/h and also bounds the sprite set (21 tilts, 3.5 degrees apart, `STEPS` 20). |
+| Drop size from rate (A5a) | `d0Of`, `rainRate`, `RAIN_NOMINAL` 5, `physics()` in the rain | `R` = the live rain rate (the gauge's, `Sky.setRainRate`; none, as with a test link's rain over a dry gauge: 5 mm/h) clamped 0.5 to 100 mm/h; median drop diameter `D0 = 0.9 * R^0.21` mm (Marshall-Palmer: 0.9 mm at 1 mm/h, 1.46 at 10, 2.05 at 50); the layers are size classes `D = 0.6 * D0` (far), `1.0 * D0` (mid), `1.5 * D0` (near) | REAL-APPROX | The Marshall-Palmer distribution has median volume diameter about `0.9 R^0.21` mm (the code's form: the true constant depends on the form of the median); it is an average over rain types (convective rain has larger drops than stratiform at the same rate). Three classes stand for the whole spectrum, with the 0.6 and 1.5 multipliers chosen (ARTISTIC). Needs the rate: with none it assumes 5 mm/h. |
+| Terminal speed | `vtOf` | `v_t(D) = 9.65 - 10.3 * exp(-0.6 D)` m/s, D in mm (Gunn-Kinzer fit: 3.65 at 0.9 mm, 5.36 at 1.46, 6.73 at 2.1, 7.95 at 3) | REAL-APPROX | A good fit for 0.5 to 6 mm drops at sea level; ignores air density with height and drop shape, and above about 5.8 m/s large drops break up. |
+| Slant law | `slantOf(kmh, k)`; `CAP` 70 deg | per layer `tan(angle) = min(tan 70 deg, v / (v_t * 3.6))`, v in km/h (across per down), v_t of that layer: small drops lean furthest, heavy rain (larger drops, faster) less than drizzle. At 25 km/h and 5 mm/h: far 65.9, mid 55.3, near 47.6 degrees (at 1 mm/h far 72 capped to 70, mid 62, near 54; at 50 mm/h 56, 46, 41). The 11 km/h test link at 5 mm/h: 44.5, 32.4, 25.8. The cap: far from 30.8 km/h, mid from 47.7, near from 62.7 (5 mm/h) | REAL-APPROX | The real law is `tan(angle) = u_wind / v_terminal`, per drop size, as here (it was one fall speed for all drops, 24 km/h). It ignores the wind profile with height (the anemometer is a few metres up) and turbulence, and uses three sizes only. There is no real cap: at 100 km/h the true angle is 76 degrees or more. The 70 degree cap also bounds the sprite set (21 tilts, 3.5 degrees apart, `STEPS` 20). |
 | Effective speed | `effectiveSpeed` :336 (shared by the rain, the haze and the leaves' pace); `GUST_SHARE` 0.3 (:335) | `v_eff = speed + 0.3 * max(gust - speed, 0)` | TUNED | A mix of mean and gust with no standard. |
 | Smoothing | `TAU_UP` 1 s, `TAU_DOWN` 2 s | first-order low-pass: `speed += (goal - speed) * (1 - exp(-dt/tau))`; snaps within 0.02 km/h | TUNED | Hides the 16 s reading jitter. The asymmetry is aesthetic. |
-| Fall speed | `PATH` :491, `spawn` :555, `step` | vertical speed = layer speed (150/230/330 art px/s, far/mid/near) `* U(0.85, 1.15) * pace`, `pace = 0.8 + 0.4*level`, the same at every slant; across = vertical * tan(angle); path speed = vertical / cos(angle) (1.09x at 24 degrees, 1.44 at 46, 1.94 at 59, 2.92 at the 70 degree cap) | REAL-APPROX | The kinematics are real: wind pushes a drop sideways without slowing its fall, so the path speed is vertical over cos. The simplification: one terminal speed per layer for all drops (the three layer speeds, 150/230/330 art px/s, and the 0.8 to 1.2 level pace are chosen, ARTISTIC) and art px with no physical length, so only the ratios (path over vertical) are physical. A drop blown out of the window's downwind side starts again at the top or upwind side, so landings per area are the same at every slant. |
+| Fall speed | `PATH` :491, `physics()`, `spawn`, `step` | per layer `v = 230 * clamp(v_t,mid(R) / v_t,mid(5 mm/h), 0.7, 1.3) * v_t,layer / v_t,mid` art px/s (mid at 230 and the others in the v_t ratios at 5 mm/h: about 148, 230, 303; drizzle 0.76x, a downpour 1.3x at most), `* U(0.85, 1.15) * pace`, `pace = 0.8 + 0.4*level`, the same at every slant; across = vertical * tan(angle); path speed = vertical / cos(angle), each layer at its own angle | REAL-APPROX | The kinematics are real: wind pushes a drop sideways without slowing its fall, so the path speed is vertical over cos, and the speeds follow the terminal speeds. The simplification: art px with no physical length (the scale is chosen so the mid layer at 5 mm/h keeps the old 230, ARTISTIC; the 0.7 to 1.3 clamp and the 0.8 to 1.2 level pace are chosen), so only the ratios are physical. A drop blown out of the window's downwind side starts again at the top or upwind side, so landings per area are the same at every slant; each layer spawns over its own lean's extent, so the most leaning layer's region covers the width. |
 | Streak length | `streak` :507; `STREAK_MOST` 1.6 | length along the path `(n - 1) * PATH * min(1.6, 1/cos(angle))` with n 3 to 4 (far), 5 to 6 (mid), 8 to 10 (near); rows `round(len*cos)`, columns `round(len*tan*cos)` | ARTISTIC | Grows with the path speed, capped at 1.6x the calm length (reached at 51.3 degrees; the path speed itself keeps growing to 2.9x). The calm length is `(n - 1) * PATH` with `PATH = sqrt(1 + 0.45^2) = 1.097`. |
 | Drop count | `need` :560 | `need = (W*H/1000) * (0.1 + 2.4 * level^1.5)`; count `round(need * share)` | TUNED | No density factor: the vertical speed is constant, so landings per area (measured over 60 s of weather time: 3870, 3822, 3823, 3695 at 0, 24, 46, 68 degrees) stay within 5 %. The comment now says about 71 drops for the light case on a laptop, which matches (`0.1 + 2.4*0.3^1.5` times 144, 71.2). |
 | Sway | step | `slant * (1 + 0.12*sin(0.37 t))`, a 17 s period | ARTISTIC | |
-| Wind push on rain | step :547 | extra across-speed `(calm*STEADY*(1 + gust)*k + BANDS*(0.7 + gust)*band) * slant/0.45`, `STEADY` 45, `BANDS` 190 px/s, `k = layer speed / 330` | ARTISTIC | Scales with the slant so there is none in calm. |
-| Landing, splash | step | splash of 5 frames in 0.24 s, thrown downwind by `min(abs(vx)/vy, tan 70 deg) * 1.4` px | ARTISTIC | |
+| Wind push on rain | step :547 | extra across-speed `(calm*STEADY*(1 + gust)*k + BANDS*(0.7 + gust)*band) * slant/0.45`, `STEADY` 45, `BANDS` 190 px/s, `k` = the layer's nearness 150/330, 230/330, 1 (`LAYERS[].near`, fixed whatever the drop size) | ARTISTIC | Scales with the slant so there is none in calm. |
+| Landing, splash | step | per drop, its layer's own lean for the splash drift; splash of 5 frames in 0.24 s, thrown downwind by `min(abs(vx)/vy, tan 70 deg) * 1.4` px | ARTISTIC | |
 | Leaf knock | `hard` | `hard = 0.04 + 0.96 * level^2.5`; knock `60 px/s * hard * ratio * U(0.7, 1.3)` | ARTISTIC | |
 
 ### 3.3 Wind: the leaf air-velocity field (~1215-1560)
@@ -193,7 +196,7 @@ Everything here is drawn in art px. The measured wind speed scales the leaves' p
 | Gust pulses | step ~1500 | every `U(2.5, 6)` s add `U(0.5, 1.1)` to g; g decays as `exp(-0.9 t)` | TUNED | A stand-in for gustiness, not driven by the gust reading. |
 | Gust bands | `bandAt` :1260 | `0.62*sin(0.024 s X) + 0.38*sin(0.041 s X + 1.7)`, `s = clamp(360/W, 1, 2.6)` (wavelengths 262 and 153 art px at s = 1) | ARTISTIC | No basis in the data. |
 | Turbulence | `airAt` :1275 | stream function `psi = A*sin(0.05X + a)*sin(0.07y - 0.7a) + B*sin(0.11X + 1.3 - a)*sin(0.13y - 0.9a)`, `A = 420*(0.7 + 0.6g)*k`, `B = 110*k`, `k = layer speed/60`, `a = 0.6 t`. Velocity `(dpsi/dy, -dpsi/dx)`; curl `0.0074*A*s1*s2 + 0.029*B*s3*s4` | ARTISTIC | The structure is real maths: the field is divergence-free, and `0.0074 = 0.05^2 + 0.07^2`, `0.029 = 0.11^2 + 0.13^2` (checked). The amplitudes and wavelengths are chosen. |
-| Eddies | `eddy` :1316 | tangential speed `spin*rho*exp(-rho^2)`, `rho = distance/r`, maximum 0.43*spin at rho 0.71; `spin = +-U(4.5, 6)*r`, `r = U(26, 46)` art px; life `U(5, 9)` s, strength `sin(pi*k)^0.6`; count `max(4, round(W*H/30000))` | ARTISTIC | A Gaussian-type vortex, not a Lamb-Oseen or Rankine one (1/r far field). Real eddies do not pull leaves in and then fling them out. |
+| Eddies | `eddy` :1316, `EDDY_REST` | tangential speed `spin*rho*exp(-rho^2)`, `rho = distance/r`, maximum 0.43*spin at rho 0.71; `spin = +-U(4.5, 6)*r`, `r = U(26, 46)` art px; life `U(5, 9)` s, strength `sin(pi*k)^0.6`; count (slots) `max(4, round(W*H/30000))`; after its life each slot rests `U(5, 9)` s before the next eddy (`EDDY_REST`: a cycle of 14 s on average, so a new eddy rises half as often as the 7 s it did; half the slots start part way through a rest) | ARTISTIC | A Gaussian-type vortex, not a Lamb-Oseen or Rankine one (1/r far field). Real eddies do not pull leaves in and then fling them out. |
 | Leaf relaxation | step | `v += (v_air - v)*(1 - exp(-dt/tau))`, `tau = U(0.12, 0.3)` s; sink `U(2, 10)` px/s; spin `U(4, 9) + min(2.5*abs(curl), 14) + whirl` frames/s | REAL-APPROX | First-order drag relaxation is the standard way a light particle follows air. The sink speed is not physical (a real leaf falls near 1 m/s). Spin rising with curl is qualitatively right. |
 | Veer | `setWind` :3917, `leafAir` :1306 | on a side flip the heading turns by about 180 degrees: `angle = from + delta*smoothstep(u)`, duration `VEER_S*abs(delta)/pi`, at least 1 s, `VEER_S` 9 | ARTISTIC | A designed story so leaves do not stop and reverse; real air does not swirl 180 degrees on a wind shift. |
 
@@ -304,7 +307,7 @@ Distances are art px, times are seconds. The dew point is not used anywhere in t
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
 | Heavy gate | `HEAVY_RAIN` :1676 | 0.75 of the rain level, which is `8*(0.75 - 0.3)/0.7 = 5.14` mm/h | TUNED | The "about 5 mm/h" comment is right; the threshold itself has no physical meaning. |
-| Landing | `land()` | `LANDING` 0.35 per second, at most `RAIN_MOST` 14 on the glass, r in [2.6, 2.97] | ARTISTIC | Not a real sticking rate. |
+| Landing | `land()` | `LANDING` 0.35 per second, at most `RAIN_MOST` 14 on the glass; bead radius `r = 2.6 + 0.37 * clamp((D0 - 0.9)/1.3, 0, 1)` (`rainR`, from the rain rate as above: 2.6 px in drizzle to 2.97 from D0 2.2 mm, about 70 mm/h; 2.70 at 5 mm/h, 2.82 at 20) | ARTISTIC | Not a real sticking rate; the growth of a bead with the drop is the real direction, the size range chosen. |
 | Splash | ~2010 | `THROWN` [14, 20], `THROW` [24, 40] px/s, `FALL` 80 px/s^2 (:1687), `SPRAY` 0.25, `SPLASH_S` 0.25 s, `SQUASH` [0.5, 0.75] over 0.2 s | ARTISTIC | `FALL` 80 is not 9.8 m/s^2 at any scale. |
 | Droplet drying | `DRYING` [15, 40] s | | TUNED | |
 
@@ -518,7 +521,7 @@ Constants to grep when checking that the numbers here still match:
 
 | Area | Grep for |
 |---|---|
-| Rain slant | `FALL = 24`, `CAP = 70`, `OLD_SLANT`, `PATH`, `STREAK_MOST`, `GUST_SHARE`, `effectiveSpeed`, `TAU_UP`, `TEST_WIND`, `STEPS = 20`, `PACE` / `paceOf` |
+| Rain slant, drop size | `d0Of`, `vtOf`, `beadROf`, `RAIN_NOMINAL`, `LAYERS` (`size`, `near`), `MID_SPEED`, `CAP = 70`, `OLD_SLANT`, `PATH`, `STREAK_MOST`, `GUST_SHARE`, `effectiveSpeed`, `TAU_UP`, `TEST_WIND`, `STEPS = 20`, `PACE` / `paceOf` |
 | Effect levels | `conditionsOf`, `FLOOD_ON`, `FOG_OFF`, `windSideOf`, `GUST_MARK`, `BUDGET`, `ART_PX`, `FADE_S` |
 | Haze | `PAN_MAX`, `PAN_K`, `bakeTexture`, `HOLLOW` |
 | Heat | `heatOf`, `HEAT_STEPS`, `HEAT_PERIOD`, `HEAT_PEAK`, `heatWave`, `wanted`, `HEAT_SLEW`, `HEAT_SOFT` |

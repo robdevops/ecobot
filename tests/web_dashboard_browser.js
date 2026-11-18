@@ -3866,7 +3866,7 @@ const WEATHER = {
       Sky.advance(200);
       Sky.timeScale(1);
       const r = Sky.state().rain;
-      return { slantDeg: r.slantDeg, slant: r.slant, speed: r.speed, target: r.target, vxMax: r.vxMax, tilts: r.tilts, mirrored: r.mirrored, vx: r.vx };
+      return { slantDeg: r.slantDeg, slant: r.slant, speed: r.speed, target: r.target, vxMax: r.vxMax, tilts: r.tilts, mirrored: r.mirrored, vx: r.vx, layers: r.layers };
     }, [kmh, gust]);
     out.speeds = {};
     for (const kmh of [0, 2, 5, 10, 20, 40, 60, 100]) out.speeds[kmh] = await settle(kmh);
@@ -3898,7 +3898,7 @@ const WEATHER = {
       Sky.timeScale(1);
       const steps = (a) => Math.max(...a.map((v, i) => i ? Math.abs(v - a[i - 1]) : 0));
       const to = (a, deg) => a.findIndex((v) => Math.abs(v) >= deg) / 60;   // (s until it has got that far)
-      return { maxUp: steps(up), maxDown: steps(down), final: up[up.length - 1], upTo50: to(up, 50), upSecondsHalf: to(up, up[up.length - 1] * 0.5),
+      return { vt: Sky.state().rain.layers[1].vt, maxUp: steps(up), maxDown: steps(down), final: up[up.length - 1], upTo50: to(up, 50), upSecondsHalf: to(up, up[up.length - 1] * 0.5),
                downSecondsHalf: down.findIndex((v) => v <= up[up.length - 1] * 0.5) / 60, back: down[down.length - 1], monotonic: up.every((v, i) => i === 0 || v >= up[i - 1] - 1e-9) };
     });
     // rightward: the exact mirror (a negative angle, the streaks mirrored, the drops moving right)
@@ -3947,17 +3947,54 @@ const WEATHER = {
           ratio += r.pathRatio; down += r.downRatio; len += r.streakLen; count += Sky.state().particles.rain; n++;
         }
         const r = Sky.state().rain;
-        return { path: ratio / n, down: down / n, streak: len / n, drops: count / n, landed: r.landed - from, deg: r.slantDeg };
+        return { path: ratio / n, down: down / n, streak: len / n, drops: count / n, landed: r.landed - from, deg: r.slantDeg, layers: r.layers.map((l) => l.angleDeg) };
       });
     }
     // the test link's wind (?fx=rain2,wind: simulated 11 km/h, no reading above it): the slant it gives
     const link = await weatherPage(browser, url, { query: "?fx=rain2,wind", driven: true });
-    out.link = await link.page.evaluate(() => { Sky.timeScale(3); Sky.advance(200); Sky.timeScale(1); const r = Sky.state().rain; return { deg: r.slantDeg, speed: r.speed }; });
+    out.link = await link.page.evaluate(() => { Sky.timeScale(3); Sky.advance(200); Sky.timeScale(1); const r = Sky.state().rain; return { deg: r.slantDeg, speed: r.speed, layers: r.layers.map((l) => l.angleDeg), rate: r.rate }; });
     await link.context.close();
     // the splashes: sideways spread (their x as drawn against where the drop landed) isn't asserted; no error is
     out.errors = p.errors;
     await p.context.close();
     return out;
+  },
+
+  // The rain's drop sizes (Sky.setRainRate): at each rate R (mm/h) the median drop D0, each layer's drop size, terminal speed, lean at
+  // 25 km/h and vertical speed, and the landing bead's radius, settled
+  async drops(browser, url, out) {
+    const p = await weatherPage(browser, url, { query: "?fx=rain2", driven: true });
+    out.rates = {};
+    for (const rate of [0, 0.2, 0.5, 1, 5, 10, 50, 100, 500]) {
+      out.rates[rate] = await p.page.evaluate((rate) => {
+        Sky.setRainRate(rate);
+        Sky.setWindSpeed(25, 0);
+        Sky.timeScale(3);
+        Sky.advance(200);
+        Sky.timeScale(1);
+        const r = Sky.state().rain;
+        return { rate: r.rate, d0: r.d0, beadR: r.beadR, layers: r.layers, slantDeg: r.slantDeg };
+      }, rate);
+    }
+    out.errors = p.errors;
+    await p.context.close();
+  },
+
+  // The wind's eddies: how often new ones rise, over a long stretch of the weather's time (each of the page's slots in turn: a life, a rest)
+  async eddies(browser, url, out) {
+    const p = await weatherPage(browser, url, { query: "?fx=wind", driven: true });
+    out.run = await p.page.evaluate(() => {
+      Sky.timeScale(3);
+      Sky.advance(100);   // (past the opening's part-way cycles)
+      const w0 = Sky.state().wind, t0 = Sky.clock().clock, from = w0.eddyRises;
+      let live = 0, n = 0;
+      for (let i = 0; i < 4000; i++) { Sky.advance(1); const w = Sky.state().wind; live += w.eddyStates.length; n++; }
+      const w = Sky.state().wind;
+      Sky.timeScale(1);
+      return { rises: w.eddyRises - from, seconds: Sky.clock().clock - t0, slots: w.eddySlots, live: live / n };
+    });
+    out.errors = p.errors;
+    await p.context.close();
   },
 
   async direction(browser, url, out) {
