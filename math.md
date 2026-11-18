@@ -21,10 +21,11 @@ How to read the tables:
 - "Faithful?" says how close to reality the formula is and where it stops being right.
 - A number appears only if it is in the code or a cited standard.
 
-Retuning status (read this first):
+Status (as of 96e255f):
 
-- The rain slant law `tan(angle) = speed / 24 km/h`, cap 70 degrees, constant vertical fall speed (path speed `V0 / cos(angle)`), and `TEST_WIND = 11` are committed at HEAD (commit 4d828c4). This file describes them as current. No 18 km/h law remains in the code.
-- The heat wave is still vertical in the committed code. The working tree has an uncommitted change that rotates it to follow the sun's lean (marked "retuning in progress" in section 4.4). The formulas there are the committed vertical version.
+- The rain slant law `tan(angle) = speed / 24 km/h` (cap 70 degrees), the constant vertical fall speed (path speed `V0 / cos(angle)`) and `TEST_WIND = 11` are in the code. No 18 km/h law remains.
+- The heat wave follows the sun's lean (the UV beams' own value, commit c59e2f3). Section 4.2 describes it.
+- Issues in section 9 carry a status: FIXED (with the commit), LEFT BY DECISION (the user chose to leave it), or N/A.
 
 ## 1. Summary of formula groups
 
@@ -43,7 +44,8 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | A2 | Wind side from wind direction | 3.1 | REAL-APPROX |
 | A3 | Rain slant law | 3.2 | REAL-APPROX |
 | A4 | Rain effective speed and smoothing | 3.2 | TUNED |
-| A5 | Rain fall speeds, streak length, landing, splash | 3.2 | ARTISTIC |
+| A5 | Rain fall speed (constant vertical speed, path speed `V0 / cos`) | 3.2 | REAL-APPROX |
+| A5b | Rain layer speeds, streak length, landing, splash | 3.2 | ARTISTIC |
 | A6 | Rain drop count and density | 3.2 | TUNED |
 | A7 | Leaf wind: stream function turbulence | 3.3 | ARTISTIC |
 | A8 | Leaf wind: eddies, gust pulses and bands, veer | 3.3 | ARTISTIC |
@@ -52,18 +54,19 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | A11 | Frame rate, fades, direction easing | 3.1 | ARTISTIC |
 | A12 | Smoothstep easing | 3.1 | REAL-MODEL |
 | A13 | Wind speed to haze pan | 4.1 | TUNED |
+| A14 | Leaf pace scale `k` from the wind speed | 3.3 | TUNED |
 | H1 | Haze level from AQI band edges | 4.1 | REAL-MODEL |
 | H2 | Haze texture, tint, palette, motes | 4.1 | ARTISTIC |
 | H3 | Heat level, colour ramp, period, peak | 4.2 | TUNED |
-| H4 | Heat wave phases and spatial wash | 4.2 | ARTISTIC |
+| H4 | Heat wave phases, rotated frame and spatial wash (the lean itself is S3) | 4.2 | ARTISTIC |
 | H5 | UV trigger (UV index 11 and above) | 4.3 | REAL-MODEL |
 | H6 | Ice reach, growth and melt rates | 4.4 | TUNED |
 | H7 | Ice crystal forms | 4.4 | ARTISTIC |
-| H8 | Flood trigger (rain rate above 30 mm/h) | 4.5 | TUNED |
+| H8 | Flood trigger (above 30 mm/h on, below 24 off) | 4.5 | TUNED |
 | H9 | Flood level, chop, frog timing, gust objects | 4.5 | ARTISTIC |
 | H10 | Flood wave equation and wind drift | 4.5 | REAL-APPROX |
 | H11 | Gust-object trigger (gust above 99 km/h) | 4.5 | TUNED |
-| B1 | Humidity trigger and fog level | 5.1 | TUNED |
+| B1 | Humidity trigger (90 % on, 85 % off) and fog level | 5.1 | TUNED |
 | B2 | Bead volume `r^3` and merging | 5.2 | REAL-MODEL |
 | B3 | Bead gathering, leaving, evaporation | 5.2 | REAL-APPROX |
 | B4 | Bead pinning threshold `RUN_R` | 5.3 | REAL-APPROX |
@@ -91,14 +94,14 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | D1 | Server sun position call and sunrise/sunset times | 8.1 | REAL-MODEL |
 | D2 | Magnus dew point (outlook fallback only) | 8.2 | REAL-MODEL |
 | D3 | Server unit conversions | 8.2 | REAL-MODEL |
-| D4 | US AQI from PM2.5 and PM10 | 8.3 | REAL-APPROX |
+| D4 | US AQI from PM2.5 and PM10 (truncated, instantaneous) | 8.3 | REAL-APPROX |
 | D5 | AQI and PM gauge bands (EPA edges) | 8.3 | REAL-MODEL |
 | D6 | PM1, CO2, VOC, NOx bands and ratings | 8.3 | TUNED |
 | D7 | Spike removal | 8.3 | TUNED |
 | D8 | Means, minima, maxima, time-weighting | 8.4 | REAL-MODEL |
-| D9 | Rain from the daily counter | 8.4 | REAL-APPROX |
+| D9 | Rain from the daily counter (plausible-reset rule) | 8.4 | REAL-APPROX |
 | D10 | Display smoothing, row caps, MIN_READINGS | 8.4 | TUNED |
-| D11 | Outlook rain verdict | 8.2 | TUNED |
+| D11 | Outlook rain verdict (pressure by start-to-end change) | 8.2 | TUNED |
 | D12 | Forecast rain chance from the ensemble | 8.5 | REAL-APPROX |
 | D13 | Forecast-revision alert thresholds | 8.5 | TUNED |
 | D14 | Day look rules | 8.5 | TUNED |
@@ -108,15 +111,15 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | D18 | Circular mean of wind direction | 8.6 | REAL-MODEL |
 | D19 | Alert rule thresholds | 8.6 | TUNED |
 
-Count per label (generated from this table when the file was written):
+Count per label (counted from this table, as of 96e255f):
 
 | Label | Groups |
 |---|---|
 | REAL-MODEL | 19 |
-| REAL-APPROX | 14 |
-| TUNED | 30 |
+| REAL-APPROX | 15 |
+| TUNED | 31 |
 | ARTISTIC | 12 |
-| Total | 75 |
+| Total | 77 |
 
 Not computed here at all (the station or a provider supplies them): dew point, feels like, apparent temperature, VPD, sunrise and sunset, pollen and thunderstorm-asthma levels, and the dashboard's heat index or wind chill (none exists in `lib/`).
 
@@ -143,13 +146,13 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Beam lean | `leanAt` web_dashboard.html:916 | `lean = clamp(-atan(sin(az) / tan(max(el, 3 deg))), -75, 75)` degrees from vertical; `EL_LOW` 3, `BEAM_MAX` 75 | REAL-APPROX | The sun's direction projected on the east/up plane, east on the right of the screen (as on the compass dial). It drops the north/south component (toward or away from the viewer). The 3 degree floor and 75 degree cap are display limits. Example: az 85.7, el 45.6 gives -44.4 degrees; az 111, el 10.8 gives -78, capped to -75. For a northern-hemisphere station the left/right sense would depend on which way the window faces. |
-| Fallback lean | `leanOf` :912 | `h = clamp((t - noon) / ((set - rise)/2), -1, 1)`, `lean = 70 * sin(pi/2 * h)`; `noon = (rise + set)/2`; `BEAM_CURVE` 70 | TUNED | Right sign (negative in the morning) but no latitude or season; 70 degrees at the extremes, not 90. Used only when no sun position exists. |
+| Beam lean | `leanAt` web_dashboard.html:915 | `lean = clamp(-atan(sin(az) / tan(max(el, 3 deg))), -75, 75)` degrees from vertical; `EL_LOW` 3, `BEAM_MAX` 75 | REAL-APPROX | The sun's direction projected on the east/up plane, east on the right of the screen (as on the compass dial). It drops the north/south component (toward or away from the viewer). The 3 degree floor and 75 degree cap are display limits. Example: az 85.7, el 45.6 gives -44.4 degrees; az 111, el 10.8 gives -78, capped to -75. For a northern-hemisphere station the left/right sense would depend on which way the window faces. |
+| Fallback lean | `leanOf` :911 | `h = clamp((t - noon) / ((set - rise)/2), -1, 1)`, `lean = 70 * sin(pi/2 * h)`; `noon = (rise + set)/2`; `BEAM_CURVE` 70 | TUNED | Right sign (negative in the morning) but no latitude or season; 70 degrees at the extremes, not 90. Used only when no sun position exists. |
 | Sunrise, sunset fallback | `SUN_FALLBACK` web_dashboard.py:104 | 06:00 and 18:00 (360 and 1080 min) when the forecast has none or set is not after rise | TUNED | Wrong by up to about 3 hours at Melbourne's solstices. See Issues. |
 | Sunrise and sunset | `sun_of` web_dashboard.py:107 | minutes = hour*60 + minute + second/60, from Open-Meteo's local ISO times for today | REAL-MODEL | The provider's values, DST included. |
-| Run-on | `setSun`, `placeNow` :935 | `rate = (new - last) / dt` for samples 30 s to 3600 s apart (azimuth difference the short way: `((d + 540) mod 360) - 180`); position runs on at that rate for at most 1800 s (`RUN_ON`) | REAL-APPROX | Linear extrapolation; accurate to a small fraction of a degree between the 60 s fetches. If data stops, the error grows (near transit in a Melbourne summer the azimuth moves roughly 50 degrees an hour). |
-| Beams | `uvShafts`, `beamOf` :950-1005 | count `max(4, round(W/70))` plus off-screen ones; width 8 to 18 art px; length 0.4 to 0.9 of H; rotation about the top by the lean, width squeezed by `cos(lean)`; sway 0.85 to 1.65 px | ARTISTIC | Drawn only while the sun is up. |
-| Top glow | :1120 | height 16 % of H; alpha `0.6 * (1 - y/(0.16 H))^2.4` | ARTISTIC | |
+| Run-on | `setSun` :931, `placeNow` :919 | `rate = (new - last) / dt` for samples 30 s to 3600 s apart (azimuth difference the short way: `((d + 540) mod 360) - 180`); position runs on at that rate for at most 1800 s (`RUN_ON`) | REAL-APPROX | Linear extrapolation; accurate to a small fraction of a degree between the 60 s fetches. If data stops, the error grows (near transit in a Melbourne summer the azimuth moves roughly 50 degrees an hour). |
+| Beams | `uvShafts`, `beamOf` :950-995 | count `max(4, round(W/70))` plus off-screen ones; width 8 to 18 art px; length 0.4 to 0.9 of H; rotation about the top by the lean, width squeezed by `cos(lean)`; sway 0.85 to 1.65 px | ARTISTIC | Drawn only while the sun is up. |
+| Top glow | :1179 | height 16 % of H; alpha `0.6 * (1 - y/(0.16 H))^2.4` | ARTISTIC | |
 
 ## 3. Wind, rain and the air (Sky)
 
@@ -157,42 +160,42 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Effect levels | `conditionsOf` :5317 | rain: 0 if rate is 0, else `0.3 + 0.7*min(1, rate/8)` (mm/h). haze: the number of AQI edges [50, 100, 150, 200, 300] below the AQI (0 to 5; the tile's own bounds if given). uv: 1 if UVI is 11 or more. humidity: 0 below 90 %, else `max(0.05, min(1, (RH - 90)/10))`. wind: 1 if wind is above 15 km/h (the reading, not the gust). heat: 0 below 35 C, else `0.3 + 0.7*min(1, (T - 35)/8)`. ice: `-T` if T is below 0 (degrees below zero). flood: 1 if rain rate is above 30 mm/h, then kept until it falls below 24 mm/h; humidity likewise kept from 90 % down to 85 % | TUNED | The thresholds come from real category names (UVI 11 is WHO "extreme"; 15 km/h is mid-Beaufort 3), but the ramps are linear and chosen by look. Rain saturates at 8 mm/h, so 8 and 30 mm/h look the same. Hysteresis on the flood (on over 30, off below 24 mm/h) and the humidity (on from 90 %, off below 85 %), held in the page (`flooding`, `fogging`), so a reading near either does not toggle the effect; a page load starts with the plain mark. |
-| Wind side | `windSideOf` :5337 | direction in (0, 180) gives leftward (-1); in (180, 360) gives rightward (+1); 0, 180, 360 or no reading keeps the last side | REAL-APPROX | Correct sign for a dial with east on the right: wind from the east blows toward the west. Only the side counts; 91 and 179 degrees behave the same. |
+| Effect levels | `conditionsOf` :5350 | rain: 0 if rate is 0, else `0.3 + 0.7*min(1, rate/8)` (mm/h). haze: the number of AQI edges [50, 100, 150, 200, 300] below the AQI (0 to 5; the tile's own bounds if given). uv: 1 if UVI is 11 or more. humidity: 0 when not fogging, else `max(0.05, min(1, (RH - 90)/10))` (so 0.05 while held between 85 and 90 %). wind: 1 if wind is above 15 km/h (the reading, not the gust). heat: 0 below 35 C, else `0.3 + 0.7*min(1, (T - 35)/8)`. ice: `-T` if T is below 0 (degrees below zero). flood: 1 if rain rate is above 30 mm/h (`FLOOD_ON`), then kept while it is 24 mm/h or more (`FLOOD_OFF`); humidity on from 90 % (`FOG_ON`), kept while it is 85 % or more (`FOG_OFF`) | TUNED | The thresholds come from real category names (UVI 11 is WHO "extreme"; 15 km/h is mid-Beaufort 3), but the ramps are linear and chosen by look. Rain saturates at 8 mm/h, so 8 and 30 mm/h look the same. Hysteresis on the flood (on over 30, off below 24 mm/h) and the humidity (on from 90 %, off below 85 %), held in the page (`flooding`, `fogging`, :5359-5360), so a reading near either does not toggle the effect; a page load starts with the plain mark. |
+| Wind side | `windSideOf` :5372 | direction in (0, 180) gives leftward (-1); in (180, 360) gives rightward (+1); 0, 180, 360 or no reading keeps the last side | REAL-APPROX | Correct sign for a dial with east on the right: wind from the east blows toward the west. Only the side counts; 91 and 179 degrees behave the same. |
 | Direction easing | `steer`, `DIR_S` 4 s | `p` slides to its target at rate `2/DIR_S`; `f = sin(p*pi/2)`; the side flips when f crosses 0 and sprites are mirrored | ARTISTIC | |
-| Particle budget | `BUDGET` :284, `tick()` | budget = `W*H/400` particles (480 x 300 gives 360); `share = min(1, budget / sum of needs)`; each effect gets `round(need*share)`; humidity has its own limits; rain's count is the plain budget at every slant | TUNED | A performance and legibility cap. Max rain alone: need 360, exactly the budget. |
-| Brightness cap | `CAP` :285, `draw()` | `sum = total of strength_k * amount_k` over all effects except rain; `cap = min(1, 1.5 / sum)`; each effect drawn at `strength*amount*cap`. Strengths: rain `0.55 + 0.35*L` (outside the cap), haze 0.44/0.52/0.60/0.70/0.82 by band, heat `0.4 + 0.4*L`, uv 0.8, wind 0.8, flood 0.6, gust 0.45, ice `0.36 - 0.12*min(1, extent/(0.6*big))`, humidity 0.8 | TUNED | Looks only. |
+| Particle budget | `BUDGET` :285, `tick()` | budget = `W*H/400` particles (480 x 300 gives 360); `share = min(1, budget / sum of needs)`; each effect gets `round(need*share)`; humidity has its own limits; rain's count is the plain budget at every slant | TUNED | A performance and legibility cap. Max rain alone: need 360, exactly the budget. |
+| Brightness cap | `CAP` :286, `draw()` | `sum = total of strength_k * amount_k` over all effects except rain; `cap = min(1, 1.5 / sum)`; each effect drawn at `strength*amount*cap`. Strengths: rain `0.55 + 0.35*L` (outside the cap), haze 0.44/0.52/0.60/0.70/0.82 by band, heat `0.4 + 0.4*L`, uv 0.8, wind 0.8, flood 0.6, gust 0.45, ice `0.36 - 0.12*min(1, extent/(0.6*big))`, humidity 0.8 | TUNED | Looks only. |
 | Frame, fade | `FADE_S` 1.5 s, 30 fps cap | linear fade | ARTISTIC | |
 | Smoothstep | various | `u*u*(3 - 2*u)` | REAL-MODEL | A standard easing function (the use of it is for looks). |
 
-### 3.2 Rain (`web_dashboard.html` ~474-680)
+### 3.2 Rain (`web_dashboard.html` ~474-680; `GUST_SHARE` :335)
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Slant law | `slantOf` :491; `FALL` 24, `CAP` 70 deg | `tan(angle) = min(tan 70 deg, v / 24)`, v in km/h (across per down). The cap is reached at v = 65.9 km/h. Checks: 5 km/h gives 11.8 degrees, 10 gives 22.6, 25 gives 46.2, 40 gives 59.0, 60 gives 68.2 | REAL-APPROX | The real law is `tan(angle) = u_wind / v_terminal`, so the form is right. 24 km/h is 6.7 m/s, a fair raindrop terminal speed (drizzle about 4 m/s, a 2 mm drop 6.5, a 5 mm drop 9). It uses one fall speed for all drops, ignores the wind profile with height (the anemometer is a few metres up) and turbulence. There is no real cap: at 100 km/h the true angle is 76 degrees. The 70 degree cap bites only above 66 km/h and also bounds the sprite set (21 tilts, 3.5 degrees apart, `STEPS` 20). |
-| Effective speed | `effectiveSpeed` (shared by the rain, the haze and the leaves' pace); `GUST_SHARE` 0.3 | `v_eff = speed + 0.3 * max(gust - speed, 0)` | TUNED | A mix of mean and gust with no standard. |
+| Slant law | `slantOf` :497; `FALL` 24, `CAP` 70 deg | `tan(angle) = min(tan 70 deg, v / 24)`, v in km/h (across per down). The cap is reached at v = 65.9 km/h. Checks: 5 km/h gives 11.8 degrees, 10 gives 22.6, 25 gives 46.2, 40 gives 59.0, 60 gives 68.2 | REAL-APPROX | The real law is `tan(angle) = u_wind / v_terminal`, so the form is right. 24 km/h is 6.7 m/s, a fair raindrop terminal speed (drizzle about 4 m/s, a 2 mm drop 6.5, a 5 mm drop 9). It uses one fall speed for all drops, ignores the wind profile with height (the anemometer is a few metres up) and turbulence. There is no real cap: at 100 km/h the true angle is 76 degrees. The 70 degree cap bites only above 66 km/h and also bounds the sprite set (21 tilts, 3.5 degrees apart, `STEPS` 20). |
+| Effective speed | `effectiveSpeed` :336 (shared by the rain, the haze and the leaves' pace); `GUST_SHARE` 0.3 (:335) | `v_eff = speed + 0.3 * max(gust - speed, 0)` | TUNED | A mix of mean and gust with no standard. |
 | Smoothing | `TAU_UP` 1 s, `TAU_DOWN` 2 s | first-order low-pass: `speed += (goal - speed) * (1 - exp(-dt/tau))`; snaps within 0.02 km/h | TUNED | Hides the 16 s reading jitter. The asymmetry is aesthetic. |
-| Fall speed | `PATH` :486, `spawn`, `step` | vertical speed = layer speed (150/230/330 art px/s, far/mid/near) `* U(0.85, 1.15) * pace`, `pace = 0.8 + 0.4*level`, the same at every slant; across = vertical * tan(angle); path speed = vertical / cos(angle) (1.1x at 24 degrees, 1.4 at 46, 1.9 at 59, 2.9 at the 70 degree cap) | REAL-MODEL | Physical: wind pushes a drop sideways without slowing its fall. A drop blown out of the window's downwind side starts again at the top or upwind side, so landings per area are the same at every slant. |
-| Streak length | `streak` :503 | length along the path `(n - 1) * PATH * min(1.6, 1/cos(angle))` with n 3 to 4 (far), 5 to 6 (mid), 8 to 10 (near); rows `round(len*cos)`, columns `round(len*tan*cos)` | ARTISTIC | Grows with the path speed, capped at 1.6x the calm length (reached at 51 degrees). |
-| Drop count | `need` :562 | `need = (W*H/1000) * (0.1 + 2.4 * level^1.5)`; count `round(need * share)` | TUNED | No density factor: the vertical speed is constant, so landings per area (measured over 60 s of weather time: 3870, 3822, 3823, 3695 at 0, 24, 46, 68 degrees) stay within 5 %. The comment "about 85 drops on a laptop" does not match the formula (see Issues). |
+| Fall speed | `PATH` :491, `spawn` :555, `step` | vertical speed = layer speed (150/230/330 art px/s, far/mid/near) `* U(0.85, 1.15) * pace`, `pace = 0.8 + 0.4*level`, the same at every slant; across = vertical * tan(angle); path speed = vertical / cos(angle) (1.09x at 24 degrees, 1.44 at 46, 1.94 at 59, 2.92 at the 70 degree cap) | REAL-APPROX | The kinematics are real: wind pushes a drop sideways without slowing its fall, so the path speed is vertical over cos. The simplification: one terminal speed per layer for all drops (the three layer speeds, 150/230/330 art px/s, and the 0.8 to 1.2 level pace are chosen, ARTISTIC) and art px with no physical length, so only the ratios (path over vertical) are physical. A drop blown out of the window's downwind side starts again at the top or upwind side, so landings per area are the same at every slant. |
+| Streak length | `streak` :507; `STREAK_MOST` 1.6 | length along the path `(n - 1) * PATH * min(1.6, 1/cos(angle))` with n 3 to 4 (far), 5 to 6 (mid), 8 to 10 (near); rows `round(len*cos)`, columns `round(len*tan*cos)` | ARTISTIC | Grows with the path speed, capped at 1.6x the calm length (reached at 51.3 degrees; the path speed itself keeps growing to 2.9x). The calm length is `(n - 1) * PATH` with `PATH = sqrt(1 + 0.45^2) = 1.097`. |
+| Drop count | `need` :560 | `need = (W*H/1000) * (0.1 + 2.4 * level^1.5)`; count `round(need * share)` | TUNED | No density factor: the vertical speed is constant, so landings per area (measured over 60 s of weather time: 3870, 3822, 3823, 3695 at 0, 24, 46, 68 degrees) stay within 5 %. The comment now says about 71 drops for the light case on a laptop, which matches (`0.1 + 2.4*0.3^1.5` times 144, 71.2). |
 | Sway | step | `slant * (1 + 0.12*sin(0.37 t))`, a 17 s period | ARTISTIC | |
-| Wind push on rain | step :527 | extra across-speed `(calm*STEADY*(1 + gust)*k + BANDS*(0.7 + gust)*band) * slant/0.45`, `STEADY` 45, `BANDS` 190 px/s, `k = layer speed / 330` | ARTISTIC | Scales with the slant so there is none in calm. |
+| Wind push on rain | step :547 | extra across-speed `(calm*STEADY*(1 + gust)*k + BANDS*(0.7 + gust)*band) * slant/0.45`, `STEADY` 45, `BANDS` 190 px/s, `k = layer speed / 330` | ARTISTIC | Scales with the slant so there is none in calm. |
 | Landing, splash | step | splash of 5 frames in 0.24 s, thrown downwind by `min(abs(vx)/vy, tan 70 deg) * 1.4` px | ARTISTIC | |
 | Leaf knock | `hard` | `hard = 0.04 + 0.96 * level^2.5`; knock `60 px/s * hard * ratio * U(0.7, 1.3)` | ARTISTIC | |
 
-### 3.3 Wind: the leaf air-velocity field (~1160-1520)
+### 3.3 Wind: the leaf air-velocity field (~1215-1560)
 
-Everything here is drawn in art px. The measured wind speed scales the leaves' pace by `k = clamp(0.4 + 0.024*s, 0.5, 1.6)` (`PACE`, `paceOf`; `s` the rain's effective speed, eased with `TAU_UP`/`TAU_DOWN`): 25 km/h gives the layer speeds below (k = 1), 15 km/h 0.76, 40 km/h 1.36, 50 and over 1.6, under 4 km/h 0.5. `k` scales the leaves' speed, the gust bands' carrying speed, the turbulence's drift and swirl, and the eddies' drift; a test link's wind over a calmer real one uses k = 1. The reading also switches the effect on (above 15 km/h), chooses the side, and drives the rain slant and haze pan.
+Everything here is drawn in art px. The measured wind speed scales the leaves' pace by `k = clamp(0.4 + 0.024*s, 0.5, 1.6)` (`PACE` :1227, `paceOf` :1228; applied at :1509; `s` the rain's effective speed, eased with `TAU_UP`/`TAU_DOWN`): 25 km/h gives the layer speeds below (k = 1), 15 km/h 0.76, 40 km/h 1.36, 50 and over 1.6, under about 4.2 km/h 0.5. The leaves are only on above 15 km/h, so in practice k is at least 0.76. `k` scales the leaves' speed, the gust bands' carrying speed, the turbulence's drift and swirl, and the eddies' drift; a test link's wind over a calmer real one uses k = 1. The reading also switches the effect on (above 15 km/h), chooses the side, and drives the rain slant and haze pan.
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Leaf speeds | LAYERS ~1164 | 40/60/85 art px/s `* k * clamp(W/360, 0.6, 1) * (1 + gust + 0.3*(0.7 + gust)*band) * abs(dir.f)` | ARTISTIC | Their scale `k` follows the reading (TUNED: 0.4 + 0.024 s is chosen by look, with no physical length scale); the rest is not tied to it. |
-| Gust pulses | step ~1480 | every `U(2.5, 6)` s add `U(0.5, 1.1)` to g; g decays as `exp(-0.9 t)` | TUNED | A stand-in for gustiness, not driven by the gust reading. |
-| Gust bands | `bandAt` :1240 | `0.62*sin(0.024 s X) + 0.38*sin(0.041 s X + 1.7)`, `s = clamp(360/W, 1, 2.6)` (wavelengths 262 and 153 art px at s = 1) | ARTISTIC | No basis in the data. |
-| Turbulence | `airAt` :1255 | stream function `psi = A*sin(0.05X + a)*sin(0.07y - 0.7a) + B*sin(0.11X + 1.3 - a)*sin(0.13y - 0.9a)`, `A = 420*(0.7 + 0.6g)*k`, `B = 110*k`, `k = layer speed/60`, `a = 0.6 t`. Velocity `(dpsi/dy, -dpsi/dx)`; curl `0.0074*A*s1*s2 + 0.029*B*s3*s4` | ARTISTIC | The structure is real maths: the field is divergence-free, and `0.0074 = 0.05^2 + 0.07^2`, `0.029 = 0.11^2 + 0.13^2` (checked). The amplitudes and wavelengths are chosen. |
-| Eddies | `eddy` ~1275 | tangential speed `spin*rho*exp(-rho^2)`, `rho = distance/r`, maximum 0.43*spin at rho 0.71; `spin = +-U(4.5, 6)*r`, `r = U(26, 46)` art px; life `U(5, 9)` s, strength `sin(pi*k)^0.6`; count `max(4, round(W*H/30000))` | ARTISTIC | A Gaussian-type vortex, not a Lamb-Oseen or Rankine one (1/r far field). Real eddies do not pull leaves in and then fling them out. |
+| Leaf speeds | LAYERS :1222 | 40/60/85 art px/s `* k * clamp(W/360, 0.6, 1) * (1 + gust + 0.3*(0.7 + gust)*band) * abs(dir.f)` | ARTISTIC | Their scale `k` follows the reading (TUNED: 0.4 + 0.024 s is chosen by look, with no physical length scale); the rest is not tied to it. |
+| Gust pulses | step ~1500 | every `U(2.5, 6)` s add `U(0.5, 1.1)` to g; g decays as `exp(-0.9 t)` | TUNED | A stand-in for gustiness, not driven by the gust reading. |
+| Gust bands | `bandAt` :1260 | `0.62*sin(0.024 s X) + 0.38*sin(0.041 s X + 1.7)`, `s = clamp(360/W, 1, 2.6)` (wavelengths 262 and 153 art px at s = 1) | ARTISTIC | No basis in the data. |
+| Turbulence | `airAt` :1275 | stream function `psi = A*sin(0.05X + a)*sin(0.07y - 0.7a) + B*sin(0.11X + 1.3 - a)*sin(0.13y - 0.9a)`, `A = 420*(0.7 + 0.6g)*k`, `B = 110*k`, `k = layer speed/60`, `a = 0.6 t`. Velocity `(dpsi/dy, -dpsi/dx)`; curl `0.0074*A*s1*s2 + 0.029*B*s3*s4` | ARTISTIC | The structure is real maths: the field is divergence-free, and `0.0074 = 0.05^2 + 0.07^2`, `0.029 = 0.11^2 + 0.13^2` (checked). The amplitudes and wavelengths are chosen. |
+| Eddies | `eddy` :1316 | tangential speed `spin*rho*exp(-rho^2)`, `rho = distance/r`, maximum 0.43*spin at rho 0.71; `spin = +-U(4.5, 6)*r`, `r = U(26, 46)` art px; life `U(5, 9)` s, strength `sin(pi*k)^0.6`; count `max(4, round(W*H/30000))` | ARTISTIC | A Gaussian-type vortex, not a Lamb-Oseen or Rankine one (1/r far field). Real eddies do not pull leaves in and then fling them out. |
 | Leaf relaxation | step | `v += (v_air - v)*(1 - exp(-dt/tau))`, `tau = U(0.12, 0.3)` s; sink `U(2, 10)` px/s; spin `U(4, 9) + min(2.5*abs(curl), 14) + whirl` frames/s | REAL-APPROX | First-order drag relaxation is the standard way a light particle follows air. The sink speed is not physical (a real leaf falls near 1 m/s). Spin rising with curl is qualitatively right. |
-| Veer | `setWind` ~3850, `leafAir` | on a side flip the heading turns by about 180 degrees: `angle = from + delta*smoothstep(u)`, duration `VEER_S*abs(delta)/pi`, at least 1 s, `VEER_S` 9 | ARTISTIC | A designed story so leaves do not stop and reverse; real air does not swirl 180 degrees on a wind shift. |
+| Veer | `setWind` :3917, `leafAir` :1306 | on a side flip the heading turns by about 180 degrees: `angle = from + delta*smoothstep(u)`, duration `VEER_S*abs(delta)/pi`, at least 1 s, `VEER_S` 9 | ARTISTIC | A designed story so leaves do not stop and reverse; real air does not swirl 180 degrees on a wind shift. |
 
 ## 4. Haze, heat, UV, ice, flood
 
@@ -201,27 +204,28 @@ Everything here is drawn in art px. The measured wind speed scales the leaves' p
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
 | Level | `conditionsOf` | AQI above 50/100/150/200/300 gives levels 1 to 5 | REAL-MODEL | The US AQI band edges. The AQI itself is in section 8.3. |
-| Pan speed | `panFor` :711; `PAN_MAX` 3.15, `PAN_K` 22.1 | `pan = 3.15 * (1 - exp(-w / 22.1))` art px/s, `w = speed + 0.3*max(gust - speed, 0)`. Checks: 3 km/h gives 0.40, 40 km/h gives 2.64 | TUNED | Real haze moves at the wind speed (40 km/h is 11 m/s). This is a slow, saturating stand-in that encodes only "faster wind, faster pan". |
+| Pan speed | `panFor` :710; `PAN_MAX` 3.15, `PAN_K` 22.1 | `pan = 3.15 * (1 - exp(-w / 22.1))` art px/s, `w = speed + 0.3*max(gust - speed, 0)`. Checks: 3 km/h gives 0.40, 40 km/h gives 2.63 | TUNED | Real haze moves at the wind speed (40 km/h is 11 m/s). This is a slow, saturating stand-in that encodes only "faster wind, faster pan". |
 | Low-pass | `TAU` 4 s | `filtered += (w - filtered)*min(1, dt/4)` | TUNED | |
-| Texture | `bakeTexture` :731 | three layers of value noise (octaves 0.55/0.3/0.15), domain-warped, histogram-equalised per layer, summed with weights 0.6/0.85/1; cut by `comb`: `t = clamp((d/255 - lo)/span, 0, 1)`, shade `7*0.999*smoothstep(t)` | ARTISTIC | Each layer is uniform after equalisation but the sum is bell-shaped, so the cover per band is not the nominal share (see Issues). |
+| Texture | `bakeTexture` :730 | three layers of value noise (octaves 0.55/0.3/0.15), domain-warped, histogram-equalised per layer, summed with weights 0.6/0.85/1; cut by `comb`: `t = clamp((d/255 - lo)/span, 0, 1)`, shade `7*0.999*smoothstep(t)` | ARTISTIC | Each layer is uniform after equalisation but the sum is bell-shaped, so the cover per band is not the nominal share (see Issues). |
 | Tint | `lookOf` | grey mix 14 % using `Y = 0.2126R + 0.7152G + 0.0722B` | ARTISTIC | The luma weights are the real ITU-R BT.709 ones (REAL-MODEL), applied to gamma-encoded values as a shortcut. The colours are chosen. |
 | Palette | `bake` | 8 shades; colour mix `u^0.85`, alpha `255*open*u^0.8`, `open` 0.7/0.7/0.8/0.9/1 by band | TUNED | |
 | Motes | ~752 | count `(W*H/1800)*(0.6 + 0.2*level)` moving at the pan speed | ARTISTIC | |
 
-### 4.2 Heat (~1020-1110; the wave is being retuned, see 4.2.1)
+### 4.2 Heat (`web_dashboard.html` ~998-1170)
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Heat 0 to 1 | `heatOf` :1027 | `h = clamp((level - 0.3)/0.7, 0, 1)`, which is `(T - 35)/8` for 35 to 43 C | TUNED | Linear and chosen. Nothing relates it to heat's effect on a person. |
-| Colour ramp | `heatColours` :1034 | `hue = 30 - 26h` (30 to 4 degrees), `sat = 0.30 + 0.70h`, five lightnesses [0.3, 0.4, 0.48, 0.55, 0.68] plus `(1 - h)*0.14` | TUNED | Standard HSL conversion (REAL-MODEL), chosen ramp: pale amber to vivid scarlet. |
-| Period | `cycle` :1053 | `period = 14 - 4h` s (14 s at 35 C, 10 s at 43 C) | TUNED | At most 0.1 flashes a second, far under the 3 Hz limit of WCAG 2.3.1. |
-| Peak | `cycle` | `peak = 0.7 + 0.3h` | TUNED | |
-| Wave phases | `heatWave` | phase u in [0, 1): build to 0.55 with extent `1 - (1 - s)^2`, `s = u/0.55`, brightness `(0.55 + 0.45s)*smoothstep(min(1, u/0.08))`; hold to 0.7; fade to 0.9 with brightness `1 - smoothstep`; gap to 1 | ARTISTIC | A visual "heat shimmer rising" metaphor. |
-| Spatial wash | ~1040-1100 | brightness `0.62*fall(k)*lobe(x)`, `fall = (0.5 + 0.5*cos(pi*k))^1.25`, `k = row/(0.25 H)`, lobe `0.7 + 0.3*clamp(0.5 + 0.32*sin(u + 0.7) + 0.18*sin(2u + 2.1), 0, 1)`; alpha `0.5*(0.55 + 0.45*level)` | ARTISTIC | The reach is a quarter of the window height. |
+| Heat 0 to 1 | `heatOf` :1026 | `h = clamp((level - 0.3)/0.7, 0, 1)`, which is `(T - 35)/8` for 35 to 43 C | TUNED | Linear and chosen. Nothing relates it to heat's effect on a person. |
+| Colour ramp | `heatColours` :1033; `HEAT_HUE` [30, 4], `HEAT_SAT` [0.3, 1], `HEAT_LIGHT` :1023 | `hue = 30 - 26h` (30 to 4 degrees), `sat = 0.30 + 0.70h`, five lightnesses [0.3, 0.4, 0.48, 0.55, 0.68] plus `(1 - h)*0.14` | TUNED | Standard HSL conversion (REAL-MODEL), chosen ramp: pale amber to vivid scarlet. |
+| Period | `cycle` :1053; `HEAT_PERIOD` [14, 10] | `period = 14 - 4h` s (14 s at 35 C, 10 s at 43 C) | TUNED | At most 0.1 flashes a second, far under the 3 Hz limit of WCAG 2.3.1. |
+| Peak | `cycle`; `HEAT_PEAK` [0.7, 1] | `peak = 0.7 + 0.3h` | TUNED | |
+| Wave phases | `heatWave` :1041; `HEAT_BUILD` 0.55, `HEAT_HOLD` 0.7, `HEAT_GONE` 0.9, `HEAT_RISE` 0.08 | phase u in [0, 1): build to 0.55 with extent `1 - (1 - s)^2`, `s = u/0.55`, brightness `(0.55 + 0.45s)*smoothstep(min(1, u/0.08))`; hold to 0.7; fade to 0.9 with brightness `1 - smoothstep`; gap to 1 | ARTISTIC | A visual "heat radiating" metaphor. |
+| Lean | `wanted` :1057 | the beams' lean (`beamState().lean`, section 2.2), 0 when the sun is down (`up` false); the drawn lean catches up at `HEAT_SLEW` 20 degrees a second at most (`dt` capped at 0.1 s); the sprite is baked again when the drawn lean is 0.5 degree from the baked one (3 degrees while catching up), or the heat step (48 steps) changes | REAL-APPROX | The direction is the sun's own (S3, with its limits: east-west projection only, 3 degree and 75 degree limits). The heat itself comes from the air temperature, not the sun: the lean says only "the sun's side". With the sun down it is vertical. The slew and re-bake rules are display behaviour. |
+| Frame | `frame` :1072; `HEAT_END` 20, `HEAT_FADE` 0.25 | `rows = ceil(0.25*H)` (at most H); with `c = cos(lean)`, `s = sin(lean)`: along-ray `w = dy*c + dx*s`, across `u = dx*c - dy*s` (dx, dy from the pivot); ray length `L = rows*c`; depth `deep = 1 + 2*(1 - c)`; pivot x `= round(W/2 * (1 + clamp(lean/20, -1, 1)))` on the top edge | ARTISTIC | A rotated frame so the wash radiates along the lean. The pivot sits at the end of the top edge away from the sun (the middle with no lean, the far end from 20 degrees), so the sun's side is lit from the start and no corner is bare. The reach is a quarter of the height at the pivot (straight down), so along a leaning ray it is `rows/cos(lean)` in true length. |
+| Spatial wash | `bake` :1076 | brightness `0.62*fall(k)*env*lobe(x)`; `fall = (0.5 + 0.5*cos(pi*k))^1.25`, `k = clamp((w - lead)/L, 0, 1)` (full before the pivot's level, 0 at `L`); `env` = 1 up to one reach straight down (`dy/rows <= 1`), then `0.5 + 0.5*cos(pi*k2)` with `k2 = (dy/rows - 1)/(deep - 1)`, 0 at `deep` (so the wedge on the sun's side is no deeper than `deep` reaches); `lobe = 0.7 + 0.3*clamp(0.5 + 0.32*sin(2*pi*x/W + 0.7) + 0.18*sin(4*pi*x/W + 2.1), 0, 1)` where x is where the ray crosses the top; alpha `0.5*(0.55 + 0.45*level)`; padded `HEAT_PAD` 3.5 degrees each side of the baked lean | ARTISTIC | All of it is for looks. |
+| Front | `draw` :1131-1160; `HEAT_SOFT` 0.4 | the lit front across the ray at `extent*(L + 0.4*rows)`, a linear mask over the last `0.4*rows` | ARTISTIC | |
 
-#### 4.2.1 Retuning in progress
-
-The committed heat wave is vertical (it never leans). The working tree has an uncommitted change that rotates the wave to the same lean as the UV beams (`beamState().lean`, vertical when the sun is down), repainting when the lean changes. Constants named in that change are not documented here until it lands.
+Vertical case (no lean): `c = 1`, `s = 0`, `deep = 1`, pivot at the middle: the wave is the straight-down one of earlier versions.
 
 ### 4.3 UV
 
@@ -230,33 +234,33 @@ The committed heat wave is vertical (it never leans). The working tree has an un
 | Trigger | `conditionsOf` | UVI of 11 or more turns the beams on (strength 0.8) | REAL-MODEL | 11 and above is the WHO "extreme" category. |
 | Beams, lean, glow | section 2.2 | | REAL-APPROX / ARTISTIC | See 2.2. |
 
-### 4.4 Ice and frost (~3170-3560)
+### 4.4 Ice and frost (~3240-3600)
 
 With `d` = degrees below 0 C.
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Reach | `reachFor` :3229 | `reach = big*(0.035 + 0.615*min(1, d/5)^1.2 + 0.15*clamp((d - 5)/5, 0, 1))`, `big` = the longer window side. 3.5 % just below 0, 65 % at -5 C, 80 % at -10 C and colder | TUNED | Real frost needs a surface at or below 0 C and below the frost point (dew point 0 C or lower). This uses air temperature only, ignores humidity and dew point, and the reach is a fraction of the window. |
-| Growth | `growRate` :3232 | `big*(0.0005 + 0.0005*min(d, 10))` per second (about a minute to the fringe just below 0, 3.6 minutes at -5) | TUNED | "Colder, faster" is the real trend; the numbers are chosen. |
-| Melt | `MELT` :3233 | `0.005*big` per second | TUNED | |
+| Reach | `reachFor` :3256 | `reach = big*(0.035 + 0.615*min(1, d/5)^1.2 + 0.15*clamp((d - 5)/5, 0, 1))`, `big` = the longer window side. 3.5 % just below 0, 65 % at -5 C, 80 % at -10 C and colder | TUNED | Real frost needs a surface at or below 0 C and below the frost point (dew point 0 C or lower). This uses air temperature only, ignores humidity and dew point, and the reach is a fraction of the window. |
+| Growth | `growRate` :3259 | `big*(0.0005 + 0.0005*min(d, 10))` per second (about a minute to the fringe just below 0, 3.6 minutes at -5) | TUNED | "Colder, faster" is the real trend; the numbers are chosen. |
+| Melt | `MELT` :3260 | `0.005*big` per second | TUNED | |
 | Crystal forms | ~3180-3230 | branches mostly at 60 degrees to the stem; fern, plume, tuft, needles | ARTISTIC | The 60 degrees nods to ice's hexagonal habit; forms and sizes are decorative. |
 | Haze depth | ~3188 | `min(0.4*extent, 0.11*min(W, H))` | ARTISTIC | |
 
-### 4.5 Flood, frog, gust objects (~2740-3140, ~3560-3800)
+### 4.5 Flood, frog, gust objects (~2810-3210, ~3600-3850)
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Flood trigger | `conditionsOf` | rain rate above 30 mm/h | TUNED | 30 mm/h is a heavy-rain intensity (heavy rain is roughly above 4 to 8 mm/h and violent above 50 mm/h in common classifications), not a flood criterion; flash floods depend on accumulation, soil and catchment. |
-| Level | step ~3080; `RISE` 4, `DRAIN` 6 | full height `0.25*H`; rises at `full/4` per second, drains at `full/6` per second | ARTISTIC | Far faster than real water. |
-| Wave equation | `waves` :2945; `c` 34 px/s | per column `a = c^2*(h[l] + h[r] - 2h[i]) + 2*(v[l] + v[r] - 2v[i]) - 0.1*v[i]`; substeps `ds <= 0.7/c`; surface clamped to +-6 px | REAL-APPROX | A damped 1D wave equation with viscous smoothing is a fair stand-in for surface waves. Real waves are dispersive (`c = sqrt(g*d)` only in shallow water); this is not. |
-| Wind drift | `PUSH` 6 px/s | first-order upwind advection of h and v at `6 px/s * wind amount` | REAL-APPROX | Real surface drift is a few percent of wind speed; this is a constant. Upwind adds numerical diffusion. |
+| Flood trigger | `conditionsOf` :5359; `FLOOD_ON` 30, `FLOOD_OFF` 24 | on when the rain rate is above 30 mm/h, kept on while it is 24 mm/h or more | TUNED | 30 mm/h is a heavy-rain intensity (heavy rain is roughly above 4 to 8 mm/h and violent above 50 mm/h in common classifications), not a flood criterion; flash floods depend on accumulation, soil and catchment. The 6 mm/h of hysteresis stops flicker for a reading near 30; the page starts with the plain mark. |
+| Level | step ~3095; `RISE` 4, `DRAIN` 6 (:2831) | full height `0.25*H`; rises at `full/4` per second, drains at `full/6` per second | ARTISTIC | Far faster than real water. |
+| Wave equation | `waves` :2972; `c` 34 px/s | per column `a = c^2*(h[l] + h[r] - 2h[i]) + 2*(v[l] + v[r] - 2v[i]) - 0.1*v[i]`; substeps `ds <= 0.7/c`; surface clamped to +-6 px | REAL-APPROX | A damped 1D wave equation with viscous smoothing is a fair stand-in for surface waves. Real waves are dispersive (`c = sqrt(g*d)` only in shallow water); this is not. |
+| Wind drift | `PUSH` 6 px/s (:2833) | first-order upwind advection of h and v at `6 px/s * wind amount` | REAL-APPROX | Real surface drift is a few percent of wind speed; this is a constant. Upwind adds numerical diffusion. |
 | Drop hit | `hit` | Gaussian poke of `-power` px, width 1.3; power 0.3/0.6/1.1 by layer | ARTISTIC | |
 | Chop | `CALMS` 25 s | chop eases to 1 with a 3 s time constant, back to 0 with 25 s; pokes per second `chop*30*W/300` | TUNED | |
 | Frog timing | ~2767-3062 | first frog after 30 s, then exponential with mean 180 s (`-mean*ln(1 - U)`), minimum gap 40 s; speed `U(7, 10)` px/s | ARTISTIC | Whimsy. |
-| Gust-object trigger | `GUST_MARK` :5395 | a new gust reading above 99 km/h flings one object | TUNED | 99 km/h is 27.5 m/s, in Beaufort 10 to 11 (89 to 117 km/h). The mark is "about a hundred". |
+| Gust-object trigger | `GUST_MARK` :5430 | a new gust reading above 99 km/h flings one object | TUNED | 99 km/h is 27.5 m/s, in Beaufort 10 to 11 (89 to 117 km/h). The mark is "about a hundred". |
 | Gust-object flight | `gust` step | speed `U(42, 56)` px/s `* (1 + 0.35*wind amount)`; shed bits every 0.15 to 0.45 s, up to 14 | ARTISTIC | |
 
-## 5. Condensation beads (humidity effect, ~1550-2700)
+## 5. Condensation beads (humidity effect, ~1568-2800)
 
 Distances are art px, times are seconds. The dew point is not used anywhere in the humidity effect: the trigger is outdoor relative humidity only.
 
@@ -264,8 +268,8 @@ Distances are art px, times are seconds. The dew point is not used anywhere in t
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Trigger and level | `conditionsOf` | level 0 below 90 % RH, else `clamp((RH - 90)/10, 0.05, 1)` | TUNED | Real fog on glass needs the glass below the air's dew point. RH of 90 % is a stand-in. |
-| Fog thickness | `thickness` :1789; `THICKEN` 4 s | `0.5 + 0.5*v`, approached at 1/4 per second | ARTISTIC | At v = 0.05 it is 0.525 (the comment says so now). |
+| Trigger and level | `conditionsOf` :5360; `FOG_ON` 90, `FOG_OFF` 85 | on from 90 % RH, kept while it is 85 % or more; level `clamp((RH - 90)/10, 0.05, 1)` (0.05 while held between 85 and 90 %) | TUNED | Real fog on glass needs the glass below the air's dew point. RH of 90 % is a stand-in. The 5 point hysteresis stops flicker. |
+| Fog thickness | `thickness` :1816; `THICKEN` 4 s | `0.5 + 0.5*v`, approached at 1/4 per second | ARTISTIC | At v = 0.05 it is 0.525 (the comment says so now). |
 | Foggy threshold | `FOG_AT` 0.06 | glass is FOGGY at 0.06 felt fog or more, else DRY; a TRAIL is wet glass less than half re-fogged | TUNED | |
 | Form, clear | `FORM` 6 s, `CLEAR` 10 s | cover moves at `dt/FORM` up, `dt/CLEAR` down | TUNED | Real fog on glass takes minutes. |
 
@@ -287,11 +291,11 @@ Distances are art px, times are seconds. The dew point is not used anywhere in t
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Speed law | `sized` :1989; `SPEED` 13 | `v(r, g) = 13 * (x <= 1 ? x^5 : x^3) * PACE[g] * run factor * tilt steepness`, `x = r/2.8` | TUNED | Real drops do not move below a pinning threshold, and above it speed grows with size (gravity pull scales with volume, drag with r). The `x^5` and `x^3` branches are a plausible shape, not fitted to data. They meet at x = 1 with a slope kink. The `x^3` branch is linear in water volume; below r = 2.8 the law is steeper than volume. |
-| Pace | `PACE` :1605 | [dry 0.3, trail 1.6, fog 1] | TUNED | Drops run faster on a wetted track, so the order is right; the ratios are chosen. |
-| Speed table | comment ~1562 | r 0.87 gives 0.04 px/s, r 1 gives 0.08, r 1.4 gives 0.4, r 2 gives 2.4, r 2.8 gives 13, r 4 gives 38 (on fog) | | Recomputed: 0.038, 0.076, 0.41, 2.4, 13, 37.9. All match. |
-| Pinning | `RUN_R` :1622 | no motion below r = 1.4 (`1.4^3 = 2.74`, about sixteen tiny beads) | REAL-APPROX | Stands in for contact-angle pinning; real pinning depends on drop size, tilt and surface. |
-| Track floor | `TRACK` :1990 | `sized(3, trail)`, about 25.6 px/s | TUNED | |
+| Speed law | `sized` :2016; `SPEED` 13 | `v(r, g) = 13 * (x <= 1 ? x^5 : x^3) * PACE[g] * run factor * tilt steepness`, `x = r/2.8` | TUNED | Real drops do not move below a pinning threshold, and above it speed grows with size (gravity pull scales with volume, drag with r). The `x^5` and `x^3` branches are a plausible shape, not fitted to data. They meet at x = 1 with a slope kink. The `x^3` branch is linear in water volume; below r = 2.8 the law is steeper than volume. |
+| Pace | `PACE` :1632 | [dry 0.3, trail 1.6, fog 1] | TUNED | Drops run faster on a wetted track, so the order is right; the ratios are chosen. |
+| Speed table | comment ~1592 | r 0.87 gives 0.04 px/s, r 1 gives 0.08, r 1.4 gives 0.4, r 2 gives 2.4, r 2.8 gives 13, r 4 gives 38 (on fog) | | Recomputed: 0.038, 0.076, 0.41, 2.4, 13, 37.9. All match. |
+| Pinning | `RUN_R` :1649 | no motion below r = 1.4 (`1.4^3 = 2.74`, about sixteen tiny beads) | REAL-APPROX | Stands in for contact-angle pinning; real pinning depends on drop size, tilt and surface. |
+| Track floor | `TRACK` :2017 | `sized(3, trail)`, about 25.6 px/s | TUNED | |
 | Pooled pull | `gather()` | when pooled, a bead within 4 px edge gap of a larger or tiny bead drifts at 0.1 px/s until the gap is 0.25 px, then merges | TUNED | 0.1 is below the slowest running speed 0.122 (checked). |
 | Snap | `snaps()`; `SNAP` 1 px | two beads within 1 px edge gap: the higher is pulled to the lower at 6 to 30 px/s (acceleration 120 px/s^2) and merged | ARTISTIC | Stands in for the capillary jump. |
 | Pop, gulp, stretch | `POP` 0.12 s, `GULP_R` 3.9, `STRETCH` 0.14 | bulges and stretches of a bead | ARTISTIC | |
@@ -301,19 +305,19 @@ Distances are art px, times are seconds. The dew point is not used anywhere in t
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Heavy gate | `HEAVY_RAIN` :1649 | 0.75 of the rain level, which is `8*(0.75 - 0.3)/0.7 = 5.14` mm/h | TUNED | The "about 5 mm/h" comment is right; the threshold itself has no physical meaning. |
+| Heavy gate | `HEAVY_RAIN` :1676 | 0.75 of the rain level, which is `8*(0.75 - 0.3)/0.7 = 5.14` mm/h | TUNED | The "about 5 mm/h" comment is right; the threshold itself has no physical meaning. |
 | Landing | `land()` | `LANDING` 0.35 per second, at most `RAIN_MOST` 14 on the glass, r in [2.6, 2.97] | ARTISTIC | Not a real sticking rate. |
-| Splash | ~2010 | `THROWN` [14, 20], `THROW` [24, 40] px/s, `FALL` 80 px/s^2 (:1660), `SPRAY` 0.25, `SPLASH_S` 0.25 s, `SQUASH` [0.5, 0.75] over 0.2 s | ARTISTIC | `FALL` 80 is not 9.8 m/s^2 at any scale. |
+| Splash | ~2010 | `THROWN` [14, 20], `THROW` [24, 40] px/s, `FALL` 80 px/s^2 (:1687), `SPRAY` 0.25, `SPLASH_S` 0.25 s, `SQUASH` [0.5, 0.75] over 0.2 s | ARTISTIC | `FALL` 80 is not 9.8 m/s^2 at any scale. |
 | Droplet drying | `DRYING` [15, 40] s | | TUNED | |
 
-## 6. Device tilt (`screenGravity` :5442, `tilt` :4009)
+## 6. Device tilt (`screenGravity` :5477, `tilt` :4036)
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
 | Gravity on screen | `screenGravity` | non-iOS (`u = -ax`, `v = ay`): angle 0 gives `(u, v)`, 90 gives `(v, -u)`, 180 gives `(-u, -v)`, 270 gives `(-v, u)`; other angles by `x = u*cos(a) + v*sin(a)`, `y = -u*sin(a) + v*cos(a)`. iOS: `u = ax`, `v = -ay` before the same turn | REAL-MODEL | The direction of gravity from `accelerationIncludingGravity`. Checked against the code's own tables for all four angles on both platforms. |
 | iOS sign | `screenGravity` | iOS reports the pull itself; Android reports the support force (minus gravity); the sign is flipped once | REAL-MODEL | Consistent with the flat-reading example (z = -9.56 on iOS, face up). |
 | Steepness | `tilt()` | `s = sqrt(gx^2 + gy^2) / sqrt(gx^2 + gy^2 + gz^2) = sin(theta)`; theta is the screen normal's angle from vertical (0 lying face up, 90 upright, 180 face down) | REAL-MODEL | The in-plane share of gravity: the sliding force factor `g*sin(theta)`; independent of the reading's size. |
-| Response curve | `POOL_IN`, `POOL_OUT`, `STEEP_FULL` :4006 | `POOL_IN = sin 5 deg = 0.0872`, `POOL_OUT = sin 7 deg = 0.1219`, `STEEP_FULL = sin 40 deg = 0.6428`; `t = clamp((s - 0.0872)/(0.6428 - 0.0872), 0, 1)`; `steep = smoothstep(t)`, low-passed with `k = 1 - exp(-dt/0.25)` | TUNED | The smoothstep is applied to `sin(theta)`, not theta: the ramp midpoint is s = 0.365 (theta 21.4 degrees). The real driving force keeps rising to 90 degrees; saturating at 40 is a choice. The 5/7 degree dead zone stands in for pinning and prevents flicker. |
+| Response curve | `POOL_IN`, `POOL_OUT`, `STEEP_FULL` :4033 | `POOL_IN = sin 5 deg = 0.0872`, `POOL_OUT = sin 7 deg = 0.1219`, `STEEP_FULL = sin 40 deg = 0.6428`; `t = clamp((s - 0.0872)/(0.6428 - 0.0872), 0, 1)`; `steep = smoothstep(t)`, low-passed with `k = 1 - exp(-dt/0.25)` | TUNED | The smoothstep is applied to `sin(theta)`, not theta: the ramp midpoint is s = 0.365 (theta 21.4 degrees). The real driving force keeps rising to 90 degrees; saturating at 40 is a choice. The 5/7 degree dead zone stands in for pinning and prevents flicker. |
 | Smoothing | `SNAP_DEG` 4, `STEP_DEG` 1.5, `TAU` 0.25 s | low-pass of the direction; snaps to straight down within 4 degrees; changes only when it moves 1.5 degrees or more | TUNED | Noise suppression. |
 | Face down | `tilt()` | steepness depends on `sin(theta)` only, so 180 degrees pools like 0 | REAL-APPROX | Real drops hang and fall from the underside. Rare, and documented in the code comment. |
 
@@ -321,7 +325,7 @@ Bead motion along the downhill unit vector (`b.x += grav.x*dy`, `b.y += grav.y*d
 
 ## 7. Gauges, units and layout
 
-### 7.1 Unit conversions (web_dashboard.html `UNITS` ~4640)
+### 7.1 Unit conversions (web_dashboard.html `UNITS` :4678)
 
 The server always sends metric. The page converts the reading, scale, ticks, table figures, floor and the red hand. Sky thresholds (35 C, 15 km/h, 30 mm/h) read the metric figures and do not move with the unit switch.
 
@@ -331,7 +335,7 @@ The server always sends metric. The page converts the reading, scale, ticks, tab
 | km/h to mph | `mph = kmh / 1.609344` | REAL-MODEL | Exact. The wind tile shows whole mph. |
 | hPa to inHg | `inHg = hPa / 33.8639` | REAL-MODEL | The exact figure is 33.86389; relative error below 3e-7. |
 | mm to inches | `in = mm / 25.4` (rain, rain rate in/h) | REAL-MODEL | Exact; shown to 2 decimals (0.01 in is 0.254 mm). |
-| Scale re-rounding | `inUnits()` :4657. Tick step: the first of `STEPS` [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000] with `floor((high - low)/s + 1e-9) + 1 <= most`. For dials and units flagged `round`: `low = floor(low/step)*step`, `high = max(low + step, round(high/step)*step)`. The thermometer is not rounded | TUNED | Wind 0 to 100 km/h becomes 0 to 60 mph (96.6 km/h), pressure 950 to 1050 hPa becomes 28 to 31 inHg (948.2 to 1049.8 hPa), rain 0 to 100 mm becomes 0 to 4 in (101.6 mm), rain rate 0 to 50 mm/h becomes 0 to 2 in/h (50.8 mm/h). The needle still matches the reading because `share()` uses the new ends. |
+| Scale re-rounding | `inUnits()` :4685. Tick step: the first of `STEPS` [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000] with `floor((high - low)/s + 1e-9) + 1 <= most`. For dials and units flagged `round`: `low = floor(low/step)*step`, `high = max(low + step, round(high/step)*step)`. The thermometer is not rounded | TUNED | Wind 0 to 100 km/h becomes 0 to 60 mph (96.6 km/h), pressure 950 to 1050 hPa becomes 28 to 31 inHg (948.2 to 1049.8 hPa), rain 0 to 100 mm becomes 0 to 4 in (101.6 mm), rain rate 0 to 50 mm/h becomes 0 to 2 in/h (50.8 mm/h). The needle still matches the reading because `share()` uses the new ends. |
 
 The server's own factors (`lib/ecowitt/hass_map.py` ~65-71) are listed in 8.2 and match these.
 
@@ -339,11 +343,11 @@ The server's own factors (`lib/ecowitt/hass_map.py` ~65-71) are listed in 8.2 an
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Linear share | `lib/gauge_look.py share()`, html `share` ~4097 | `share = clamp((v - low)/(high - low), 0, 1)` | REAL-MODEL | A linear mapping. |
+| Linear share | `lib/gauge_look.py share()`, html `share` :4170 | `share = clamp((v - low)/(high - low), 0, 1)` | REAL-MODEL | A linear mapping. |
 | Banded share (air gauges) | same | with bounds `b0..bn`, for `b_i < v <= b_(i+1)`: `share = (i + (v - b_i)/(b_(i+1) - b_i))/n` | TUNED | Equal-width bands are a layout choice (as AirNow does it). |
 | Needle angle | `START` 215, `SWEEP` 250 | `theta = 215 - 250*share` degrees (0 = right, 90 = up); the dial spans 215 to -35 degrees, a 110 degree gap at the bottom | TUNED | Each colour band is `SWEEP/colours` wide minus 0.8 degree each side (ARTISTIC). |
-| Thermometer level | ~4146-4195 | `y = 95 + (1 - share)*(238 - 95)` | REAL-MODEL | Same mapping as the scale bar, so ticks and mercury agree. At 0 C the mercury is at y 238, bulb and about 16 px of tube already filled. |
-| Beaker level | ~4146-4195 | `y = 292 - max(share, 0.02)*(292 - 10 - 90)`, none at `v <= 0` | TUNED | Any rain above 0 shows at least 2 % (about 3.8 px), so a trace looks like about 2 mm. |
+| Thermometer level | ~4170-4225 | `y = 95 + (1 - share)*(238 - 95)` | REAL-MODEL | Same mapping as the scale bar, so ticks and mercury agree. At 0 C the mercury is at y 238, bulb and about 16 px of tube already filled. |
+| Beaker level | ~4170-4225 | `y = 292 - max(share, 0.02)*(292 - 10 - 90)`, none at `v <= 0` | TUNED | Any rain above 0 shows at least 2 % (about 3.8 px), so a trace looks like about 2 mm. |
 | Rest position | `floor()` | no reading rests at 0, or the scale's low (pressure 950), dimmed to `FADE` 0.4 | ARTISTIC | |
 | Thermometer scale | `lib/ecowitt/dashboard.py scale()` | 0 to 40 C widened by 10 C: `low = min(0, floor(v/10)*10)`, `high = max(40, ceil(v/10)*10)`; band colours by `degree_colour()` | TUNED | A reading of 60 C makes a tall scale. Dew point, feels like and indoor share the 0 to 40 start. |
 | Gauge ranges | `GAUGES` ecowitt/dashboard.py:50-85 | humidity 0 to 100; pressure 950 to 1050 hPa; wind 0 to 100 km/h; rain 0 to 100 mm; rain rate 0 to 50 mm/h; solar 0 to 1500 W/m^2; UV 0 to 12 with ticks 0, 3, 6, 8, 11 (twelve 1-UV colour slices on the WHO categories: 3 green, 3 yellow, 2 orange, 3 red, 1 violet) | TUNED | Display ranges, not physical limits (wind above 100 and UV above 12 pin at the end; full sun can reach about 1100 to 1400 W/m^2). |
@@ -363,22 +367,22 @@ The server's own factors (`lib/ecowitt/hass_map.py` ~65-71) are listed in 8.2 an
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
 | Sector | `lib/ecowitt/direction.py sector()` | `int(((deg mod 360) + 11.25) // 22.5) mod 16`; N is sector 0 (348.75 to 11.25) | REAL-MODEL | 16 points of 22.5 degrees. |
-| Needle | `compass()` :4341 | rotates to the reading (degrees clockwise from north, where the wind comes from), eased the short way: `from + (((to - from) mod 360) + 540) mod 360 - 180` | REAL-MODEL | |
+| Needle | `compass()` :4369 | rotates to the reading (degrees clockwise from north, where the wind comes from), eased the short way: `from + (((to - from) mod 360) + 540) mod 360 - 180` | REAL-MODEL | |
 | Rose counts | `directions_on()` ecowitt/reads.py:69, `rose()` | per sector, minutes of wind from it: each 5-minute reading counts 5; each 1-minute reading counts 1 only if no 5-minute reading is within 300 s; calm (speed 0 or less) is left out; a reading with no speed counts | REAL-APPROX | Time-weighted, not speed-weighted: a long light breeze equals a short gale. A single 5-minute sample counts 5 minutes. |
 | Rose share | `rose()` web_dashboard.py:258, `ROSE_DECIMALS` 4 (web_dashboard.py:94) | `share_i = count_i / total`, rounded to 4 decimals; empty if total is 0 | REAL-MODEL | |
-| Petal length | `ROSE_REACH` 0.8, `ROSE_HALF` 9 deg (web_dashboard.html:4350) | `out_i = 0.8*138*share_i/max(share)`; wedge half-width 9 degrees (18 degrees in a 22.5 degree sector) | TUNED | The longest petal is always 80 % of the radius: relative shape only, no absolute percentage scale. |
+| Petal length | `ROSE_REACH` 0.8, `ROSE_HALF` 9 deg (web_dashboard.html:4362) | `out_i = 0.8*138*share_i/max(share)`; wedge half-width 9 degrees (18 degrees in a 22.5 degree sector) | TUNED | The longest petal is always 80 % of the radius: relative shape only, no absolute percentage scale. |
 
 ### 7.5 Layout, canvas, staleness, appearance
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
 | Tile aspect | `CELL_W` 480, `CELL_H` 575 | `aspect = 480/575 = 0.8348` | TUNED | |
-| Fit | `layout()` :4542; `PAD` 8, `STATUS` 18 | `W = clientWidth - 2*PAD`, `H = clientHeight - 2*PAD - STATUS`; for cols 1..n: `rows = ceil(n/cols)`, `w = min(W/cols, H/rows*aspect)`; the best w wins | TUNED | A simple optimisation. |
+| Fit | `layout()` :4570; `PAD` 8, `STATUS` 18 | `W = clientWidth - 2*PAD`, `H = clientHeight - 2*PAD - STATUS`; for cols 1..n: `rows = ceil(n/cols)`, `w = min(W/cols, H/rows*aspect)`; the best w wins | TUNED | A simple optimisation. |
 | Scroll fallback | `MIN_TILE` 160, `MIN_SCROLL_TILE` 150 | if best w is below 160: `cols = max(1, min(n, floor(W/150)))`, `w = W/cols`, page scrolls | TUNED | |
-| Gallery | `galleryLayout()` :5130; `TABLE_TOP` 372 | zoomed aspect `480/372 = 1.29`; `w = min(W - 2*PAD, H*aspect)`; slot pitch W; flick if speed is above 0.4 px/ms and the drag is at least 24 px; settle to `round(position/pitch)`; duration distance*450 ms clamped to 150 to 320 ms; rubber band `(1 - 1/(over*0.55/pitch + 1))*pitch`; bounce 40 px over 300 ms; zoom 200 ms | TUNED | Feel constants. |
+| Gallery | `galleryLayout()` :5158; `TABLE_TOP` 372 | zoomed aspect `480/372 = 1.29`; `w = min(W - 2*PAD, H*aspect)`; slot pitch W; flick if speed is above 0.4 px/ms and the drag is at least 24 px; settle to `round(position/pitch)`; duration distance*450 ms clamped to 150 to 320 ms; rubber band `(1 - 1/(over*0.55/pitch + 1))*pitch`; bounce 40 px over 300 ms; zoom 200 ms | TUNED | Feel constants. |
 | Art pixel | `ART_PX` 480, ~3857 | `P = max(3, round(max(w, h)/480))`; canvas `ceil(w/P)` by `ceil(h/P)`. 1920 x 1080 gives P = 4, 480 x 270 art px | TUNED | |
 | Overdraw margin | `OVER` 100 :290 | `M = ceil(100/P)` rows above and below, filled by mirroring | ARTISTIC | |
-| Stale reading | `STALE_MS` 3600000 :4773 | stale if time is missing or `now - time` is not at most one hour | TUNED | Only the status line greys; gauges are not dimmed for old data. |
+| Stale reading | `STALE_MS` 3600000 :4801 | stale if time is missing or `now - time` is not at most one hour | TUNED | Only the status line greys; gauges are not dimmed for old data. |
 | Needle motion | `MOVE_MS` 900, `RISE_MS` 1000 | ease `1 - (1 - p)^3`; `REFETCH_MS` 60 s | TUNED | |
 | Geometry | thermometer (top 95, bottom 238, cx 285, bulb radius 38), beaker (top 90, bottom 292), dial radii 130/138/102/84, hub 13, table chips, petal gradients | | ARTISTIC | Appearance only. |
 
@@ -397,26 +401,26 @@ The station supplies dew point, feels like, `app_temp`, `app_tempin` and VPD (`l
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Dew point (Magnus) | `lib/service/outlook.py:158`; `a` 17.62, `b` 243.12 C | `g = ln(RH/100) + a*T/(b + T)`, `Td = b*g/(a - g)`; RH clamped to at least 1 % | REAL-MODEL | Used only when the station sends no dew point. Good to about 0.4 C over a wide range; poor at very low RH ((35 C, 10 %) gives -1.17 C). Checks: (20 C, 50 %) gives 9.26 C; (30 C, 80 %) gives 26.17; (0 C, 100 %) gives 0.0. |
+| Dew point (Magnus) | `lib/service/outlook.py:159`; `a` 17.62, `b` 243.12 C | `g = ln(RH/100) + a*T/(b + T)`, `Td = b*g/(a - g)`; RH clamped to at least 1 % | REAL-MODEL | Used only when the station sends no dew point. Good to about 0.4 C over a wide range; poor at very low RH ((35 C, 10 %) gives -1.17 C). Checks: (20 C, 50 %) gives 9.26 C; (30 C, 80 %) gives 26.17; (0 C, 100 %) gives 0.0. |
 | Unit conversions | `lib/ecowitt/hass_map.py:65-71` | pressure to hPa: kPa x10, Pa x0.01, inHg x33.8639, mmHg x1.33322, psi x68.9476; speed to km/h: mph x1.609344, m/s x3.6, kn x1.852, ft/s x1.09728; length to mm: cm x10, in x25.4; rate in/h x25.4; temperature: F gives `(T - 32)*5/9`, K gives `T - 273.15`; VPD hPa to kPa x0.1 (api.py:82 corrects inHg VPD at x3.38639) | REAL-MODEL | Exact factors. |
-| Outlook rain verdict | `lib/service/outlook.py:36-45, 186-309` | score: falling pressure 1 to 3 hPa adds 1, over 3 hPa adds 2; moist (RH 90 % or more, or `T - dew point <= 2 C`) adds 1; unsettled (under 1005 hPa) adds 1; wind picking up 5 km/h or more while falling adds 1; settled (over 1020 hPa) subtracts 1; clamp 0 to 2 maps to unlikely, possible, likely; any rain in the last hour forces likely. Steady is under `STEADY_HPA` 1.0 over 3 hours | TUNED | Falling pressure with moist air does precede rain, but the cut-offs are not calibrated. `_pressure` (:136) calls it "falling" when the high came before the low and uses `max - min`, so a 3 hPa fall followed by a 2.9 hPa recovery still reads "down 3.0". |
+| Outlook rain verdict | `lib/service/outlook.py:36-45, 136-309` | score: falling pressure 1 to 3 hPa adds 1, over 3 hPa adds 2; moist (RH 90 % or more, or `T - dew point <= 2 C`) adds 1; unsettled (under 1005 hPa) adds 1; wind picking up 5 km/h or more while falling adds 1; settled (over 1020 hPa) subtracts 1; clamp 0 to 2 maps to unlikely, possible, likely; any rain in the last hour forces likely. The pressure change is `last - first` over the 3 hours (`_pressure` :136, rounded to 0.1): falling if at most -1.0 hPa (`STEADY_HPA`), rising if at least +1.0, else steady | TUNED | Falling pressure with moist air does precede rain, but the cut-offs are not calibrated. A fall that recovers by the end now reads steady; a rise then fall still reads by its end points, so a swing inside the window is not seen. |
 | Emoji triggers | `lib/ecowitt/glance.py:1-18` | hot 35/30/25 C, cold 8/0 C, wind 15/30/50 km/h, muggy 85 %, dry 30 %, pressure 1025 hPa, VPD 1.2 kPa, solar 600 and 200 W/m^2, UV 6 and 10 | TUNED | |
 
 ### 8.3 Air quality (`lib/airgradient/*`, `lib/series.py`)
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| AQI interpolation | `_aqi` metrics.py:106 | `I = (I_hi - I_lo)/(C_hi - C_lo)*(C - C_lo) + I_lo`, rounded to the nearest integer; above the top breakpoint returns 500 | REAL-MODEL | The EPA linear-interpolation method. |
-| PM2.5 table | `pm25_aqi` :113 | 0.0 to 9.0 gives AQI 0 to 50; 9.1 to 35.4 gives 51 to 100; 35.5 to 55.4 gives 101 to 150; 55.5 to 125.4 gives 151 to 200; 125.5 to 225.4 gives 201 to 300; 225.5 to 325.4 gives 301 to 500 | REAL-MODEL | The 2024 EPA revision (checked row by row). |
-| PM10 table | metrics.py:78-86 | 0 to 54, 55 to 154, 155 to 254, 255 to 354, 355 to 424, 425 to 604 give the same AQI bands; concentration truncated with `floor` | REAL-MODEL | Matches the EPA table (unchanged in 2024). |
-| Combined AQI | `us_aqi` :128 | the higher of the PM2.5 and PM10 sub-indices; PM2.5 wins ties; the source is named | REAL-MODEL | The AirNow rule. |
-| Applied to now | | the formulas run on the latest sensor reading, not a 24-hour average or NowCast | REAL-APPROX | It reads "the AQI if this level persisted". It differs from AirNow when PM2.5 is changing, and PM2.5 uses `round(conc, 1)` where EPA truncates (see Issues). |
-| Gauge bounds | `lib/airgradient/dashboard.py:51-73` | AQI 0, 50, 100, 150, 200, 300, 500; PM2.5 0, 9.0, 35.4, 55.4, 125.4, 225.4, 325.4; PM10 0, 54, 154, 254, 354, 424, 604 | REAL-MODEL | EPA edges. |
+| AQI interpolation | `_aqi` metrics.py:106, `truncate` :113 | `I = (I_hi - I_lo)/(C_hi - C_lo)*(C - C_lo) + I_lo`, rounded to the nearest integer (the EPA rounds the index); the concentration is first truncated (not rounded) to the table's resolution, 0.1 for PM2.5 and 1 for PM10 (`truncate`, with a 1e-9 guard against float error); above the top breakpoint returns 500 | REAL-MODEL | The EPA linear-interpolation method, with the EPA's truncation: 9.05 gives 9.0 (AQI 50), 35.45 gives 35.4 (AQI 100). |
+| PM2.5 table | `pm25_aqi` :119 | 0.0 to 9.0 gives AQI 0 to 50; 9.1 to 35.4 gives 51 to 100; 35.5 to 55.4 gives 101 to 150; 55.5 to 125.4 gives 151 to 200; 125.5 to 225.4 gives 201 to 300; 225.5 to 325.4 gives 301 to 500 | REAL-MODEL | The 2024 EPA revision (checked row by row). |
+| PM10 table | metrics.py:77-85 | 0 to 54, 55 to 154, 155 to 254, 255 to 354, 355 to 424, 425 to 604 give the same AQI bands; concentration truncated to a whole number | REAL-MODEL | Matches the EPA table (unchanged in 2024). |
+| Combined AQI | `us_aqi` :134 | the higher of the PM2.5 and PM10 sub-indices; PM2.5 wins ties; the source is named | REAL-MODEL | The AirNow rule. |
+| Applied to now | | the formulas run on the latest sensor reading, not a 24-hour average or NowCast | REAL-APPROX | It reads "the AQI if this level persisted". It differs from AirNow when PM2.5 is changing (the air-gauge header says so). |
+| Gauge bounds | `lib/airgradient/dashboard.py:36-80, 85-89` | AQI 0, 50, 100, 150, 200, 300, 500; PM2.5 0, 9.0, 35.4, 55.4, 125.4, 225.4, 325.4; PM10 0, 54, 154, 254, 354, 424, 604 | REAL-MODEL | EPA edges. |
 | PM1 bands | same | the PM2.5 bounds | TUNED | No standard exists for PM1; PM1 is part of PM2.5, so the scale is lenient. |
 | CO2, VOC, NOx bands | same; `series.py:55-64` | CO2 400, 800, 1000, 1500, 2000, 2500 ppm (ratings 799/1499); VOC index 1, 100, 150, 250, 400, 500 (ratings 150/250); NOx index 1, 20, 150, 300, 500 (ratings 20/150) | TUNED | CO2 cut-offs are a common indoor rule of thumb (the code comment attributes them to ASHRAE, which sets no such bands). VOC and NOx are Sensirion relative indices (VOC 100 and NOx 1 are the baselines); the other edges are the service's own. |
 | Ratings | `series.py:55-64`, `zone()` | good if at most the first limit, poor if at most the second, very poor above. PM2.5 9.0 and 55.4; PM10 54 and 254 | REAL-MODEL for PM2.5 and PM10 edges, TUNED for the rest | |
-| Spike removal | `without_spikes` metrics.py:46; `SPIKE_RATIO` 2.5, `SPIKE_RISE` 5 ug/m^3, `REQUIRE_CONSECUTIVE` 2 | a stretch shorter than 2 readings of PM1, PM2.5 or PM10 is dropped if every reading is at least 2.5 times and at least 5 above the higher neighbour (neighbours within 900 s) | TUNED | Targets sensor glitches, but can drop a real short puff of smoke. |
-| Gauge band names | `AirGauge.band()` | a value is in the band below an edge if `value < edge + step`; step 0.1 for PM2.5 and PM1, 1 for PM10, AQI and NOx, 0 for CO2 and VOC | REAL-APPROX | Mirrors the EPA's truncation to table resolution. The needle uses the plain edge, so they can disagree (see Issues). |
+| Spike removal | `without_spikes` metrics.py:45; `SPIKE_RATIO` 2.5, `SPIKE_RISE` 5 ug/m^3, `REQUIRE_CONSECUTIVE` 2 | a stretch shorter than 2 readings of PM1, PM2.5 or PM10 is dropped if every reading is at least 2.5 times and at least 5 above the higher neighbour (neighbours within 900 s) | TUNED | Targets sensor glitches, but can drop a real short puff of smoke. |
+| Gauge band names | `AirGauge.seen()` :65, `band()` :77 | the particles' concentration (PM2.5, PM10, PM1, not the AQI) is truncated to the step (0.1, 1, 0.1) by `seen()`; the needle and the band name both use that value; a value is in the band below an edge if `seen < edge + step`; step 1 for AQI and NOx, 0 for CO2 and VOC | REAL-APPROX | Mirrors the EPA's truncation to table resolution, and needle and band now agree. |
 
 ### 8.4 Stored readings and aggregation
 
@@ -426,8 +430,8 @@ The station supplies dew point, feels like, `app_temp`, `app_tempin` and VPD (`l
 | Interval low, high | history.py / storage | minimum of the readings' own lows (`COALESCE(_lo, value)`), maximum of their highs | REAL-MODEL | |
 | Day mean, period mean | `storage/days.py:8`, `lines.time_mean`, `readings_mean` | mean of the day's half-hour means; period mean weights days by seconds covered | REAL-MODEL | |
 | Gust "max", direction "last" | history.py:215 | maximum of the highs; the latest reading, with no averaging | REAL-MODEL | |
-| Rain from the counter | `rain_slots` rain.py:16; `MAX_GAP` 3 slots (90 min) | rain per slot is the rise of the running daily counter; a drop is taken as the midnight reset and adds the whole new value; a hole longer than 90 minutes counts 0 | REAL-APPROX | Any counter drop is assumed to be the reset: a glitch or re-sync mid-day adds a spurious amount; a hole over 90 minutes loses real rain. |
-| Rain events | `rain_spells` rain.py:11 | slots join one spell if the gap is 6 slots (3 dry hours) or less; a spell needs at least 1.0 mm | TUNED | |
+| Rain from the counter | `rain_slots` rain.py:34, `_is_reset` :25; `MAX_GAP` 3 slots (90 min), `RESET_MM` 2.0, `RESET_SHARE` 0.1, `RESET_HOURS` 2 | rain per slot is the rise of the running daily counter; a drop is the midnight reset (adds the whole new value) only if the new total is under 2 mm and either the reading is within 2 hours after local midnight (when the zone is given) or the new total is at most 10 % of the total before; any other drop is a glitch: it adds 0, the old total stays the baseline, and it is counted (`glitches`); a hole longer than 90 minutes counts 0 | REAL-APPROX | A mid-day re-sync no longer adds a spurious amount. A hole over 90 minutes loses real rain. A real reset the rule rejects (new total 2 mm or more, or not near midnight and above 10 %) is ignored, and because the baseline stays at the old total, the new day's rain is lost until the counter passes it (see Issues). |
+| Rain events | `rain_spells` rain.py:59 | slots join one spell if the gap is 6 slots (3 dry hours) or less; a spell needs at least 1.0 mm | TUNED | |
 | 5-minute band | storage/write.py:28 | exists only if `MIN_READINGS` 2 live readings fell in the slot | TUNED | |
 | Line smoothing | `SMOOTH_POINTS` 3 | 3-point rolling mean (15 minutes of 5-minute readings), for temperature, humidity, dew point, feels like and pressure only | TUNED | Never for wind or rain. |
 | Row caps | `MINUTE_HOURS` 8, `INTRADAY_DAYS` 8, `FINE_DAYS` 31, `MAX_ROWS` 300 | | TUNED | Limits, not maths. |
@@ -457,67 +461,74 @@ The station supplies dew point, feels like, `app_temp`, `app_tempin` and VPD (`l
 
 ## 9. Issues found
 
-Each item was checked against the code. Issues are recorded, not fixed. Numbers are approximate lines in the current working tree.
+Each item was checked against the code. The user reviewed the list and decided which to fix; the rest were left on purpose. Status: FIXED (with the commit), LEFT BY DECISION (the user chose to leave it, with the reason), N/A. New issues found while refreshing this file follow the list.
 
 Wrong or misleading comments and numbers:
 
-1. (Fixed: the comment now says 71.) Rain count comment: `web_dashboard.html:562` says "light: about 85 drops on a laptop", but `need()` at the minimum level 0.3 and 480 x 300 gives `(144000/1000)*(0.1 + 2.4*0.3^1.5) = 71`.
-2. (Fixed: comment corrected.) Fog thickness comment: `web_dashboard.html:1789` says "the fog at a level (90 %: 0, 100 %: 1)", but `thickness(v) = 0.5 + 0.5*v` and the level floors at 0.05, so at 90 % it is 0.525.
-3. (Fixed: comment corrected.) Haze texture comment: `web_dashboard.html:730` says a cut "covers exactly that share". That is true per layer only. The summed layers are bell-shaped, so the covered share per band is about 42/59/79/92/99 % (survey simulation), and the thickest shade is rarely or never reached (Moderate: `lo + span = 1.0` is above the sum's maximum of about 0.96).
-4. (Fixed: comment corrected.) Swell comment: `web_dashboard.html:1618` says tiny beads pass `TINY` "in about a minute or two on a heavy fog (as felt, about 0.4)". At felt fog 0.4 the formula gives about 3.6 minutes (86 s only at f = 1).
-5. (Fixed: comment corrected.) Bead speed comment: `web_dashboard.html:1565` says speed is "its water (r^3) times SPEED"; that is only the branch for r of 2.8 and above (below it the law is `x^5`).
-6. (Fixed: comment corrected.) Smoothstep thresholds "5 and 40 degrees" are applied to `sin(theta)`, so the ramp midpoint is theta 21.4 degrees, not 22.5 (`web_dashboard.html:4006`).
-7. (Fixed: wording corrected.) Air-gauge header: `lib/airgradient/dashboard.py:27` says "Left out: PM1", but `AIR_GAUGES` includes a PM1 dial. Its CO2 note (`:15`) attributes 800/1000/1500/2000 ppm to ASHRAE, who set no such bands. Line 8 says "as AirNow gives it", but the value is from the latest reading, not NowCast.
-8. (Fixed: the comment says it is by design.) `web_dashboard.html:4116` `TABLE_TOP = 372` with comment "(table(): 378)": the two numbers differ by design (a 6 px margin) but read like a typo.
+1. FIXED (03f2b5d): rain count comment now says 71 (`need()` at level 0.3 and 480 x 300 gives `(144000/1000)*(0.1 + 2.4*0.3^1.5) = 71`).
+2. FIXED (03f2b5d): fog thickness comment says `0.5 + 0.5*v`, 0.525 at 90 %.
+3. FIXED (03f2b5d): haze texture comment no longer says a cut "covers exactly that share" (the summed layers are bell-shaped, about 42/59/79/92/99 %).
+4. FIXED (03f2b5d): swell comment: about 3.6 minutes at felt fog 0.4, 86 s only at 1.
+5. FIXED (03f2b5d): bead speed comment names the `x^5` branch below r 2.8.
+6. FIXED (03f2b5d): smoothstep comment says the 5 and 40 degrees apply to `sin(theta)`, midpoint theta 21.4.
+7. FIXED (ccb7329): air-gauge header no longer says "Left out: PM1"; the CO2 note no longer attributes the bands to ASHRAE; the AQI line says "one reading, not NowCast or a 24-hour average".
+8. FIXED (03f2b5d): `TABLE_TOP` 372 comment says the 6 px margin is by design.
 
 Formulas that diverge from the standard they cite:
 
-9. (Fixed: truncated to 0.1, by the 2024 EPA breakpoints.) PM2.5 rounding: `metrics.py:115` uses `round(conc, 1)` where the EPA truncates to 0.1. 9.05 gives AQI 51 (EPA: 9.0, AQI 50); 35.45 gives 101 (EPA: 35.4, AQI 100). The error is one AQI point at band edges. PM10 uses `floor`, which is right.
-10. Instantaneous AQI: the AQI is computed from one reading, not a 24-hour average or NowCast (the EPA definition).
-11. (Fixed: both go by the truncated value.) Needle and band name can disagree: for PM2.5 and PM1 between 9.0 and 9.1 the needle is already in "Moderate" but `band()` says "Good" (`value < 9.0 + 0.1`).
-12. (Fixed: twelve slices on the WHO categories.) UV dial colours: six equal slices of 2 UV (edges 2, 4, 6, 8, 10) do not match the WHO categories whose starts are the ticks 3, 6, 8, 11. UV 4 is drawn orange where WHO says moderate; UV 8 is the start of the purple band where WHO says very high; the dial stops at 12 while UV can exceed it.
-13. Fahrenheit thermometer: ticks every 20 F from 40 no longer line up with the colour band edges at 32, 50, 68, 86, 104.
-14. Inch dials span a slightly different range from metric: wind 0 to 60 mph is 96.6 km/h, pressure 28 to 31 inHg is 948.2 to 1049.8 hPa.
-15. Pressure arrow direction uses the unrounded change but the JSON `change` is rounded to 0.1, so 0.29 can be reported as 0.3 with "steady". No visible effect today.
-16. Pressure arrow versus outlook: the arrow uses 1 hour and 0.3 hPa, the outlook uses 3 hours and 1.0 hPa for "steady"; the arrow can fire on the daily pressure tide.
-17. (Fixed: the change from the window's start to its end, 1.0 hPa threshold.) Outlook `_pressure` (`outlook.py:136`): "falling" whenever the high came before the low, sized by `max - min`, so a fall followed by a near-full recovery still scores as falling.
-18. Magnus fallback: poor at very low RH ((35 C, 10 %) gives -1.17 C). Dormant while the station supplies a dew point.
-19. (Fixed: a drop is the reset only if under 2 mm and within 2 h after local midnight or at most 10 % of the total before; else a counted, ignored glitch.) Rain counter: `rain_slots` treats any drop in the daily counter as the midnight reset and adds the whole new value; a mid-day glitch adds a spurious amount, and the reset is the station's, not local midnight.
-20. Sunrise fallback: `SUN_FALLBACK` (06:00 and 18:00) is wrong by up to about 3 hours at Melbourne's solstices, and the dashboard falls back silently. The sun's azimuth and elevation are unaffected.
-21. Clear-sky model: Cooper declination and no Earth-Sun distance term shift the "sunny" cut-offs near 0.80 by a few percent.
+9. FIXED (ccb7329): PM2.5 (and PM10, PM1 gauges) truncated to 0.1 (1 for PM10) by `truncate`, the EPA's rule: 9.05 gives AQI 50, 35.45 gives 100.
+10. LEFT BY DECISION: instantaneous AQI (one reading, not 24-hour or NowCast); the user chose to leave it, and the gauge header now says so.
+11. FIXED (ccb7329): needle and band name both go by the truncated value (`AirGauge.seen`), so they agree.
+12. FIXED (03f2b5d): UV dial is twelve 1-UV slices on the WHO categories (3 green, 3 yellow, 2 orange, 3 red, 1 violet).
+13. LEFT BY DECISION: Fahrenheit thermometer tick and band edge mismatch; the user chose to leave it (cosmetic).
+14. LEFT BY DECISION: inch dials span a slightly different range than metric; the user chose to leave it (rounded scale ends are intended).
+15. LEFT BY DECISION: pressure arrow direction uses the unrounded change while the JSON shows 0.1; the user chose to leave it (no visible effect).
+16. LEFT BY DECISION: pressure arrow (1 hour, 0.3 hPa) against the outlook (3 hours, 1.0 hPa); the user chose to leave the two scales as they are.
+17. FIXED (ccb7329): outlook `_pressure` uses the change from the window's first reading to its last, 1.0 hPa for steady (a fall that recovers reads steady).
+18. LEFT BY DECISION: Magnus fallback poor at very low RH; dormant while the station supplies a dew point.
+19. FIXED (ccb7329): `rain_slots` takes a drop as the midnight reset only if the new total is under 2 mm and (within 2 h after local midnight, or at most 10 % of the total before); else a counted, ignored glitch (but see new issue N1).
+20. LEFT BY DECISION: sunrise fallback 06:00 / 18:00; the user chose to leave it (the sun's own position does not use it).
+21. LEFT BY DECISION: clear-sky model uses Cooper declination and no Earth-Sun distance term; the user chose to leave it (a few percent on a threshold).
 
 Design simplifications that do not estimate reality:
 
-22. Fog: the humidity effect uses outdoor RH 90 % or more, not glass temperature against dew point (`outdoor.dew_point` is available but unused). Interior-surface condensation happens at far lower RH.
-23. Ice: air temperature below 0 C regardless of humidity or dew point; reach is a fraction of the window.
-24. (Fixed for the flood and the fog: 24 mm/h and 85 % to go off; the 30 mm/h "flash flood" naming is unchanged.) No hysteresis on the flood (30 mm/h) and humidity (90 %) triggers; a reading hovering at the threshold toggles the effect each reading. 30 mm/h is an intensity, not a flash-flood criterion.
-25. (Fixed: leaf pace scales with the speed, k; eddies and gusts stay random.) Leaf wind is not scaled by the measured speed: leaf speeds are fixed constants (40/60/85 art px/s) and eddies and gusts are random. Only the on/off (above 15 km/h), the side, the rain slant and the haze pan use the reading.
-26. FIXED: rain falls at a constant vertical speed, its path speed growing as 1/cos(angle); streaks lengthen to 1.6x.
-27. The 70 degree rain cap only matters above 66 km/h; the real law has no cap.
-28. (Fixed: one `GUST_SHARE` and `effectiveSpeed`.) `GUST_SHARE = 0.3` is defined twice (rain `effective()` at :485 and haze `windNow()` at :697), so retuning one can drift from the other.
-29. Rain and haze: `PAN_MAX`, `PAN_K` and the rain speeds are in art px/s with no physical length scale.
-30. UV beam lean assumes a screen with east on the right (matching the compass dial); correct for the Melbourne station, mirrored for a window facing the other way.
-31. Pending, not an error: the heat wave is vertical in the committed code and is being retuned to follow the sun's lean.
+22. LEFT BY DECISION: fog uses outdoor RH 90 % or more, not glass temperature against dew point; the user chose to leave it.
+23. LEFT BY DECISION: ice uses air temperature below 0 C regardless of humidity or dew point; the user chose to leave it.
+24. FIXED (03f2b5d) for the flood (on over 30, off below 24 mm/h) and the fog (on from 90 %, off below 85 %). The 30 mm/h "flash flood" naming is unchanged.
+25. FIXED (03f2b5d): leaf pace scales with the wind speed, `k = clamp(0.4 + 0.024 s, 0.5, 1.6)`. Eddies and gust pulses stay random.
+26. FIXED (96e255f): rain falls at a constant vertical speed, path speed `V0 / cos(angle)`, streaks grow to at most 1.6x, plain drop count (no density factor), drops blown out of the side start again.
+27. LEFT BY DECISION: the 70 degree rain cap (bites above 66 km/h; the real law has no cap); the user chose to leave it.
+28. FIXED (03f2b5d): one `GUST_SHARE` and `effectiveSpeed` (:335-336) for the rain, haze and leaves.
+29. LEFT BY DECISION: `PAN_MAX`, `PAN_K` and the rain speeds are in art px/s with no physical length scale; the user chose to leave it.
+30. LEFT BY DECISION: UV beam lean assumes east on the right of the screen; the user chose to leave it (right for the Melbourne station).
+31. N/A (resolved by c59e2f3): the heat wave now follows the sun's lean (section 4.2).
+
+New issues found while refreshing this file (recorded, not fixed):
+
+N1. Rain counter, `rain.py:44-57`: a glitch keeps the old total as the baseline. If the real midnight reset is rejected (the first reading of the new day is 2 mm or more, or the reading is after 2 am local and the new total is above 10 % of yesterday's), the rest of the day's rain is lost until the new total passes yesterday's. Rare (needs 2 mm or more in the first slot after a gap of at most 90 minutes), but the loss is the whole day.
+N2. Leaf pace is at least 0.76 whenever the wind effect is on (above 15 km/h), so the scaling only shows from 15 km/h up; below the threshold the leaves are not drawn at all, and the lower clamp 0.5 is reached only while the wind eases out.
+N3. Rain path speed keeps growing to 2.9x at the cap while the streak length stops at 1.6x (from 51 degrees), so above 51 degrees a streak is shorter than the drop's path speed would suggest. Chosen by the user's rule, noted for honesty.
+N4. `math.md` itself had two small errors, now corrected: the haze pan at 40 km/h is 2.63 (not 2.64), and the leaf pace at the 4 km/h floor is reached at 4.2 km/h.
 
 Notes (not issues): `leafAir` measures the mean wind by differencing two `airAt` calls, so near a strong eddy it is reduced by the pull term and the eddy weight is slightly overstated. NOAA's refraction has a 0.6 arcmin step at -0.575 degree, irrelevant because `refracted=False`. The sun position was compared with an independent almanac algorithm: elevation within 0.45 degree, azimuth off only near the zenith.
 
 ## 10. Maintenance
 
-When a formula in the code changes, update this file in the same commit: the formula, its constants, its label, and the line reference. Move an item from "Issues" when it is fixed.
+When a formula in the code changes, update this file in the same commit: the formula, its constants, its label, and the line reference. Mark an issue FIXED (with the commit) in section 9 when it is fixed.
 
 Constants to grep when checking that the numbers here still match:
 
 | Area | Grep for |
 |---|---|
-| Rain slant | `FALL = 24`, `CAP = 70`, `OLD_SLANT`, `PATH`, `GUST_SHARE`, `TAU_UP`, `TEST_WIND`, `STEPS = 20` |
-| Effect levels | `conditionsOf`, `windSideOf`, `GUST_MARK`, `BUDGET`, `ART_PX`, `FADE_S` |
+| Rain slant | `FALL = 24`, `CAP = 70`, `OLD_SLANT`, `PATH`, `STREAK_MOST`, `GUST_SHARE`, `effectiveSpeed`, `TAU_UP`, `TEST_WIND`, `STEPS = 20`, `PACE` / `paceOf` |
+| Effect levels | `conditionsOf`, `FLOOD_ON`, `FOG_OFF`, `windSideOf`, `GUST_MARK`, `BUDGET`, `ART_PX`, `FADE_S` |
 | Haze | `PAN_MAX`, `PAN_K`, `bakeTexture`, `HOLLOW` |
-| Heat | `heatOf`, `HEAT_STEPS`, `HEAT_PERIOD`, `HEAT_PEAK`, `heatWave`, `wanted` |
+| Heat | `heatOf`, `HEAT_STEPS`, `HEAT_PERIOD`, `HEAT_PEAK`, `heatWave`, `wanted`, `HEAT_SLEW`, `HEAT_END`, `HEAT_PAD`, `frame` |
 | UV and sun | `BEAM_MAX`, `BEAM_CURVE`, `EL_LOW`, `RUN_ON`, `SUN_FALLBACK`, `leanAt`, `leanOf` |
 | Ice, flood | `reachFor`, `growRate`, `MELT`, `RISE = 4`, `DRAIN`, `CALMS`, `PUSH` |
 | Beads | `RUN_R`, `GONE`, `TINY`, `SWELL`, `PACE`, `sized`, `HEAVY_RAIN`, `FOG_AT`, `FORM`, `CLEAR`, `THICKEN` |
 | Tilt | `POOL_IN`, `POOL_OUT`, `STEEP_FULL`, `SNAP_DEG`, `screenGravity`, `tilt(` |
 | Gauges | `STEPS = [0.1`, `START, SWEEP`, `MIN_TILE`, `TABLE_TOP`, `STALE_MS`, `TENDENCY_STEADY`, `TENDENCY_AGO`, `ROSE_REACH`, `33.8639`, `1.609344`, `25.4` |
-| Server | `sun_position`, `refraction`, `17.62`, `us_aqi`, `pm25_aqi`, `PM25_AQI`, `SPIKE_RATIO`, `MAX_GAP`, `MIN_READINGS`, `STEADY_HPA`, `HAURWITZ`, `MIN_HOURS`, `SEASON_MONTHS` |
+| Server | `sun_position`, `refraction`, `17.62`, `us_aqi`, `pm25_aqi`, `PM25_AQI`, `SPIKE_RATIO`, `truncate`, `MAX_GAP`, `RESET_MM`, `MIN_READINGS`, `STEADY_HPA`, `HAURWITZ`, `MIN_HOURS`, `SEASON_MONTHS` |
 
 Labels: if a TUNED or ARTISTIC number is later fitted to data or a standard, say which source and change the label. If a REAL-MODEL formula is simplified, downgrade it to REAL-APPROX and list the limits.
