@@ -14,6 +14,8 @@
 //     needle}), waits for a line on stdin (the test has given it a reading, or taken it away), then, once its label changes, samples it
 //     every frame for 1.5 s and prints {before, after, frames: [{opacity, number}], same_tile, compass: [before, after] (compassLook),
 //     pressure (dialsLook's), errors}.
+//   node web_dashboard_browser.js URL --arrows JSON: the page at 1024x768 once for each tendency in the JSON list, the Atmospheric pressure
+//     tile given it; prints [{tendency, hpa, inhg (dialsLook's pressure, in hPa and with inHg pressed), errors}].
 //   node web_dashboard_browser.js URL --arrange PART: the page at 1024x768 with a mouse, a part of the arranging (arrangeMode):
 //     "dragged" (dragging to reorder, the drag's text zones, the grip and the × on mouseover, the tiles' see-through look), "hidden"
 //     (the ×, the remove zone, the reset link, the preferences across a reload), "prefs" (the preferences corrupt or from elsewhere (a
@@ -236,7 +238,7 @@ const dialsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
       const m = c.measureText(reading.textContent), y = n(reading, "y"), inkRight = n(reading, "x") + m.actualBoundingBoxRight;
       const along = [];
       if (shown && path.getAttribute("d")) for (let s = 0, len = path.getTotalLength(); s <= len; s += 1) { const q = path.getPointAtLength(s); along.push([q.x, q.y]); }
-      arrow = { shown, way: g.dataset.way, d: path.getAttribute("d"), stroke: getComputedStyle(path).stroke, fill: getComputedStyle(g).fill,
+      arrow = { shown, way: g.dataset.way, cls: g.dataset.class, d: path.getAttribute("d"), stroke: getComputedStyle(path).stroke, fill: getComputedStyle(g).fill,
                 width: parseFloat(getComputedStyle(path).strokeWidth), box: shown ? box(path) : null, along,
                 hubWidth: n(hub, "stroke-width"), reading: box(reading), inkRight, ink: [y - m.actualBoundingBoxAscent, y + m.actualBoundingBoxDescent],
                 ring: [n(ring, "cx"), n(ring, "cy"), n(ring, "r"), n(ring, "stroke-width")], hub: box(hub),
@@ -347,6 +349,34 @@ async function live(browser, url) {
   const pressureSame = await page.evaluate(() => window.__pressure.isConnected && window.__pressure === window.__pressureTile().querySelector("g.tendency"));
   const pressure = { ...(await dialsLook(page))["Atmospheric pressure"], same: pressureSame };   // (its arrow turned in place)
   process.stdout.write(JSON.stringify({ label: await label(), same_page: same, same_tile: sameTile, shown, compass, hands, pressure, errors }) + "\n");
+}
+
+// --arrows JSON: for each tendency given (null or {change, way, class}), a fresh page whose data's Atmospheric pressure tile carries it (the
+// page's fetch altered on the way: the server's own is tested apart), the pressure's dialsLook in hPa and again with inHg pressed.
+async function arrowsMode(browser, url, wanted) {
+  const out = [];
+  for (const tendency of JSON.parse(wanted)) {
+    const init = { fn: (t) => {
+      const real = window.fetch.bind(window);
+      window.fetch = async (u, o) => {
+        const r = await real(u, o);
+        if (!/\/data(\?|$)/.test(String(u))) return r;
+        const j = await r.clone().json();
+        for (const tile of j.tiles || []) if (tile.title === "Atmospheric pressure") tile.tendency = t;
+        return new Response(JSON.stringify(j), { status: r.status, headers: { "content-type": "application/json" } });
+      };
+    }, arg: tendency };
+    const { context, page, errors } = await open(browser, url, 1024, 768, { init });
+    await page.evaluate(() => document.fonts.ready);
+    await calm(page, 3000);
+    const hpa = (await dialsLook(page))["Atmospheric pressure"];
+    await page.evaluate(() => document.querySelector("#units button[data-unit='inHg']").click());
+    await calm(page, 500);
+    const inhg = (await dialsLook(page))["Atmospheric pressure"];
+    out.push({ tendency, hpa, inhg, errors });
+    await context.close();
+  }
+  process.stdout.write(JSON.stringify(out));
 }
 
 async function arrive(browser, url, title) {
@@ -4471,6 +4501,7 @@ async function weatherMode(browser, url, part) {
   try {
     if (second === "--live") await live(browser, url);
     else if (second === "--arrive") await arrive(browser, url, third);
+    else if (second === "--arrows") await arrowsMode(browser, url, third);
     else if (PARTED[second]) {   // (PART, or several joined by "+": side by side, each its own page, a report each, in a list)
       const reports = await Promise.all(third.split("+").map((part) => PARTED[second](browser, url, part)));
       process.stdout.write(JSON.stringify(third.includes("+") ? reports : reports[0]) + "\n");

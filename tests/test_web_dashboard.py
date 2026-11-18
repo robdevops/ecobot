@@ -32,13 +32,13 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from types import SimpleNamespace as NS
 
 import httpx
 import pytest
 
-from lib import gauge_sheet, web_dashboard
+from lib import gauge_sheet, solar, web_dashboard
 from lib.ecowitt.direction import POINTS
 from lib.gauge_look import look, tile_json
 from lib.mcp_server import AIR_URI, EcobotServer, WEATHER_URI, http_app
@@ -94,7 +94,7 @@ class Station:
     def held(self, rose: list[int] | None = None, pressure: list[tuple[float, float]] | None = None,
              rain: list[tuple[float, float]] | None = None):
         """The station's file holds today's wind directions (directions_on's: minutes from each of the 16 compass points; none: all
-        0) and the past hour and a half's pressure (pressure_on's, given as [(minutes before now, hPa)], oldest first; none: no
+        0) and the past four hours' pressure (pressure_on's, given as [(minutes before now, hPa)], oldest first; none: no
         reading) and the past six hours' 5-minute rain rates (rain_rates_on's, [(minutes before now, mm/h)], oldest first; none:
         no history), as the dashboard reads them (nothing else: the red hands' highs are the sheet's)."""
         async def read(fn, mac, *args):
@@ -104,8 +104,8 @@ class Station:
                 assert end - 60 - start == web_dashboard.FLOOD_READ == 6 * 3600, (start, end)
                 return [(int(end - 60 - m * 60), v) for m, v in (rain or [])]
             assert abs(end - 60 - time.time()) < 5
-            if fn is pressure_on:                                                # (the past 90 minutes: TENDENCY_READ)
-                assert end - 60 - start == web_dashboard.TENDENCY_READ == 90 * 60, (start, end)
+            if fn is pressure_on:                                                # (the past 4 hours: TENDENCY_READ)
+                assert end - 60 - start == web_dashboard.TENDENCY_READ == 240 * 60, (start, end)
                 return [(int(end - 60 - m * 60), v) for m, v in (pressure or [])]
             assert datetime.fromtimestamp(start, TZ).time() == datetime.min.time()   # (today's: from the station's midnight to now)
             assert datetime.fromtimestamp(start, TZ).date() == datetime.now(TZ).date()
@@ -202,28 +202,37 @@ async def test_the_data_carries_the_stations_rain_rate_now_its_rain_gauges_or_el
     assert readings_of({**station.live, **live}) != readings_of(station.live)    # the piezo's rate changing: an event, the page fetches it
 
 
-async def test_the_data_carries_the_sun_sunrise_sunset_and_the_time_now_by_the_stations_clock_else_six_to_six(server, station):
-    """`sun`: {rise, set, now}, minutes since the station's local midnight (its zone, DST included): today's sunrise and sunset from the
-    forecast (Open-Meteo's daily, ISO local times); 06:00 and 18:00 with no forecast, none for today or a day that doesn't make sense."""
+async def test_the_data_carries_the_sun_sunrise_sunset_and_the_time_now_by_the_stations_clock_from_solar_py_else_six_to_six(server, station):
+    """`sun`: {rise, set, now}, minutes since the station's local midnight (its zone, DST included): with the station's location today's
+    sunrise and sunset from the sunrise equation (lib/solar.py: not the forecast's); 06:00 and 18:00 with no location; polar day 0 and
+    1440, polar night none."""
     page = WebDashboard(server)
     before = datetime.now(TZ)
-    sun = (await page.data())["sun"]                                            # (no forecast)
+    sun = (await page.data())["sun"]                                            # (no location)
     after = datetime.now(TZ)
     assert (sun["rise"], sun["set"]) == (360, 1080) and set(sun) == {"rise", "set", "now"}
     assert web_dashboard.minutes_of(before) - 0.02 <= sun["now"] <= web_dashboard.minutes_of(after) + 0.02 or after.date() != before.date(), sun
     today = datetime.now(TZ).date()
-    day = {"date": today, "sunrise": f"{today}T05:52", "sunset": f"{today}T20:07"}
-    server.ctx.forecast = NS(days=[{"date": date(2000, 1, 1), "sunrise": "2000-01-01T01:00", "sunset": "2000-01-01T02:00"}, day])
+    server.ctx.forecast = NS(days=[{"date": today, "sunrise": f"{today}T05:52", "sunset": f"{today}T20:07"}], location=None)
     sun = (await page.data())["sun"]
-    assert (sun["rise"], sun["set"]) == (5 * 60 + 52, 20 * 60 + 7), sun        # (today's: DST in it, the zone's clock)
-    for days in ([], None, [{"date": today}], [{**day, "sunset": f"{today}T04:00"}], [{**day, "sunrise": "dawn"}],
-                 [{"date": today + __import__("datetime").timedelta(days=1), "sunrise": f"{today}T05:00", "sunset": f"{today}T19:00"}]):
-        server.ctx.forecast = NS(days=days)
-        sun = (await page.data())["sun"]
-        assert (sun["rise"], sun["set"]) == (360, 1080), (days, sun)           # (the fallback)
+    assert (sun["rise"], sun["set"]) == (360, 1080), sun                       # (the forecast's times are not used)
+    melbourne = (-37.81, 144.96)
+    server.ctx.forecast = NS(days=[{"date": today, "sunrise": f"{today}T01:00", "sunset": f"{today}T02:00"}], location=melbourne)
+    sun = (await page.data())["sun"]
+    want = solar.sun_times(*melbourne, today, TZ)
+    assert (sun["rise"], sun["set"]) == (want.rise, want.set) and 240 < sun["rise"] < 480 and 960 < sun["set"] < 1260, sun
     # by the station's zone, not the server's: the same instant, 12:30 in Melbourne in summer (UTC+11)
     noon = datetime(2026, 1, 15, 12, 30, 15, tzinfo=TZ)
-    assert web_dashboard.sun_of(None, noon) == {"rise": 360, "set": 1080, "now": 750.25}
+    assert web_dashboard.sun_of(noon) == {"rise": 360, "set": 1080, "now": 750.25}
+    summer = web_dashboard.sun_of(datetime(2026, 12, 21, 12, 0, tzinfo=TZ), melbourne)
+    assert summer["rise"] == pytest.approx(5 * 60 + 54, abs=2) and summer["set"] == pytest.approx(20 * 60 + 41, abs=2), summer   # (DST's clock)
+    winter = web_dashboard.sun_of(datetime(2026, 6, 21, 12, 0, tzinfo=TZ), melbourne)
+    assert winter["rise"] == pytest.approx(7 * 60 + 35, abs=2) and winter["set"] == pytest.approx(17 * 60 + 8, abs=2), winter
+    # polar day: up all day (0 to 1440), the beams with the sun's own elevation; polar night: none, the sun's el below the horizon
+    day = web_dashboard.sun_of(datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc), (80.0, 0.0))
+    assert (day["rise"], day["set"]) == (0, 1440) and day["el"] > 0, day
+    night = web_dashboard.sun_of(datetime(2026, 12, 21, 12, 0, tzinfo=timezone.utc), (80.0, 0.0))
+    assert night["rise"] is None and night["set"] is None and night["el"] < 0, night
 
 
 async def test_the_sun_carries_its_real_azimuth_and_elevation_at_the_stations_location_and_clock_and_none_without_a_location(server, station):
@@ -233,14 +242,14 @@ async def test_the_sun_carries_its_real_azimuth_and_elevation_at_the_stations_lo
     page = WebDashboard(server)
     melbourne = (-37.81, 144.96)
     noon = datetime(2026, 1, 15, 13, 15, tzinfo=TZ)           # (about solar noon in Melbourne's midsummer, daylight saving's clock)
-    sun = web_dashboard.sun_of(None, noon, melbourne)
-    assert set(sun) == {"rise", "set", "now", "az", "el"} and (sun["rise"], sun["set"], sun["now"]) == (360, 1080, 795), sun
+    sun = web_dashboard.sun_of(noon, melbourne)
+    assert set(sun) == {"rise", "set", "now", "az", "el"} and sun["now"] == 795 and sun["rise"] == pytest.approx(6 * 60 + 13, abs=2) and sun["set"] == pytest.approx(20 * 60 + 44, abs=2), sun   # (solar.py's)
     assert 70 <= sun["el"] <= 80 and (sun["az"] < 15 or sun["az"] > 345), sun            # (high in the north)
-    winter = web_dashboard.sun_of(None, datetime(2026, 7, 15, 12, 20, tzinfo=TZ), melbourne)
+    winter = web_dashboard.sun_of(datetime(2026, 7, 15, 12, 20, tzinfo=TZ), melbourne)
     assert 25 <= winter["el"] <= 32 and (winter["az"] < 15 or winter["az"] > 345), winter
-    morning = web_dashboard.sun_of(None, datetime(2026, 3, 20, 8, 0, tzinfo=TZ), melbourne)
+    morning = web_dashboard.sun_of(datetime(2026, 3, 20, 8, 0, tzinfo=TZ), melbourne)
     assert 60 < morning["az"] < 110 and morning["el"] > 0, morning                      # (the east)
-    assert "az" not in web_dashboard.sun_of(None, noon) and "el" not in web_dashboard.sun_of(None, noon, None), "no location"
+    assert "az" not in web_dashboard.sun_of(noon) and "el" not in web_dashboard.sun_of(noon, None), "no location"
     # the page's data: the forecast's location first, else the station's, else none
     assert "az" not in (await page.data())["sun"]                                       # (neither here)
     server.ctx.forecast = NS(days=[], location=melbourne)
@@ -355,24 +364,24 @@ async def test_todays_wind_directions_are_counted_from_the_5_minute_readings_and
     storage.close()
 
 
-async def test_the_data_carries_the_pressures_change_over_the_past_hour_on_its_tile_only_read_from_the_file_and_kept_a_minute(
+async def test_the_data_carries_the_pressures_3_hour_tendency_on_its_tile_only_read_from_the_file_and_kept_a_minute(
         server, station, monkeypatch, caplog):
-    """The Atmospheric pressure tile's `tendency`: its change over the past hour, {"change": hPa, "way"} (tendency_of: the file's newest
-    reading less the one nearest an hour before it, in hPa, from the past 90 minutes' 5-minute readings and minutes: pressure_on); null
+    """The Atmospheric pressure tile's `tendency`: its WMO 3-hour tendency, {"change": hPa, "way", "class"} (tendency_of: the file's newest
+    reading less the one nearest 3 hours before it, in hPa, from the past 4 hours' 5-minute readings and minutes: pressure_on); null
     with no file, too little history, or the file not read. Read at most every TENDENCY_SECONDS, else kept; no other tile has one."""
     page = WebDashboard(server)
     pressure = lambda got: next(t for t in got["tiles"] if t["title"] == "Atmospheric pressure")
     got = await page.data()
     assert pressure(got)["tendency"] is None and [t["title"] for t in got["tiles"] if "tendency" in t] == ["Atmospheric pressure"]   # (no file)
     assert pressure(got)["decimals"] == 0 and next(g for g in web_dashboard.GAUGES if g.title == "Atmospheric pressure").decimals == 0
-    station.held(pressure=pressure_hour(-1.4))
+    station.held(pressure=pressure_hour(-2.4))
     assert pressure(await page.data())["tendency"] is None and web_dashboard.TENDENCY_SECONDS == 60   # (kept: read under a minute ago)
     page._tendency = None
-    assert pressure(await page.data())["tendency"] == {"change": -1.4, "way": "down"}
+    assert pressure(await page.data())["tendency"] == {"change": -2.4, "way": "down", "class": "moderate"}
     station.held(pressure=pressure_hour(0.8))                                # read again a minute on: risen
     page._tendency = (page._tendency[0] - 61, page._tendency[1])
-    assert pressure(await page.data())["tendency"] == {"change": 0.8, "way": "up"}
-    station.held(pressure=[(m, 1012.0) for m in range(40, -1, -5)])          # only 40 minutes held: none
+    assert pressure(await page.data())["tendency"] == {"change": 0.8, "way": "up", "class": "slow"}
+    station.held(pressure=[(m, 1012.0) for m in range(120, -1, -5)])         # only 2 hours held: none
     page._tendency = None
     assert pressure(await page.data())["tendency"] is None
 
@@ -380,37 +389,44 @@ async def test_the_data_carries_the_pressures_change_over_the_past_hour_on_its_t
         raise OSError("disk")
     station.eco.storage = NS(read=broken)
     monkeypatch.setattr(web_dashboard, "TENDENCY_SECONDS", 0)
-    assert pressure(await page.data())["tendency"] is None and "couldn't read the past hour's pressure: OSError: disk" in caplog.text
+    assert pressure(await page.data())["tendency"] is None and "couldn't read the past hours' pressure: OSError: disk" in caplog.text
 
 
-def test_the_pressures_change_over_the_past_hour_is_its_newest_reading_less_the_one_nearest_an_hour_before():
-    """tendency_of: [(epoch, hPa)] oldest first: the newest less the reading nearest 60 minutes before it (45 to 75 minutes before it;
-    none there: None), to a tenth; up 0.3 hPa or more: "up", down as much: "down", less either way: "steady"."""
+def test_the_pressures_3_hour_tendency_classes_by_the_size_of_its_change_and_reads_the_reading_nearest_3_hours_back():
+    """tendency_of: [(epoch, hPa)] oldest first: the newest less the reading nearest 180 minutes before it (150 to 210 minutes before it;
+    none there: None), to a tenth; by its size: under 0.1 "none" (steady), 0.1 to 1.5 "slow", 1.6 to 3.5 "moderate", 3.6 to 6.0 "quick",
+    over 6.0 "rapid" (the edges inclusive, as listed), "up" or "down" by its sign."""
     t = 1_794_200_000
     hour = lambda *pairs: [(t - m * 60, v) for m, v in pairs]                 # ((minutes before the newest, hPa), ...), oldest first
-    assert web_dashboard.tendency_of(hour((60, 1010.0), (30, 1010.9), (0, 1011.2))) == {"change": 1.2, "way": "up"}       # rising
-    assert web_dashboard.tendency_of(hour((60, 1012.0), (0, 1010.5))) == {"change": -1.5, "way": "down"}                  # falling
-    assert web_dashboard.tendency_of(hour((60, 1012.0), (0, 1012.2))) == {"change": 0.2, "way": "steady"}                 # steady
-    assert web_dashboard.tendency_of(hour((60, 1012.0), (0, 1011.8))) == {"change": -0.2, "way": "steady"}
-    assert web_dashboard.tendency_of(hour((60, 1012.0), (0, 1012.3)))["way"] == "up"                                      # (0.3: the mark)
-    assert web_dashboard.tendency_of(hour((60, 1013.3), (0, 1013.0)))["way"] == "down"
-    assert web_dashboard.tendency_of(hour((60, 1012.0), (0, 1012.29)))["way"] == "steady"
-    # the reading nearest an hour before the newest: 63 minutes (3 off) rather than 55 (5 off), or 80 (out of reach) and 50 (10 off)
-    assert web_dashboard.tendency_of(hour((80, 1000.0), (63, 1011.0), (55, 1013.0), (0, 1012.0))) == {"change": 1.0, "way": "up"}
-    assert web_dashboard.tendency_of(hour((80, 1000.0), (50, 1013.0), (0, 1012.0))) == {"change": -1.0, "way": "down"}
-    assert web_dashboard.tendency_of(hour((60, 1012.0), *((m, 1013.0) for m in range(59, -1, -1)))) == {"change": 1.0, "way": "up"}
-    # too little history: none about an hour old (only 40 minutes; nothing between 45 and 75 minutes before the newest; none at all)
-    assert web_dashboard.tendency_of(hour((40, 1012.0), (20, 1011.0), (0, 1010.0))) is None
-    assert web_dashboard.tendency_of(hour((90, 1012.0), (76, 1012.0), (44, 1011.0), (0, 1010.0))) is None
-    assert web_dashboard.tendency_of(hour((75, 1012.0), (0, 1011.0))) == {"change": -1.0, "way": "down"}                  # (75: still)
+    for size, cls in ((0.05, "none"), (0.0, "none"), (0.1, "slow"), (1.5, "slow"), (1.6, "moderate"), (3.5, "moderate"), (3.6, "quick"),
+                      (6.0, "quick"), (6.1, "rapid"), (12.0, "rapid")):
+        assert web_dashboard.tendency_of(hour((180, 1010.0), (0, 1010.0 + size))) == {
+            "change": 0.0 if cls == "none" else size, "way": "steady" if cls == "none" else "up", "class": cls}, (size, cls)
+        assert web_dashboard.tendency_of(hour((180, 1010.0 + size), (0, 1010.0))) == {
+            "change": 0.0 if cls == "none" else -size, "way": "steady" if cls == "none" else "down", "class": cls}, (size, cls)
+    # (a change between the tenths: taken to a tenth first: 1.55 is 1.6, moderate)
+    assert web_dashboard.tendency_of(hour((180, 1000.0), (0, 1001.55)))["class"] in ("slow", "moderate")
+    assert web_dashboard.tendency_of(hour((180, 1000.0), (0, 1001.549)))["class"] == "slow"
+    # the reading nearest 3 hours before the newest: 183 minutes (3 off) rather than 175 (5 off), or 230 (out of reach) and 190 (10 off)
+    assert web_dashboard.tendency_of(hour((230, 1000.0), (183, 1011.0), (175, 1013.0), (0, 1012.0))) == {"change": 1.0, "way": "up", "class": "slow"}
+    assert web_dashboard.tendency_of(hour((230, 1000.0), (190, 1013.0), (0, 1012.0))) == {"change": -1.0, "way": "down", "class": "slow"}
+    assert web_dashboard.tendency_of(hour((180, 1012.0), *((m, 1013.0) for m in range(179, -1, -1)))) == {"change": 1.0, "way": "up", "class": "slow"}
+    # the window 150 to 210 minutes, edges in; too little history: None
+    assert web_dashboard.tendency_of(hour((150, 1012.0), (0, 1010.0))) == {"change": -2.0, "way": "down", "class": "moderate"}
+    assert web_dashboard.tendency_of(hour((210, 1012.0), (0, 1010.0))) == {"change": -2.0, "way": "down", "class": "moderate"}
+    assert web_dashboard.tendency_of(hour((149, 1012.0), (0, 1010.0))) is None
+    assert web_dashboard.tendency_of(hour((211, 1012.0), (0, 1010.0))) is None
+    assert web_dashboard.tendency_of(hour((120, 1012.0), (60, 1011.0), (0, 1010.0))) is None            # (only 2 hours)
+    assert web_dashboard.tendency_of(hour((240, 1012.0), (212, 1012.0), (148, 1011.0), (0, 1010.0))) is None
     assert web_dashboard.tendency_of(hour((0, 1012.0))) is None and web_dashboard.tendency_of([]) is None
+    assert web_dashboard.TENDENCY_READ == 240 * 60 and web_dashboard.TENDENCY_AGO == (150 * 60, 180 * 60, 210 * 60)
 
 
 @functools.cache
 def pressure_hour(change: float) -> list[tuple[float, float]]:
-    """The past 90 minutes' pressure, a reading every 5 minutes ([(minutes before now, hPa)], oldest first), changing `change` hPa
-    over the last hour, steadily."""
-    return [(m, round(1013.2 - change * m / 60, 2)) for m in range(90, -1, -5)]
+    """The past 4 hours' pressure, a reading every 5 minutes ([(minutes before now, hPa)], oldest first), changing `change` hPa
+    over the last 3 hours, steadily."""
+    return [(m, round(1013.2 - change * m / 180, 3)) for m in range(240, -1, -5)]
 
 
 async def test_todays_pressure_is_read_from_the_5_minute_readings_and_the_minutes_they_dont_cover(tmp_path):
@@ -928,8 +944,8 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     monkeypatch.setattr(web_dashboard, "ROSE_SECONDS", 0)                  # (today's rose read again with each data: it changes below)
     station.reads("wind", "wind_gust", "12")
     station.highs_today({"wind_gust": 37.0, "rain_rate_max": 4.2, "solar_max": 820.0, "uv_max": 6.5})   # (today's highest: above the
-    station.held(ROSE, pressure_hour(1.2))                               # readings now, all but 0; today's rose, and the pressure
-    monkeypatch.setattr(web_dashboard, "TENDENCY_SECONDS", 0)              # risen over the past hour; read again: it falls below)
+    station.held(ROSE, pressure_hour(2.0))                               # readings now, all but 0; today's rose, and the pressure
+    monkeypatch.setattr(web_dashboard, "TENDENCY_SECONDS", 0)              # risen over the past 3 hours; read again: it falls below)
     wind = next(t for t in gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False})).tiles if t.title == "Wind")
     station.reads("indoor", "temperature", "23.7")                       # an indoor sensor, served with MCP_DASHBOARD_INDOOR off:
     station.reads("indoor", "humidity", "47")                            # its tiles never drawn (the same tiles as with none)
@@ -947,7 +963,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         station.reads("wind", "wind_direction", "300")                           # (and the wind backs from the east to WNW)
         station.highs_today({"wind_gust": 60.0, "uv_max": 9.0, "rain_rate_max": 0.0})   # (and today's highest gust and UV rise, rain
                                                                                  # rate's a dry day's 0, and today's
-        station.held(ROSE_LATER, pressure_hour(-1.5))                             # rose turns to the west; the pressure falls)
+        station.held(ROSE_LATER, pressure_hour(-2.5))                             # rose turns to the west; the pressure falls)
         await server.publish_changes()
         live.stdin.write(b"go\n")
         await live.stdin.drain()
@@ -1037,7 +1053,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         assert all(c == rgb(MAX_CHIP) for t, heads in others.items() if t != "Wind" for n, c in heads if n.endswith("Max")), others
         assert hands["Wind"]["daily"] == [f"{v:.0f}" for v in wind.rows["Daily"]] and wind.rows["Daily"][1] >= 12, (hands["Wind"], wind)
         # every round dial's hub small (about half the old 25), its outline as thin, its needle pivoting on its centre; the compass's
-        # smaller still; the pressure in whole hPa, its reading and its table; its arrow after its reading (risen over the past hour: up, blue), no other's
+        # smaller still; the pressure in whole hPa, its reading and its table; its arrow after its reading (risen 2 hPa over the past 3 hours: moderate, up, blue), no other's
         dials = got["dials"]
         assert {d["kind"] for d in dials.values()} == {"dial", "compass"} and len(dials) >= 6, dials
         for title, d in dials.items():
@@ -1095,8 +1111,9 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     assert after["hands"]["Rain rate"]["kind"] == "limit" and not after["hands"]["Rain rate"]["shown"], after["hands"]["Rain rate"]
 
 
-def arrow_drawn(p: dict, way: str | None, name: str):
-    """The pressure's arrow after its reading (dialsLook's), its way over the past hour: none (`way` None: hidden), or a fine,
+def arrow_drawn(p: dict, way: str | None, name: str, cls: str = "moderate"):
+    """The pressure's arrow after its reading (dialsLook's), its way over the past 3 hours and its class (`cls`: slow, a short arrow, 0.5
+    of the normal length; moderate, the normal; quick, 1.35 times; rapid, the normal with a second chevron behind the first): none (`way` None: hidden), or a fine,
     instrument-style arrow: one thin straight shaft and a small, narrow, sharp open head (two short strokes from its tip, back and
     out to either side: a slim chevron, narrower than 45 degrees), no fill, no outline; up and blue (the needle's) when rising, down
     and red (the red hands') when falling, none when steady (`way` None), about the digits' height; just after the reading (its
@@ -1106,12 +1123,18 @@ def arrow_drawn(p: dict, way: str | None, name: str):
     if way is None:
         assert a is not None and not a["shown"] and a["way"] == "", (name, a)
         return
-    assert a["shown"] and a["way"] == way and a["fill"] == "none" and "edge" not in a, (name, a)
+    assert a["shown"] and a["way"] == way and a["cls"] == cls and a["fill"] == "none" and "edge" not in a, (name, a)
     assert a["stroke"] == rgb({"up": look()["needle"], "down": look()["high_hand"]}[way]), (name, a)
     assert look()["rising"] == look()["needle"] == "#3E86C0" and look()["falling"] == look()["high_hand"] == "#FF3B30", look()
     assert 1 <= a["width"] <= 2 and a["width"] < a["hubWidth"], (name, a)                                     # (fine: about 1.2)
-    assert re.fullmatch(r"M[\d.]+,[\d.]+ L[\d.]+,[\d.]+ M[\d.]+,[\d.]+ L[\d.]+,[\d.]+ L[\d.]+,[\d.]+", a["d"]), (name, a["d"])
-    x0, y0, x1, y1, hx0, hy0, tx, ty, hx1, hy1 = map(float, re.findall(r"[\d.]+", a["d"]))   # (the shaft, then the head)
+    chevrons = 2 if cls == "rapid" else 1
+    assert re.fullmatch(r"M[\d.]+,[\d.]+ L[\d.]+,[\d.]+" + r" M[\d.]+,[\d.]+ L[\d.]+,[\d.]+ L[\d.]+,[\d.]+" * chevrons, a["d"]), (name, a["d"])
+    x0, y0, x1, y1, hx0, hy0, tx, ty, hx1, hy1, *second = map(float, re.findall(r"[\d.]+", a["d"]))   # (the shaft, then the head, then a second)
+    if second:                                                                   # rapid: a second chevron behind the first, the same size
+        sx0, sy0, sx, sy, sx1, sy1 = second
+        assert sx == tx and sx1 - sx == pytest.approx(hx1 - tx) and sx - sx0 == pytest.approx(tx - hx0) and sy1 == sy0, (name, a["d"])
+        assert abs(sy - ty) >= 4 and (sy - ty) * (1 if way == "up" else -1) > 0 and abs(sy0 - hy0) == pytest.approx(abs(sy - ty)), (name, a["d"])
+        assert abs(y1 - y0) > abs(sy - ty) + abs(hy0 - ty), (name, a["d"])   # (it is behind the first, on the shaft)
     assert (tx, ty) == (x1, y1), (name, a["d"])                                  # the head at the shaft's tip
     k, back = abs(hx0 - tx), abs(hy0 - ty)
     assert 2 <= k <= 5 and 1.6 * k <= back <= 3 * k, (name, a["d"])              # a slim chevron: longer than wide (under 32 degrees a side)
@@ -1119,7 +1142,8 @@ def arrow_drawn(p: dict, way: str | None, name: str):
     assert hy0 == pytest.approx(ty + back if way == "up" else ty - back), (name, a["d"])
     ink_top, ink_bottom = a["ink"]
     tall = ink_bottom - ink_top                                                  # (the digits' height: about 38 px at 50 px)
-    assert (y1 < y0) == (way == "up") and 0.7 * tall <= abs(y1 - y0) <= tall, (name, a["d"], tall)
+    scale = {"slow": 0.5, "moderate": 1, "quick": 1.35, "rapid": 1}[cls]         # (the normal arrow: 0.8 of the digits' height)
+    assert (y1 < y0) == (way == "up") and 0.7 * tall * scale <= abs(y1 - y0) <= tall * scale, (name, a["d"], tall)
     bx0, by0, bx1, by1 = a["box"]
     assert bx0 - a["inkRight"] == pytest.approx(2, abs=0.5), (name, a["box"], a["inkRight"])     # a 2 px gap after the last digit's ink
     assert (by0 + by1) / 2 == pytest.approx((ink_top + ink_bottom) / 2, abs=1), (name, a["box"], a["ink"])   # centred on its digits
@@ -1134,6 +1158,42 @@ def arrow_drawn(p: dict, way: str | None, name: str):
         assert reach < r - w / 2 - 1, (name, reach, a["ring"])                  # inside the outline, clear of it
     else:
         assert reach < r + w / 2 + 6, (name, reach, a["ring"])                  # (inHg: at most across it, over the ring)
+
+
+@needs_browser
+async def test_the_pressures_arrow_is_drawn_by_its_class_short_normal_long_or_double_in_its_colour_and_none_when_steady(server, station):
+    """The page draws the pressure's `tendency` by class: slow a short arrow (0.5 of the normal length), moderate the normal, quick a long one
+    (1.35 times), rapid a double arrow (two chevrons, the second behind the first); up blue and down red; placed 2 px after the digits'
+    ink; none for steady or without a tendency; the same in inHg (the change stays in hPa)."""
+    wanted = [{"change": c, "way": w, "class": k} for c, w, k in ((0.8, "up", "slow"), (-0.8, "down", "slow"), (2.0, "up", "moderate"),
+              (-2.0, "down", "moderate"), (4.5, "up", "quick"), (-4.5, "down", "quick"), (7.0, "up", "rapid"), (-7.0, "down", "rapid"),
+              (0.0, "steady", "none"))] + [None]
+    port = free_port()
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):
+        proc = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", "--arrows", json.dumps(wanted),
+                                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=NO_WEATHER)
+        out, err = await asyncio.wait_for(proc.communicate(), 120)
+        assert proc.returncode == 0, err.decode()
+    got = json.loads(out)
+    length = {}
+    for run in got:
+        t = run["tendency"]
+        assert run["errors"] == [], run
+        if t is None or t["way"] == "steady":
+            arrow_drawn(run["hpa"], None, f"none {t}")
+            arrow_drawn(run["inhg"], None, f"none {t}, inHg")
+            continue
+        arrow_drawn(run["hpa"], t["way"], f"{t['class']} {t['way']}", t["class"])
+        arrow_drawn(run["inhg"], t["way"], f"{t['class']} {t['way']}, inHg", t["class"])
+        a = run["hpa"]["arrow"]
+        assert a["d"] and run["inhg"]["arrow"]["way"] == t["way"] and run["inhg"]["arrow"]["cls"] == t["class"]
+        nums = list(map(float, re.findall(r"[\d.]+", a["d"])))
+        length[t["class"], t["way"]] = abs(nums[3] - nums[1])
+        assert a["stroke"] == rgb(look()["rising"] if t["way"] == "up" else look()["falling"]), a
+    for way in ("up", "down"):
+        normal = length["moderate", way]
+        assert length["slow", way] == pytest.approx(0.5 * normal, rel=0.02) and length["quick", way] == pytest.approx(1.35 * normal, rel=0.02)
+        assert length["rapid", way] == pytest.approx(normal, rel=0.02)
 
 
 def limit_mark(h, name, title):
@@ -1167,8 +1227,8 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
     reading going away (the VOC index): it dims and drops to its floor; the wind's direction gone with it, its compass dims, its needle
     back at north and no figure claimed."""
     title, column, value = ("NOx index", "nox_index", 60) if comes else ("VOC index", "voc_index", None)
-    station.held(pressure=pressure_hour(0.1) if comes else [(m, 1012.0) for m in range(40, -1, -5)])   # (the pressure steady over
-                                                                                 # the past hour; or only 40 minutes of it: no arrow)
+    station.held(pressure=pressure_hour(0.0) if comes else [(m, 1012.0) for m in range(100, -1, -5)])   # (the pressure steady over
+                                                                                 # the past 3 hours; or only 100 minutes of it: no arrow)
     port = free_port()
     async with Serving(http_app(server, tokens=(TOKEN,)), port):   # (no weather: as run_page's weather=False)
         page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", "--arrive", title,
@@ -1185,7 +1245,7 @@ async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_comin
     got = json.loads(out)
     after, frames = got["after"], got["frames"]
     assert got["errors"] == [] and got["same_tile"], got                         # moved in place: the same tile, not drawn again
-    arrow_drawn(got["pressure"], None, f"arrive, {comes}")   # (the pressure's arrow: none, steady or without an hour of readings)
+    arrow_drawn(got["pressure"], None, f"arrive, {comes}")   # (the pressure's arrow: none, steady or without 3 hours of readings)
     numbers = [float(f["number"]) for f in frames]
     opacities = [f["opacity"] for f in frames]
     if comes:

@@ -22,15 +22,15 @@
     the station's day in its zone: Wind's gust, Rain rate's, Solar radiation's, UV index's: their tiles' Daily Max, the Wind's its
     Daily Gust, the reading now counted in: today_highs()), the Wind direction tile's `rose` (today's
     share of the wind's direction from each of the 16 compass points, N first, clockwise, from the file's readings, calm ones left out;
-    [] with none: rose()), the Atmospheric pressure tile's `tendency` (its change over the past hour, for the arrow after its reading:
-    {"change": hPa, "way": "up", "down" or "steady"}, the file's newest reading less its reading nearest an hour before it; null with
-    no reading about an hour old: tendency()), and
+    [] with none: rose()), the Atmospheric pressure tile's `tendency` (its WMO 3-hour tendency, for the arrow after its reading:
+    {"change": hPa, "way": "up", "down" or "steady", "class": "none", "slow", "moderate", "quick" or "rapid"}, the file's newest reading
+    less its reading nearest 3 hours before it; null with no reading about 3 hours old: tendency()), and
     the air sensor's PM2.5 now (`pm25`, µg/m³, null with none: the haze's opacity, Beer-Lambert), the flash flood (`flood`: {"depth": 0 to 1},
     a leaky bucket over the past six hours' 5-minute rain rates, run on to now with the live one, null with no history: flood_of()), and
     the gust now (`gust`, km/h: over 99, a new
     reading sends a cow, a barn or a chicken across behind the tiles), and the sun (`sun`: {rise, set, now, az, el}: minutes since the
-    station's local midnight, DST included: today's sunrise and sunset from the forecast (Open-Meteo's daily ones, in the station's zone),
-    06:00 and 18:00 without them, and the station's clock now; and the sun's real place now at the station's latitude and longitude
+    station's local midnight, DST included: today's sunrise and sunset worked out here from the station's latitude and longitude (lib/solar.py's sunrise
+    equation, in the station's zone; polar day 0 and 1440, polar night none: no beams), 06:00 and 18:00 with no location, and the station's clock now; and the sun's real place now at the station's latitude and longitude
     (the forecast's MCP_FORECAST_LAT and LON when set, else the station's own), az degrees clockwise from north and el degrees above the
     horizon, computed here (lib/solar.py), the two keys left out with no location), for the sky's UV beams to lean with the sun's real
     place (the sunrise and sunset curve without it), by the station's clock, not the viewer's own (sun_of());
@@ -68,7 +68,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingR
 from starlette.routing import Route
 
 from . import gauge_sheet
-from .solar import sun_position
+from .solar import sun_position, sun_times
 from .airgradient.dashboard import AIR_GAUGES
 from .airgradient.metrics import value_of
 from .service.common import iso
@@ -95,11 +95,13 @@ NOT_ANSWERING = "The weather station isn't answering right now."
 RAIN_RATES = ("rainfall", "rainfall_piezo")   # where the station's rain rate is (current's groups): its rain gauge's first, then the piezo's
 ROSE_SECONDS = 60           # the wind rose (today's directions) read from the file at most this often (the data asked for again sooner: the same)
 ROSE_DECIMALS = 4           # its shares rounded so
-TENDENCY_TITLE = "Atmospheric pressure"   # the tile with an arrow after its reading: its change over the past hour (`tendency`: tendency())
-TENDENCY_SECONDS = 60       # the past hour's pressure read from the file at most this often (as the rose)
-TENDENCY_AGO = (45 * 60, 60 * 60, 75 * 60)   # ... the reading it is told from: the one nearest an hour before the newest, 45 to 75 min before it
-TENDENCY_READ = 90 * 60     # ... read from this long before now (the newest more than 45 min old: no reading about an hour before it read)
-TENDENCY_STEADY = 0.3       # ... a change under this (hPa) either way: steady (no arrow)
+TENDENCY_TITLE = "Atmospheric pressure"   # the tile with an arrow after its reading: its change over the past 3 hours (`tendency`: tendency())
+TENDENCY_SECONDS = 60       # the past hours' pressure read from the file at most this often (as the rose)
+TENDENCY_AGO = (150 * 60, 180 * 60, 210 * 60)   # ... the reading it is told from: the one nearest 3 hours before the newest, 150 to 210 min before it
+TENDENCY_READ = 240 * 60    # ... read from this long before now (the newest more than 150 min old: no reading about 3 hours before it read)
+TENDENCY_STEADY = 0.1       # ... a change under this (hPa, to a tenth): none (steady: no arrow)
+TENDENCY_CLASSES = ((1.5, "slow"), (3.5, "moderate"), (6.0, "quick"))   # the WMO 3-hour tendency scale (hPa, inclusive upper
+# edges, the change taken to a tenth): under 0.1 none (steady: no arrow); to 1.5 slow; to 3.5 moderate; to 6.0 quick; above: rapid
 FLOOD_SECONDS = 60          # the past hours' rain rates read from the file at most this often (the bucket worked out again each time: its live end)
 FLOOD_READ = 6 * 3600       # ... read from this long before now
 FLOOD_TAU = 30 * 60.0       # the flood's leaky bucket: its depth drains with this time constant (s) ...
@@ -110,7 +112,7 @@ RED_HANDS = {g.title: "Gust" if g.gust else "Max" for g in GAUGES if g.high_hand
 # and the column of their table whose Daily figure it is (the Wind's: its highest gust)
 
 
-SUN_FALLBACK = (6 * 60, 18 * 60)   # sunrise and sunset (minutes since midnight) when the forecast gives none
+SUN_FALLBACK = (6 * 60, 18 * 60)   # sunrise and sunset (minutes since midnight) with no station location
 
 
 def minutes_of(when: datetime) -> float:
@@ -118,28 +120,20 @@ def minutes_of(when: datetime) -> float:
     return round(when.hour * 60 + when.minute + when.second / 60, 2)
 
 
-def sun_of(forecast, now: datetime, location: tuple[float, float] | None = None) -> dict:
-    """{rise, set, now} (and {az, el}, with a `location`): minutes since the station's local midnight (`now`: the station's time, in its zone: the clock's DST in it): today's
-    sunrise and sunset from the forecast's day for that date (Open-Meteo's, as ISO local times), 06:00 and 18:00 with no forecast, none for
-    today, or times that don't make a day (set not after rise). With a `location` (lat, lon): the sun's real place there now, `el` its
-    elevation above the horizon and `az` its azimuth clockwise from north, in degrees (lib/solar.py, the station's zone's clock in it);
-    without one neither key (the page keeps to the sunrise and sunset curve)."""
+def sun_of(now: datetime, location: tuple[float, float] | None = None) -> dict:
+    """{rise, set, now} (and {az, el}, with a `location`): minutes since the station's local midnight (`now`: the station's time, in its zone: the clock's DST in it).
+    With a `location` (lat, lon): today's sunrise and sunset from the sunrise equation there (lib/solar.py sun_times, the zone's DST in it; the
+    forecast's are not used), and the sun's real place now, `el` its elevation above the horizon and `az` its azimuth clockwise from north,
+    in degrees. Polar day (no set): rise 0 and set 1440; polar night (no rise): both None, the beams absent (the sun's el is below the
+    horizon all day). With no location: 06:00 and 18:00, and neither az nor el (the page keeps to the sunrise and sunset curve)."""
     rise, set_ = SUN_FALLBACK
-    for day in (getattr(forecast, "days", None) or []):
-        if day.get("date") != now.date():
-            continue
-        try:
-            found = [minutes_of(datetime.fromisoformat(day[k])) for k in ("sunrise", "sunset")]
-        except (KeyError, TypeError, ValueError):
-            break
-        if found[0] < found[1]:
-            rise, set_ = found
-        break
-    out = {"rise": rise, "set": set_, "now": minutes_of(now)}
+    out = {"now": minutes_of(now)}
     if location and None not in location and now.utcoffset() is not None:
+        times = sun_times(location[0], location[1], now.date(), now.tzinfo)
+        rise, set_ = (0, 1440) if times.note == "no set" else (times.rise, times.set)
         el, az = sun_position(location[0], location[1], now)
         out.update(az=round(az, 3), el=round(el, 3))
-    return out
+    return {"rise": rise, "set": set_, **out}
 
 
 def location_of(ctx) -> tuple[float, float] | None:
@@ -199,9 +193,10 @@ def today_highs(tiles) -> dict[str, float | None]:
 
 
 def tendency_of(readings: list[tuple[int, float]]) -> dict | None:
-    """The pressure's change over the past hour from readings ([(epoch, hPa)], oldest first): {"change": the newest less the reading
-    nearest an hour (TENDENCY_AGO) before it, hPa to a tenth, "way": "up" (risen TENDENCY_STEADY or more), "down" (fallen as much) or
-    "steady"}; None with no reading 45 to 75 minutes before the newest."""
+    """The pressure's 3-hour tendency from readings ([(epoch, hPa)], oldest first): {"change": the newest less the reading nearest 3
+    hours (TENDENCY_AGO) before it, hPa to a tenth, "way": "up", "down" or "steady", "class": "none" (under 0.1 hPa: steady), "slow"
+    (0.1 to 1.5), "moderate" (1.6 to 3.5), "quick" (3.6 to 6.0) or "rapid" (over 6.0), by the size of the change to a tenth}; None
+    with no reading 150 to 210 minutes before the newest."""
     if not readings:
         return None
     newest, now = readings[-1]
@@ -209,9 +204,15 @@ def tendency_of(readings: list[tuple[int, float]]) -> dict | None:
     then = [(abs(newest - mid - t), v) for t, v in readings if lo <= newest - t <= hi]
     if not then:
         return None
-    change = now - min(then, key=lambda p: p[0])[1]
-    way = "up" if change >= TENDENCY_STEADY - 1e-9 else "down" if change <= -TENDENCY_STEADY + 1e-9 else "steady"
-    return {"change": round(change, 1), "way": way}
+    change = round(now - min(then, key=lambda p: p[0])[1], 1)
+    tenths = round(abs(change) * 10)
+    cls = "none" if tenths < round(TENDENCY_STEADY * 10) else "rapid"
+    for top, name in TENDENCY_CLASSES:
+        if cls != "none" and tenths <= round(top * 10):
+            cls = name
+            break
+    way = "steady" if cls == "none" else "up" if change > 0 else "down"
+    return {"change": change + 0.0, "way": way, "class": cls}
 
 
 def flood_of(rows: list[tuple[int, float]], now: float, live: float | None = None) -> float | None:
@@ -262,7 +263,7 @@ class WebDashboard:
             raise ValueError(f"animations: {animations!r} is not one of {', '.join(MOTIONS)}")
         self._streams: set[asyncio.Queue] = set()
         self._rose: tuple[float, int, list[float]] | None = None   # (when read, the day's start, its shares): rose()'s, kept ROSE_SECONDS
-        self._tendency: tuple[float, dict | None] | None = None   # (when read, the past hour's change): tendency()'s, kept TENDENCY_SECONDS
+        self._tendency: tuple[float, dict | None] | None = None   # (when read, the 3-hour tendency): tendency()'s, kept TENDENCY_SECONDS
         self._flood: tuple[float, list[tuple[int, float]] | None] | None = None   # (when read, the past hours' 5-minute rain rates): flood_rows()'s, kept FLOOD_SECONDS
         self._shown = self._readings()
         self.closed = False
@@ -280,13 +281,13 @@ class WebDashboard:
         for tile in tiles:
             if tile["kind"] == "compass":   # (the wind's direction: today's rose under its needle)
                 tile["rose"] = await self.rose()
-            elif tile["title"] == TENDENCY_TITLE:   # (the pressure: an arrow after its reading, its past hour's way)
+            elif tile["title"] == TENDENCY_TITLE:   # (the pressure: an arrow after its reading, its 3-hour tendency)
                 tile["tendency"] = await self.tendency()
         rate = rain_rate_of(result, live)
         out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": tiles, "look": look(),
                "rain_rate": rate, "gust": now_of(result, live, GUST),
                "today_highs": today_highs(sheet.tiles if sheet else []), "pm25": self.pm25(), "flood": await self.flood(rate),
-               "sun": sun_of(getattr(self.server.ctx, "forecast", None), datetime.now(self.server.ctx.zone), location_of(self.server.ctx))}
+               "sun": sun_of(datetime.now(self.server.ctx.zone), location_of(self.server.ctx))}
         if sheet is None:
             out["unavailable"] = (result.get("unavailable") or {}).get("station") or NOT_ANSWERING
         return out
@@ -335,9 +336,9 @@ class WebDashboard:
         return shares
 
     async def tendency(self) -> dict | None:
-        """The pressure's change over the past hour (tendency_of): the file's newest reading (its 5-minute readings and the minutes they
-        don't cover: pressure_on, as the station keeps it, in hPa) less its reading nearest an hour before that; None with none about an
-        hour old (or no file, or an error reading it). Read at most every TENDENCY_SECONDS, else kept."""
+        """The pressure's 3-hour tendency (tendency_of): the file's newest reading (its 5-minute readings and the minutes they
+        don't cover: pressure_on, as the station keeps it, in hPa) less its reading nearest 3 hours before that; None with none about 3
+        hours old (or no file, or an error reading it). Read at most every TENDENCY_SECONDS, else kept."""
         eco, now = self.server.ctx.eco, time.time()
         if self._tendency and now - self._tendency[0] < TENDENCY_SECONDS:
             return self._tendency[1]
@@ -346,7 +347,7 @@ class WebDashboard:
             try:
                 got = tendency_of(await eco.storage.read(pressure_on, eco.mac, int(now) - TENDENCY_READ, int(now) + 60))
             except Exception as e:   # (no arrow drawn)
-                log.warning("Dashboard: couldn't read the past hour's pressure: %s: %s", type(e).__name__, e)
+                log.warning("Dashboard: couldn't read the past hours' pressure: %s: %s", type(e).__name__, e)
         self._tendency = (now, got)
         return got
 

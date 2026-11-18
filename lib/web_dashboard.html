@@ -996,8 +996,10 @@ const Sky = (() => {
                  : {...state, lean: leanOf(minutes), az: null, el: null, up: true, real: false};
   };
   function setSun(given) {   // the page's data's sun
-    if (!given || ![given.rise, given.set, given.now].every(Number.isFinite) || given.set <= given.rise) return;
-    Object.assign(sun, {rise: given.rise, set: given.set, now: given.now});
+    if (!given || !Number.isFinite(given.now)) return;
+    const day = [given.rise, given.set].every(Number.isFinite);   // (polar night: no rise or set, null: the old ones kept; the sun's place says it is down)
+    if (day && given.set <= given.rise) return;
+    Object.assign(sun, day ? {rise: given.rise, set: given.set, now: given.now} : {now: given.now});
     if (!(Number.isFinite(given.az) && Number.isFinite(given.el))) { sun.sample = null; sun.rate = {az: 0, el: 0}; sun.at = clock; return; }
     const last = sun.sample, dt = clock - sun.at;
     if (last && dt >= SAMPLE_GAP && dt <= 3600) {   // (the rate from the last two samples; the azimuth the short way round)
@@ -4307,16 +4309,20 @@ const Sky = (() => {
 
   const DIAL = [240, 203, 138];   // a dial's centre and its ring's radius (the compass's too: the same size, lined up)
   const HUB = 13;                 // a dial's hub, its needle's pivot: its radius (its outline as thin, lw(1.5)); the needle's tail under it
-  // The pressure's way over the past hour (tile.tendency: {change, way}, the server's: its newest reading less the one nearest an hour
-  // before; null with none about an hour old): a fine instrument-style arrow just after the reading under the dial, its head's back
-  // 2 px from the last digit's ink (ARROW.gap; the reading stays centred), vertically centred on its digits: a thin straight shaft with a
-  // small, narrow, sharp open head (a slim chevron), no outline. Rising: pointing up, in L.rising (the needle's blue); falling:
-  // pointing down, in L.falling (the red hands' red). None when steady (under 0.3 hPa either way), with no tendency or no reading.
+  // The pressure's 3-hour tendency (tile.tendency: {change, way, class}, the server's: its newest reading less the one nearest 3 hours
+  // before, hPa; null with none about 3 hours old; class by the WMO scale: none under 0.1 hPa, slow to 1.5, moderate to 3.5, quick to
+  // 6.0, rapid above): a fine instrument-style arrow just after the reading under the dial, its head's back 2 px from the last digit's
+  // ink (ARROW.gap; the reading stays centred), vertically centred on its digits: a thin straight shaft with a small, narrow, sharp open
+  // head (a slim chevron), no outline. Rising: pointing up, in L.rising (the needle's blue); falling: pointing down, in L.falling (the
+  // red hands' red). Drawn by class: slow, a short arrow (ARROW.long.slow, 0.5 of the normal length); moderate, the normal arrow
+  // (0.8 of the digits' height); quick, a long one (1.35 times); rapid, a double arrow: the normal length with a second chevron behind
+  // the first. None when steady (class none), with no tendency or no reading.
   // A wide reading (inHg's "29.92") reaches the dial's grey ring, as the reading itself does: the arrow is simply drawn over it. No
   // motion: it is only put in place as the reading changes. The reading's width and its digits' ink are measured on a canvas (no
   // layout asked of the page), once for each text.
-  // ARROW: the gap after the number's ink (px), the head's half-width and length (px), the arrow's height (of the digits'), the stroke's width
-  const ARROW = {gap: 2, head: 3.5, back: 7, tall: 0.8, width: lw(1.2)};
+  // ARROW: the gap after the number's ink (px), the head's half-width and length (px), the arrow's height (of the digits'), the stroke's
+  // width, each class's length (of the normal) and the second chevron's step back (px)
+  const ARROW = {gap: 2, head: 3.5, back: 7, tall: 0.8, width: lw(1.2), long: {slow: 0.5, moderate: 1, quick: 1.35, rapid: 1}, second: 5.5};
   const digits = new Map();   // ({size/text: [its ink's right edge from its centre, its digits' ink centre below the em box's middle, their height]})
   let measuring = null;
   function measure(words, size) {
@@ -4336,17 +4342,19 @@ const Sky = (() => {
     const group = el("g", {class: "tendency", fill: "none", "stroke-linecap": "butt", "stroke-linejoin": "miter", "pointer-events": "none"}, svg);
     const arrow = el("path", {"stroke-width": ARROW.width, class: "arrow"}, group);
     let shown = null, words = null;
-    return (way) => {   // the arrow at the reading as it reads now, this way ("up" or "down"; anything else, "steady" too: none)
-      if (way !== "up" && way !== "down") way = null;
+    return (way, cls) => {   // the arrow at the reading as it reads now, this way ("up" or "down"; anything else, "steady" too: none) and class
+      if ((way !== "up" && way !== "down") || !ARROW.long[cls]) way = null;
       group.style.display = way ? "" : "none";
       group.dataset.way = way || "";
-      if (!way || (way === shown && label.textContent === words)) return;
-      shown = way;
+      group.dataset.class = way ? cls : "";
+      if (!way || (`${way}/${cls}` === shown && label.textContent === words)) return;
+      shown = `${way}/${cls}`;
       words = label.textContent;
-      const [right, middle, high] = measure(words, size), h = high * ARROW.tall, k = ARROW.head, b = ARROW.back, f = (v) => v.toFixed(2);
+      const [right, middle, high] = measure(words, size), h = high * ARROW.tall * ARROW.long[cls], k = ARROW.head, b = ARROW.back, f = (v) => v.toFixed(2);
       const left = x + right + ARROW.gap, cy = y + middle;
       const sx = left + k, sign = way === "up" ? -1 : 1, tip = cy + sign * h / 2;
-      const d = `M${f(sx)},${f(cy - sign * h / 2)} L${f(sx)},${f(tip)} M${f(sx - k)},${f(tip - sign * b)} L${f(sx)},${f(tip)} L${f(sx + k)},${f(tip - sign * b)}`;
+      const chevron = (t) => ` M${f(sx - k)},${f(t - sign * b)} L${f(sx)},${f(t)} L${f(sx + k)},${f(t - sign * b)}`;
+      const d = `M${f(sx)},${f(cy - sign * h / 2)} L${f(sx)},${f(tip)}` + chevron(tip) + (cls === "rapid" ? chevron(tip - sign * ARROW.second) : "");
       arrow.setAttribute("d", d);
       arrow.setAttribute("stroke", ink(way === "up" ? L.rising : L.falling));
     };
@@ -4381,19 +4389,20 @@ const Sky = (() => {
     const label = text(svg, cx, cy + 102, "", 50, ink(L.ink));   // (the reading alone: no band word ("Moderate") under the dial, its
     label.classList.add("reading");                                // colours say it)
     const arrow = tile.tendency === undefined ? null : tendencyArrow(svg, label, cx, cy + 102, 50, ink);   // (the pressure's)
-    let way = null;
+    let way = null, cls = null;
     el("circle", {cx, cy, r: HUB, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(1.5), class: "hub"}, svg);
     const at = (v) => {
       const a = angle(v);
       const pts = [polar(cx, cy, outer - L.band_width - 6, a), polar(cx, cy, 10, a + 90), polar(cx, cy, -(HUB - 1), a), polar(cx, cy, 10, a - 90)];
       needle.setAttribute("points", pts.map((p) => p.map((n) => n.toFixed(2)).join(",")).join(" "));
       label.textContent = figure(v, tile.decimals);
-      if (arrow) arrow(way);   // (kept just after the number as it changes)
+      if (arrow) arrow(way, cls);   // (kept just after the number as it changes)
     };
     if (arrow) {
       at.band = (t) => {   // (the tile as given again: its arrow turned, shown or hidden)
         way = t.value === null || !t.tendency ? null : t.tendency.way;
-        arrow(way);
+        cls = way && t.tendency.class;
+        arrow(way, cls);
       };
       at.band(tile);
     }
@@ -4725,7 +4734,7 @@ const Sky = (() => {
   // °F, its coloured bands as they were), its ticks every round step (0.5, 1, 2, 5, 10 ...) that gives no more of them than it had; a
   // dial's (the wind's 0 to 100 km/h), and a scale `round` (the rain's beaker), ending on its ticks (0 to 60 mph, every 10; 950 to 1050
   // hPa: 28 to 31 inHg, every 0.5; 0 to 100 mm: 0 to 4 in, every 1; 0 to 50 mm/h: 0 to 2 in/h, every 0.5). The pressure's arrow (its
-  // way over the past hour, told in hPa) as it was: the same way in either, just after the reading whatever its width. The weather's marks (heat from 35 °C, leaves from 15 km/h, flood above 30
+  // 3-hour tendency, told in hPa) as it was: the same way in either, just after the reading whatever its width. The weather's marks (heat from 35 °C, leaves from 15 km/h, flood above 30
   // mm/h) read the server's own figures: unchanged by these.
   const UNITS = {temperature: {metric: "°C", other: "°F", name: "Temperature unit", convert: (c) => c * 9 / 5 + 32},
                  wind: {metric: "km/h", other: "mph", name: "Wind speed unit", convert: (k) => k / 1.609344},

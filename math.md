@@ -39,7 +39,7 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | S3 | UV beam lean from sun azimuth and elevation | 2.2 | REAL-APPROX |
 | S4 | Beam lean fallback curve (no sun position) | 2.2 | TUNED |
 | S5 | Sun position run-on between fetches | 2.2 | REAL-APPROX |
-| S6 | Sunrise and sunset fallback 06:00 / 18:00 | 2.2 | TUNED |
+| S6 | Sunrise and sunset fallback 06:00 / 18:00 (no station location only) | 2.2 | TUNED |
 | S7 | Beam, glow and shaft drawing | 2.2 | ARTISTIC |
 | A1 | Effect levels from the readings (`conditionsOf`) | 3.1 | TUNED |
 | A2 | Wind side from wind direction | 3.1 | REAL-APPROX |
@@ -85,14 +85,14 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | G4 | Banded share, needle angle, beaker floor, band colouring | 7.2 | TUNED |
 | G5 | Gauge scale ranges and thermometer widening | 7.2 | TUNED |
 | G6 | Table Max / Min / Gust / Total | 7.3 | REAL-MODEL |
-| G7 | Pressure tendency arrow | 7.3 | TUNED |
+| G7 | Pressure 3-hour tendency arrow (WMO classes) | 7.3 | REAL-MODEL |
 | G8 | Compass sector and needle | 7.4 | REAL-MODEL |
 | G9 | Wind rose | 7.4 | REAL-APPROX |
 | G10 | Tile layout fit and gallery gestures | 7.5 | TUNED |
 | G11 | Art pixel size and canvas margin | 7.5 | TUNED |
 | G12 | Stale-reading rule (1 hour) | 7.5 | TUNED |
 | G13 | Dial, needle, thermometer, beaker geometry | 7.5 | ARTISTIC |
-| D1 | Server sun position call and sunrise/sunset times | 8.1 | REAL-MODEL |
+| D1 | Server sun position call and sunrise/sunset times (sunrise equation, `solar.sun_times`) | 8.1 | REAL-MODEL |
 | D2 | Magnus dew point (outlook fallback only) | 8.2 | REAL-MODEL |
 | D3 | Server unit conversions | 8.2 | REAL-MODEL |
 | D4 | US AQI from PM2.5 and PM10 (truncated, instantaneous) | 8.3 | REAL-APPROX |
@@ -122,7 +122,7 @@ Count per label (counted from this table, as of 96e255f):
 | ARTISTIC | 12 |
 | Total | 77 |
 
-Not computed here at all (the station or a provider supplies them): dew point, feels like, apparent temperature, VPD, sunrise and sunset, pollen and thunderstorm-asthma levels, and the dashboard's heat index or wind chill (none exists in `lib/`).
+Not computed here at all (the station or a provider supplies them): dew point, feels like, apparent temperature, VPD, pollen and thunderstorm-asthma levels, and the dashboard's heat index or wind chill (none exists in `lib/`).
 
 ## 2. Sun and sky geometry
 
@@ -149,8 +149,8 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 |---|---|---|---|---|
 | Beam lean | `leanAt` web_dashboard.html:915 | `lean = clamp(-atan(sin(az) / tan(max(el, 3 deg))), -75, 75)` degrees from vertical; `EL_LOW` 3, `BEAM_MAX` 75 | REAL-APPROX | The sun's direction projected on the east/up plane, east on the right of the screen (as on the compass dial). It drops the north/south component (toward or away from the viewer). The 3 degree floor and 75 degree cap are display limits. Example: az 85.7, el 45.6 gives -44.4 degrees; az 111, el 10.8 gives -78, capped to -75. For a northern-hemisphere station the left/right sense would depend on which way the window faces. |
 | Fallback lean | `leanOf` :911 | `h = clamp((t - noon) / ((set - rise)/2), -1, 1)`, `lean = 70 * sin(pi/2 * h)`; `noon = (rise + set)/2`; `BEAM_CURVE` 70 | TUNED | Right sign (negative in the morning) but no latitude or season; 70 degrees at the extremes, not 90. Used only when no sun position exists. |
-| Sunrise, sunset fallback | `SUN_FALLBACK` web_dashboard.py:104 | 06:00 and 18:00 (360 and 1080 min) when the forecast has none or set is not after rise | TUNED | Wrong by up to about 3 hours at Melbourne's solstices. See Issues. |
-| Sunrise and sunset | `sun_of` web_dashboard.py:107 | minutes = hour*60 + minute + second/60, from Open-Meteo's local ISO times for today | REAL-MODEL | The provider's values, DST included. |
+| Sunrise, sunset fallback | `SUN_FALLBACK` web_dashboard.py | 06:00 and 18:00 (360 and 1080 min) only with no station location | TUNED | Wrong by up to about 3 hours at Melbourne's solstices; no longer used once a location exists (issue 20 FIXED). |
+| Sunrise and sunset | `sun_times` solar.py, `sun_of` web_dashboard.py | The sunrise equation. Solar noon (UTC min) = `720 - 4 lon - eqtime` (eqtime and declination `dec` from the NOAA fits at that noon, refined twice); `w0 = acos((sin(-0.833 deg) - sin(lat) sin(dec)) / (cos(lat) cos(dec)))`; rise/set = noon -/+ `4 w0` min; plus the zone's UTC offset that date (DST), wrapped into the day, 0.01 min. -0.833 deg = refraction 0.567 + the disc's radius 0.266. An acos argument above 1: polar night (None, "no rise"); below -1: polar day (None, "no set"); `sun_of` then sends rise 0, set 1440 (day) or both null (night: no beams) | REAL-MODEL | Checked against the sun's own elevation crossing -0.833 deg (within a minute or two): Melbourne 2026-12-21 05:54 / 20:41 (not the 05:52 / 20:32 first guessed: the longitude puts solar noon at 13:18 DST), 2026-06-21 07:35 / 17:08; London 04:43 / 21:21 BST. The forecast's sunrise and sunset are no longer requested. Ignores altitude and the horizon's real shape. |
 | Run-on | `setSun` :931, `placeNow` :919 | `rate = (new - last) / dt` for samples 30 s to 3600 s apart (azimuth difference the short way: `((d + 540) mod 360) - 180`); position runs on at that rate for at most 1800 s (`RUN_ON`) | REAL-APPROX | Linear extrapolation; accurate to a small fraction of a degree between the 60 s fetches. If data stops, the error grows (near transit in a Melbourne summer the azimuth moves roughly 50 degrees an hour). |
 | Beams | `uvShafts`, `beamOf` :950-995 | count `max(4, round(W/70))` plus off-screen ones; width 8 to 18 art px; length 0.4 to 0.9 of H; rotation about the top by the lean, width squeezed by `cos(lean)`; sway 0.85 to 1.65 px | ARTISTIC | Drawn only while the sun is up. |
 | Top glow | :1179 | height 16 % of H; alpha `0.6 * (1 - y/(0.16 H))^2.4` | ARTISTIC | |
@@ -362,7 +362,7 @@ The server's own factors (`lib/ecowitt/hass_map.py` ~65-71) are listed in 8.2 an
 | Rain total, Max | `figures()` | total `round(sum of daily rain, 1)`; Max is the wettest day (rows covering more than one day) | REAL-MODEL | |
 | Rows | | Daily is today; Monthly is the current month to date; Yearly is 1 January to date | REAL-MODEL | |
 | Limit mark | `dial()` | the red triangle sits at the angle of today's high (wind uses its gust), only on wind, rain rate, solar, UV | REAL-MODEL | Position is the same number as the table's Daily figure; shape is ARTISTIC. |
-| Pressure tendency | `tendency_of()` web_dashboard.py:192; `TENDENCY_AGO` (45, 60, 75) min, `TENDENCY_READ` 90 min, `TENDENCY_STEADY` 0.3 hPa | `change = newest - reading nearest 60 min before it` (among readings 45 to 75 min before); up if `change >= +0.3`, down if `change <= -0.3`, else steady (no arrow); JSON change rounded to 0.1 hPa | TUNED | A 1-hour change at 0.3 hPa, where the meteorological convention is a 3-hour change. The daily pressure tide (about 0.5 to 1 hPa amplitude at mid-latitudes) can give an arrow on a quiet day. No arrow if the newest reading is more than 45 minutes old. The service's outlook uses 3 hours and 1.0 hPa for "steady" (section 8.2). |
+| Pressure tendency | `tendency_of()` web_dashboard.py; `TENDENCY_AGO` (150, 180, 210) min, `TENDENCY_READ` 240 min, `TENDENCY_STEADY` 0.1, `TENDENCY_CLASSES` | `change = round(newest - reading nearest 180 min before it, 1)` (among readings 150 to 210 min back; none otherwise); class by `|change|` to a tenth, the WMO 3-hour tendency scale: under 0.1 none (steady, no arrow), 0.1 to 1.5 slow, 1.6 to 3.5 moderate, 3.6 to 6.0 quick, over 6.0 rapid; JSON `{change, way: up/down/steady, class}` | REAL-MODEL | The meteorological 3-hour change, the daily pressure tide mostly gone. The arrow group (page): length by class 0.5 / 1 / 1.35 times the normal (0.8 of the digit height), rapid a double arrow (a second chevron 5.5 px behind the first at the normal length), 2 px after the last digit's ink, `lw(1.2)`, blue up (#3E86C0), red down (#FF3B30) (ARTISTIC). No arrow with no reading 150 to 210 minutes old. Change stays in hPa whatever unit is shown. |
 
 ### 7.4 Compass and wind rose
 
@@ -395,7 +395,7 @@ The server's own factors (`lib/ecowitt/hass_map.py` ~65-71) are listed in 8.2 an
 | Name | Where | Formula | Label | Faithful? |
 |---|---|---|---|---|
 | Sun for the beams | :128 | `sun_position(lat, lon, now)` (section 2.1), rounded to 3 decimals; location from the forecast, else the station's | REAL-MODEL | |
-| Sunrise and sunset | `sun_of` :107 | Open-Meteo local times for today, minutes rounded to 0.01; fallback 360 and 1080 (section 2.2) | REAL-MODEL, fallback TUNED | |
+| Sunrise and sunset | `sun_of` | `solar.sun_times` for the station's location and zone (section 2.2); fallback 360 and 1080 with no location | REAL-MODEL, fallback TUNED | |
 
 ### 8.2 Derived readings and outlook
 
@@ -485,11 +485,11 @@ Formulas that diverge from the standard they cite:
 13. LEFT BY DECISION: Fahrenheit thermometer tick and band edge mismatch; the user chose to leave it (cosmetic).
 14. LEFT BY DECISION: inch dials span a slightly different range than metric; the user chose to leave it (rounded scale ends are intended).
 15. LEFT BY DECISION: pressure arrow direction uses the unrounded change while the JSON shows 0.1; the user chose to leave it (no visible effect).
-16. LEFT BY DECISION: pressure arrow (1 hour, 0.3 hPa) against the outlook (3 hours, 1.0 hPa); the user chose to leave the two scales as they are.
+16. LEFT BY DECISION: pressure arrow (now the WMO 3-hour tendency classes) against the outlook (3 hours, 1.0 hPa for steady); the two scales differ, the user chose to leave them.
 17. FIXED (ccb7329): outlook `_pressure` uses the change from the window's first reading to its last, 1.0 hPa for steady (a fall that recovers reads steady).
 18. LEFT BY DECISION: Magnus fallback poor at very low RH; dormant while the station supplies a dew point.
 19. FIXED (ccb7329): `rain_slots` takes a drop as the midnight reset only if the new total is under 2 mm and (within 2 h after local midnight, or at most 10 % of the total before); else a counted, ignored glitch (but see new issue N1).
-20. LEFT BY DECISION: sunrise fallback 06:00 / 18:00; the user chose to leave it (the sun's own position does not use it).
+20. FIXED (sunrise equation, `solar.sun_times`): sunrise and sunset come from the station's location; 06:00 / 18:00 remains only with no location.
 21. LEFT BY DECISION: clear-sky model uses Cooper declination and no Earth-Sun distance term; the user chose to leave it (a few percent on a threshold).
 
 Design simplifications that do not estimate reality:

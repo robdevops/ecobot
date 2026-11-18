@@ -1,6 +1,6 @@
 """lib/solar.py: the sun's elevation and azimuth from a place and a moment (the NOAA algorithm), against known values and by reasoning."""
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -107,3 +107,48 @@ def test_the_azimuth_moves_through_a_day_without_a_jump():
     day = [p for p in points if p[0] > 0]
     steps = [(b[1] - a[1] + 540) % 360 - 180 for a, b in zip(day, day[1:])]
     assert all(-30 < s < 0 for s in steps), steps   # (round the compass the one way, never back: SE through N to SW in the southern summer: falling)
+
+
+def hhmm(h, m):
+    return h * 60 + m
+
+
+def crossings(place, day, zone):
+    """Sunrise and sunset found independently: the minutes (since local midnight) where sun_position's geometric elevation crosses -0.833
+    degrees, scanning the day by the minute."""
+    start = datetime(day.year, day.month, day.day, tzinfo=zone)
+    up = [solar.sun_position(*place, start + timedelta(minutes=m))[0] + 0.833 >= 0 for m in range(1441)]
+    return [m for m in range(1, 1441) if up[m] != up[m - 1]]
+
+
+@pytest.mark.parametrize("place, day, zone, rise, set_", [
+    (MELBOURNE, date(2026, 12, 21), MEL, hhmm(5, 54), hhmm(20, 41)),     # summer solstice, daylight saving's clock (UTC+11)
+    (MELBOURNE, date(2026, 6, 21), MEL, hhmm(7, 35), hhmm(17, 8)),       # winter solstice (UTC+10)
+    (MELBOURNE, date(2026, 9, 23), MEL, hhmm(6, 10), hhmm(18, 16)),      # about the equinox (DST began on October 4: still UTC+10)
+    (LONDON, date(2026, 6, 21), LON, hhmm(4, 43), hhmm(21, 21)),         # BST (UTC+1)
+    ((0.0, 0.0), date(2026, 3, 20), timezone.utc, hhmm(6, 5), hhmm(18, 11)),
+])
+def test_sunrise_and_sunset_by_the_sunrise_equation_against_known_values(place, day, zone, rise, set_):
+    got = solar.sun_times(*place, day, zone)
+    assert got.note is None and got.rise == pytest.approx(rise, abs=2) and got.set == pytest.approx(set_, abs=2), got
+    found = crossings(place, day, zone)                                   # (and the sun's own elevation crossing the horizon there)
+    assert len(found) == 2 and found[0] == pytest.approx(got.rise, abs=1.5) and found[1] == pytest.approx(got.set, abs=1.5), (found, got)
+
+
+def test_the_day_is_about_12_hours_at_the_equator_and_longest_at_the_solstice_in_the_summer_hemisphere():
+    for day in (date(2026, 3, 20), date(2026, 6, 21), date(2026, 12, 21)):
+        eq = solar.sun_times(0.0, 30.0, day, timezone.utc)
+        assert (eq.set - eq.rise) / 60 == pytest.approx(12.1, abs=0.2), (day, eq)   # (the disc and refraction add a few minutes)
+    long, short = solar.sun_times(*MELBOURNE, date(2026, 12, 21), MEL), solar.sun_times(*MELBOURNE, date(2026, 6, 21), MEL)
+    assert long.set - long.rise > 14 * 60 and short.set - short.rise < 10 * 60
+
+
+def test_the_sun_that_never_sets_or_never_rises_gives_none_and_says_why():
+    assert solar.sun_times(80.0, 0.0, date(2026, 6, 21), timezone.utc) == (None, None, "no set")        # polar day
+    assert solar.sun_times(80.0, 0.0, date(2026, 12, 21), timezone.utc) == (None, None, "no rise")      # polar night
+    assert solar.sun_times(-80.0, 0.0, date(2026, 12, 21), timezone.utc).note == "no set"
+    assert solar.sun_times(-80.0, 0.0, date(2026, 6, 21), timezone.utc).note == "no rise"
+    assert solar.sun_times(90.0, 0.0, date(2026, 6, 21), timezone.utc).note == "no set"                 # (the pole: cos(lat) = 0)
+    assert solar.sun_times(64.0, 0.0, date(2026, 6, 21), timezone.utc).note is None                     # (a short night)
+    near = solar.sun_times(70.0, 0.0, date(2026, 5, 1), timezone.utc)
+    assert near.note is None and near.rise is not None and 0 <= near.rise < 1440 and 0 <= near.set < 1440

@@ -31,7 +31,7 @@ COMPASS_LABEL_Y = 346       # ... its reading ("99° E") under it
 COMPASS_BAND = "#262E34"    # ... its ring, under the ticks and the letters N, E, S and W
 WATER = "#4FB3F6"           # the rain beaker's water
 NEEDLE = "#3E86C0"
-RISING, FALLING = NEEDLE, HIGH_HAND   # the web page's pressure arrow after its reading (its way over the past hour): up, in the
+RISING, FALLING = NEEDLE, HIGH_HAND   # the web page's pressure arrow after its reading (its 3-hour tendency): up, in the
                                      # needle's blue; down, in the red hands' red (steady: none)
 WIND_CHIPS = {**CHIPS, "Max": NEEDLE, "Gust": HIGH_HAND}   # the web page's Wind table: its Max the needle's colour (the speed
                                                            # it shows), its Gust its limit mark's red (today's highest gust)
