@@ -1238,7 +1238,7 @@ const Sky = (() => {
   //   and reached it) it keeps to it all the way down, row by row on the run's middle wherever that wanders (a break of up to LOCK_GAP
   //   rows, or the bead ahead on it, held straight across), no wandering back off, till it merges, runs off the bottom, or the run ends (then on as it was).
   //   Its size (its water: continuous, no largest): on fog it gathers the fog it passes (GATHER a px, CONDENSE a s as it sits; the
-  //   fog wiped) and grows; on a trail it keeps its size; on dry glass, only there, it shrinks, leaving its water behind (LEAVE a px,
+  //   fog wiped) and grows; on a trail it keeps its size; on dry glass, only there, it shrinks, leaving its water behind (LEAVE a px, a rain bead's RAIN_LEAVE of that,
   //   EVAPORATE a s). Shrunk to nothing (GONE): gone. A run (trail) is wet glass as fog is: no bead condenses in one, none shrinks in one, and a bead on fog never dries, shrinks or disappears: it only grows (a tiny one
   //   swelling at least MIN_FELT as thick as the fog, thin or wiped through, a bigger one gathering at least that) till it runs;
   //   only merging, running off the bottom, the weather clearing or dry glass (a bead stopped there, in a track) take it. Two that touch merge, their water adding up (the fastest way to grow).
@@ -1275,6 +1275,7 @@ const Sky = (() => {
     const CONDENSE = 0.012;            // ... and for each s it sits on it (each bead 0.3 to 1.5 times that, a few 3 to 5 times)
     const LEAVE = 0.1;                 // water left on dry glass for each px a bead runs, for each px of its width ...
     const EVAPORATE = 0.15;            // ... and for each s it sits there, for each px of its radius
+    const RAIN_LEAVE = 0.5;            // a rain bead leaves this much of LEAVE a px: it holds on to its water, running about 1.4 times as far on dry glass
     const LOCK_GAP = 5;                // rows ahead a bead locked on a run looks for it again past a break in it
     const GONE = 0.03;                 // a bead's water this little: gone (r about 0.3)
     const BORN = [0.5, 0.6];           // a bead condensing: its radius, tiny (a px: two of them together small, r 0.63 or more)
@@ -1314,7 +1315,7 @@ const Sky = (() => {
     const HEAVY_RAIN = 0.75;           // rain this strong or more (about 5 mm/h): heavy, a drop sticking to the glass now and then ...
     const LANDING = 0.35;              // ... about this many a second (one in 3 s) ...
     const RAIN_MOST = 14;              // ... a dozen or so on the glass at most ...
-    const RAIN_R = [3, 3.8];           // ... each landing this big (its radius) ...
+    const RAIN_R = [2.6, 3.3];         // ... each landing this big (its radius) ...
     const SQUASH = [0.5, 0.75];        // ... landing squashed flat and wide (this much wider at first, as much shorter: its water
                                        // ... kept), held a frame or two (HOLD s), then wobbling back to round (a little taller and
     const HOLD = 0.05;                 // ... narrower, then wider again, less and less) over SQUASH_S in all ...
@@ -1652,12 +1653,12 @@ const Sky = (() => {
     }
     // The physics, one bead (b: {vol, r, k}) over a stretch of glass g (f: its fog as shown): px run in s s
     const sized = (r, g) => { const x = r / 2.8; return SPEED * (x <= 1 ? x ** 5 : x ** 3) * PACE[g]; };
-    const TRACK = sized(RAIN_R[0], TRAIL);   // (on a trail, every running bead at least this fast: a freshly landed rain bead's)
+    const TRACK = sized(3, TRAIL);   // (on a trail, every running bead at least this fast: that of a bead of r 3, as rain beads landed before they were smaller)
     // (px/s, a stretch's mean)
     const speedFor = (r, g) => (r < RUN_R ? 0 : g === TRAIL ? Math.max(TRACK, sized(r, g)) : sized(r, g));
     function change(b, g, f, px, s) {
       if (g === FOGGY) { f = Math.max(f, MIN_FELT); b.vol += GATHER * f * 2 * b.r * px + CONDENSE * (b.k || 1) * f * s; }
-      else if (g === DRY) b.vol = Math.max(0, b.vol - LEAVE * 2 * b.r * px - EVAPORATE * b.r * s);
+      else if (g === DRY) b.vol = Math.max(0, b.vol - LEAVE * (b.kind === "rain" ? RAIN_LEAVE : 1) * 2 * b.r * px - EVAPORATE * b.r * s);
       b.r = Math.cbrt(b.vol);
     }
     function account(b, g, f, px, s) {   // (change(), and for the tests: the water gained and lost on each glass, px run and s taken)
@@ -2299,10 +2300,10 @@ const Sky = (() => {
                      glass: Object.fromEntries(GLASSES.map((name, g) => [name, {...seen.glass[g]}])), sizes: seen.sizes.map((s) => s.slice()),
                      bands: BANDS,
                      // (the physics as the beads run by it: a bead's mean speed, px/s, of radius r on glass g ("dry", "trail", "fog"),
-                     // and its radius after px run over s s there (fog: as thick as f))
+                     // and its radius after px run over s s there (fog: as thick as f; kind "rain": a rain bead's))
                      physics: {speed: (r, g) => speedFor(r, GLASSES.indexOf(g)),
-                               after: (r, g, px, s, f = 0.5) => {
-                                 const b = {r, vol: r ** 3, k: 1};
+                               after: (r, g, px, s, f = 0.5, kind = "fog") => {
+                                 const b = {r, vol: r ** 3, k: 1, kind};
                                  for (let n = 0; n < px && b.vol > GONE; n++) change(b, GLASSES.indexOf(g), f, 1, s / px);
                                  if (!px) change(b, GLASSES.indexOf(g), f, 0, s);
                                  return b.vol > GONE ? b.r : 0;

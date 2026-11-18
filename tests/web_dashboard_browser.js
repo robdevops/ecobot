@@ -3043,6 +3043,12 @@ const WEATHER = {
       await p.page.evaluate(() => Sky.timeScale(3));
       await lookable(p.page);
       const seen = await rainBeads(p.page, 100, 250, 0, 1);
+      // (how far, px, each rain bead (of the radii they landed with) would run down dry glass before it is too small to run: the physics' own
+      // steps of a px, a rain bead's)
+      seen.runs = await p.page.evaluate((radii) => {
+        const { after, run } = Sky.state().humidity.physics;
+        return radii.map((r) => { let px = 0; while (r >= run && px < 5000) { r = after(r, "dry", 1, 0, 0.5, "rain"); px++; } return px; });
+      }, seen.stuck.map((s) => s.r));
       await p.page.evaluate(() => Sky.timeScale(1));
       // (heavy still, its weather's own time (a frame 0.1 s: a stretch over a few), 30 s: the biggest setting off again after pauses)
       seen.stretching = await beadsWatched(p.page, 300);

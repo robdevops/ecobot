@@ -2214,7 +2214,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert speed["fog"][3] == 0 and 0.2 < speed["fog"][4] < 0.6 and speed["fog"][-1] > 100, speed["fog"]
     assert after["dry"][0] == 0 and after["fog"][-1] > sizes[-1], after
     # heavy rain's beads: light rain none; heavy, a drop sticking every few s (one in 3 s), a dozen or so (14) on the glass at most, each landing at once
-    # (no fading in) as a large bead (r 3 or more), hard: squashed flat and wide a frame or two, wobbling back to round, with a splash
+    # (no fading in) as a large bead (r 2.6 to 3.3: a little smaller than the 3 to 3.8 they were, 13 % less; the large sprite class, r 2.5 or more), hard: squashed flat and wide a frame or two, wobbling back to round, with a splash
     # (a ring of 14 to 20 droplets thrown out fast, lopsided, some of them spray streaks, 4 to 8 of them left on the glass as tiny
     # beads); on dry glass crawling (about 0.3 of its speed on fog, the same size), down a trail at TRACK or more (its own size's
     # speed there), shrinking only (its water left behind), never growing; none vanishing; their wet streaks on the
@@ -2229,9 +2229,19 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert 12 <= heavy_rain["landed"] <= 42 and 6 <= heavy_rain["rainMost"] <= 14 and heavy_rain["popped"] == 0, heavy_rain
     # (each landing seen: shown at once, or, landing on a bead already there, merged into it at once (in its absorbed))
     assert len(sticking["stuck"]) == heavy_rain["landed"], sticking["stuck"]
-    assert all(s["r"] >= 3 and (s["alpha"] == 1 or s.get("merged")) and 14 <= s["dots"] <= 20 and len(s["thrown"]) == s["dots"] and s["phase"] == "heavy"
+    assert all(2.6 <= s["r"] <= 3.3 and (s["alpha"] == 1 or s.get("merged")) and 14 <= s["dots"] <= 20 and len(s["thrown"]) == s["dots"] and s["phase"] == "heavy"
                for s in sticking["stuck"]), sticking["stuck"]
     assert len({s["dots"] for s in sticking["stuck"]}) >= 4, sticking["stuck"]
+    # (a little smaller than they were (r 3 to 3.8, mean 3.4): the mean landing radius 12 to 15 % under that; and shrinking slower as they run on
+    # dry glass (a rain bead leaves half the water a px that others do): the run each would make down dry glass, till too small to run,
+    # (r squared goes down a steady 4/3 of LEAVE (0.1) a px: (r2 - RUN_R2) / (4/3 * 0.1) for the old mean) at least 1.3 times as far as the old
+    # beads' (the median, over the beads that landed)
+    radii = [s["r"] for s in sticking["stuck"]]
+    mean_r = sum(radii) / len(radii)
+    assert 3.4 * 0.85 - 0.12 <= mean_r <= 3.4 * 0.88 + 0.12, mean_r
+    old_run = (3.4**2 - physics["run"] ** 2) / (4 / 3 * 0.1)   # (about 72 px)
+    new_run = sorted(sticking["runs"])[len(sticking["runs"]) // 2]
+    assert len(sticking["runs"]) == len(radii) and new_run >= 1.3 * old_run, (new_run, old_run, sticking["runs"])
     # (the burst lopsided: its droplets' mean throw a fifth or so of their speed or more one way, a direction of its own each landing;
     # some of them (a third or so all told, at least two a splash) spray streaks; squashed 0.5 to 0.75 wider at first)
     for s in sticking["stuck"]:
