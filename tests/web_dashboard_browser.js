@@ -1801,16 +1801,18 @@ const rainSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
   const begun = () => Sky.clock().frames >= 50 ? look() : __next(begun);
   begun();
 }), ms);
-// The sun's limb (heat) and the UV's beams rooted on it, on a driven page (?fx=heat,uv, 640x480): for each lean of LEANS (the sun placed
-// by Sky.setSunPosition: a low sun for the cap's -75 and 75) after 90 frames: the heat's probe (limb {apex, centre, radius, a, area}, bakes,
-// colour), the beams' (lean, roots), the rim's pixels (0 < depth <= 1 below the limb) compared 15 frames (0.5 s) on, the beams' mean
-// axis from their drawn transforms (halo sprites); at lean 0 and 45 with the heat alone the halo's brightness over 12 s (red channel in
-// a 2-5 px band outside the limb: its depth of shimmer, and the rim's changes), and its grid power; then, at lean 0, the colour at heat 0
-// and 1 (the probe's, and the canvas's mean by alpha), the brightness over 24 s (its dominant frequency, with the UV too), the most any
-// pixel's alpha, the bake counts (frames on, a lean change of 0.2 and of 1 degree, a resize), the layers in order and the cost
+// The sun's limb (heat: the large sun with a tiny piece in view) and the UV's beams rooted on it, on a driven page (?fx=heat,uv, 640x480):
+// for each of the six moments of PLACES (the sun placed by Sky.setSunPosition: sunrise, early and mid-morning, noon in summer and winter,
+// the afternoon, sunset) after 120 frames: the heat's probe (limb {apex, centre, radius, a, depth, exit, area}, bakes, colour, wash),
+// the beams' (lean, roots), the rim's pixels (0 < depth <= 1 below the limb) compared 15 frames (0.5 s) on, the beams' mean axis from
+// their drawn transforms (halo sprites), the wash's brightness along the rays' axis from the apex; with the heat alone the halo's
+// brightness over 12 s (red channel in a 2-5 px band outside the limb: its depth of shimmer, and the rim's changes), and its grid
+// power; then at noon the colour at heat 0 and 1 (the probe's, and the canvas's mean by alpha), the brightness over 24 s (its dominant
+// frequency, with the UV too), the most any pixel's alpha, the bake counts (frames on, a lean change of 0.2 and of 1 degree, a depth
+// change under and over its step, a resize), the exit point through the day (each ten minutes of the two solstice days) and the
+// layers in order and the cost
 const limbSeen = async (page) => {
-  const sinFor = (lean, el) => (Math.asin(-Math.tan(lean * Math.PI / 180) * Math.tan(el * Math.PI / 180)) * 180 / Math.PI + 360) % 360;
-  const PLACES = [[-75, 90, 2], [-45, sinFor(-45, 20), 20], [-15, sinFor(-15, 20), 20], [0, 0, 60], [15, sinFor(15, 20), 20], [45, sinFor(45, 20), 20], [75, 270, 2]];
+  const PLACES = [["sunrise", 109, 8], ["early", 80, 25], ["mid", 60, 40], ["noonSummer", 0, 76], ["noonWinter", 0, 29], ["afternoon", 290, 30], ["sunset", 251, 8]];
   const fx = (detail) => page.evaluate((detail) => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail })), detail);
   const out = { leans: [] };
   const inPage = (f, arg) => page.evaluate(f, arg);
@@ -1820,7 +1822,7 @@ const limbSeen = async (page) => {
     window.__rim = (L) => { const W = window.__c.width, H = window.__c.height, r = []; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const q = L.radius - Math.hypot(x + 0.5 - L.centre[0], y + 0.5 - L.centre[1]); if (q > 0 && q <= 1) r.push(y * W + x); } return r; };
   };
   await page.evaluate(helpers);
-  for (const [lean, az, el] of PLACES) {
+  for (const [name, az, el] of PLACES) {
     await fx({ heat: 1, uv: 0 });
     const look = await inPage(([az, el]) => {
       Sky.setSunPosition(az, el); Sky.advance(120);
@@ -1833,7 +1835,7 @@ const limbSeen = async (page) => {
       const band = [];
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const q = Math.hypot(x + 0.5 - L.centre[0], y + 0.5 - L.centre[1]) - L.radius; if (q > 2 && q < 5) band.push(y * W + x); }
       const red = [], first = __grab(); let rimMoved = 0;
-      const US = [-300, -100, 0, 100, 300], thick = US.map(() => []), glow = US.map(() => []);
+      const US = [-150, -50, 0, 50, 150], thick = US.map(() => []), glow = US.map(() => []);
       for (let k = 0; k < 24; k++) {
         Sky.advance(15);
         const bd = Sky.state().heat.band; US.forEach((u, j) => { const v = bd.at(u); thick[j].push(v.thick); glow[j].push(v.bri); });
@@ -1851,10 +1853,15 @@ const limbSeen = async (page) => {
       const qc = bd.centre, hw = bd.thick / 2, inside = [], outside = [];
       for (let q = qc - 0.3 * hw; q <= qc + 0.3 * hw; q += 2) inside.push(q);
       for (let q = qc + 1.2 * hw; q <= qc + 1.2 * hw + 24; q += 2) outside.push(q);
+      // the wash along the rays from the apex: the mean red (by alpha) in a 9 x 9 window at each distance (of the height) beyond the limb
+      const washAt = (k) => { let sum = 0, n = 0; const x0 = Math.round(L.apex[0] + L.d[0] * k * H), y0 = Math.round(L.apex[1] + L.d[1] * k * H);
+        for (let y = y0 - 4; y <= y0 + 4; y++) for (let x = x0 - 4; x <= x0 + 4; x++) { if (x < 0 || y < 0 || x >= W || y >= H) continue; const i = (y * W + x) * 4; sum += d[i] * d[i + 3] / 255; n++; }
+        return n ? sum / n : null; };
+      const wash = [0.04, 0.1, 0.2, 0.3, 0.4].map(washAt);
       return { rim: rim.length, inked, diffs, red, rimMoved, heat: st.heat, size: [W, H], cost: st.cost, drawn: st.drawn.heat, cap: st.cap,
-               thick, glow, vars: [mean(inside), mean(outside)] };
+               thick, glow, wash, vars: [mean(inside), mean(outside)] };
     }, [az, el]);
-    look.lean = lean; look.grid = lean === 0 ? (await gridPeak(page)).ratio : null;
+    look.name = name; look.grid = ["sunrise", "noonSummer", "sunset"].includes(name) ? (await gridPeak(page)).ratio : null;
     await fx({ heat: 1, uv: 1 });
     Object.assign(look, await inPage(() => {
       Sky.advance(90);
@@ -1870,7 +1877,7 @@ const limbSeen = async (page) => {
     out.leans.push(look);
   }
   // colour at heat 0 and 1 (the sun at noon)
-  await inPage(() => Sky.setSunPosition(0, 60));
+  await inPage(() => Sky.setSunPosition(0, 60));   // (a high noon)
   out.colours = [];
   for (const level of [0.3, 1]) {
     await fx({ heat: level, uv: 0 });
@@ -1914,16 +1921,36 @@ const limbSeen = async (page) => {
   // the bakes: frames on change none; 0.2 degree none; 1 degree one more; a resize one more
   await fx({ heat: 1, uv: 1 });
   out.bakes = await inPage(() => {
-    const baked = () => Sky.state().heat.baked, lean = () => Sky.state().beam.lean;
+    const baked = () => Sky.state().heat.bakes, lean = () => Sky.state().beam.lean, depth = () => Sky.state().heat.limb.depth;
     Sky.setSunPosition(0, 60); Sky.advance(30);
     const a = baked(); Sky.advance(120); const b = baked();
     Sky.setSunPosition(120, 30); Sky.advance(3); const l0 = lean(); const c = baked();
     Sky.setSunPosition(118.5, 30); Sky.advance(3); const l1 = lean(); const d = baked();
-    return { start: a, after: b, first: c, leanA: l0, leanB: l1, second: d };
+    Sky.setSunPosition(118.4, 30); Sky.advance(3); const e = baked();   // (0.1 degree of lean: none)
+    // the depth alone (due north, az 0: the lean stays 0): a rise of the sun's height under the step, none; over it, one
+    Sky.setSunPosition(0, 30); Sky.advance(3); const f = baked(), d0 = depth();
+    Sky.setSunPosition(0, 32); Sky.advance(3); const g = baked(), d1 = depth();
+    Sky.setSunPosition(0, 37); Sky.advance(3); const h = baked(), d2 = depth();
+    return { start: a, after: b, first: c, leanA: l0, leanB: l1, second: d, small: e, level: f, depthSmall: g, depthBig: h, depths: [d0, d1, d2], size: Sky.state().heat.size };
   });
+  // the exit point through each day (every 10 minutes the sun is up): where the limb meets the border, the apex, the depth, the beams' lean
+  out.days = await inPage((days) => {
+    const run = {};
+    for (const [name, [, rows]] of Object.entries(days)) {
+      run[name] = [];
+      for (const [m, az, el] of rows) {
+        if (el <= 0) continue;
+        Sky.setSunPosition(az, el); Sky.advance(2);
+        const st = Sky.state(), L = st.heat.limb;
+        run[name].push({ m, az, el, exit: L.exit, apex: L.apex, depth: L.depth, a: L.a, lean: st.beam.lean, size: st.heat.size });
+      }
+    }
+    Sky.setSunPosition(null, null);
+    return run;
+  }, require("./sun_days.json").days);
   await page.setViewportSize({ width: 560, height: 420 });
   await page.waitForTimeout(700);
-  out.bakes.resized = await inPage(() => { Sky.advance(3); return { baked: Sky.state().heat.baked, size: Sky.state().heat.size }; });
+  out.bakes.resized = await inPage(() => { Sky.advance(3); return { baked: Sky.state().heat.bakes, size: Sky.state().heat.size }; });
   await page.setViewportSize({ width: 640, height: 480 });
   await page.waitForTimeout(700);
   await inPage(() => { Sky.setSunPosition(null, null); Sky.advance(3); });

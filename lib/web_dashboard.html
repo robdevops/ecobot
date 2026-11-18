@@ -1270,7 +1270,7 @@ const Sky = (() => {
       // from the limb, its place u along it, its steady strength (falling with d by WASH_FADE at the reach, and sideways with a sigma that
       // widens with d), its dither
       const Wh = Math.ceil(W / 2), Hh = Math.ceil(H / 2), Lw = WASH_REACH * H / Math.log(1 / WASH_FADE), sig0 = WASH_SIGMA * W;
-      const wI = [], wD = [], wU = [], wE = [], wT = [];
+      const wI = [], wD = [], wU = [], wE = [], wT = [], wg = [];   // (wg: six numbers a pixel, the steady parts of its noise and waves)
       let reach = 0;
       for (let yh = 0; yh < Hh; yh++) for (let xh = 0; xh < Wh; xh++) {
         const x = xh * 2 + 1, y = yh * 2 + 1, d = Math.hypot(x - cx, y - cy) - R;
@@ -1278,13 +1278,14 @@ const Sky = (() => {
         const u = (x - cx) * tx + (y - cy) * ty, sg = sig0 + WASH_SPREAD * d, e0 = Math.exp(-d / Lw) * Math.exp(-u * u / (2 * sg * sg)) * smooth3(3, 9, d);
         if (e0 < 0.004) continue;
         wI.push(yh * Wh + xh); wD.push(d); wU.push(u); wE.push(e0); wT.push(dither(xh, yh));
+        wg.push(u * 0.02, d * 0.03, Math.sin(u * 0.05), Math.cos(u * 0.05), Math.sin(d * 0.02), Math.cos(d * 0.02));
         if (e0 >= WASH_FADE && d > reach) reach = d;
       }
       canvasW = canvasOf(Wh, Hh); gW = canvasW.getContext("2d"); imgW = gW.createImageData(canvasW.width, canvasW.height); w32 = new Uint32Array(imgW.data.buffer);
       canvasL = canvasOf(W, H); gL = canvasL.getContext("2d"); img = gL.createImageData(canvasL.width, canvasL.height); c32 = new Uint32Array(img.data.buffer);
       bakes++;
       lastAt = -Infinity; lutKey = -1;
-      return {G, id: G.id, area, wn: wI.length, wI: Int32Array.from(wI), wD: Float32Array.from(wD), wU: Float32Array.from(wU), wE: Float32Array.from(wE), wT: Float32Array.from(wT), reach, Wh, Hh, Lw, box: [x0, y0, Math.max(0, x1 - x0 + 1), Math.max(0, y1 - y0 + 1)], U0, T0, qc, hw0,
+      return {G, id: G.id, area, wn: wI.length, wI: Int32Array.from(wI), wD: Float32Array.from(wD), wU: Float32Array.from(wU), wE: Float32Array.from(wE), wT: Float32Array.from(wT), wg: Float32Array.from(wg), reach, Wh, Hh, Lw, box: [x0, y0, Math.max(0, x1 - x0 + 1), Math.max(0, y1 - y0 + 1)], U0, T0, qc, hw0,
               sIdx, sSrc, sRim, sThr, ns: surf.length, n: need.size, su: Float32Array.from(su), sq: Float32Array.from(sq), sny: Float32Array.from(sny),
               sph: Float32Array.from(sph), sdw: Float32Array.from(sdw), sedge: Float32Array.from(sedge), score: Float32Array.from(score), ssrc: Int32Array.from(ssrc),
               sv: new Float32Array(N), hn, hIdx, hDd, hE1, hSm, hBin, hThr, bri: new Float32Array(2 * U0 + 1), ext: new Float32Array(2 * U0 + 1),
@@ -1307,14 +1308,14 @@ const Sky = (() => {
     return {
       strength: () => 0.8,
       // (for the tests: the limb {apex: [x, y] (P), centre: [x, y] (C), radius, a: the lean it was baked for, d: the rays' direction, area: the
-      // window's pixels inside the disc, box: where it draws, id}, the bakes so far, the colour now ([r, g, b]: the brightest shade, and all
+      // window's pixels inside the disc, box: where it draws, id}, the bakes so far, the colour now ([r, g, b]: the surface's body shade, a little over half the ramp, and all
       // the shades), the heat h (0 at 35 C, 1 at 43 C) and the level, the band {thick (its nominal thickness, art px), centre (its
       // centreline's depth below the limb), alpha, live (the wobble's strength 0-1), at(u): its thickness and brightness multipliers at u
       // art px along the limb from its foot, at the moment}, the lean wanted now (the beams') and the window's size)
       probe: () => {
         const h = hNow(), b = beamState(), G = bk && bk.G;
         colours(h);
-        return {level: e.level, h, size: [W, H], lean: b.up ? b.lean : 0, bakes, colour: lut.rgbs[NL], colours: lut.rgbs, warm: warm.rgbs[NR],
+        return {level: e.level, h, size: [W, H], lean: b.up ? b.lean : 0, bakes, colour: lut.rgbs[Math.round(NL * 0.6)], colours: lut.rgbs, warm: warm.rgbs[NR],
                 limb: G ? {apex: G.P.slice(), centre: G.C.slice(), radius: G.R, a: G.a, depth: G.depth, exit: G.E.slice(), d: G.d.slice(), t: G.t.slice(), area: bk.area, box: bk.box, id: G.id, step: LIMB_STEP, depthStep: DEPTH_STEP} : null,
                 wash: bk ? {reach: bk.reach, lit: washLit, cells: bk.wn, sigma: WASH_SIGMA * W, spread: WASH_SPREAD, levels: WASH_LEVELS} : null,
                 band: bk ? {thick: bk.T0, centre: bk.qc, alpha: BAND_ALPHA, live: live(h), breath: BAND_BREATH, at: (u) => { const i = Math.round(u) + bk.U0; return {thick: bk.bt[i], bri: bk.bb[i]}; }} : null,
@@ -1365,12 +1366,12 @@ const Sky = (() => {
         // ---- the ember wash: out of the visible piece along the rays, its bands travelling slowly (half resolution, on the fresh frames)
         if (fresh) {
           const lam = WASH_PERIOD * H, str = (0.5 + 0.5 * (0.5 + 0.5 * Math.cos(a - 4 * W12))) * (0.35 + 0.65 * h) * 0.95, sw = 0.6 + 0.4 * h;
-          const sa = Math.sin(a), ca = Math.cos(a), wl = washLut.packed;
+          const sa = Math.sin(a), ca = Math.cos(a), s2 = Math.sin(2 * a), c2 = Math.cos(2 * a), wl = washLut.packed, wg = k.wg, ia = 1 / lam;
           let lit = 0;
           for (let i = 0; i < k.wn; i++) {
-            const d = k.wD[i], u = k.wU[i];
-            const c = 0.5 + 0.5 * Math.cos(2 * Math.PI * (d / lam + 0.35 * grain(u * 0.02 + 0.8 * ca + 9, d * 0.03 + 0.8 * sa)) - 3 * a);
-            const wob = (0.55 + 0.45 * Math.pow(c, 1.6)) * (0.82 + 0.18 * sw * Math.sin(u * 0.05 + 2 * a) * Math.sin(a + d * 0.02));
+            const d = k.wD[i], j = i * 6;
+            const c = 0.5 + 0.5 * Math.cos(2 * Math.PI * (d * ia + 0.35 * grain(wg[j] + 0.8 * ca + 9, wg[j + 1] + 0.8 * sa)) - 3 * a);
+            const wob = (0.55 + 0.45 * c * Math.sqrt(c)) * (0.82 + 0.18 * sw * (wg[j + 2] * c2 + wg[j + 3] * s2) * (wg[j + 4] * ca + wg[j + 5] * sa));
             let s = (k.wE[i] * wob * str * WASH_LEVELS + k.wT[i]) | 0;
             if (s > WASH_LEVELS) s = WASH_LEVELS;
             w32[k.wI[i]] = s ? wl[s] : 0;

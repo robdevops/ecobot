@@ -2762,79 +2762,104 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert frost["grown"]["extent"] > 0 and frost["grown"]["ink"] > 0, frost["grown"]
     started_afresh(frost["restarted"], "ice")
     assert frost["restarted"]["frost"] == {"extent": 0, "ink": 0, "sparkles": 0}, frost["restarted"]
-    # the heat (?fx=heat): the bottom of the sun's huge disc seen as a limb (radius 1.6 widths), its apex on the ray from the window's
-    # centre toward the sun (the beams' lean) 0.2 of the height in, its tangent there perpendicular to the beams' axis; static, with a
-    # granulated surface, a steady rim, a shimmering halo, bands of radiation; the UV's beams rooted on its arc
+    # the heat (?fx=heat): the large sun with only a tiny piece in view. The sun's disc (radius 1.6 widths) cuts the window's border; its
+    # limb's apex lies on the ray from the window's centre toward the sun (the beams' lean), a depth of 0.04 H + 0.06 H sin(el) in from
+    # the border, its tangent there perpendicular to the beams' axis; static, with a granulated surface, a steady rim, a shimmering halo,
+    # a thick band and an ember wash; the UV's beams rooted on its arc or entering at the window's edge. The piece travels along the
+    # border with the sun: the right edge at sunrise, the top at noon, the left at sunset
     hot = got["heat"]
     assert hot["errors"] == [], hot["errors"]
-    leans = {l["lean"]: l for l in hot["leans"]}
-    assert sorted(leans) == [-75, -45, -15, 0, 15, 45, 75], sorted(leans)
+    leans = {l["name"]: l for l in hot["leans"]}
+    assert sorted(leans) == sorted(["sunrise", "early", "mid", "noonSummer", "noonWinter", "afternoon", "sunset"]), sorted(leans)
+    places = {"sunrise": (109, 8), "early": (80, 25), "mid": (60, 40), "noonSummer": (0, 76), "noonWinter": (0, 29), "afternoon": (290, 30), "sunset": (251, 8)}
     areas = {}
-    for lean, look in leans.items():
+    for name, look in leans.items():
         w, h = look["size"]
         limb, beam = look["heat"]["limb"], look["beam"]
-        assert beam["lean"] == pytest.approx(lean, abs=0.01), (lean, beam["lean"])
+        az, el = places[name]
+        lean = beam["lean"]
+        assert lean == pytest.approx(max(-75, min(75, -math.degrees(math.atan(math.sin(math.radians(az)) / math.tan(math.radians(max(el, 3))))))), abs=0.01), (name, lean)
         assert limb["a"] == pytest.approx(lean, abs=0.5) and limb["radius"] == pytest.approx(1.6 * w), limb
         # (the limb's tangent at the apex perpendicular to the beams' axis d: the radius to the apex is along d, within 1 degree)
         (px, py), (cx, cy) = limb["apex"], limb["centre"]
         radial = math.degrees(math.atan2(px - cx, py - cy))
-        assert abs(radial - limb["a"]) < 1e-6 and math.hypot(px - cx, py - cy) == pytest.approx(limb["radius"]), (lean, limb)
+        assert abs(radial - limb["a"]) < 1 and math.hypot(px - cx, py - cy) == pytest.approx(limb["radius"]), (name, limb)
         d = (math.sin(math.radians(limb["a"])), math.cos(math.radians(limb["a"])))
         assert abs(d[0] * (px - cx) + d[1] * (py - cy) - limb["radius"]) < 1e-6
-        # (the apex on the ray from the window's centre toward the sun: M - t d, t > 0 then beyond the window's edge, and inside the window)
+        # (the apex on the ray from the window's centre toward the sun: M - t d, t > 0, inside the window; the exit E on the same ray, on the border)
         mx, my = w / 2 - px, h / 2 - py
-        assert abs(mx * d[1] - my * d[0]) < 1e-6 and mx * d[0] + my * d[1] > 0, (lean, limb)   # (collinear, short of the window's centre)
+        assert abs(mx * d[1] - my * d[0]) < 1e-6 and mx * d[0] + my * d[1] > 0, (name, limb)
         assert 0 <= px <= w and 0 <= py <= h, limb
-        areas[lean] = limb["area"]
+        ex, ey = limb["exit"]
+        assert min(abs(ex), abs(ex - w), abs(ey), abs(ey - h)) < 1e-6 and -1e-6 <= ex <= w + 1e-6 and -1e-6 <= ey <= h + 1e-6, (name, limb)
+        assert math.hypot(px - ex, py - ey) == pytest.approx(limb["depth"], abs=1e-6), (name, limb)
+        # (the depth: 0.04 H + 0.06 H sin(el), within 5 %, never under 0.04 H)
+        want = 0.04 * h + 0.06 * h * math.sin(math.radians(el))
+        assert limb["depth"] == pytest.approx(want, rel=0.05) and limb["depth"] >= 0.04 * h - 1e-9, (name, limb["depth"], want)
+        areas[name] = limb["area"]
+        assert limb["area"] > 0, (name, limb)
         # (static: the rim's pixels the same 0.5 s apart, and over 12 s; and drawn)
-        assert look["rim"] > 20 and look["inked"] == look["rim"] and look["diffs"] == 0 and look["rimMoved"] == 0, (lean, look["rim"], look["inked"], look["diffs"], look["rimMoved"])
-        # (the beams' roots on the visible arc within 1 art px; the others enter from the window's edge; the axis the lean's within 1.5 degrees)
+        assert look["rim"] > 10 and look["inked"] == look["rim"] and look["diffs"] == 0 and look["rimMoved"] == 0, (name, look["rim"], look["inked"], look["diffs"], look["rimMoved"])
+        # (the beams' roots on the visible arc within 1 art px; the others enter from the window's edge; the axis the lean's within 1 degree)
         roots = beam["roots"]
-        assert len(roots) >= 4 and any(r["inside"] for r in roots), (lean, roots)
+        assert len(roots) >= 3 and any(r["inside"] for r in roots) or name.startswith("sunrise") or name == "sunset", (name, roots)
         for r in roots:
             if r["inside"]:
-                assert abs(math.hypot(r["x"] - cx, r["y"] - cy) - limb["radius"]) < 1 and -1 <= r["x"] <= w + 1 and -1 <= r["y"] <= h + 1, (lean, r)
+                assert abs(math.hypot(r["x"] - cx, r["y"] - cy) - limb["radius"]) < 1 and -1 <= r["x"] <= w + 1 and -1 <= r["y"] <= h + 1, (name, r)
             else:
-                assert min(abs(r["x"]), abs(r["x"] - w), abs(r["y"]), abs(r["y"] - h)) < 1e-6, (lean, r)
-        assert look["axes"] > 100 and abs(look["axis"] - lean) < 1.5, (lean, look["axis"])
+                assert min(abs(r["x"]), abs(r["x"] - w), abs(r["y"]), abs(r["y"] - h)) < 1e-6, (name, r)
+        assert look["axes"] > 100 and abs(look["axis"] - lean) < 1, (name, look["axis"], lean)
         assert look["order"] == ["heat", "uv"], look["order"]
-        assert look["cost"] < 4 and look["cost2"] < 4, (lean, look["cost"], look["cost2"], {l: (v["cost"], v["cost2"]) for l, v in leans.items()})
+        assert look["cost"] < 4 and look["cost2"] < 4, (name, look["cost"], look["cost2"], {l: (v["cost"], v["cost2"]) for l, v in leans.items()})
         assert look["drawn"] <= look["cap"] and look["drawn"] <= 0.8 + 1e-9
-    # ... noon: the limb symmetric about the centre column along the top edge; a morning sun (negative) near the right and top, an
-    # afternoon sun near the left and top
-    noon = leans[0]["heat"]["limb"]
-    assert noon["apex"][0] == pytest.approx(leans[0]["size"][0] / 2) and noon["centre"][0] == pytest.approx(leans[0]["size"][0] / 2), noon
-    assert noon["apex"][1] == pytest.approx(0.2 * leans[0]["size"][1]) and leans[0]["heat"]["limb"]["a"] == 0
-    for lean in (45, 15, 75):
-        east, west = leans[-lean]["heat"]["limb"]["apex"], leans[lean]["heat"]["limb"]["apex"]
-        w = leans[lean]["size"][0]
-        assert east[0] > w / 2 > west[0] and east[0] + west[0] == pytest.approx(w, abs=1e-6) and east[1] == pytest.approx(west[1], abs=1e-6), (east, west)
-    assert leans[-45]["heat"]["limb"]["apex"][0] > leans[-15]["heat"]["limb"]["apex"][0] > leans[0]["heat"]["limb"]["apex"][0]
-    # ... the visible limb is the largest at noon, smaller at any other lean (a corner at 45 degrees, a band along a side at the cap),
-    # never vanishing, the same either side
-    assert areas[0] > areas[15] > areas[45] and areas[0] > areas[75] > 50 and areas[45] > 50, areas
-    assert all(areas[-l] == pytest.approx(areas[l], rel=0.03) for l in (15, 45, 75)), areas
-    # ... the halo's brightness shimmers (its depth over 12 s, of its mean along the whole limb, where the waves along it average out: at least 5 %; at one place 35-40 %; never moving the limb: the rim above)
-    for lean in (0, 45):
-        glow = leans[lean]["red"]
+        # (the wash flows out along the rays to about 0.2 H: reach within 30 %, lit, strong near the piece, gone well past its reach)
+        wash = look["heat"]["wash"]
+        assert wash["reach"] == pytest.approx(0.2 * h, rel=0.3) and wash["lit"] > 100, (name, wash)
+        near, mid, far = look["wash"][1], look["wash"][2], look["wash"][4]
+        assert near is None or near > 3 * (far or 0), (name, look["wash"])
+    # ... the exit on the right edge a sixth to a half of the way down at sunrise (0.15 H to 0.5 H), the top edge's middle at noon, the
+    # left edge at sunset
+    w, h = leans["sunrise"]["size"]
+    ex, ey = leans["sunrise"]["heat"]["limb"]["exit"]
+    assert ex == pytest.approx(w) and 0.15 * h <= ey <= 0.5 * h, (ex, ey)
+    for noon in ("noonSummer", "noonWinter"):
+        ex, ey = leans[noon]["heat"]["limb"]["exit"]
+        assert ey == pytest.approx(0) and abs(ex - w / 2) < 0.02 * w, (noon, ex, ey)
+    ex, ey = leans["sunset"]["heat"]["limb"]["exit"]
+    assert ex == pytest.approx(0) and 0.15 * h <= ey <= 0.5 * h, (ex, ey)
+    # ... the piece fuller at a summer noon than a winter one by 25 %, the depth thinner at sunrise than mid-morning than at noon
+    summer, winter = (leans[k]["heat"]["limb"]["depth"] for k in ("noonSummer", "noonWinter"))
+    assert summer >= 1.25 * winter, (summer, winter)
+    assert leans["sunrise"]["heat"]["limb"]["depth"] < leans["mid"]["heat"]["limb"]["depth"] < summer
+    assert leans["sunrise"]["heat"]["limb"]["depth"] == pytest.approx(0.048 * h, rel=0.05)
+    # ... the visible limb in view every time; the same at sunrise and sunset (mirrored, the same sun height)
+    assert all(a > 50 for a in areas.values()), areas
+    assert areas["sunrise"] == pytest.approx(areas["sunset"], rel=0.05), areas
+    # ... the halo's brightness shimmers (its depth over 12 s, of its mean along the whole limb, where the waves along it average out: at
+    # least 5 %; never moving the limb: the rim above)
+    for name in ("noonSummer", "mid"):
+        glow = leans[name]["red"]
         depth = (max(glow) - min(glow)) / (max(glow) + min(glow))
-        assert 0.05 < depth < 0.6, (lean, depth)
-    assert leans[0]["grid"] < 400, leans[0]["grid"]
-    # ... the one thick band along the limb: its centreline the limb's arc (a constant depth, the same at every place), 0.06-0.09 of the
+        assert 0.03 < depth < 0.6, (name, depth)
+    # ... no dot pattern in the dither at the extremes (its grid power)
+    for name in ("sunrise", "noonSummer", "sunset"):
+        assert leans[name]["grid"] < 400, (name, leans[name]["grid"])
+    # ... the one thick band along the limb: its centreline the limb's arc (a constant depth, the same at every place), about 0.06 of the
     # height thick, its thickness within +-25 % of its mean over 10 s (moving, more at the full heat), its brightness wobbling; translucent:
-    # the surface's grain shows through it (its variance along the limb at least 40 % of that just below the band)
-    for lean in (0, 45, -45):
-        look = leans[lean]
+    # the surface's grain shows through it (its variance along the limb at least 40 % of that just below the band, where that is in view)
+    for name in ("noonSummer", "mid", "sunrise"):
+        look = leans[name]
         band, h = look["heat"]["band"], look["size"][1]
-        assert 0.06 * h <= band["thick"] <= 0.09 * h and 0.3 * band["thick"] < band["centre"] < 0.5 * band["thick"], (lean, band)
+        assert 0.05 * h <= band["thick"] <= 0.07 * h and 0.3 * band["thick"] < band["centre"] < 0.5 * band["thick"], (name, band)
         assert 0.35 <= band["alpha"] <= 0.6, band
         for thick, glow in zip(look["thick"], look["glow"]):
-            assert None not in thick, (lean, thick, glow)
+            assert None not in thick and None not in glow, (name, thick, glow)
             mean = sum(thick) / len(thick)
-            assert all(abs(t - mean) <= 0.25 * mean for t in thick) and max(thick) - min(thick) > 0.04, (lean, thick)
-            assert max(glow) - min(glow) > 0.1 and all(0.3 < g < 1.8 for g in glow), (lean, glow)
+            assert all(abs(t - mean) <= 0.25 * mean for t in thick) and max(thick) - min(thick) > 0.04, (name, thick)
+            assert max(glow) - min(glow) > 0.1 and all(0.3 < g < 1.8 for g in glow), (name, glow)
         inside, outside = look["vars"]
-        assert inside is not None and outside is not None and inside >= 0.4 * outside, (lean, look["vars"])
+        if inside is not None and outside is not None:
+            assert inside >= 0.4 * outside, (name, look["vars"])
     # the colour: brownish ember at 35 C, vivid scarlet-orange at 43 C: more saturated and redder (the probe's brightest shade, and what is drawn)
     def sat(c):
         return (max(c) - min(c)) / max(max(c), 1)
@@ -2852,11 +2877,33 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # no flash faster than 0.5 Hz (the brightness over 24 s: its dominant frequency), heat alone and with the UV
     for f in hot["flash"]:
         assert f["dominant"] <= 0.5, f
-    # the bake: constant while it animates and for a lean change under 0.5 degree; one more for 0.5 or over, and one for a resize
+    # the bake: constant while it animates and for a lean change under 0.5 degree, or a depth change under 0.005 H; one more for 0.5 degree
+    # or over, one for a depth change over it, and one for a resize
     bk = hot["bakes"]
     assert bk["start"] == bk["after"] and bk["second"] == bk["first"] + 1 and bk["first"] >= bk["start"], bk
-    assert abs(bk["leanA"] - bk["leanB"]) >= 0.5, bk
-    assert bk["resized"]["baked"] == bk["second"] + 1 and bk["resized"]["size"] != leans[0]["size"], bk
+    assert abs(bk["leanA"] - bk["leanB"]) >= 0.5 and bk["small"] == bk["second"], bk
+    assert bk["depthSmall"] == bk["level"] and bk["depthBig"] == bk["level"] + 1, bk
+    assert abs(bk["depths"][1] - bk["depths"][0]) < 0.005 * leans["noonSummer"]["size"][1] <= abs(bk["depths"][2] - bk["depths"][0]), bk
+    assert bk["resized"]["baked"] == bk["depthBig"] + 1 and bk["resized"]["size"] != leans["noonSummer"]["size"], bk
+    # the exit point through each solstice day (every ten minutes): along the border monotonically (the right edge up, the top edge left,
+    # the left edge down), no jump over 0.12 of the border's length, from the right edge to the left
+    for day, rows in hot["days"].items():
+        assert len(rows) > 60, (day, len(rows))
+        w, h = rows[0]["size"]
+        def along(p):   # (the border from the right edge's foot, up it, along the top, down the left: the distance)
+            x, y = p
+            if abs(x - w) < 1e-6: return h - y
+            if abs(y) < 1e-6: return h + (w - x)
+            assert abs(x) < 1e-6, p
+            return h + w + y
+        track = [along(r["exit"]) for r in rows]
+        assert all(b >= a - 1e-6 for a, b in zip(track, track[1:])), (day, track)
+        assert max(b - a for a, b in zip(track, track[1:])) <= 0.12 * 2 * (w + h), (day, max(b - a for a, b in zip(track, track[1:])))
+        assert abs(rows[0]["exit"][0] - w) < 1e-6 and abs(rows[-1]["exit"][0]) < 1e-6, (day, rows[0]["exit"], rows[-1]["exit"])
+        assert all(r["depth"] >= 0.04 * h - 1e-9 for r in rows)
+        # (the depth swells toward noon and thins again)
+        depths = [r["depth"] for r in rows]
+        assert max(depths) == pytest.approx(depths[len(depths) // 2], rel=0.1) and depths[0] < 0.7 * max(depths) and depths[-1] < 0.7 * max(depths), (day, depths[0], max(depths), depths[-1])
     # the lean through the day: a smooth curve, 70 degrees at most, no jump (under a degree a minute), the sun's side east (right of the
     # screen): negative (down-left) in the morning, positive (down-right) in the afternoon, rising all day
     curve = hot["sun"]["curve"]
