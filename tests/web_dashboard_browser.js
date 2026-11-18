@@ -1804,7 +1804,7 @@ const rainSeen = (page, ms) => page.evaluate((ms) => new Promise((resolve) => {
 // The sun (heat: the disc with its halo and flare; UV: the beams round it) on a driven page (?fx=heat,uv, 640x480). Prints, for the
 // tests: `arcs` (the sun's place every 5 minutes over the solstice and equinox days, from half an hour before sunrise to half an hour
 // after sunset: {m, day, x, y, r, t} and the window's size), `night` (the canvas's ink and the sun's day flag at 01:00 and 21:40),
-// `discs` (at heat 0.3 and 1, the disc's mean colour at its centre and near its limb, from the canvas), `beams` (the probe's beams at
+// `balls` (at heat 0.3 and 1, the ball's mean colour by distance from its centre, its centre, its half radius and ember) and `edges` (lit pixels on the edge of its box), `beams` (the probe's beams at
 // UV 11: count, widths against the sun's diameter), `amounts` (UV 5.9 to 12: the probe's amount, the violet pixels drawn), `lobes`
 // (at five places of the sun: the lean, the beams' angles and lengths), `ends` (each beam's brightness along it from 0.5 to 1 of its
 // length, and the violet along the longest in the picture), `edge` (violet pixels in the window's outer ring), `flash` (the brightness
@@ -1843,21 +1843,51 @@ const sunLook = async (page) => {
     }
     return seen;
   });
-  // the disc: mean colour at its centre (inside 0.35 R) and near its limb (0.7 to 0.9 R), heat 0.3 and 1, the UV off
-  out.discs = [];
+  // the ball (the UV off): at heat 0.3 and 1, the mean colour by whole pixels of distance from its centre (`lum`, `rgb`), its centre's
+  // colour, the radius of half its brightness (`half`), and the ember (the flare's field outside 1.2 R: its largest value `ember`);
+  // then the ball's field and the canvas on and beyond the edge of the ball's box (`edges`: lit pixels on its ring, in the window)
+  out.balls = [];
   for (const level of [0.3, 1]) {
     await fx({ heat: level, uv: 0 });
-    out.discs.push(await inPage(() => {
+    out.balls.push(await inPage(() => {
       __day(354.36, 1241.24, 75.61, 798); Sky.advance(150);
-      const st = Sky.state(), s = st.heat.sun, d = __grab(), W = __c.width, mean = (lo, hi) => {
-        let n = 0; const sum = [0, 0, 0];
-        for (let y = Math.floor(s.y - s.r); y <= Math.ceil(s.y + s.r); y++) for (let x = Math.floor(s.x - s.r); x <= Math.ceil(s.x + s.r); x++) {
-          const q = Math.hypot(x + 0.5 - s.x, y + 0.5 - s.y) / s.r; if (q < lo || q > hi) continue;
-          const i = (y * W + x) * 4; for (let k = 0; k < 3; k++) sum[k] += d[i + k]; n++;
-        }
-        return sum.map((v) => v / Math.max(n, 1));
-      };
-      return { level: st.heat.level, centre: mean(0, 0.35), limb: mean(0.7, 0.9), drawn: st.drawn.heat, cap: st.cap };
+      const st = Sky.state(), s = st.heat.sun, d = __grab(), W = __c.width, n = Math.ceil(s.r * 6) + 8, sum = new Float64Array(n * 3), cnt = new Float64Array(n);
+      for (let y = Math.max(0, Math.floor(s.y - n)); y <= Math.min(__c.height - 1, Math.ceil(s.y + n)); y++) for (let x = Math.max(0, Math.floor(s.x - n)); x <= Math.min(W - 1, Math.ceil(s.x + n)); x++) {
+        const q = Math.floor(Math.hypot(x + 0.5 - s.x, y + 0.5 - s.y)); if (q >= n) continue;
+        const i = (y * W + x) * 4; for (let k = 0; k < 3; k++) sum[q * 3 + k] += d[i + k]; cnt[q]++;
+      }
+      const rgb = Array.from({ length: n }, (_, q) => [0, 1, 2].map((k) => sum[q * 3 + k] / Math.max(cnt[q], 1)));
+      const lum = rgb.map((c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]);
+      const half = lum.findIndex((v) => v < 0.5 * lum[0]);
+      const f = st.heat.fields(); let ember = 0;
+      for (let y = 0; y < __c.height; y++) for (let x = 0; x < W; x++) if (Math.hypot(x - s.x, y - s.y) > 1.2 * s.r && f.R[y * W + x] > ember) ember = f.R[y * W + x];
+      return { level: st.heat.level, r: s.r, Rh: st.heat.ball.Rh, rgb, lum, half, ember, centre: [...d.slice((Math.round(s.y) * W + Math.round(s.x)) * 4, (Math.round(s.y) * W + Math.round(s.x)) * 4 + 3)], drawn: st.drawn.heat, cap: st.cap };
+    }));
+  }
+  // ... the edge of the ball's box (and of the bloom's, which is bigger) at the sun's places in summer and winter, heat 0.3 and 1
+  out.edges = [];
+  for (const level of [0.3, 1]) {
+    await fx({ heat: level, uv: 0 });
+    out.edges.push(...await inPage(() => {
+      const seen = [];
+      for (const [name, rise, set, noon, m] of [["summer sunrise", 354.36, 1241.24, 75.61, 372], ["summer morning", 354.36, 1241.24, 75.61, 540], ["summer noon", 354.36, 1241.24, 75.61, 798],
+                                                 ["summer sunset", 354.36, 1241.24, 75.61, 1225], ["winter sunrise", 455.21, 1027.59, 28.74, 470], ["winter noon", 455.21, 1027.59, 28.74, 741], ["winter afternoon", 455.21, 1027.59, 28.74, 940]]) {
+        __day(rise, set, noon, m); Sky.advance(150);
+        const st = Sky.state(), d = __grab(), W = __c.width, Hh = __c.height, f = st.heat.fields(), ring = (box, lit) => {
+          const [x0, y0, x1, y1] = box; let n = 0, sides = 0;
+          const side = (xs, ys) => { for (const x of xs) for (const y of ys) { n += lit(x, y) ? 1 : 0; } sides++; };
+          const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+          if (x0 > 0) side([x0], range(y0, y1));
+          if (x1 < W - 1) side([x1], range(y0, y1));
+          if (y0 > 0) side(range(x0, x1), [y0]);
+          if (y1 < Hh - 1) side(range(x0, x1), [y1]);
+          return { n, sides };
+        };
+        const ball = ring(st.heat.ball.box, (x, y) => f.S[y * W + x] > 0), all = ring(st.heat.ball.bloomBox || st.heat.ball.box, (x, y) => d[(y * W + x) * 4 + 3] > 0 && d[(y * W + x) * 4] + d[(y * W + x) * 4 + 1] + d[(y * W + x) * 4 + 2] > 0);
+        // (the ball's field, in the box's whole outer two rows too: nothing at all beyond it)
+        seen.push({ name, level: st.heat.level, ball, all, box: st.heat.ball.box, bloom: st.heat.ball.bloomBox, size: [W, Hh] });
+      }
+      return seen;
     }));
   }
   // the beams at UV 11
@@ -1873,6 +1903,7 @@ const sunLook = async (page) => {
     await fx({ heat: 1, uv: Math.max(0, Math.min(1, (index - 6) / 5)) });
     out.amounts.push(await inPage((index) => {
       Sky.advance(120);
+      Sky.advance(Math.round((((4 - Sky.state().clock) % 20) + 20) % 20 * 30));   // (on to the same phase of the 20 s round: the beams at their brightest)
       const b = Sky.state().beam;
       return { index, amp: b.amp, violet: __violet(__grab()), beams: b.beams.length };
     }, index));

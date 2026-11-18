@@ -2801,23 +2801,39 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # ... nothing drawn at night, the sun up at midday
     assert hot["night"]["early"] == {"ink": 0, "day": False} and hot["night"]["late"] == {"ink": 0, "day": False}, hot["night"]
     assert hot["night"]["noon"]["day"] and hot["night"]["noon"]["ink"] > 500, hot["night"]
-    # the disc: white-hot at the centre, orange at the limb, never a dark centre; cooler at 35 C (a yellow-orange ember) than at 43 C
-    cool, hotter = hot["discs"]
-    assert cool["level"] == pytest.approx(0.3) and hotter["level"] == 1, hot["discs"]
-    lum = lambda c: 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
-    for disc in hot["discs"]:
-        assert lum(disc["centre"]) > lum(disc["limb"]) + 10 and disc["centre"][0] > 150 and disc["drawn"] <= disc["cap"], disc
-    assert min(hotter["centre"][1:]) > 190 and hotter["centre"][2] > cool["centre"][2] + 30 and lum(hotter["centre"]) > lum(cool["centre"]) + 10, hot["discs"]   # (near white)
-    assert cool["centre"][0] > cool["centre"][1] > cool["centre"][2] and cool["centre"][2] < 130, cool                                                          # (yellow-orange)
+    # the ball: a blown-out white ball with no disc edge: its brightness (the mean at each whole pixel of distance from the centre) never
+    # rises going out and no step of one pixel is more than a sixth of the full scale (a disc's rim would be), white at its centre at
+    # 43 C (every channel high) and cream at 35 C, the ball much larger at 43 C than 35 C (the radius of half its brightness), its glow
+    # reaching 3.4 R to 6 R (R (3.4 + 2.6 heat)) and gone beyond that
+    cool, hotter = hot["balls"]
+    assert cool["level"] == pytest.approx(0.3) and hotter["level"] == 1 and cool["drawn"] <= cool["cap"] and hotter["drawn"] <= hotter["cap"], hot["balls"]
+    for ball in hot["balls"]:
+        lum = ball["lum"]
+        assert ball["Rh"] == pytest.approx(ball["r"] * (3.4 + 2.6 * ball["level"])), ball["Rh"]
+        assert all(b <= a + 4 for a, b in zip(lum, lum[1:])), lum                                  # (never rising outward: the dither's grain aside)
+        assert max(a - b for a, b in zip(lum, lum[1:])) < 255 / 6, lum                              # (no step: no rim, no edge)
+        assert lum[0] > 240 and max(lum[int(ball["Rh"]) + 4:]) < 3, lum                            # (white at the middle; nothing past the reach)
+    assert min(sum(hotter["rgb"][q][c] for q in range(4)) / 4 for c in range(3)) > 250, hotter["rgb"][:4]   # (white: every channel high)
+    cream = [sum(cool["rgb"][q][c] for q in range(4)) / 4 for c in range(3)]
+    assert cream[0] > 250 and cream[2] < 245 and cream[0] > cream[1] > cream[2], cream            # (warmer: the blue falling off first)
+    assert hotter["half"] > 1.8 * cool["half"] > 0 and hotter["Rh"] > 1.35 * cool["Rh"], (hotter["half"], cool["half"])
+    # ... and its ember: a dark-orange flare outside the ball, there at 43 C but subtle (its field's largest value, the page showing 0.45 of
+    # it: under 0.6 and over 0.1), dimmer at 35 C
+    assert 0.1 < hotter["ember"] < 0.6 and cool["ember"] < 0.6 * hotter["ember"], (hotter["ember"], cool["ember"])
+    # no glow pixel on or beyond the edge of the ball's box (Rh + 3 from the sun), nor of the ember bloom's (the picture's own box), at the
+    # sun's places through a summer and a winter day, the box's sides inside the window (its sides at the window's edge cut by it)
+    assert len(hot["edges"]) == 14, hot["edges"]
+    for look in hot["edges"]:
+        assert look["ball"]["n"] == 0 and look["all"]["n"] == 0 and look["ball"]["sides"] >= 2 and look["all"]["sides"] >= 2, look
     # the beams: twelve, about 1.3 sun diameters wide at the base (within 10 %), their lengths varying, blunt
     beams = hot["beams"]
     assert beams["count"] == 12 and len(beams["widths"]) == 12 and beams["lobe"] == 0.6 and beams["edge"] == 34, beams
     for width in beams["widths"]:
         assert width == pytest.approx(1.3 * beams["diameter"], rel=0.1), (width, beams["diameter"])
-    # ... spaced about 30 degrees all round (within 8 degrees of even)
+    # ... spaced about 30 degrees all round (each one off its place by up to 3.5 degrees and swaying 3 more: a gap within 13 degrees of even)
     angles = sorted(a % 360 for a in (b for b in hot["lobes"][0]["beams"] for b in [b["angle"]]))
     gaps = [(b - a) for a, b in zip(angles, angles[1:] + [angles[0] + 360])]
-    assert all(22 < g < 38 for g in gaps), gaps
+    assert all(17 < g < 43 for g in gaps), gaps
     # the UV: none below index 6, the violet rising with it (never falling) to full at 11, none drawn at the lowest
     amounts = {a["index"]: a for a in hot["amounts"]}
     assert amounts[5.9]["amp"] == 0 and amounts[5.9]["violet"] == 0 and amounts[5.9]["beams"] == 0, amounts[5.9]
