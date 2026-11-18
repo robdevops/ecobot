@@ -300,7 +300,7 @@ Wind's gust, the rain rate's high) all change in place, with the same decimals (
 its reading: up and blue when it rose 0.3 hPa or more over the past hour, down and red when it fell as much, none when
 steady (under 0.3 hPa either way) or with less than about an hour of readings) points the same way. ecobot-mcp still sends metric and the browser converts. The wind's direction stays in degrees. Each browser keeps its
 choice with the arrangement, and "reset preferences" (shown while any is not metric) puts all four back to metric. The weather
-behind the gauges goes by the metric readings whatever is shown (heat from 35 °C, leaves above 15 km/h, a flood above 30 mm/h).
+behind the gauges goes by the metric readings whatever is shown (heat from 35 °C, leaves above 15 km/h, the flood from a depth of 0.05 of full in the server's leaky bucket over the past six hours' rain, the haze's opacity from the PM2.5 itself).
 
 A click or tap on a gauge (or Enter or Space on a tile reached with Tab) zooms its title and gauge (its table hidden until you go
 back) to fill the window, a single tile shown too. Zoomed, page through the tiles like a photo gallery, each still live: ← and →, Space (next) and Backspace (previous), a

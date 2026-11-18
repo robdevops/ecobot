@@ -187,7 +187,7 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 // out; the tab hidden, it waits. Only with MCP_DASHBOARD_ANIMATIONS on and no reduced motion asked for: otherwise the page never
 // sets it going (animate false), and nothing is drawn, no loop, no frame.
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), haze: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
-//   100 %), uv, wind: 0 or 1, heat: 0-1 (35 °C to 43 °C), ice: how far below 0 °C it is (0: none), flood: 0 or 1 (2: the test link's, its first frog
+//   100 %), uv, wind: 0 or 1, heat: 0-1 (35 °C to 43 °C), ice: how far below 0 °C it is (0: none), flood: 0-1 (the bucket's depth of full, from 0.05; 2: the test link's, full, its first frog
 //   sooner)}; animate false (the page's "stop", MCP_DASHBOARD_ANIMATIONS low or off, or reduced motion): nothing drawn (and
 //   anything blown across gone).
 //   Sky.setSun({rise, set, now, az, el}): the station's sunrise and sunset and the time of day now (minutes since its local midnight: the page's
@@ -201,6 +201,7 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   rain's slant follows them continuously (per layer, tan of its angle from vertical = speed / its drops' terminal speed, see Sky.setRainRate: 25 km/h at 5 mm/h about 66, 55 and 48 degrees far, mid, near; none at no wind: straight
 //   down; at most 70 degrees; the gust adding 0.3 of what it is over the speed; the speed eased, rising over about 2 s, falling over
 //   about 4); the haze's sideways pan follows them too (about 0.4 px/s at 3 km/h to 2.6 at 40: none at no wind). The wind's leaves follow it too: their pace (and the gust bands', the turbulence's and the eddies' drift) is scaled by k = clamp(0.4 + 0.024 s, 0.5, 1.6), s the same effective speed eased the same way (25 km/h: the old pace, 1); a third argument true (the test links', over a real speed under their 11 km/h) holds k at 1. Sky.state().wind: {k, speed (the eased s), ...}.
+//   Sky.setPm25(pm): the air sensor's PM2.5 now, µg/m³ (null: the band's midpoint): the haze's opacity (1 - exp(-0.01457 pm), at most 0.97) and tint follow it continuously.
 //   Sky.setRainRate(rate): the live rain rate, mm/h (the gauge's; none: a nominal 5): the median drop D0 = 0.9 R^0.21 mm (R clamped 0.5-100, Marshall-Palmer)
 //   sizes the layers (0.6, 1, 1.5 times D0), each with its terminal speed v_t = 9.65 - 10.3 exp(-0.6 D) m/s, its fall speed and its lean; the heavy rain's beads on the glass grow with D0 (2.6 to 2.97 px).
 //   Sky.state().rain also has rate, d0, beadR and layers: [{angle (radians), angleDeg, vt, D, v (px/s)}] far to near (slant, slantDeg: the mid layer's).
@@ -726,6 +727,24 @@ const Sky = (() => {
     {thin: [198, 148, 84], core: [146, 98, 38], lo: 0.32, span: 0.60, open: 0.8},     // Unhealthy (red: ochre-brown)
     {thin: [176, 106, 80], core: [122, 58, 42], lo: 0.22, span: 0.65, open: 0.9},      // Very Unhealthy (purple: brown-red)
     {thin: [136, 70, 64], core: [82, 30, 38], lo: 0.10, span: 0.70, open: 1}];          // Hazardous (maroon: dense, dark, murky)
+  // The opacity follows the air sensor's PM2.5 itself, continuously (Beer-Lambert with Koschmieder's view: extinction (1/m) =
+  // 4e-6 * PM2.5 (µg/m³; 4 m²/g mass extinction), over an effective viewing distance L = 3643 m: opacity = 1 - exp(-0.01457 * PM2.5),
+  // at most 0.97: 12 % at 9 µg/m³, 25 % at 20, 40 % at 35, 55 % at 55, 77 % at 100, 89 % at 150, 97 % at 250), from the band's baked
+  // image (its cover and pattern, by the band) drawn at an alpha scaled to it: each band's image is baked at the opacity of its top edge
+  // and drawn at opacity(pm) / opacity(top), so at the band's midpoint (its design look: the opacity there) nothing changes; with no
+  // PM2.5 reading the band's midpoint is taken. Its tint runs continuously between the bands' (by the PM2.5's place among the bands'
+  // midpoints), the baked image's re-baked (cross-faded) as it moves a 16th of a band's step. No haze below 9 µg/m³ (the Moderate
+  // band's edge; its opacity eased in over 8 to 9 so a reading hovering there doesn't pop).
+  const PM_EXT = 0.01457, PM_CAP = 0.97, PM_EDGES = [9, 35.4, 55.4, 125.4, 225.4, 325.4];   // (1/(µg/m³), cap, the bands' edges: the last's top for its midpoint)
+  let pmRaw = null;   // (the sensor's PM2.5 now, µg/m³: Sky.setPm25; none: null)
+  const pmOpacity = (pm) => pm > 0 ? Math.min(PM_CAP, 1 - Math.exp(-PM_EXT * pm)) : 0;
+  const pmShown = (pm) => pmOpacity(pm) * clamp(pm - 8, 0, 1);   // (what is drawn: none below 8, eased in to 9)
+  const pmMid = (band) => (PM_EDGES[band - 1] + PM_EDGES[band]) / 2;
+  const pmRange = (band) => pmOpacity(PM_EDGES[band]) / pmOpacity(pmMid(band));   // (how much more opaque than its design look its image is baked)
+  const pmPos = (pm) => {   // where PM2.5 stands among the bands' midpoints, 0 (the first's) to 4 (the last's), linearly between
+    for (let i = 1; i < 5; i++) if (pm < pmMid(i + 1)) return clamp(i - 1 + (pm - pmMid(i)) / (pmMid(i + 1) - pmMid(i)), 0, 4);
+    return 4;
+  };
   const haze = effect((e) => {
     const random = streamOf("haze:motes"), between = random.between;   // (the dust motes' own randomness)
     const SHADES = 8;                  // the veil's steps of tint and opacity, dithered one into the next
@@ -739,7 +758,7 @@ const Sky = (() => {
       {cells: [[256, 32], [256, 16], [128, 8]], weight: 1, shear: 0.18, seed: 7300}];
     const OCTAVES = [0.55, 0.3, 0.15];
     const MOTE = [{alpha: 0.25, share: 0.45}, {alpha: 0.35, share: 0.35}, {alpha: 0.5, share: 0.2}];
-    let built = 0, slide = 0, speed = 0, filtered = 0, motes = [], born = 0, dust = [], renders = 0;
+    let built = 0, slide = 0, speed = 0, filtered = 0, shown = 0, pmNow = 0, imgPos = 0, motes = [], born = 0, dust = [], renders = 0;
     let TW = 0, TH = 0, tex = null, img = null, imgLevel = 0, prev = null, fade = 1, look = null, seam = null;
     const total = LAYERS.reduce((sum, l) => sum + l.weight, 0);
     const luts = LAYERS.map((l) => Uint8Array.from({length: 256}, (_, i) => Math.round(Math.max(0, i - HOLLOW) * l.weight / total)));   // (each layer's share of the sum)
@@ -790,15 +809,18 @@ const Sky = (() => {
       return out;
     }
     // The look for the band `level` (1-5) as numbers: thin and core tints (r, g, b each), lo, span, open
-    const lookOf = (level) => {
+    const lookOf = (level, pos = level - 1) => {   // (pos: its tint's place among the bands, 0-4: the band's own by default)
       const b = HAZE[level - 1], grey = (c) => { const y = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; return c.map((v) => v + (y - v) * GREY); };
-      return {thin: grey(b.thin), core: grey(b.core), lo: b.lo, span: b.span, open: b.open};
+      const i = Math.min(3, Math.floor(pos)), k = pos - i, lerp = (a, c) => a.map((v, j) => v + (c[j] - v) * k);
+      const tint = (key) => lerp(grey(HAZE[i][key]), grey(HAZE[i + 1][key]));
+      return {thin: tint("thin"), core: tint("core"), lo: b.lo, span: b.span, open: b.open * pmRange(level)};   // (baked as opaque as its top edge's PM2.5 is)
     };
+    const aimPos = () => Math.round(pmPos(pmNow) * 16) / 16;
     const hex = (c) => `#${c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
     // The baked image for a look, from the textures: each pixel's three layers summed (each row sheared for a wind blowing leftward),
     // cut and stepped by the band's curve, dithered: TW x H, wrapping sideways (the textures do, and the dither's tiles divide TW)
-    function bake(level) {
-      look = lookOf(level);
+    function bake(level, pos) {
+      look = lookOf(level, pos);
       const {thin, core, lo, span, open} = look, MASK = TW - 1;
       const comb = new Float32Array(300), pal = new Uint32Array(SHADES);
       for (let d = 0; d < comb.length; d++) {   // (the sum past the cut, eased in: thin edges first, the cores darker and more opaque)
@@ -806,7 +828,7 @@ const Sky = (() => {
         comb[d] = (SHADES - 1) * 0.999 * t * t * (3 - 2 * t);
       }
       for (let k = 1; k < SHADES; k++) {
-        const u = k / (SHADES - 1), c = Math.pow(u, 0.85), a = Math.round(255 * open * Math.pow(u, 0.8));
+        const u = k / (SHADES - 1), c = Math.pow(u, 0.85), a = Math.min(255, Math.round(255 * open * Math.pow(u, 0.8)));
         const col = [0, 1, 2].map((j) => Math.round(thin[j] + (core[j] - thin[j]) * c));
         pal[k] = ((a << 24) | (col[2] << 16) | (col[1] << 8) | col[0]) >>> 0;   // (little-endian RGBA)
       }
@@ -834,7 +856,7 @@ const Sky = (() => {
       built = level;
       const l = lookOf(level);
       dust = [0.15, 0.28, 0.4].map((k) => `rgb(${l.core.map((v) => Math.round(v + (225 - v) * k)).join(",")})`);
-      if (fresh) { slide = 0; speed = 0; filtered = windNow(); }
+      if (fresh) { slide = 0; speed = 0; filtered = windNow(); pmNow = pmRaw === null ? pmMid(level) : pmRaw; }
     }
     const place = (m, anywhere, side) => {   // (side: -1 in from the right, moving left; 1 from the left)
       m.id = ++born;
@@ -863,12 +885,19 @@ const Sky = (() => {
       // (px/s, always positive), its motes [id, x, y], how many times it was baked, the bakes yet to do (the textures and the
       // image), whether the old image is still fading out, its tint (hex): the thin edge's and the dense core's, its cover's cut, span and opacity, the
       // baked image's width, and how well its sides meet: the mean alpha step across its seam and between neighbouring columns)
-      probe: () => ({level: built, slide, speed, motes: motes.map((m) => [m.id, m.x, m.y]), renders,
+      probe: () => ({level: built, pm25: built ? pmNow : null, opacity: built ? pmShown(pmNow) : 0, drawn: shown, pmRaw,
+                     of: (pm) => { const l = lookOf(1, pmPos(pm)); return {opacity: pmShown(pm), pos: pmPos(pm), tint: {thin: hex(l.thin), core: hex(l.core)}, rgb: [l.thin, l.core]}; },   // (the curves alone, for the tests)
+                     slide, speed, motes: motes.map((m) => [m.id, m.x, m.y]), renders,
                      pending: !built ? 0 : (tex ? LAYERS.length - tex.length : LAYERS.length) + (imgLevel === built ? 0 : 1), settling: prev ? 1 : 0,
                      tint: look ? {thin: hex(look.thin), core: hex(look.core)} : null, look: look && {lo: look.lo, span: look.span, open: look.open},
                      width: TW, seam}),
       step(dt, t, share) {
         if (e.level > 0 && e.level !== built) build(e.level);
+        // (the PM2.5, low-passed like the wind's: none, the band's midpoint, at once; the alpha drawn follows it)
+        if (built) {
+          if (pmRaw === null) pmNow = pmMid(built); else pmNow += (pmRaw - pmNow) * Math.min(1, dt / TAU);
+          shown = clamp(pmShown(pmNow) / pmOpacity(PM_EDGES[built]), 0, 1);
+        }
         // (the live wind's, low-passed; none: still, exactly)
         const w = windNow();
         filtered += (w - filtered) * Math.min(1, dt / TAU);
@@ -882,9 +911,10 @@ const Sky = (() => {
             TH = 1 << Math.max(8, Math.ceil(Math.log2(Math.max(H, 2))));
             tex = [];
           } else if (tex.length < LAYERS.length) tex.push(bakeTexture(LAYERS[tex.length]));
-          else if (imgLevel !== built) {
+          else if (imgLevel !== built || (e.level > 0 && !prev && imgPos !== aimPos())) {   // (a new band, or the tint moved on)
             if (img) { prev = img; fade = 0; }
-            img = bake(built);
+            imgPos = aimPos();
+            img = bake(built, imgPos);
             imgLevel = built;
           }
           if (prev) { fade += dt / FADE; if (fade >= 1) { prev = null; fade = 1; } }
@@ -911,8 +941,8 @@ const Sky = (() => {
               if (plain > 0.001) lay(g, im, a * plain, slide, false);
               if (plain < 0.999) lay(g, im, a * (1 - plain), -slide, true);
             };
-            if (prev) pass(prev, alpha * (1 - fade));
-            pass(img, alpha * (prev ? fade : 1));
+            if (prev) pass(prev, alpha * shown * (1 - fade));
+            pass(img, alpha * shown * (prev ? fade : 1));
           }
           let depth = -1;
           for (const m of motes) {
@@ -2823,8 +2853,10 @@ const Sky = (() => {
   });
 
   // ---------- flood: a flash flood, the window filling from the bottom like a fish tank, its surface choppy ----------
-  // The station's rain rate over 30 mm/h: water rising steadily from the window's bottom to a quarter of the way up (RISE s from
-  // empty), draining back down (DRAIN s) once it's 30 or less. A translucent blue-green body, darker toward the bottom (dithered), a
+  // The server's leaky bucket over the past hours' rain (data.flood.depth, 0-1 of full: a runoff share of the rain rate filling it, draining
+  // with a 30 minute time constant: lib/web_dashboard.py flood_of) gives the water's height: depth * SPAN of the window's, from the
+  // window's bottom (the effect shows from a depth of 0.05; the test link's level 2 is full), rising at RISE s from empty to full at
+  // fastest and draining at DRAIN s at fastest (so it eases to a new depth, never jumps). A translucent blue-green body, darker toward the bottom (dithered), a
   // bright surface line with a faint lighter band under it, no caps or foam; a fainter line just below, slightly out of step: the
   // tank's far side. The surface: a height a pixel column under a damped wave equation (WAVE px/s), its waves travelling, reflecting
   // off the window's sides, piling up and slapping higher there; stirred all across by every raindrop landing in it (hit(): a ripple
@@ -2851,6 +2883,7 @@ const Sky = (() => {
     const MOST = 6;                    // px: the surface at most this far above or below its level
     const CALMS = 25;                  // s for the chop to calm once the rain eases (to build up: 3)
     const SLOSH = [4, 10];             // s between the bigger sloshes
+    const FROG_DEPTH = 0.9;            // of full: the frog only swims in water this deep (his sprite's underwater rows fit: 0.9 > 0.7)
     const FROG_FIRST = 30, FROG_EVERY = 180, FROG_SPEED = [7, 10];   // s, s, px/s
     const TOP = 2 * MOST + 2;          // rows drawn above its full level (its crests, higher up the sides)
     const DIP = Math.ceil(MOST * 1.8) + 1;   // px: its troughs at most this far below its level (lower at the sides)
@@ -3106,7 +3139,7 @@ const Sky = (() => {
           nextSlosh = between(1, 3);
         }
         since += dt;
-        const target = e.level > 0 ? full : 0;
+        const target = e.level > 0 ? full * Math.min(1, e.level) : 0;   // (the bucket's depth of full; a test link's 2: full)
         depth = depth + clamp(target - depth, -dt * full / DRAIN, dt * full / RISE);
         const pouring = e.level > 0 ? 1 : 0;
         chop += (pouring - chop) * (1 - Math.exp(-dt / (pouring > chop ? 3 : CALMS)));
@@ -3130,7 +3163,7 @@ const Sky = (() => {
         for (const s of splashes) s.age += dt;
         splashes = splashes.filter((s) => s.age < 0.2);
         // the frog: rarely, never at once; drifting across with the wind, bobbing on the waves
-        if (!frog && since >= nextFrog && depth >= 0.7 * full) {   // (in from upwind: the right edge for a wind blowing leftward, the left for rightward)
+        if (!frog && since >= nextFrog && depth >= FROG_DEPTH * full) {   // (only in deep water, the bucket 0.9 full or more: his sprite's underwater rows need it; in from upwind: the right edge for a wind blowing leftward, the left for rightward)
           frog = {x: dir.side < 0 ? W + 24 : -24, v: between(...FROG_SPEED), blink: between(2, 5), clock: between(0, FROG_LAP), seen: false, born: since};
           frogs++;
         }
@@ -3183,7 +3216,7 @@ const Sky = (() => {
           if (f > y + 3 && f < rows) px[f * W + x] = pack(FAR, 120);
         }
         layer.getContext("2d").putImageData(img, 0, 0);
-        const o = Math.min(1, alpha * 1.4);
+        const o = Math.min(1, alpha * 1.4) * Math.min(1, depth / 3);   // (faded in over its first px)
         g.globalAlpha = o;
         g.drawImage(layer, 0, top);
         for (const s of splashes) {
@@ -4106,6 +4139,8 @@ const Sky = (() => {
 
   // setWindSpeed(speed, gust, forced): the live wind's speed and gust, km/h (null or none: 0), which the rain's slant, the haze's pan and the leaves' pace follow (see the rain, the haze, the wind); forced: a test link's wind, the leaves at their usual pace
   // setRainRate(rate): the live rain rate, mm/h (the rain gauge's; null or none: 0, and the rain's drop sizes use RAIN_NOMINAL, 5, as a test link's rain over a dry gauge shows), which the rain's drop sizes, speeds and leans, and its beads on the glass, follow
+  // setPm25(pm): the air sensor's PM2.5 now, µg/m³ (null or none: the band's midpoint is taken), which the haze's opacity and tint follow (see the haze)
+  function setPm25(pm) { pmRaw = Number.isFinite(pm) && pm >= 0 ? pm : null; }
   function setRainRate(rate) { gale.rain = Number.isFinite(rate) && rate > 0 ? rate : 0; }
   function setWindSpeed(speed, gust, forced = false) {
     gale.speed = Number.isFinite(speed) && speed > 0 ? speed : 0;
@@ -4114,7 +4149,7 @@ const Sky = (() => {
   }
 
   const running = () => DRIVEN ? animate && alive() : !!frame;
-  return {set, fling, tilt, level, setSun, setTime, setSunPosition, setWind, setWindSpeed, setRainRate, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
+  return {set, fling, tilt, level, setSun, setTime, setSunPosition, setWind, setWindSpeed, setRainRate, setPm25, lab: (spec) => effects.wind.lab(spec), air: (...a) => effects.wind.sample(...a), timeScale: (k) => { scale = k; },   // (test-only: the weather's time this many times as fast, each frame)
           heatPhase: (u) => effects.heat.seek(u), advance, frost: (quick) => effects.ice.probe(quick),   // (test-only: frames now; the frost as it is now)
           clock: () => ({frames, clock, running: running()}),   // (test-only: Sky.state()'s, cheaply)
           state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: running(), frames, cost, clock, size: [W, H, P],
@@ -4897,6 +4932,7 @@ const Sky = (() => {
     realSide = windSideOf(data) || realSide;   // (a reading due north or south, or none: the way it was)
     const speedNow = conditionsOfWind(data); realSpeed = speedNow.speed; realGust = speedNow.gust;
     realRate = typeof data.rain_rate === "number" ? data.rain_rate : 0;
+    realPm25 = typeof data.pm25 === "number" && Number.isFinite(data.pm25) ? data.pm25 : null;
     Sky.setSun(data.sun);   // (the beams lean with the station's time of day)
     weather();
     gusting(data);
@@ -5352,19 +5388,22 @@ const Sky = (() => {
   // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop" (bottom left) ----------
   // (And with each new live gust reading over 99 km/h, something big blown across once: gusting(), below.)
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
-  // stronger to 8 mm/h), haze from the AQI tile's (the US AQI's) Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
+  // stronger to 8 mm/h), haze from the AQI tile's (the US AQI's) Moderate band up (1-5, a band each: its baked pattern; its opacity and
+  // tint follow the air sensor's PM2.5 itself, continuously: data.pm25, Sky.setPm25), uv at a UV index of 11, humidity at 90 %
   // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself, and down to 85 % once on: hysteresis), wind above 15 km/h (the reading now, not the gust), heat at 35 °C (stronger to 43 °C: 0.3 to 1), ice below 0 °C (how far below), a flash flood
-  // over 30 mm/h (the rain's too; once on, down to 24 mm/h: hysteresis). A tile
-  // with no reading now calls for nothing.
+  // from the server's leaky bucket over the past hours' rain (data.flood.depth, 0-1: the effect's level, from FLOOD_SHOW, 0.05, up; the
+  // water's height follows it: see the flood). A tile with no reading now calls for nothing.
   const CALLED_BY = {rain: "Rain", haze: "AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
                      ice: "Temperature", flood: "Rain"};
   const BANDS = [50, 100, 150, 200, 300];   // the US AQI's bands' upper edges, Good to Very Unhealthy (the tile's own bounds if it has them)
   let real = {}, simulated = {}, conditions = {};
-  // Two marks have a hysteresis, so a reading hovering at one doesn't toggle its effect with each fetch: the flash flood, on over 30 mm/h
-  // and kept on down to 24 (it goes off below that); the humidity's fog, on from 90 % and kept on down to 85 % (off below that). The state
-  // is the page's, from the data it has fetched (a page load starts with the plain mark); a tile with no reading now clears it.
-  const FLOOD_ON = 30, FLOOD_OFF = 24, FOG_ON = 90, FOG_OFF = 85;
-  let flooding = false, fogging = false;
+  // The humidity's fog has a hysteresis, so a reading hovering at its mark doesn't toggle it with each fetch: on from 90 % and kept on down
+  // to 85 % (off below that). The state is the page's, from the data it has fetched (a page load starts with the plain mark); a tile with
+  // no reading now clears it. The flood has none: its depth is the server's leaky bucket, which moves slowly itself.
+  const FOG_ON = 90, FOG_OFF = 85, FLOOD_SHOW = 0.05;   // (the flood shows from a depth of 0.05 of full)
+  const PM25_EDGES = [9, 35.4, 55.4, 125.4, 225.4];     // (the EPA's 2024 PM2.5 breakpoints: a band where the AQI tile gives none)
+  let fogging = false;
+  const clampTo = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
   function conditionsOf(data) {
     const now = (title) => {
       const t = (data.tiles || []).find((tile) => idOf(tile) === title);
@@ -5374,14 +5413,15 @@ const Sky = (() => {
     const humidity = now("Humidity"), wind = now("Wind"), temperature = now("Temperature");
     const aqiTile = (data.tiles || []).find((t) => idOf(t) === "AQI"), bands = aqiTile && aqiTile.bounds && aqiTile.bounds.length > 2
       ? aqiTile.bounds.slice(1, -1) : BANDS;
-    flooding = rate !== null && (rate > FLOOD_ON || (flooding && rate >= FLOOD_OFF));
+    const pm25 = typeof data.pm25 === "number" && Number.isFinite(data.pm25) ? data.pm25 : null;
+    const depth = data.flood && typeof data.flood.depth === "number" && Number.isFinite(data.flood.depth) ? clampTo(data.flood.depth, 0, 1) : 0;
     fogging = humidity !== null && (humidity >= FOG_ON || (fogging && humidity >= FOG_OFF));
     return {rain: rate > 0 ? 0.3 + 0.7 * Math.min(1, rate / 8) : 0,
-            haze: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),
+            haze: aqi !== null ? Math.min(5, bands.filter((b) => aqi > b).length) : pm25 !== null ? PM25_EDGES.filter((b) => pm25 > b).length : 0,
             uv: uvi !== null && uvi >= 11 ? 1 : 0,
             humidity: fogging ? Math.max(0.05, Math.min(1, (humidity - 90) / 10)) : 0,
             wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 0.3 + 0.7 * Math.min(1, (temperature - 35) / 8) : 0,
-            ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: flooding ? 1 : 0};
+            ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: depth >= FLOOD_SHOW ? depth : 0};
   }
   // The wind's direction (the compass tile's reading: degrees, where it comes FROM, 0 north, 90 east, clockwise; east is the right of
   // the screen, as on the dial): from the east side, 0 to 180 (not either), it blows toward the west: leftward, -1; from the west
@@ -5398,7 +5438,7 @@ const Sky = (() => {
     const t = (data.tiles || []).find((tile) => idOf(tile) === "Wind");
     return {speed: t && typeof t.value === "number" ? t.value : 0, gust: typeof data.gust === "number" ? data.gust : 0};
   }
-  let realSpeed = 0, realGust = 0, realRate = 0;
+  let realSpeed = 0, realGust = 0, realRate = 0, realPm25 = null;
   const TEST_WIND = 11;   // (km/h: what a test link's wind effect blows at, about 24 degrees of slant, like the old fixed default's: the readings' being what they are)
   let realSide = 0;   // (the last side a reading gave: -1 leftward, +1 rightward, 0 none yet)
   const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: "stop" shows)
@@ -5415,6 +5455,7 @@ const Sky = (() => {
     const was = calling();
     conditions = Object.fromEntries(Object.keys(CALLED_BY).map((k) => [k, Math.max(real[k] || 0, simulated[k] || 0)]));
     Sky.setWindSpeed(Math.max(realSpeed, simulated.wind > 0 ? TEST_WIND : 0), Math.max(realGust, simulated.wind > 0 ? TEST_WIND : 0), simulated.wind > 0 && realSpeed < TEST_WIND);   // (a link's wind over a calmer real one: the leaves at their usual pace)
+    Sky.setPm25(simulated.haze > (real.haze || 0) ? null : realPm25);   // (the sensor's PM2.5, unless a test link's band is the one shown: that band's own typical look)
     Sky.setRainRate(realRate);   // (the gauge's, mm/h; a test link's rain over a dry one: Sky's nominal 5)
     Sky.setWind(simulated.windDir || realSide);   // (a test link's way, else the reading's: 0 holds it; first, so with nothing yet drawn it's the way from the start)
     Sky.set(conditions, animated());

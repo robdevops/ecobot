@@ -25,6 +25,8 @@
     [] with none: rose()), the Atmospheric pressure tile's `tendency` (its change over the past hour, for the arrow after its reading:
     {"change": hPa, "way": "up", "down" or "steady"}, the file's newest reading less its reading nearest an hour before it; null with
     no reading about an hour old: tendency()), and
+    the air sensor's PM2.5 now (`pm25`, µg/m³, null with none: the haze's opacity, Beer-Lambert), the flash flood (`flood`: {"depth": 0 to 1},
+    a leaky bucket over the past six hours' 5-minute rain rates, run on to now with the live one, null with no history: flood_of()), and
     the gust now (`gust`, km/h: over 99, a new
     reading sends a cow, a barn or a chicken across behind the tiles), and the sun (`sun`: {rise, set, now, az, el}: minutes since the
     station's local midnight, DST included: today's sunrise and sunset from the forecast (Open-Meteo's daily ones, in the station's zone),
@@ -56,6 +58,7 @@ import asyncio
 import html
 import json
 import logging
+import math
 import time
 from datetime import datetime
 from pathlib import Path
@@ -70,7 +73,7 @@ from .airgradient.dashboard import AIR_GAUGES
 from .airgradient.metrics import value_of
 from .service.common import iso
 from .ecowitt.dashboard import GAUGES, GUST, live_value
-from .ecowitt.reads import directions_on, pressure_on
+from .ecowitt.reads import directions_on, pressure_on, rain_rates_on
 from .gauge_look import look, tile_json
 from .timeutil import day_bounds, local_date
 
@@ -97,6 +100,12 @@ TENDENCY_SECONDS = 60       # the past hour's pressure read from the file at mos
 TENDENCY_AGO = (45 * 60, 60 * 60, 75 * 60)   # ... the reading it is told from: the one nearest an hour before the newest, 45 to 75 min before it
 TENDENCY_READ = 90 * 60     # ... read from this long before now (the newest more than 45 min old: no reading about an hour before it read)
 TENDENCY_STEADY = 0.3       # ... a change under this (hPa) either way: steady (no arrow)
+FLOOD_SECONDS = 60          # the past hours' rain rates read from the file at most this often (the bucket worked out again each time: its live end)
+FLOOD_READ = 6 * 3600       # ... read from this long before now
+FLOOD_TAU = 30 * 60.0       # the flood's leaky bucket: its depth drains with this time constant (s) ...
+FLOOD_RUNOFF = 0.5          # ... fills at this share of the rain rate (mm/h x h = mm of runoff) ...
+FLOOD_FULL = 15.0           # ... and is full at this depth (mm): a sustained 60 mm/h fills it, 30 mm/h half
+FLOOD_ROW = 300             # a 5-minute reading covers the 5 minutes up to its time; any longer gap between two is dry (the bucket draining)
 RED_HANDS = {g.title: "Gust" if g.gust else "Max" for g in GAUGES if g.high_hand}   # the dials with a red hand at today's highest,
 # and the column of their table whose Daily figure it is (the Wind's: its highest gust)
 
@@ -205,6 +214,31 @@ def tendency_of(readings: list[tuple[int, float]]) -> dict | None:
     return {"change": round(change, 1), "way": way}
 
 
+def flood_of(rows: list[tuple[int, float]], now: float, live: float | None = None) -> float | None:
+    """The flash flood's depth, 0 to 1, a leaky bucket over the rain rates ([(epoch, mm/h)], oldest first: the 5-minute readings, each
+    the rate over the 5 minutes up to its time): depth' = FLOOD_RUNOFF * R - depth / FLOOD_TAU (mm, R in mm/h), full at FLOOD_FULL. Stepped
+    forward row by row, exactly: over dt at a rate R, d = d * exp(-dt / tau) + runoff * R * tau * (1 - exp(-dt / tau)); a gap between rows
+    beyond the 5 minutes one covers is dry. The newest row run on to `now` with the `live` rate (none: dry). Clamped to 1; None with no
+    rows (no history)."""
+    if not rows:
+        return None
+    tau, runoff = FLOOD_TAU, FLOOD_RUNOFF * FLOOD_TAU / 3600   # (runoff: mm per mm/h held for the whole of tau)
+
+    def step(depth: float, seconds: float, rate: float) -> float:
+        k = math.exp(-max(seconds, 0.0) / tau)
+        return depth * k + runoff * max(rate, 0.0) * (1 - k)
+
+    depth, before = 0.0, rows[0][0] - FLOOD_ROW
+    for at, rate in rows:
+        gap = at - before
+        depth = step(step(depth, max(0.0, gap - FLOOD_ROW), 0.0), min(gap, FLOOD_ROW), rate)
+        before = at
+    gap = now - before
+    if gap > 0:
+        depth = step(depth, gap, live if live is not None else 0.0)   # (the live rate over all of the time since the row: the station's file may lag)
+    return round(min(1.0, max(0.0, depth / FLOOD_FULL)), 3)
+
+
 def air_readings_of(row: dict | None) -> tuple | None:
     """What the air gauges show now of the air sensor's latest reading (its raw row, as AirGradient keeps it): each of their readings
     (the AQI is PM2.5's). None without one."""
@@ -229,13 +263,14 @@ class WebDashboard:
         self._streams: set[asyncio.Queue] = set()
         self._rose: tuple[float, int, list[float]] | None = None   # (when read, the day's start, its shares): rose()'s, kept ROSE_SECONDS
         self._tendency: tuple[float, dict | None] | None = None   # (when read, the past hour's change): tendency()'s, kept TENDENCY_SECONDS
+        self._flood: tuple[float, list[tuple[int, float]] | None] | None = None   # (when read, the past hours' 5-minute rain rates): flood_rows()'s, kept FLOOD_SECONDS
         self._shown = self._readings()
         self.closed = False
         server.bus.subscribe(self._on_event)
 
     # ---------- the data ----------
     async def data(self) -> dict:
-        """{as_of, devices, tiles, look, rain_rate, gust, today_highs, sun}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
+        """{as_of, devices, tiles, look, rain_rate, gust, today_highs, pm25, flood, sun}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
         (fetch off): an open request on the LAN never asks the station (the keep-warm keeps the live reading, and the events come from it)."""
         tool = self.server.service.get("current")
         result = json.loads(await tool.call(gauge_sheet.call(), {"fetch": False})) if tool else {"error": "no current"}
@@ -247,13 +282,38 @@ class WebDashboard:
                 tile["rose"] = await self.rose()
             elif tile["title"] == TENDENCY_TITLE:   # (the pressure: an arrow after its reading, its past hour's way)
                 tile["tendency"] = await self.tendency()
+        rate = rain_rate_of(result, live)
         out = {"as_of": result.get("as_of"), "devices": self.device_times(), "tiles": tiles, "look": look(),
-               "rain_rate": rain_rate_of(result, live), "gust": now_of(result, live, GUST),
-               "today_highs": today_highs(sheet.tiles if sheet else []),
+               "rain_rate": rate, "gust": now_of(result, live, GUST),
+               "today_highs": today_highs(sheet.tiles if sheet else []), "pm25": self.pm25(), "flood": await self.flood(rate),
                "sun": sun_of(getattr(self.server.ctx, "forecast", None), datetime.now(self.server.ctx.zone), location_of(self.server.ctx))}
         if sheet is None:
             out["unavailable"] = (result.get("unavailable") or {}).get("station") or NOT_ANSWERING
         return out
+
+    def pm25(self) -> float | None:
+        """The air sensor's PM2.5 now (µg/m³, as it is held: its corrected reading first), for the page's haze's opacity; None with none."""
+        held = getattr(self.server.ctx.air, "_current", None)
+        try:
+            return value_of(held[0], "pm2_5") if held else None
+        except (KeyError, TypeError, IndexError):
+            return None
+
+    async def flood(self, live: float | None) -> dict | None:
+        """The flash flood: {"depth": 0 to 1} (flood_of: a leaky bucket over the past FLOOD_READ s of the station's 5-minute rain rates,
+        run on to now with the live rate `live`); None with no history (or no file, or an error reading it). The rates are read at most
+        every FLOOD_SECONDS, else kept."""
+        eco, now = self.server.ctx.eco, time.time()
+        if not (self._flood and now - self._flood[0] < FLOOD_SECONDS):
+            rows = None
+            if getattr(eco, "storage", None) is not None and getattr(eco, "mac", None):
+                try:
+                    rows = await eco.storage.read(rain_rates_on, eco.mac, int(now) - FLOOD_READ, int(now) + 60)
+                except Exception as e:   # (no flood drawn)
+                    log.warning("Dashboard: couldn't read the past hours' rain rates: %s: %s", type(e).__name__, e)
+            self._flood = (now, rows)
+        depth = flood_of(self._flood[1] or [], now, live)
+        return None if depth is None else {"depth": depth}
 
     async def rose(self) -> list[float]:
         """Today's wind rose (the station's day, in its zone): the share of today's readings of the wind's direction (its 5-minute
@@ -411,5 +471,5 @@ class WebDashboard:
                 Route(f"{path}/events", self.events, methods=["GET"])]
 
 
-__all__ = ["RED_HANDS", "ROSE_SECONDS", "WebDashboard", "air_readings_of", "now_of", "rain_rate_of", "readings_of", "tendency_of",
+__all__ = ["RED_HANDS", "flood_of", "ROSE_SECONDS", "WebDashboard", "air_readings_of", "now_of", "rain_rate_of", "readings_of", "tendency_of",
            "today_highs"]

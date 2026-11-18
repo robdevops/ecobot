@@ -109,6 +109,22 @@ def pressure_on(r: Reader, mac: str, start: int, end: int) -> list[tuple[int, fl
     return out
 
 
+def rain_rates_on(r: Reader, mac: str, start: int, end: int) -> list[tuple[int, float]]:
+    """The station's rain rate (mm/h) from start to end, oldest first, [(epoch, mm/h)]: its 5-minute readings only, those of its rain
+    gauge, else its piezo gauge's where that is the one with any; [] with none (the web page's flood: a leaky bucket over the past
+    hours' rain)."""
+    for group in ("rainfall", "rainfall_piezo"):
+        sensor, place = r.sensor(mac, group), column_of(group, "rain_rate")
+        if sensor is None or sensor.kind not in KINDS or place is None:
+            continue
+        column = q(place[0])
+        got = r.db.execute(f"SELECT ts, {column} FROM {sensor.kind} WHERE sensor = ? AND res = '5min' AND ts BETWEEN ? AND ? "
+                           f"AND {column} IS NOT NULL ORDER BY ts", (sensor.id, start, end)).fetchall()
+        if got:
+            return [(ts, float(value)) for ts, value in got]
+    return []
+
+
 def newest_minute_on(r: Reader, mac: str) -> int | None:
     """The time of the newest minute held of the station (where the next pull of Home Assistant's starts), None for none."""
     found = [r.db.execute(f"SELECT MAX(ts) FROM {s.kind} WHERE sensor = ? AND res = '1min'", (s.id,)).fetchone()[0]

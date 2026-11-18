@@ -44,7 +44,7 @@ from lib.gauge_look import look, tile_json
 from lib.mcp_server import AIR_URI, EcobotServer, WEATHER_URI, http_app
 from lib.service.context import Context
 from lib.service.names import Catalogue
-from lib.ecowitt.reads import directions_on, pressure_on
+from lib.ecowitt.reads import directions_on, pressure_on, rain_rates_on
 from lib.gauge_look import CHIPS, MAX_CHIP, START, SWEEP
 from lib.web_dashboard import (DESCRIPTION, ICON, ICON_URL, PAGE, RED_HANDS, WebDashboard, air_readings_of, rain_rate_of, readings_of,
                                today_highs)
@@ -91,13 +91,18 @@ class Station:
         self.air_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
         self._keep_air()
 
-    def held(self, rose: list[int] | None = None, pressure: list[tuple[float, float]] | None = None):
+    def held(self, rose: list[int] | None = None, pressure: list[tuple[float, float]] | None = None,
+             rain: list[tuple[float, float]] | None = None):
         """The station's file holds today's wind directions (directions_on's: minutes from each of the 16 compass points; none: all
         0) and the past hour and a half's pressure (pressure_on's, given as [(minutes before now, hPa)], oldest first; none: no
-        reading), as the dashboard reads them (nothing else: the red hands' highs are the sheet's)."""
+        reading) and the past six hours' 5-minute rain rates (rain_rates_on's, [(minutes before now, mm/h)], oldest first; none:
+        no history), as the dashboard reads them (nothing else: the red hands' highs are the sheet's)."""
         async def read(fn, mac, *args):
-            assert mac == "fake" and fn in (directions_on, pressure_on)
+            assert mac == "fake" and fn in (directions_on, pressure_on, rain_rates_on)
             start, end = args
+            if fn is rain_rates_on:                                              # (the past 6 hours: FLOOD_READ)
+                assert end - 60 - start == web_dashboard.FLOOD_READ == 6 * 3600, (start, end)
+                return [(int(end - 60 - m * 60), v) for m, v in (rain or [])]
             assert abs(end - 60 - time.time()) < 5
             if fn is pressure_on:                                                # (the past 90 minutes: TENDENCY_READ)
                 assert end - 60 - start == web_dashboard.TENDENCY_READ == 90 * 60, (start, end)
@@ -426,6 +431,95 @@ async def test_todays_pressure_is_read_from_the_5_minute_readings_and_the_minute
                                 now - 600: "1012.9", now - 540: "1013.0", now + 120: "1013.4"}), now)   # (newer than `end`)
     got = await storage.read(pressure_on, mac, start, now)
     assert got == [(now - 3600, 1012.3), (now - 3300, 1012.5), (now - 600, 1012.9), (now - 540, 1013.0)], got
+    storage.close()
+
+
+def hours_at(rate: float, hours: float, ago: float = 0.0) -> list[tuple[float, float]]:
+    """A steady rain rate in the 5-minute readings: [(epoch, mm/h)] each 300 s, ending `ago` s before the moment the tests call `NOW`."""
+    end = NOW - ago
+    return [(end - 300 * i, rate) for i in range(int(hours * 12) - 1, -1, -1)]
+
+
+NOW = 1_794_279_900.0
+
+
+def test_the_flash_floods_depth_is_a_leaky_bucket_over_the_past_hours_rain_runoff_half_the_rate_draining_with_a_30_minute_time_constant():
+    """flood_of: depth' = 0.5 R - depth / tau (tau 30 min, R mm/h), full at 15 mm, stepped exactly over the 5-minute rows and run on to
+    now with the live rate; 0 to 1; None with no history."""
+    flood = web_dashboard.flood_of
+    assert (web_dashboard.FLOOD_TAU, web_dashboard.FLOOD_RUNOFF, web_dashboard.FLOOD_FULL) == (1800.0, 0.5, 15.0)
+    assert flood([], NOW, 5.0) is None                                              # (no history: none, a live reading or not)
+    assert flood(hours_at(0.0, 3), NOW, 0.0) == 0.0
+    assert flood(hours_at(60.0, 3), NOW, 60.0) >= 0.95                              # (a sustained 60 mm/h: full)
+    assert flood(hours_at(30.0, 3), NOW, 30.0) == pytest.approx(0.5, abs=0.05)      # (30 mm/h: about half)
+    assert flood(hours_at(120.0, 3), NOW, 120.0) == 1.0                             # (clamped)
+    assert flood(hours_at(10.0, 6), NOW, 10.0) == pytest.approx(0.167, abs=0.02)    # (light: a sixth)
+    # 60 mm/h for an hour, then none: the peak 1 - exp(-2) = 0.865, drained to 1/e of it in 30 minutes, to 5 % in 90
+    peak = flood(hours_at(60.0, 1), NOW, 0.0)
+    assert peak == pytest.approx(1 - math.exp(-2), abs=0.01)
+    assert flood(hours_at(60.0, 1), NOW + 1800, 0.0) == pytest.approx(peak * math.exp(-1), abs=0.01)    # about 0.37 of the peak
+    assert flood(hours_at(60.0, 1), NOW + 5400, 0.0) == pytest.approx(peak * math.exp(-3), abs=0.01)    # about 0.05 of it
+    # a 5-minute burst of 100 mm/h: 25 * (1 - exp(-1/6)) mm = 0.26 of full
+    assert flood([(NOW, 100.0)], NOW, 100.0) == pytest.approx(25 * (1 - math.exp(-1 / 6)) / 15, abs=0.01)
+    assert 0.2 <= flood([(NOW, 100.0)], NOW, 0.0) <= 0.3
+    # the newest row run on to now with the live rate: rain still falling keeps it filling, none lets it drain; a gap in the rows is dry
+    rain, rows = flood(hours_at(60.0, 1), NOW + 600, 60.0), hours_at(60.0, 1)
+    assert rain > peak > flood(rows, NOW + 600, 0.0) and flood(rows, NOW + 600, None) == flood(rows, NOW + 600, 0.0)
+    assert flood([(NOW - 3600, 60.0), (NOW, 0.0)], NOW, 0.0) < 0.15                  # (the hour-old burst, mostly drained)
+    assert flood(hours_at(60.0, 1), NOW + 600, 0.0) < flood(hours_at(60.0, 1), NOW + 300, 0.0) < peak
+
+
+async def test_the_data_carries_the_flash_floods_depth_read_from_the_file_and_kept_a_minute_and_the_air_sensors_pm25(server, station, monkeypatch, caplog):
+    """`flood`: {"depth": 0 to 1} from the past six hours' 5-minute rain rates (flood_of; the live rate runs it on to now), read from the
+    file at most every FLOOD_SECONDS; null with no history or no file or a failed read. `pm25`: the air sensor's PM2.5 now (µg/m³), null
+    with none."""
+    page = WebDashboard(server)
+    got = await page.data()
+    assert got["flood"] is None and got["pm25"] == station.latest["pm2_5"]["value"], (got["flood"], got["pm25"])   # (no file)
+    station.air_reads("pm2_5", 55.4)
+    assert (await page.data())["pm25"] == 55.4
+    station.air_reads("pm2_5", None)
+    assert (await page.data())["pm25"] is None
+    rate = lambda mm: [(m, mm) for m in range(360 - 5, -1, -5)]                    # (minutes before now, mm/h: every 5 minutes for 6 hours)
+    station.held(rain=rate(60.0))
+    station.reads("rainfall", "rain_rate", "60")
+    assert (await page.data())["flood"] is None and web_dashboard.FLOOD_SECONDS == 60   # (kept: read under a minute ago, no history then)
+    page._flood = None
+    depth = (await page.data())["flood"]["depth"]
+    assert depth >= 0.95, depth
+    station.held(rain=rate(30.0))                                                      # (the file changes: not read again for a minute)
+    assert (await page.data())["flood"]["depth"] == depth
+    page._flood = (page._flood[0] - 61, page._flood[1])
+    assert (await page.data())["flood"]["depth"] == pytest.approx(0.5, abs=0.05)
+    station.reads("rainfall", "rain_rate", "0")                                        # (the rain stops: drains from the rows' end)
+    assert (await page.data())["flood"]["depth"] <= 0.5
+    station.held(rain=[])
+    page._flood = None
+    assert (await page.data())["flood"] is None
+
+    async def broken(*a):
+        raise OSError("disk")
+    station.eco.storage = NS(read=broken)
+    monkeypatch.setattr(web_dashboard, "FLOOD_SECONDS", 0)
+    assert (await page.data())["flood"] is None and "couldn't read the past hours' rain rates: OSError: disk" in caplog.text
+
+
+async def test_the_5_minute_rain_rates_are_read_from_the_rain_gauge_else_the_piezo_gauge_and_nothing_older_or_newer(tmp_path):
+    """rain_rates_on: [(epoch, mm/h)] oldest first, the 5-minute readings of the rain gauge's rate, else the piezo gauge's where that is the one
+    with any; [] with none."""
+    from lib.storage import Storage
+    storage = Storage(tmp_path / "s.sqlite", TZ)
+    mac, now = "AA:BB", 1_794_279_900
+    start = now - 6 * 3600
+    assert await storage.read(rain_rates_on, mac, start, now) == []
+    rates = lambda group, rows: {group: {"rain_rate": {"unit": "mm/h", "list": {str(t): v for t, v in rows.items()}}}}
+    with storage.writer.transaction() as w:
+        w.put_ecowitt(mac, "5min", ["rainfall_piezo"], rates("rainfall_piezo", {now - 600: "9.0"}), now - 7 * 3600, now - 300, now=now)
+    assert await storage.read(rain_rates_on, mac, start, now) == [(now - 600, 9.0)]            # (the piezo's: the only one)
+    with storage.writer.transaction() as w:
+        w.put_ecowitt(mac, "5min", ["rainfall"], rates("rainfall", {now - 3600: "4.5", now - 300: "6.0", now - 7 * 3600: "1.0", now + 600: "2.0"}),
+                      now - 8 * 3600, now + 600, now=now)
+    assert await storage.read(rain_rates_on, mac, start, now) == [(now - 3600, 4.5), (now - 300, 6.0)]   # (the rain gauge's: not older or newer)
     storage.close()
 
 
@@ -1654,14 +1748,14 @@ async def test_on_a_touch_screen_a_tap_zooms_a_swipe_pages_from_anywhere_and_a_t
 STREAK = [[142, 157, 168], [76, 88, 97], [239, 250, 255]]   # a trail's thin streak on clear glass: its film, grime, glint
 DROPLET = [[166, 215, 242], [239, 250, 255]]                   # a tiny droplet left on a trail, its spark
 TRACK = 25.6   # px/s: down a trail, every running bead at least this fast (a freshly landed rain bead's there, r 3: 1.6 times its 16 on fog)
-EFFECTS = {"rain": "Rain", "haze": "AQI", "uv": "UV index", "humidity": "Humidity", "wind": "Wind", "heat": "Temperature",
+EFFECTS = {"rain": "Rain", "flood": "Rain", "haze": "AQI", "uv": "UV index", "humidity": "Humidity", "wind": "Wind", "heat": "Temperature",
            "ice": "Temperature"}
 
 
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies"}
+DRIVEN = {"trails", "frost", "budget", "flood", "bucket", "pm25", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies"}
 
 
 async def weather(server, part: str) -> dict:
@@ -1691,11 +1785,11 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
     assert got["iceDepth"] == [0.5, 5]                                           # further in the colder
     assert got["heatStrength"] == pytest.approx([0.3, 0.65, 1, 1])               # stronger from 35 °C to 43 °C
     # shown in °F, mph, inHg and in: the same marks, of the readings in °C, km/h and mm/h (heat from 35 °C, leaves above 15 km/h, ice
-    # below 0 °C, rain above 0 mm/h, heavy from 8, a flood above 30 mm/h, not at it)
+    # below 0 °C, rain above 0 mm/h, heavy from 8; the flood from the server's bucket depth 0.05, not below it)
     calm = lambda m: {**m, "below": m["below"] | {"running": None}}   # (just short: whether the last effect's still fading out aside)
     assert {k: calm(m) for k, m in got["unitsMarks"].items()} == {k: calm(got["marks"][k]) for k in ("heat", "wind", "ice", "rain")}
     assert got["unitsRain"][0][0] < 0.4 and [r for r, _ in got["unitsRain"][1:]] == [1, 1, 1], got["unitsRain"]
-    assert [bool(f) for _, f in got["unitsRain"]] == [False, False, False, True], got["unitsRain"]
+    assert [bool(f) for _, f in got["unitsRain"]] == [False] * 4, got["unitsRain"]   # (the rate alone calls for no flood)
     # the thermometer's scale widened as the server widens it in °C (-10 to 40 °C: 14 to 104 °F; 0 to 50 °C: 32 to 122 °F)
     assert got["widened"] == ["Temperature 23.0 °F", ["100", "80", "60", "40", "20"]], got["widened"]
     assert got["widenedHot"] == ["Temperature 109.4 °F", ["120", "100", "80", "60", "40"]], got["widenedHot"]
@@ -2802,7 +2896,7 @@ def started_afresh(seen, effect):
 @needs_browser
 async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_what_falls_ending_at_it_and_a_frog_now_and_then(server, station):
     got = await weather(server, "flood")
-    # the station's rain rate over 30 mm/h, not at 30: a flash flood (the rain's too); the Rain tile its tile
+    # the server's bucket at 0.04 of full (60 mm/h falling): no flood, only the rain; full: a flash flood (the rain's too); the Rain tile its tile
     assert got["at30"]["effects"] == ["rain"] and got["at30"]["levels"]["flood"] == 0, got["at30"]
     assert got["over"]["effects"] == ["rain", "flood"] and got["over"]["levels"]["flood"] == 1 and got["over"]["framed"] == ["Rain"], got["over"]
     # the water rising from the bottom at a steady pace to a quarter of the window's height, in 3 to 5 s
@@ -2826,7 +2920,7 @@ async def test_a_flash_flood_fills_the_window_a_quarter_up_its_surface_choppy_wh
     assert there(waves["at1"], 60 - waves["speed"]) and there(waves["at1"], 60 + waves["speed"]), waves
     assert there(waves["at3"], 3 * waves["speed"] - 60) and there(waves["at3"], 60 + 3 * waves["speed"]), waves   # (back from the left)
     assert -1.5 < waves["deepest3"] < -0.25, waves
-    # the rate 30 again: draining in about 6 s, the chop calming slowly (still much of it half way down); then gone, the rain on
+    # the bucket below 0.05 again: draining in about 6 s, the chop calming slowly (still much of it half way down); then gone, the rain on
     draining = got["draining"]
     assert 5 <= draining["took"] <= 7 and draining["surface"] == 0 and got["drained"]["effects"] == ["rain"], (draining, got["drained"])
     assert draining["half"]["chop"] > 0.7 * draining["chop0"], draining
@@ -3157,7 +3251,7 @@ def test_the_frogs_limbs_are_short_tapering_and_curved_as_in_the_references():
 
 
 def test_the_frog_is_drawn_only_within_the_flood_and_only_when_it_is_deep_enough():
-    assert "depth >= 0.7 * full" in HTML
+    assert "depth >= FROG_DEPTH * full" in HTML and "FROG_DEPTH = 0.9;" in HTML and 0.9 > 0.7
     assert "Math.min(pic.under.height, H - frog.y)" in HTML and "pic.under, 0, 0, pic.under.width, rowsBelow" in HTML
     assert 0.7 * 192 > SPRITE_H - 8   # (the sprite's underwater rows fit above the floor of a 768 px window's flood)
 
@@ -3429,14 +3523,72 @@ async def test_the_leaves_pace_follows_the_measured_wind_speed_eased_and_a_test_
 
 
 @needs_browser
-async def test_the_fog_and_the_flash_flood_keep_on_past_their_marks_down_to_85_percent_and_24_mm_an_hour_and_a_page_load_starts_plain(server, station):
+async def test_the_fog_keeps_on_past_its_mark_down_to_85_percent_the_flood_has_no_hysteresis_and_a_page_load_starts_plain(server, station):
     got = await weather(server, "hysteresis")
     assert got["errors"] == [] and got["freshErrors"] == [], got
     # fog: on from 90 %, kept on to 85 % (84.9 off), back on at 90 again
     assert got["fog"] == [[91, True], [88, True], [86, True], [85, True], [84, False], [88, False], [91, True], [89.9, True], [85, True], [84.9, False]], got["fog"]
-    # flood: on over 30 mm/h (30 itself is not), kept on to 24 (23.9 off)
-    assert got["flood"] == [[31, True], [27, True], [25, True], [24, True], [23, False], [27, False], [31, True], [30, True], [24, True], [23.9, False]], got["flood"]
+    # flood: the server's bucket depth, on from 0.05 and off below it (no hysteresis: the bucket is slow itself)
+    assert got["flood"] == [[0.06, True], [0.05, True], [0.049, False], [0.06, True], [0.04, False], [0.2, True], [0.05, True], [0.04, False]], got["flood"]
+    assert got["rateOnly"] == [0, 0, 0], got["rateOnly"]   # (a heavy rain rate alone: no flood)
     assert got["fresh"] == {"fog": 0, "flood": 0}, got["fresh"]
+
+
+@needs_browser
+async def test_the_floods_water_follows_the_buckets_depth_and_the_frog_swims_only_from_nine_tenths_full(server, station):
+    got = await weather(server, "bucket")
+    levels = got["levels"]
+    assert [lv["want"] for lv in levels] == [0.04, 0.3, 0.6, 0.05, 0.2, 0.04, 0], levels
+    for lv in levels:   # (the water's height: the depth fraction of its full height, none below 0.05)
+        want = 0 if lv["want"] < 0.05 else lv["want"] * lv["full"]
+        assert lv["depth"] == pytest.approx(want, abs=0.02), lv
+        assert lv["level"] == (lv["want"] if lv["want"] >= 0.05 else 0), lv
+    assert levels[1]["full"] == 64 and levels[3]["depth"] > 0, levels
+    # (eased: a frame moves it no faster than full / RISE, 4 s from empty)
+    ease = got["ease"]
+    assert 0 < ease["step"] <= ease["full"] / 4 * ease["dt"] + 0.01, ease
+    # a frog never in water 0.85 full however long (25 minutes of the weather's time, past his due time), one at 0.95
+    assert got["shallow"]["frogs"] == 0 and got["shallow"]["since"] > got["shallow"]["nextFrog"] + 1000, got["shallow"]
+    assert got["shallow"]["depth"] == pytest.approx(0.85 * got["shallow"]["full"], abs=0.1)
+    assert got["deep"]["frogs"] >= 1 and got["deep"]["depth"] >= 0.9 * got["deep"]["full"], got["deep"]
+
+
+@needs_browser
+async def test_the_hazes_opacity_follows_the_pm25_continuously_by_beer_lambert_its_tint_between_the_bands_and_its_pattern_by_the_band(server, station):
+    got = await weather(server, "pm25")
+    # the curve 1 - exp(-0.01457 pm), at most 0.97: none below 9 (eased in from 8), 12 % at 9, 25 % at 20, 40 % at 35, 55 % at 55, 77 %
+    # at 100, 89 % at 150, 97 % at 250, capped
+    op = got["curve"]["opacity"]
+    for pm, want in (("0", 0), ("5", 0), ("8", 0), ("9", 0.12), ("20", 0.25), ("35", 0.40), ("55", 0.55), ("100", 0.77), ("150", 0.89), ("250", 0.97), ("1000", 0.97)):
+        assert op[pm] == pytest.approx(want, abs=0.03), (pm, op[pm])
+    assert max(op.values()) <= 0.97 and 0 < op["8.5"] < op["9"], op
+    # continuous (no jump over 0.02 per µg/m3 from 9 up, across every band's edge); its tint too (3 or less of 255 a channel per µg/m3);
+    # the tint at the bands' midpoints, held beyond the first and last
+    assert got["curve"]["worst"] <= 0.02 and got["curve"]["tint"] <= 3, got["curve"]
+    assert got["curve"]["mids"] == pytest.approx([0, 1, 2, 3, 4], abs=1e-6)
+    steady = got["curve"]["steady"]
+    assert steady[0] == steady[1] and steady[2] == steady[3] and steady[0] != steady[2], steady
+    # the page: below 9 no haze; read from data.pm25, low-passed, the opacity the curve's; the bands by the AQI as before
+    assert got["below"]["effects"] == [] and got["below"]["opacity"] == 0 and got["below"]["mean"] == 0, got["below"]
+    for pm, seen in got["points"].items():
+        want = min(0.97, 1 - math.exp(-0.01457 * float(pm)))
+        assert seen["effects"] == ["haze"] and seen["opacity"] == pytest.approx(want, abs=0.02) and seen["pm25"] == pytest.approx(float(pm), abs=0.1), (pm, seen)
+    # ... the band's baked pattern (its cover) as ever: it changes at an edge, the opacity across it by no more than the curve's slope
+    low, high = got["edge"]
+    assert (low["level"], high["level"]) == (1, 2) and low["look"]["lo"] != high["look"]["lo"], got["edge"]
+    assert abs(low["opacity"] - high["opacity"]) < 0.01 and low["tint"] == high["tint"], got["edge"]
+    # ... within a band more PM2.5 is more opaque as drawn, as the curve says (0.77 / 0.58), the tint moving on
+    same = got["sameBand"]
+    assert same[0]["level"] == same[1]["level"] == 3 and same[0]["look"] == same[1]["look"], same
+    assert same[1]["mean"] / same[0]["mean"] == pytest.approx((1 - math.exp(-1.457)) / (1 - math.exp(-0.01457 * 60)), abs=0.12), same
+    assert same[0]["tint"] != same[1]["tint"], same
+    # ... the tint between the bands' (a colour in each band's own at its midpoint, none the same two steps apart), at 20 µg/m3 the first band's
+    assert got["points"]["20"]["tint"] != got["points"]["35"]["tint"] != got["points"]["50"]["tint"], got["points"]
+    # no PM2.5 reading: the band's midpoint's opacity, the design look
+    assert got["none"]["pm25"] == pytest.approx(90.4) and got["none"]["opacity"] == pytest.approx(0.732, abs=0.02), got["none"]
+    # dithered with no grid (the least over several pans: under 400), cheap
+    assert min(got["grids"]) < 400, got["grids"]
+    assert got["cost"] < 4, got["cost"]
 
 
 # ---------- the wind's direction ----------

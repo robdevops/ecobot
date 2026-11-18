@@ -56,14 +56,14 @@ One row per group, one label per row (the weakest label inside the group; mixed 
 | A12 | Smoothstep easing | 3.1 | REAL-MODEL |
 | A13 | Wind speed to haze pan | 4.1 | TUNED |
 | A14 | Leaf pace scale `k` from the wind speed | 3.3 | TUNED |
-| H1 | Haze level from AQI band edges | 4.1 | REAL-MODEL |
+| H1 | Haze band from AQI band edges; its opacity from PM2.5 (Beer-Lambert) | 4.1 | REAL-MODEL |
 | H2 | Haze texture, tint, palette, motes | 4.1 | ARTISTIC |
 | H3 | Heat level, colour ramp, period, peak | 4.2 | TUNED |
 | H4 | Heat wave phases, envelope and diagonal front (the lean itself is S3) | 4.2 | ARTISTIC |
 | H5 | UV trigger (UV index 11 and above) | 4.3 | REAL-MODEL |
 | H6 | Ice reach, growth and melt rates | 4.4 | TUNED |
 | H7 | Ice crystal forms | 4.4 | ARTISTIC |
-| H8 | Flood trigger (above 30 mm/h on, below 24 off) | 4.5 | TUNED |
+| H8 | Flood trigger: a leaky-bucket runoff model on the server (tau 30 min, runoff share 0.5, full 15 mm) | 4.5 | REAL-APPROX |
 | H9 | Flood level, chop, frog timing, gust objects | 4.5 | ARTISTIC |
 | H10 | Flood wave equation and wind drift | 4.5 | REAL-APPROX |
 | H11 | Gust-object trigger (gust above 99 km/h) | 4.5 | TUNED |
@@ -161,7 +161,7 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Effect levels | `conditionsOf` :5350 | rain: 0 if rate is 0, else `0.3 + 0.7*min(1, rate/8)` (mm/h). haze: the number of AQI edges [50, 100, 150, 200, 300] below the AQI (0 to 5; the tile's own bounds if given). uv: 1 if UVI is 11 or more. humidity: 0 when not fogging, else `max(0.05, min(1, (RH - 90)/10))` (so 0.05 while held between 85 and 90 %). wind: 1 if wind is above 15 km/h (the reading, not the gust). heat: 0 below 35 C, else `0.3 + 0.7*min(1, (T - 35)/8)`. ice: `-T` if T is below 0 (degrees below zero). flood: 1 if rain rate is above 30 mm/h (`FLOOD_ON`), then kept while it is 24 mm/h or more (`FLOOD_OFF`); humidity on from 90 % (`FOG_ON`), kept while it is 85 % or more (`FOG_OFF`) | TUNED | The thresholds come from real category names (UVI 11 is WHO "extreme"; 15 km/h is mid-Beaufort 3), but the ramps are linear and chosen by look. Rain saturates at 8 mm/h, so 8 and 30 mm/h look the same. Hysteresis on the flood (on over 30, off below 24 mm/h) and the humidity (on from 90 %, off below 85 %), held in the page (`flooding`, `fogging`, :5359-5360), so a reading near either does not toggle the effect; a page load starts with the plain mark. |
+| Effect levels | `conditionsOf` :5350 | rain: 0 if rate is 0, else `0.3 + 0.7*min(1, rate/8)` (mm/h). haze: the number of AQI edges [50, 100, 150, 200, 300] below the AQI (0 to 5; the tile's own bounds if given; with no AQI, the PM2.5 breakpoints 9, 35.4, 55.4, 125.4, 225.4 against `data.pm25`): the band only picks the baked pattern, the opacity and tint follow PM2.5 (the haze table). uv: 1 if UVI is 11 or more. humidity: 0 when not fogging, else `max(0.05, min(1, (RH - 90)/10))` (so 0.05 while held between 85 and 90 %). wind: 1 if wind is above 15 km/h (the reading, not the gust). heat: 0 below 35 C, else `0.3 + 0.7*min(1, (T - 35)/8)`. ice: `-T` if T is below 0 (degrees below zero). flood: the server's bucket depth `data.flood.depth` (0-1) when it is 0.05 or more (`FLOOD_SHOW`), else 0 (no hysteresis; see the flood trigger); humidity on from 90 % (`FOG_ON`), kept while it is 85 % or more (`FOG_OFF`) | TUNED | The thresholds come from real category names (UVI 11 is WHO "extreme"; 15 km/h is mid-Beaufort 3), but the ramps are linear and chosen by look. Rain saturates at 8 mm/h, so 8 and 30 mm/h look the same. Hysteresis on the flood (on over 30, off below 24 mm/h) and the humidity (on from 90 %, off below 85 %), held in the page (`flooding`, `fogging`, :5359-5360), so a reading near either does not toggle the effect; a page load starts with the plain mark. |
 | Wind side | `windSideOf` :5372 | direction in (0, 180) gives leftward (-1); in (180, 360) gives rightward (+1); 0, 180, 360 or no reading keeps the last side | REAL-APPROX | Correct sign for a dial with east on the right: wind from the east blows toward the west. Only the side counts; 91 and 179 degrees behave the same. |
 | Direction easing | `steer`, `DIR_S` 4 s | `p` slides to its target at rate `2/DIR_S`; `f = sin(p*pi/2)`; the side flips when f crosses 0 and sprites are mirrored | ARTISTIC | |
 | Particle budget | `BUDGET` :285, `tick()` | budget = `W*H/400` particles (480 x 300 gives 360); `share = min(1, budget / sum of needs)`; each effect gets `round(need*share)`; humidity has its own limits; rain's count is the plain budget at every slant | TUNED | A performance and legibility cap. Max rain alone: need 360, exactly the budget. |
@@ -207,6 +207,7 @@ Everything here is drawn in art px. The measured wind speed scales the leaves' p
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
 | Level | `conditionsOf` | AQI above 50/100/150/200/300 gives levels 1 to 5 | REAL-MODEL | The US AQI band edges. The AQI itself is in section 8.3. |
+| Opacity from PM2.5 | `pmOpacity`, `pmShown`, `PM_EXT` 0.01457, `PM_CAP` 0.97, `PM_EDGES` | Beer-Lambert with Koschmieder's view: extinction (1/m) = 4e-6*PM2.5 (4 m2/g mass extinction), L = 3643 m, `opacity = min(0.97, 1 - exp(-0.01457*PM2.5))`: 12 % at 9 ug/m3, 25 % at 20, 40 % at 35, 55 % at 55, 77 % at 100, 89 % at 150, 97 % at 250; none below 8, eased in to 9; each band's image is baked at the opacity of its top edge and drawn at `opacity/opacity(top)` (so at the band's midpoint it is its design look); PM2.5 low-passed with TAU 4 s; the tint is lerped by PM2.5's place between the bands' midpoints (quantised to 1/16, re-baked and cross-faded) | REAL-APPROX | Beer-Lambert is the real law, the 4 m2/g mass extinction is a typical fine-particle figure, and L = 3643 m is an effective distance chosen for the look (a few km of visibility scale). The look at each band's typical value is unchanged. |
 | Pan speed | `panFor` :710; `PAN_MAX` 3.15, `PAN_K` 22.1 | `pan = 3.15 * (1 - exp(-w / 22.1))` art px/s, `w = speed + 0.3*max(gust - speed, 0)`. Checks: 3 km/h gives 0.40, 40 km/h gives 2.63 | TUNED | Real haze moves at the wind speed (40 km/h is 11 m/s). This is a slow, saturating stand-in that encodes only "faster wind, faster pan". |
 | Low-pass | `TAU` 4 s | `filtered += (w - filtered)*min(1, dt/4)` | TUNED | |
 | Texture | `bakeTexture` :730 | three layers of value noise (octaves 0.55/0.3/0.15), domain-warped, histogram-equalised per layer, summed with weights 0.6/0.85/1; cut by `comb`: `t = clamp((d/255 - lo)/span, 0, 1)`, shade `7*0.999*smoothstep(t)` | ARTISTIC | Each layer is uniform after equalisation but the sum is bell-shaped, so the cover per band is not the nominal share (see Issues). |
@@ -251,7 +252,7 @@ With `d` = degrees below 0 C.
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Flood trigger | `conditionsOf` :5359; `FLOOD_ON` 30, `FLOOD_OFF` 24 | on when the rain rate is above 30 mm/h, kept on while it is 24 mm/h or more | TUNED | 30 mm/h is a heavy-rain intensity (heavy rain is roughly above 4 to 8 mm/h and violent above 50 mm/h in common classifications), not a flood criterion; flash floods depend on accumulation, soil and catchment. The 6 mm/h of hysteresis stops flicker for a reading near 30; the page starts with the plain mark. |
+| Flood trigger | `flood_of` (lib/web_dashboard.py); `FLOOD_TAU` 30 min, `FLOOD_RUNOFF` 0.5, `FLOOD_FULL` 15 mm, `FLOOD_READ` 6 h, `FLOOD_ROW` 300 s; page `FLOOD_SHOW` 0.05 | depth' = 0.5*R - depth/tau (mm, R in mm/h, tau 30 min), stepped exactly over the past six hours' 5-minute rain-rate rows (`d = d*exp(-dt/tau) + 0.5*R*tau*(1 - exp(-dt/tau))`), the newest row run on to now with the live rate; sent as `depth/15` clamped to 0-1, read at most once a minute. The page shows the flood from 0.05 and sets the water's height to `depth * 0.25*H` (RISE/DRAIN as top speeds); the frog needs depth 0.9 or more | REAL-APPROX | A leaky-bucket (linear reservoir) runoff model: rain falls, half of it runs off into the bucket, which drains with a 30 minute time constant, so a sustained 60 mm/h fills it, 30 mm/h half, a 5 minute 100 mm/h burst about 0.2, and 60 mm/h for an hour then dry is 0.37 of its peak after 30 minutes and 0.05 after 90. The constants (runoff share, tau, full depth) are tuned, not catchment data; real flash floods depend on soil, slope and catchment. The old 30/24 mm/h trigger and its hysteresis are gone (the bucket is slow itself). |
 | Level | step ~3095; `RISE` 4, `DRAIN` 6 (:2831) | full height `0.25*H`; rises at `full/4` per second, drains at `full/6` per second | ARTISTIC | Far faster than real water. |
 | Wave equation | `waves` :2972; `c` 34 px/s | per column `a = c^2*(h[l] + h[r] - 2h[i]) + 2*(v[l] + v[r] - 2v[i]) - 0.1*v[i]`; substeps `ds <= 0.7/c`; surface clamped to +-6 px | REAL-APPROX | A damped 1D wave equation with viscous smoothing is a fair stand-in for surface waves. Real waves are dispersive (`c = sqrt(g*d)` only in shallow water); this is not. |
 | Wind drift | `PUSH` 6 px/s (:2833) | first-order upwind advection of h and v at `6 px/s * wind amount` | REAL-APPROX | Real surface drift is a few percent of wind speed; this is a constant. Upwind adds numerical diffusion. |
@@ -328,7 +329,7 @@ Bead motion along the downhill unit vector (`b.x += grav.x*dy`, `b.y += grav.y*d
 
 ### 7.1 Unit conversions (web_dashboard.html `UNITS` :4678)
 
-The server always sends metric. The page converts the reading, scale, ticks, table figures, floor and the red hand. Sky thresholds (35 C, 15 km/h, 30 mm/h) read the metric figures and do not move with the unit switch.
+The server always sends metric. The page converts the reading, scale, ticks, table figures, floor and the red hand. Sky thresholds (35 C, 15 km/h) read the metric figures and do not move with the unit switch.
 
 | Name | Formula | Label | Faithful? |
 |---|---|---|---|
@@ -495,7 +496,7 @@ Design simplifications that do not estimate reality:
 
 22. LEFT BY DECISION: fog uses outdoor RH 90 % or more, not glass temperature against dew point; the user chose to leave it.
 23. LEFT BY DECISION: ice uses air temperature below 0 C regardless of humidity or dew point; the user chose to leave it.
-24. FIXED (03f2b5d) for the flood (on over 30, off below 24 mm/h) and the fog (on from 90 %, off below 85 %). The 30 mm/h "flash flood" naming is unchanged.
+24. FIXED (03f2b5d) for the fog (on from 90 %, off below 85 %). The flood's 30/24 mm/h trigger was then replaced by the server's leaky bucket (a runoff model: see H8).
 25. FIXED (03f2b5d): leaf pace scales with the wind speed, `k = clamp(0.4 + 0.024 s, 0.5, 1.6)`. Eddies and gust pulses stay random.
 26. FIXED (96e255f): rain falls at a constant vertical speed, path speed `V0 / cos(angle)`, streaks grow to at most 1.6x, plain drop count (no density factor), drops blown out of the side start again.
 27. LEFT BY DECISION: the 70 degree rain cap (bites above 66 km/h; the real law has no cap); the user chose to leave it.

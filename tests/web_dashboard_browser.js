@@ -1429,6 +1429,8 @@ async function weatherPage(browser, url, options = {}) {
     const readings = { "AQI": 40, ...state.readings };
     for (const t of data.tiles) if (t.title in readings) t.value = readings[t.title];
     if ("rain_rate" in readings) data.rain_rate = readings.rain_rate;
+    data.pm25 = "pm25" in readings ? readings.pm25 : null;                      // (the air sensor's PM2.5: none unless given)
+    data.flood = "flood" in readings ? { depth: readings.flood } : null;        // (the server's leaky bucket: none unless given)
     if ("gust" in readings) data.gust = readings.gust;              // (the gust now, km/h)
     if (readings.asOf) data.as_of = { ...data.as_of, time: readings.asOf };   // (a new reading: its time)
     if (readings.high) Object.assign(data.today_highs, readings.high);   // (the red hands': today's highest)
@@ -2587,7 +2589,8 @@ const WEATHER = {
     const marks = { rain: [{ rain_rate: 0 }, { rain_rate: 0.1 }], haze: [{ "AQI": 50 }, { "AQI": 51 }],
                     uv: [{ "UV index": 10.9 }, { "UV index": 11 }], humidity: [{ Humidity: 89.9 }, { Humidity: 90 }],
                     wind: [{ Wind: 15 }, { Wind: 15.1 }], heat: [{ Temperature: 34.9 }, { Temperature: 35 }],
-                    ice: [{ Temperature: 0.1 }, { Temperature: -0.1 }], iceAtZero: [{ Temperature: 0 }, { Temperature: -0.1 }] };
+                    ice: [{ Temperature: 0.1 }, { Temperature: -0.1 }], iceAtZero: [{ Temperature: 0 }, { Temperature: -0.1 }],
+                    flood: [{ flood: 0.049 }, { flood: 0.05 }] };
     out.marks = {};
     for (const [name, [below, at]] of Object.entries(marks)) {
       await reads(below);
@@ -2609,8 +2612,8 @@ const WEATHER = {
     // 8 mm/h, the flood above 30 mm/h); the thermometer's scale widened as in °C
     for (const unit of ["°F", "mph", "inHg", "in"]) await page.click(`#units button[data-unit='${unit}']`);
     out.unitsRain = [];
-    for (const rate of [0.5, 8, 30, 30.1]) {
-      await reads({ rain_rate: rate });
+    for (const rate of [0.5, 8, 30, 31]) {
+      await reads({ rain_rate: rate });   // (the rate alone no longer floods: the bucket's depth does)
       const { levels } = await weatherSeen(page);
       out.unitsRain.push([levels.rain, levels.flood]);
     }
@@ -3080,12 +3083,12 @@ const WEATHER = {
       await context.close();
       return seen;
     })();
-    // the station's rain rate: 30 mm/h, then just over it (the weather's time four times as fast)
+    // the server's bucket: 0.04 of full (a heavy rain rate with it: no flood), then full (the weather's time four times as fast)
     const { context, page, errors, reads } = await weatherPage(browser, url, { driven: true });
-    await reads({ rain_rate: 30 });
+    await reads({ rain_rate: 60, flood: 0.04 });
     out.at30 = await weatherSeen(page);
     await page.evaluate(() => Sky.timeScale(4));
-    await reads({ rain_rate: 30.1 });
+    await reads({ rain_rate: 60, flood: 1 });
     out.over = await weatherSeen(page);
     out.rising = await page.evaluate(() => new Promise((resolve) => {
       const rise = [], looks = [], splashes = [];
@@ -3120,7 +3123,7 @@ const WEATHER = {
       };
       __next(step);
     }));
-    await reads({ rain_rate: 23 });   // (under 24 mm/h: a flood kept on down to there goes off; 30 would keep it)
+    await reads({ rain_rate: 23, flood: 0.04 });   // (the bucket under 0.05: off, the rain on)
     out.draining = await page.evaluate(() => new Promise((resolve) => {
       const f0 = Sky.state().flood, c0 = Sky.state().clock, effects = Sky.state().effects;
       let half = null;
@@ -4211,8 +4214,8 @@ const WEATHER = {
     await link.context.close();
   },
 
-  // A reading hovering at a mark doesn't toggle the effect: the fog on from 90 % kept on down to 85 %, the flood on over 30 mm/h kept on
-  // down to 24 mm/h; a page load starts with the plain mark
+  // A reading hovering at a mark doesn't toggle the effect: the fog on from 90 % kept on down to 85 %; the flood has none (its depth, the
+  // server's bucket, is slow itself): on from 0.05, off below it; a page load starts with the plain mark
   async hysteresis(browser, url, out) {
     const p = await weatherPage(browser, url, { driven: true });
     const seq = async (key, values, level) => {
@@ -4222,13 +4225,16 @@ const WEATHER = {
     };
     out.fog = await seq("Humidity", [91, 88, 86, 85, 84, 88, 91, 89.9, 85, 84.9], "humidity");
     await p.reads({ Humidity: 50 });
-    out.flood = await seq("rain_rate", [31, 27, 25, 24, 23, 27, 31, 30, 24, 23.9], "flood");
+    out.flood = await seq("flood", [0.06, 0.05, 0.049, 0.06, 0.04, 0.2, 0.05, 0.04], "flood");   // (no hysteresis: at 0.05 and over)
+    await p.reads({ flood: 0 });
+    out.rateOnly = [];   // (the rain rate alone, however heavy, calls for no flood)
+    for (const rate of [31, 60, 120]) { await p.reads({ rain_rate: rate }); await drive(p.page, 5); out.rateOnly.push((await weatherSeen(p.page)).levels.flood); }
     await p.reads({ rain_rate: 0 });
     out.errors = p.errors;
     await p.context.close();
     // a new page: 88 % is not enough to start it, nor 27 mm/h
     const q = await weatherPage(browser, url, { driven: true });
-    await q.reads({ Humidity: 88, rain_rate: 27 });
+    await q.reads({ Humidity: 88, rain_rate: 27, flood: 0.04 });
     await drive(q.page, 5);
     const seen = await weatherSeen(q.page);
     out.fresh = { fog: seen.levels.humidity, flood: seen.levels.flood };
@@ -4236,6 +4242,84 @@ const WEATHER = {
     await q.context.close();
   },
 
+  // The flood's water follows the server's bucket depth (data.flood.depth): its level a depth * 0.25 of the window's, easing; not below
+  // 0.05; a frog only from 0.9 of full
+  async bucket(browser, url, out) {
+    const { context, page, errors, reads } = await weatherPage(browser, url, { driven: true });
+    await page.evaluate(() => Sky.timeScale(4));
+    const settle = async (depth) => {
+      await reads({ flood: depth });
+      await driveUntil(page, (want) => { const f = Sky.state().flood; return want < 0.05 ? f.depth === 0 : f.full > 0 && Math.abs(f.depth - want * f.full) < 0.01; }, depth, 4000);
+      return page.evaluate(() => { const f = Sky.state().flood; return { depth: f.depth, full: f.full, frogs: f.frogs, nextFrog: f.nextFrog, since: f.since, level: Sky.state().levels.flood }; });
+    };
+    out.levels = [];
+    for (const d of [0.04, 0.3, 0.6, 0.05, 0.2, 0.04, 0]) out.levels.push({ want: d, ...await settle(d) });
+    // (rising: no faster than full / RISE s, draining no faster than full / DRAIN s; eased, not a jump)
+    await reads({ flood: 0 });
+    await driveUntil(page, () => Sky.state().flood.depth === 0);
+    await reads({ flood: 0.5 });
+    out.ease = await page.evaluate(() => { const f = Sky.state().flood, c0 = Sky.state().clock; Sky.advance(1); const s = Sky.state(); return { step: s.flood.depth, dt: s.clock - c0, full: f.full }; });
+    // (the frog: not in water 0.85 of full, however long; some time at 0.95)
+    await settle(0.85);
+    await page.evaluate(() => Sky.timeScale(20));
+    const t0 = await page.evaluate(() => Sky.state().clock);
+    await driveUntil(page, (t0) => Sky.state().clock > t0 + 1500, t0, 20000);
+    out.shallow = await page.evaluate(() => { const f = Sky.state().flood; return { frogs: f.frogs, depth: f.depth, full: f.full, nextFrog: f.nextFrog, since: f.since }; });
+    await reads({ flood: 0.95 });
+    await driveUntil(page, () => Sky.state().flood.frogs >= 1, null, 20000);
+    out.deep = await page.evaluate(() => { const f = Sky.state().flood; return { frogs: f.frogs, depth: f.depth, full: f.full }; });
+    out.errors = errors;
+    await context.close();
+  },
+  // The haze's opacity from the air sensor's PM2.5 (data.pm25): the curve 1 - exp(-0.01457 pm), continuous across the bands' edges; the
+  // band's pattern changing at them; the tint continuous; none below 9 µg/m3; a page's reading low-passed to it and drawn at it
+  async pm25(browser, url, out) {
+    const { context, page, errors, reads } = await weatherPage(browser, url, { driven: true });
+    out.curve = await page.evaluate(() => {
+      const of = Sky.state().haze.of, opacity = {}, pms = [0, 5, 8, 8.5, 9, 20, 35, 55, 100, 150, 250, 400, 1000];
+      for (const pm of pms) opacity[pm] = of(pm).opacity;
+      let worst = 0, tint = 0, last = of(9);
+      for (let pm = 9.5; pm <= 400; pm += 0.5) {   // (a step of 0.5 ug/m3: per ug/m3, twice)
+        const now = of(pm);
+        worst = Math.max(worst, 2 * Math.abs(now.opacity - last.opacity));
+        for (let k = 0; k < 2; k++) for (let c = 0; c < 3; c++) tint = Math.max(tint, 2 * Math.abs(now.rgb[k][c] - last.rgb[k][c]));
+        last = now;
+      }
+      return { opacity, worst, tint, steady: [of(5).tint, of(22).tint, of(500).tint, of(900).tint], mids: [of(22.2).pos, of(45.4).pos, of(90.4).pos, of(175.4).pos, of(275.4).pos] };
+    });
+    const hazeNow = () => page.evaluate(() => { const h = Sky.state().haze, s = Sky.state(); return { effects: s.effects, level: h.level, pm25: h.pm25, opacity: h.opacity, drawn: h.drawn,
+                                                                                            tint: h.tint, look: h.look, renders: h.renders, pending: h.pending, settling: h.settling }; });
+    const settled = async (readings, want) => {   // (read, the weather's time on until the low-pass and any bake have settled)
+      await reads(readings);
+      await page.evaluate(() => Sky.timeScale(8));
+      await driveUntil(page, (want) => { const h = Sky.state().haze; return (want === null ? h.level === 0 : h.level > 0 && Math.abs(h.pm25 - want) < 0.05) && !h.pending && !h.settling; }, want, 6000);
+      await drive(page, 30);
+      return hazeNow();
+    };
+    const meanAlpha = () => page.evaluate(() => { const c = document.querySelector("#sky canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; let a = 0; for (let i = 3; i < d.length; i += 4) a += d[i]; return a / (d.length / 4) / 255; });
+    // below 9 none (the AQI Good), the reading in the band's middle: its design look; no sensor reading: the band's midpoint
+    await reads({ AQI: 40, pm25: 5 });
+    await drive(page, 60);
+    out.below = { ...await hazeNow(), mean: await meanAlpha() };
+    out.points = {};
+    for (const [aqi, pm] of [[55, 9.5], [68, 20], [100, 35], [140, 50], [160, 60], [175, 100], [200, 125], [250, 175], [320, 250], [400, 300]]) {
+      out.points[pm] = { ...await settled({ AQI: aqi, pm25: pm }, pm), mean: await meanAlpha() };
+    }
+    // (the same band, more PM2.5: more opaque, as the curve says; the pattern the same)
+    out.sameBand = [];
+    for (const [aqi, pm] of [[160, 60], [175, 100]]) out.sameBand.push({ ...await settled({ AQI: aqi, pm25: pm }, pm), mean: await meanAlpha() });
+    // (across a band's edge: the pattern changes, the opacity does not jump)
+    out.edge = [];
+    for (const [aqi, pm] of [[99, 35.3], [101, 35.5]]) out.edge.push({ ...await settled({ AQI: aqi, pm25: pm }, pm), mean: await meanAlpha() });
+    // (no PM2.5 reading: the band's midpoint's opacity, its design look)
+    out.none = { ...await settled({ AQI: 160 }, 90.4), mean: await meanAlpha() };
+    // (no grid in its dither: the least of its peak ratio over several pans; the pan puts a fine grid of its own, the canvas's, in and out of phase)
+    out.grids = [];
+    for (let i = 0; i < 6; i++) { out.grids.push((await gridPeak(page)).ratio); await drive(page, 300); }
+    out.cost = await frameCost(page);
+    out.errors = errors;
+    await context.close();
+  },
   async uturn(browser, url, out) {
     const p = await weatherPage(browser, url, { query: "?fx=wind", driven: true, context: { viewport: { width: 640, height: 480 } } });
     await drive(p.page, 60);
