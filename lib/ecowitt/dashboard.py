@@ -18,7 +18,10 @@ WATER = ("#DFFBFF", "#B2EEFA", "#80E5FA", "#4FB3D6", "#2C7592")
 PRESSURE = ("#C5CAFA", "#A5ABF7", "#8087F5", "#5C5CF0", "#3F2FD0")
 WIND = ("#E8E8E8", "#C8CDD2", "#A2ABB4", "#7C8790", "#56626C")
 SUN = ("#FBE79A", "#F5D45A", "#F2A53C", "#D27A2A", "#A9501F")
-UV = ("#A9E34B", "#F7E04A", "#F4A93B", "#E8562A", "#9A1F5A", "#7A2CF0")
+# The UV dial, 0-12 in twelve equal slices of 1 UV (the page draws one arc slice for each colour), cut to the WHO's categories: Low 0-2
+# green (3 slices), Moderate 3-5 yellow (3), High 6-7 orange (2), Very high 8-10 red (3), Extreme 11+ violet (1; the dial stops at 12)
+_UV_GREEN, _UV_YELLOW, _UV_ORANGE, _UV_RED, _UV_VIOLET = "#A9E34B", "#F7E04A", "#F4A93B", "#E8562A", "#7A2CF0"
+UV = (_UV_GREEN,) * 3 + (_UV_YELLOW,) * 3 + (_UV_ORANGE,) * 2 + (_UV_RED,) * 3 + (_UV_VIOLET,)
 DEGREES = (40, 30, 20, 10, 0)          # a thermometer's scale as it starts (THERMOMETER), before it widens to take in the reading
 GUST = ("wind", "wind_gust")            # the live gust: the Wind gauge's Gust column's, and its red hand's (today's highest gust)
 THERMOMETER = (0, 40, 10)               # a thermometer's scale: its ends and its step, in °C; widened a step at a time to the reading

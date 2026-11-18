@@ -1661,7 +1661,7 @@ EFFECTS = {"rain": "Rain", "haze": "AQI", "uv": "UV index", "humidity": "Humidit
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over", "direction", "uturn", "slant"}
+DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis"}
 
 
 async def weather(server, part: str) -> dict:
@@ -3332,6 +3332,39 @@ async def test_the_rain_slants_with_the_live_wind_speed_straight_down_in_no_wind
     for kmh in ("0", "25", "60"):
         assert paths[kmh]["landed"] == pytest.approx(paths["11"]["landed"], rel=0.15), (kmh, paths)
     assert paths["60"]["drops"] > paths["25"]["drops"] > paths["11"]["drops"] * 1.05 and paths["0"]["drops"] == paths["11"]["drops"], paths
+
+
+@needs_browser
+async def test_the_leaves_pace_follows_the_measured_wind_speed_eased_and_a_test_links_wind_keeps_the_usual_pace(server, station):
+    got = await weather(server, "pace")
+    assert got["errors"] == [] and got["linkErrors"] == [], got
+    speeds = {int(k): v for k, v in got["speeds"].items()}
+    # k = clamp(0.4 + 0.024 s, 0.5, 1.6): 0 km/h 0.5 (clamped), 15 0.76, 25 1.0, 40 1.36, 60 1.6
+    for kmh, want in ((0, 0.5), (15, 0.76), (25, 1.0), (40, 1.36), (60, 1.6)):
+        assert speeds[kmh]["k"] == pytest.approx(want, abs=0.03), (kmh, speeds[kmh])
+    # the effective speed is the reading plus 0.3 of the gust over it: 10 with a gust of 40 is 19, k 0.856
+    assert got["gust"]["speed"] == pytest.approx(19, abs=0.1) and got["gust"]["k"] == pytest.approx(0.4 + 0.024 * 19, abs=0.03), got["gust"]
+    # the leaves' mean speed across scales with it (within 15 %) against what they do at 25 km/h
+    for kmh in (15, 40, 60):
+        assert speeds[kmh]["mean"] / speeds[25]["mean"] == pytest.approx(speeds[kmh]["k"], rel=0.15), (kmh, speeds)
+    assert speeds[0]["mean"] < speeds[15]["mean"] < speeds[25]["mean"] < speeds[40]["mean"] < speeds[60]["mean"], speeds
+    # eased like the rain's slant: no jump from 25 to 60 km/h, rising smoothly to 1.6
+    eased = got["eased"]
+    assert eased["first"] == pytest.approx(1.0, abs=0.01) and eased["last"] == pytest.approx(1.6, abs=0.03) and eased["monotonic"] and eased["maxStep"] < 0.05, eased
+    # the test link's wind over a calmer real one: the pace it always had; a real wind above its 11 km/h rules
+    assert got["link"]["k"] == pytest.approx(1.0, abs=0.01), got["link"]
+    assert got["linkOver"]["k"] == pytest.approx(0.4 + 0.024 * 40, abs=0.03), got["linkOver"]
+
+
+@needs_browser
+async def test_the_fog_and_the_flash_flood_keep_on_past_their_marks_down_to_85_percent_and_24_mm_an_hour_and_a_page_load_starts_plain(server, station):
+    got = await weather(server, "hysteresis")
+    assert got["errors"] == [] and got["freshErrors"] == [], got
+    # fog: on from 90 %, kept on to 85 % (84.9 off), back on at 90 again
+    assert got["fog"] == [[91, True], [88, True], [86, True], [85, True], [84, False], [88, False], [91, True], [89.9, True], [85, True], [84.9, False]], got["fog"]
+    # flood: on over 30 mm/h (30 itself is not), kept on to 24 (23.9 off)
+    assert got["flood"] == [[31, True], [27, True], [25, True], [24, True], [23, False], [27, False], [31, True], [30, True], [24, True], [23.9, False]], got["flood"]
+    assert got["fresh"] == {"fog": 0, "flood": 0}, got["fresh"]
 
 
 # ---------- the wind's direction ----------

@@ -3112,7 +3112,7 @@ const WEATHER = {
       };
       __next(step);
     }));
-    await reads({ rain_rate: 30 });
+    await reads({ rain_rate: 23 });   // (under 24 mm/h: a flood kept on down to there goes off; 30 would keep it)
     out.draining = await page.evaluate(() => new Promise((resolve) => {
       const f0 = Sky.state().flood, c0 = Sky.state().clock, effects = Sky.state().effects;
       let half = null;
@@ -4130,6 +4130,67 @@ const WEATHER = {
   // The wind turning, its eddies: the air set up by hand (Sky.lab: one eddy held still, one leaf, no random turbulence unless asked), the
   // wind turned (Sky.setWind) and each frame recorded: the eddy's swirl (Sky.air) undisturbed, a leaf in the eddy veering through up on
   // the first turn and down on the second, one outside any eddy reversing along its line, one in a weak eddy half and half
+  // The leaves' pace follows the measured wind (the effective speed: the reading plus 0.3 of the gust over it, eased): k = clamp(0.4 + 0.024 s,
+  // 0.5, 1.6), Sky.state().wind.k; the leaves' mean speed across scales with it; a test link's wind (11 km/h, forced): k = 1
+  async pace(browser, url, out) {
+    const p = await weatherPage(browser, url, { driven: true });
+    await p.page.evaluate(() => Sky.set({ wind: 1 }, true));
+    const run = (kmh, gust) => p.page.evaluate(([kmh, gust]) => {
+      Sky.setWindSpeed(kmh, gust);
+      Sky.advance(400);   // (settled: the speed eased in about 2 to 4 s of the weather's time)
+      const k = Sky.state().wind.k, speed = Sky.state().wind.speed;
+      let sum = 0, n = 0;
+      for (let i = 0; i < 1500; i++) { Sky.advance(1); const w = Sky.state().wind; sum += Math.abs(w.vx); n++; }
+      return { k, speed, mean: sum / n };
+    }, [kmh, gust]);
+    out.speeds = {};
+    for (const kmh of [0, 15, 25, 40, 60]) out.speeds[kmh] = await run(kmh, kmh);
+    out.gust = await run(10, 40);   // (10 + 0.3 * 30 = 19 km/h)
+    // the factor eases: from 25 to 60 km/h it rises smoothly over a few seconds, never a jump
+    out.eased = await p.page.evaluate(() => {
+      Sky.setWindSpeed(25, 25); Sky.advance(300);
+      const ks = [Sky.state().wind.k];
+      Sky.setWindSpeed(60, 60);
+      for (let i = 0; i < 100; i++) { Sky.advance(1); ks.push(Sky.state().wind.k); }
+      return { first: ks[0], last: ks[ks.length - 1], maxStep: Math.max(...ks.slice(1).map((v, i) => Math.abs(v - ks[i]))), monotonic: ks.every((v, i) => !i || v >= ks[i - 1] - 1e-9) };
+    });
+    out.errors = p.errors;
+    await p.context.close();
+    // the test link's wind over the real calm (11 km/h simulated, the real 0): the pace it always had
+    const link = await weatherPage(browser, url, { query: "?fx=wind", driven: true });
+    out.link = await link.page.evaluate(() => { Sky.advance(300); const w = Sky.state().wind; return { k: w.k, speed: w.speed }; });
+    // ... and over a real wind above its 11 km/h, the real one rules
+    await link.reads({ Wind: 40 });
+    out.linkOver = await link.page.evaluate(() => { Sky.advance(300); const w = Sky.state().wind; return { k: w.k, speed: w.speed }; });
+    out.linkErrors = link.errors;
+    await link.context.close();
+  },
+
+  // A reading hovering at a mark doesn't toggle the effect: the fog on from 90 % kept on down to 85 %, the flood on over 30 mm/h kept on
+  // down to 24 mm/h; a page load starts with the plain mark
+  async hysteresis(browser, url, out) {
+    const p = await weatherPage(browser, url, { driven: true });
+    const seq = async (key, values, level) => {
+      const seen = [];
+      for (const v of values) { await p.reads({ [key]: v }); await drive(p.page, 5); seen.push([v, (await weatherSeen(p.page)).levels[level] > 0]); }
+      return seen;
+    };
+    out.fog = await seq("Humidity", [91, 88, 86, 85, 84, 88, 91, 89.9, 85, 84.9], "humidity");
+    await p.reads({ Humidity: 50 });
+    out.flood = await seq("rain_rate", [31, 27, 25, 24, 23, 27, 31, 30, 24, 23.9], "flood");
+    await p.reads({ rain_rate: 0 });
+    out.errors = p.errors;
+    await p.context.close();
+    // a new page: 88 % is not enough to start it, nor 27 mm/h
+    const q = await weatherPage(browser, url, { driven: true });
+    await q.reads({ Humidity: 88, rain_rate: 27 });
+    await drive(q.page, 5);
+    const seen = await weatherSeen(q.page);
+    out.fresh = { fog: seen.levels.humidity, flood: seen.levels.flood };
+    out.freshErrors = q.errors;
+    await q.context.close();
+  },
+
   async uturn(browser, url, out) {
     const p = await weatherPage(browser, url, { query: "?fx=wind", driven: true, context: { viewport: { width: 640, height: 480 } } });
     await drive(p.page, 60);

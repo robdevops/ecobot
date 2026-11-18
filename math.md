@@ -157,7 +157,7 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Effect levels | `conditionsOf` :5317 | rain: 0 if rate is 0, else `0.3 + 0.7*min(1, rate/8)` (mm/h). haze: the number of AQI edges [50, 100, 150, 200, 300] below the AQI (0 to 5; the tile's own bounds if given). uv: 1 if UVI is 11 or more. humidity: 0 below 90 %, else `max(0.05, min(1, (RH - 90)/10))`. wind: 1 if wind is above 15 km/h (the reading, not the gust). heat: 0 below 35 C, else `0.3 + 0.7*min(1, (T - 35)/8)`. ice: `-T` if T is below 0 (degrees below zero). flood: 1 if rain rate is above 30 mm/h | TUNED | The thresholds come from real category names (UVI 11 is WHO "extreme"; 15 km/h is mid-Beaufort 3), but the ramps are linear and chosen by look. Rain saturates at 8 mm/h, so 8 and 30 mm/h look the same. No hysteresis: a reading near 30 mm/h or 90 % RH toggles the effect on and off (each flip fades over 4 to 10 s). |
+| Effect levels | `conditionsOf` :5317 | rain: 0 if rate is 0, else `0.3 + 0.7*min(1, rate/8)` (mm/h). haze: the number of AQI edges [50, 100, 150, 200, 300] below the AQI (0 to 5; the tile's own bounds if given). uv: 1 if UVI is 11 or more. humidity: 0 below 90 %, else `max(0.05, min(1, (RH - 90)/10))`. wind: 1 if wind is above 15 km/h (the reading, not the gust). heat: 0 below 35 C, else `0.3 + 0.7*min(1, (T - 35)/8)`. ice: `-T` if T is below 0 (degrees below zero). flood: 1 if rain rate is above 30 mm/h, then kept until it falls below 24 mm/h; humidity likewise kept from 90 % down to 85 % | TUNED | The thresholds come from real category names (UVI 11 is WHO "extreme"; 15 km/h is mid-Beaufort 3), but the ramps are linear and chosen by look. Rain saturates at 8 mm/h, so 8 and 30 mm/h look the same. Hysteresis on the flood (on over 30, off below 24 mm/h) and the humidity (on from 90 %, off below 85 %), held in the page (`flooding`, `fogging`), so a reading near either does not toggle the effect; a page load starts with the plain mark. |
 | Wind side | `windSideOf` :5337 | direction in (0, 180) gives leftward (-1); in (180, 360) gives rightward (+1); 0, 180, 360 or no reading keeps the last side | REAL-APPROX | Correct sign for a dial with east on the right: wind from the east blows toward the west. Only the side counts; 91 and 179 degrees behave the same. |
 | Direction easing | `steer`, `DIR_S` 4 s | `p` slides to its target at rate `2/DIR_S`; `f = sin(p*pi/2)`; the side flips when f crosses 0 and sprites are mirrored | ARTISTIC | |
 | Particle budget | `BUDGET` :284, `tick()` | budget = `W*H/400` particles (480 x 300 gives 360); `share = min(1, budget / sum of needs)`; each effect gets `round(need*share)`; humidity has its own limits; rain's count is then multiplied by `density()` | TUNED | A performance and legibility cap. Max rain alone: need 360, exactly the budget. |
@@ -170,7 +170,7 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
 | Slant law | `slantOf` :491; `FALL` 24, `CAP` 70 deg | `tan(angle) = min(tan 70 deg, v / 24)`, v in km/h (across per down). The cap is reached at v = 65.9 km/h. Checks: 5 km/h gives 11.8 degrees, 10 gives 22.6, 25 gives 46.2, 40 gives 59.0, 60 gives 68.2 | REAL-APPROX | The real law is `tan(angle) = u_wind / v_terminal`, so the form is right. 24 km/h is 6.7 m/s, a fair raindrop terminal speed (drizzle about 4 m/s, a 2 mm drop 6.5, a 5 mm drop 9). It uses one fall speed for all drops, ignores the wind profile with height (the anemometer is a few metres up) and turbulence. There is no real cap: at 100 km/h the true angle is 76 degrees. The 70 degree cap bites only above 66 km/h and also bounds the sprite set (21 tilts, 3.5 degrees apart, `STEPS` 20). |
-| Effective speed | `effective` :492; `GUST_SHARE` 0.3 | `v_eff = speed + 0.3 * max(gust - speed, 0)` | TUNED | A mix of mean and gust with no standard. |
+| Effective speed | `effectiveSpeed` (shared by the rain, the haze and the leaves' pace); `GUST_SHARE` 0.3 | `v_eff = speed + 0.3 * max(gust - speed, 0)` | TUNED | A mix of mean and gust with no standard. |
 | Smoothing | `TAU_UP` 1 s, `TAU_DOWN` 2 s | first-order low-pass: `speed += (goal - speed) * (1 - exp(-dt/tau))`; snaps within 0.02 km/h | TUNED | Hides the 16 s reading jitter. The asymmetry is aesthetic. |
 | Path speed | `PATH` :486 | `PATH = sqrt(1 + 0.45^2) = 1.097`; layer path speed = layer speed (150/230/330 art px/s, far/mid/near) `* PATH * U(0.85, 1.15) * pace`, `pace = 0.8 + 0.4*level`; down = path*cos(angle), across = path*sin(angle) | ARTISTIC | Path speed is constant at every slant (a committed look choice). Real physics keeps the vertical speed at the terminal speed and lets the path speed grow as `sqrt(v_t^2 + u^2)`. Here the vertical speed falls to 0.76 of straight-down at 46 degrees. Speeds are in art px/s. |
 | Streak length | `streak` :503 | length along the path `(n - 1) * PATH` with n 3 to 4 (far), 5 to 6 (mid), 8 to 10 (near); rows `round(len*cos)`, columns `round(len*tan*cos)` | ARTISTIC | |
@@ -182,11 +182,11 @@ Spot value: (-37.81, 144.96) at 13:02 Melbourne time on 21 Dec 2026 gives elevat
 
 ### 3.3 Wind: the leaf air-velocity field (~1160-1520)
 
-Everything here is drawn in art px. The measured wind speed does not scale it: the reading only switches the effect on (above 15 km/h), chooses the side, and drives the rain slant and haze pan.
+Everything here is drawn in art px. The measured wind speed scales the leaves' pace by `k = clamp(0.4 + 0.024*s, 0.5, 1.6)` (`PACE`, `paceOf`; `s` the rain's effective speed, eased with `TAU_UP`/`TAU_DOWN`): 25 km/h gives the layer speeds below (k = 1), 15 km/h 0.76, 40 km/h 1.36, 50 and over 1.6, under 4 km/h 0.5. `k` scales the leaves' speed, the gust bands' carrying speed, the turbulence's drift and swirl, and the eddies' drift; a test link's wind over a calmer real one uses k = 1. The reading also switches the effect on (above 15 km/h), chooses the side, and drives the rain slant and haze pan.
 
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
-| Leaf speeds | LAYERS ~1164 | 40/60/85 art px/s `* clamp(W/360, 0.6, 1) * (1 + gust + 0.3*(0.7 + gust)*band) * abs(dir.f)` | ARTISTIC | Not tied to the reading. |
+| Leaf speeds | LAYERS ~1164 | 40/60/85 art px/s `* k * clamp(W/360, 0.6, 1) * (1 + gust + 0.3*(0.7 + gust)*band) * abs(dir.f)` | ARTISTIC | Their scale `k` follows the reading (TUNED: 0.4 + 0.024 s is chosen by look, with no physical length scale); the rest is not tied to it. |
 | Gust pulses | step ~1480 | every `U(2.5, 6)` s add `U(0.5, 1.1)` to g; g decays as `exp(-0.9 t)` | TUNED | A stand-in for gustiness, not driven by the gust reading. |
 | Gust bands | `bandAt` :1240 | `0.62*sin(0.024 s X) + 0.38*sin(0.041 s X + 1.7)`, `s = clamp(360/W, 1, 2.6)` (wavelengths 262 and 153 art px at s = 1) | ARTISTIC | No basis in the data. |
 | Turbulence | `airAt` :1255 | stream function `psi = A*sin(0.05X + a)*sin(0.07y - 0.7a) + B*sin(0.11X + 1.3 - a)*sin(0.13y - 0.9a)`, `A = 420*(0.7 + 0.6g)*k`, `B = 110*k`, `k = layer speed/60`, `a = 0.6 t`. Velocity `(dpsi/dy, -dpsi/dx)`; curl `0.0074*A*s1*s2 + 0.029*B*s3*s4` | ARTISTIC | The structure is real maths: the field is divergence-free, and `0.0074 = 0.05^2 + 0.07^2`, `0.029 = 0.11^2 + 0.13^2` (checked). The amplitudes and wavelengths are chosen. |
@@ -265,7 +265,7 @@ Distances are art px, times are seconds. The dew point is not used anywhere in t
 | Name | Where | Formula and constants | Label | Faithful? |
 |---|---|---|---|---|
 | Trigger and level | `conditionsOf` | level 0 below 90 % RH, else `clamp((RH - 90)/10, 0.05, 1)` | TUNED | Real fog on glass needs the glass below the air's dew point. RH of 90 % is a stand-in. |
-| Fog thickness | `thickness` :1789; `THICKEN` 4 s | `0.5 + 0.5*v`, approached at 1/4 per second | ARTISTIC | At v = 0.05 it is 0.525. The comment says 0 at 90 % (see Issues). |
+| Fog thickness | `thickness` :1789; `THICKEN` 4 s | `0.5 + 0.5*v`, approached at 1/4 per second | ARTISTIC | At v = 0.05 it is 0.525 (the comment says so now). |
 | Foggy threshold | `FOG_AT` 0.06 | glass is FOGGY at 0.06 felt fog or more, else DRY; a TRAIL is wet glass less than half re-fogged | TUNED | |
 | Form, clear | `FORM` 6 s, `CLEAR` 10 s | cover moves at `dt/FORM` up, `dt/CLEAR` down | TUNED | Real fog on glass takes minutes. |
 
@@ -346,7 +346,7 @@ The server's own factors (`lib/ecowitt/hass_map.py` ~65-71) are listed in 8.2 an
 | Beaker level | ~4146-4195 | `y = 292 - max(share, 0.02)*(292 - 10 - 90)`, none at `v <= 0` | TUNED | Any rain above 0 shows at least 2 % (about 3.8 px), so a trace looks like about 2 mm. |
 | Rest position | `floor()` | no reading rests at 0, or the scale's low (pressure 950), dimmed to `FADE` 0.4 | ARTISTIC | |
 | Thermometer scale | `lib/ecowitt/dashboard.py scale()` | 0 to 40 C widened by 10 C: `low = min(0, floor(v/10)*10)`, `high = max(40, ceil(v/10)*10)`; band colours by `degree_colour()` | TUNED | A reading of 60 C makes a tall scale. Dew point, feels like and indoor share the 0 to 40 start. |
-| Gauge ranges | `GAUGES` ecowitt/dashboard.py:50-85 | humidity 0 to 100; pressure 950 to 1050 hPa; wind 0 to 100 km/h; rain 0 to 100 mm; rain rate 0 to 50 mm/h; solar 0 to 1500 W/m^2; UV 0 to 12 with ticks 0, 3, 6, 8, 11 | TUNED | Display ranges, not physical limits (wind above 100 and UV above 12 pin at the end; full sun can reach about 1100 to 1400 W/m^2). |
+| Gauge ranges | `GAUGES` ecowitt/dashboard.py:50-85 | humidity 0 to 100; pressure 950 to 1050 hPa; wind 0 to 100 km/h; rain 0 to 100 mm; rain rate 0 to 50 mm/h; solar 0 to 1500 W/m^2; UV 0 to 12 with ticks 0, 3, 6, 8, 11 (twelve 1-UV colour slices on the WHO categories: 3 green, 3 yellow, 2 orange, 3 red, 1 violet) | TUNED | Display ranges, not physical limits (wind above 100 and UV above 12 pin at the end; full sun can reach about 1100 to 1400 W/m^2). |
 
 ### 7.3 Table statistics and pressure arrow
 
@@ -461,21 +461,21 @@ Each item was checked against the code. Issues are recorded, not fixed. Numbers 
 
 Wrong or misleading comments and numbers:
 
-1. Rain count comment: `web_dashboard.html:562` says "light: about 85 drops on a laptop", but `need()` at the minimum level 0.3 and 480 x 300 gives `(144000/1000)*(0.1 + 2.4*0.3^1.5) = 71`.
-2. Fog thickness comment: `web_dashboard.html:1789` says "the fog at a level (90 %: 0, 100 %: 1)", but `thickness(v) = 0.5 + 0.5*v` and the level floors at 0.05, so at 90 % it is 0.525.
-3. Haze texture comment: `web_dashboard.html:730` says a cut "covers exactly that share". That is true per layer only. The summed layers are bell-shaped, so the covered share per band is about 42/59/79/92/99 % (survey simulation), and the thickest shade is rarely or never reached (Moderate: `lo + span = 1.0` is above the sum's maximum of about 0.96).
-4. Swell comment: `web_dashboard.html:1618` says tiny beads pass `TINY` "in about a minute or two on a heavy fog (as felt, about 0.4)". At felt fog 0.4 the formula gives about 3.6 minutes (86 s only at f = 1).
-5. Bead speed comment: `web_dashboard.html:1565` says speed is "its water (r^3) times SPEED"; that is only the branch for r of 2.8 and above (below it the law is `x^5`).
-6. Smoothstep thresholds "5 and 40 degrees" are applied to `sin(theta)`, so the ramp midpoint is theta 21.4 degrees, not 22.5 (`web_dashboard.html:4006`).
+1. (Fixed: the comment now says 71.) Rain count comment: `web_dashboard.html:562` says "light: about 85 drops on a laptop", but `need()` at the minimum level 0.3 and 480 x 300 gives `(144000/1000)*(0.1 + 2.4*0.3^1.5) = 71`.
+2. (Fixed: comment corrected.) Fog thickness comment: `web_dashboard.html:1789` says "the fog at a level (90 %: 0, 100 %: 1)", but `thickness(v) = 0.5 + 0.5*v` and the level floors at 0.05, so at 90 % it is 0.525.
+3. (Fixed: comment corrected.) Haze texture comment: `web_dashboard.html:730` says a cut "covers exactly that share". That is true per layer only. The summed layers are bell-shaped, so the covered share per band is about 42/59/79/92/99 % (survey simulation), and the thickest shade is rarely or never reached (Moderate: `lo + span = 1.0` is above the sum's maximum of about 0.96).
+4. (Fixed: comment corrected.) Swell comment: `web_dashboard.html:1618` says tiny beads pass `TINY` "in about a minute or two on a heavy fog (as felt, about 0.4)". At felt fog 0.4 the formula gives about 3.6 minutes (86 s only at f = 1).
+5. (Fixed: comment corrected.) Bead speed comment: `web_dashboard.html:1565` says speed is "its water (r^3) times SPEED"; that is only the branch for r of 2.8 and above (below it the law is `x^5`).
+6. (Fixed: comment corrected.) Smoothstep thresholds "5 and 40 degrees" are applied to `sin(theta)`, so the ramp midpoint is theta 21.4 degrees, not 22.5 (`web_dashboard.html:4006`).
 7. Air-gauge header: `lib/airgradient/dashboard.py:27` says "Left out: PM1", but `AIR_GAUGES` includes a PM1 dial. Its CO2 note (`:15`) attributes 800/1000/1500/2000 ppm to ASHRAE, who set no such bands. Line 8 says "as AirNow gives it", but the value is from the latest reading, not NowCast.
-8. `web_dashboard.html:4116` `TABLE_TOP = 372` with comment "(table(): 378)": the two numbers differ by design (a 6 px margin) but read like a typo.
+8. (Fixed: the comment says it is by design.) `web_dashboard.html:4116` `TABLE_TOP = 372` with comment "(table(): 378)": the two numbers differ by design (a 6 px margin) but read like a typo.
 
 Formulas that diverge from the standard they cite:
 
 9. PM2.5 rounding: `metrics.py:115` uses `round(conc, 1)` where the EPA truncates to 0.1. 9.05 gives AQI 51 (EPA: 9.0, AQI 50); 35.45 gives 101 (EPA: 35.4, AQI 100). The error is one AQI point at band edges. PM10 uses `floor`, which is right.
 10. Instantaneous AQI: the AQI is computed from one reading, not a 24-hour average or NowCast (the EPA definition).
 11. Needle and band name can disagree: for PM2.5 and PM1 between 9.0 and 9.1 the needle is already in "Moderate" but `band()` says "Good" (`value < 9.0 + 0.1`).
-12. UV dial colours: six equal slices of 2 UV (edges 2, 4, 6, 8, 10) do not match the WHO categories whose starts are the ticks 3, 6, 8, 11. UV 4 is drawn orange where WHO says moderate; UV 8 is the start of the purple band where WHO says very high; the dial stops at 12 while UV can exceed it.
+12. (Fixed: twelve slices on the WHO categories.) UV dial colours: six equal slices of 2 UV (edges 2, 4, 6, 8, 10) do not match the WHO categories whose starts are the ticks 3, 6, 8, 11. UV 4 is drawn orange where WHO says moderate; UV 8 is the start of the purple band where WHO says very high; the dial stops at 12 while UV can exceed it.
 13. Fahrenheit thermometer: ticks every 20 F from 40 no longer line up with the colour band edges at 32, 50, 68, 86, 104.
 14. Inch dials span a slightly different range from metric: wind 0 to 60 mph is 96.6 km/h, pressure 28 to 31 inHg is 948.2 to 1049.8 hPa.
 15. Pressure arrow direction uses the unrounded change but the JSON `change` is rounded to 0.1, so 0.29 can be reported as 0.3 with "steady". No visible effect today.
@@ -490,11 +490,11 @@ Design simplifications that do not estimate reality:
 
 22. Fog: the humidity effect uses outdoor RH 90 % or more, not glass temperature against dew point (`outdoor.dew_point` is available but unused). Interior-surface condensation happens at far lower RH.
 23. Ice: air temperature below 0 C regardless of humidity or dew point; reach is a fraction of the window.
-24. No hysteresis on the flood (30 mm/h) and humidity (90 %) triggers; a reading hovering at the threshold toggles the effect each reading. 30 mm/h is an intensity, not a flash-flood criterion.
-25. Leaf wind is not scaled by the measured speed: leaf speeds are fixed constants (40/60/85 art px/s) and eddies and gusts are random. Only the on/off (above 15 km/h), the side, the rain slant and the haze pan use the reading.
+24. (Fixed for the flood and the fog: 24 mm/h and 85 % to go off; the 30 mm/h "flash flood" naming is unchanged.) No hysteresis on the flood (30 mm/h) and humidity (90 %) triggers; a reading hovering at the threshold toggles the effect each reading. 30 mm/h is an intensity, not a flash-flood criterion.
+25. (Fixed: leaf pace scales with the speed, k; eddies and gusts stay random.) Leaf wind is not scaled by the measured speed: leaf speeds are fixed constants (40/60/85 art px/s) and eddies and gusts are random. Only the on/off (above 15 km/h), the side, the rain slant and the haze pan use the reading.
 26. Rain path speed is constant, so the vertical fall slows to 0.76 of straight-down at 46 degrees, where real drops keep the terminal speed vertically. Deliberate look choice, not a bug.
 27. The 70 degree rain cap only matters above 66 km/h; the real law has no cap.
-28. `GUST_SHARE = 0.3` is defined twice (rain `effective()` at :485 and haze `windNow()` at :697), so retuning one can drift from the other.
+28. (Fixed: one `GUST_SHARE` and `effectiveSpeed`.) `GUST_SHARE = 0.3` is defined twice (rain `effective()` at :485 and haze `windNow()` at :697), so retuning one can drift from the other.
 29. Rain and haze: `PAN_MAX`, `PAN_K` and the rain speeds are in art px/s with no physical length scale.
 30. UV beam lean assumes a screen with east on the right (matching the compass dial); correct for the Melbourne station, mirrored for a window facing the other way.
 31. Pending, not an error: the heat wave is vertical in the committed code and is being retuned to follow the sun's lean.

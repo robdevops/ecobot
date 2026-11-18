@@ -200,7 +200,8 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   Sky.setWindSpeed(speed, gust): the live wind's speed and gust, km/h (the Wind tile's reading and the gust, from the page's data): the
 //   rain's slant follows them continuously (tan of its angle from vertical = speed / 24 km/h, real rain's: 25 km/h about 46 degrees; none at no wind: straight
 //   down; at most 70 degrees; the gust adding 0.3 of what it is over the speed; the speed eased, rising over about 2 s, falling over
-//   about 4); the haze's sideways pan follows them too (about 0.4 px/s at 3 km/h to 2.6 at 40: none at no wind). Sky.state().rain: {slant (radians from vertical, positive leftward), slantDeg, speed (the eased km/h), target (the speed it
+//   about 4); the haze's sideways pan follows them too (about 0.4 px/s at 3 km/h to 2.6 at 40: none at no wind). The wind's leaves follow it too: their pace (and the gust bands', the turbulence's and the eddies' drift) is scaled by k = clamp(0.4 + 0.024 s, 0.5, 1.6), s the same effective speed eased the same way (25 km/h: the old pace, 1); a third argument true (the test links', over a real speed under their 11 km/h) holds k at 1. Sky.state().wind: {k, speed (the eased s), ...}.
+//   Sky.state().rain: {slant (radians from vertical, positive leftward), slantDeg, speed (the eased km/h), target (the speed it
 //   heads for), tilts (the streak sprites' steps in use, of tiltSteps: 21, 3.5 degrees apart), vxMax (the fastest drop across)}.
 //   Sky.setWind(d): the way the wind blows, -1 leftward (the default: a reading from the east side, 0 < degrees < 180) or +1
 //   rightward (from the west side, 180 < degrees < 360); 0 holds the way it is (due north or south: 0, 180, 360; or no reading).
@@ -329,7 +330,10 @@ const Sky = (() => {
                veer: {u: 1, from: Math.PI, delta: 0, dur: VEER_S, side: 0, count: 0}};   // (angles: radians on screen, 0 rightward, pi/2 up)
   const smoothU = (u) => u * u * (3 - 2 * u);
   // The live wind's speed and gust (km/h, as the page's data gives them: setWindSpeed(), below), which the rain's slant follows
-  const gale = {speed: 0, gust: 0};
+  const gale = {speed: 0, gust: 0, forced: false};   // (forced: a test link's wind is on and the real speed is under its own: the leaves blow at their usual pace)
+  const TAU_UP = 1, TAU_DOWN = 2;   // (s: the eased speeds rise over about 2 s and fall over about 4)
+  const GUST_SHARE = 0.3;   // how much of a gust over the speed counts (the one share, for the rain's slant, the haze's pan and the leaves' pace)
+  const effectiveSpeed = () => gale.speed + GUST_SHARE * Math.max(gale.gust - gale.speed, 0);   // km/h
   const veerAngle = () => dir.veer.from + dir.veer.delta * smoothU(dir.veer.u);
   // A sprite's exact mirror image (its pixels reversed along each row)
   function flipped(img) {
@@ -482,14 +486,14 @@ const Sky = (() => {
     // layer's speed times PATH, what the old fixed slant's (0.45, 24 degrees) gave (the vertical fall times sqrt(1 + 0.45^2)), split
     // into down = path * cos(angle) and across = path * sin(angle). So the old default looks as it did, a vertical rain falls 10 %
     // faster and a 46 degree one at 0.76 of that vertically. A streak keeps its length along the path the same too (spriteRows).
-    const FALL = 24, CAP = 70 * Math.PI / 180, TAN_CAP = Math.tan(CAP), GUST_SHARE = 0.3, TAU_UP = 1, TAU_DOWN = 2;
+    const FALL = 24, CAP = 70 * Math.PI / 180, TAN_CAP = Math.tan(CAP);
     const OLD_SLANT = 0.45, PATH = Math.sqrt(1 + OLD_SLANT * OLD_SLANT);   // (the old default's path speed over its vertical one: 1.097)
     const cosOf = (slant) => 1 / Math.sqrt(1 + slant * slant);   // (the cosine of the angle whose tangent is `slant`)
     const STEPS = 20;                  // the streaks drawn at STEPS + 1 slants, evenly in angle from vertical to CAP (3.5 degrees apart)
     const SLANTS = Array.from({length: STEPS + 1}, (_, i) => Math.tan(CAP * i / STEPS));
     let speed = 0, seeded = false;     // the smoothed speed (km/h) the slant follows
     const slantOf = (kmh) => Math.min(TAN_CAP, Math.max(kmh, 0) / FALL);   // px across for each px down
-    const effective = () => gale.speed + GUST_SHARE * Math.max(gale.gust - gale.speed, 0);
+    const effective = effectiveSpeed;
     const FASTEST = 330;               // the near layer's speed: the wind's air full strength on it; slower layers, further off, less
     const LAYERS = [                   // far (short, dim, slow) to near; [tail, body, head] shades
       {speed: 150, length: [3, 4], alpha: 0.55, shades: [0, 1, 2], share: 0.45, ripple: 0.3},   // (ripple: a flood's, where it lands,
@@ -559,7 +563,7 @@ const Sky = (() => {
     };
     return {
       strength: () => 0.55 + 0.35 * e.level,
-      need: () => (W * H / 1000) * (0.1 + 2.4 * Math.pow(e.level, 1.5)),   // (light: about 85 drops on a laptop; heavy: 360)
+      need: () => (W * H / 1000) * (0.1 + 2.4 * Math.pow(e.level, 1.5)),   // (light: about 71 drops on a laptop, 480 x 300; heavy: 360)
       count: () => drops.length,
       // (for the tests: where the drops are across, on screen in the window's lower half (art px), and their mean speed across, px/s,
       // negative leftward)
@@ -694,7 +698,7 @@ const Sky = (() => {
     const random = streamOf("haze:motes"), between = random.between;   // (the dust motes' own randomness)
     const SHADES = 8;                  // the veil's steps of tint and opacity, dithered one into the next
     const GREY = 0.14;                 // how much grey is mixed into the tint
-    const PAN_MAX = 3.15, PAN_K = 22.1, TAU = 4, GUST_SHARE = 0.3;   // the pan: px/s at most, the wind's km/h at which it is 63 % of that, the low-pass's s, the gust's share
+    const PAN_MAX = 3.15, PAN_K = 22.1, TAU = 4;   // the pan: px/s at most, the wind's km/h at which it is 63 % of that, the low-pass's s
     const FADE = 1;                    // s: the old image and the new cross-faded
     const HOLLOW = 10;                 // how far each texture's values are dropped (0-255) before summing
     const LAYERS = [   // far to near: its noise's cells [across, down] in three octaves, how much it adds, its shear (px across per px down), its seed
@@ -709,7 +713,7 @@ const Sky = (() => {
     const luts = LAYERS.map((l) => Uint8Array.from({length: 256}, (_, i) => Math.round(Math.max(0, i - HOLLOW) * l.weight / total)));   // (each layer's share of the sum)
     // The pan's speed (px/s) for the wind (km/h)
     const panFor = (w) => w > 0 ? PAN_MAX * (1 - Math.exp(-w / PAN_K)) : 0;
-    const windNow = () => gale.speed + GUST_SHARE * Math.max(gale.gust - gale.speed, 0);
+    const windNow = effectiveSpeed;
     // Value noise added into `out` (w x h, wrapping both ways: its cells a whole number across and down): octaves [cell across, cell down, weight, seed]
     function periodic(out, w, h, octaves) {
       for (const [cx, cy, weight, seed] of octaves) {
@@ -727,7 +731,7 @@ const Sky = (() => {
       }
     }
     // A layer's texture (TW x TH bytes, wrapping both ways): its noise displaced by two more (the domain warp), then its values evened
-    // out (every value as likely as any other), so a cut at some value covers exactly that share of it
+    // out (every value as likely as any other), so a cut at some value covers exactly that share of one layer (the layers summed are bell-shaped: the covered share per band is about 42/59/79/92/99 %, and the thickest shade is rarely reached)
     function bakeTexture(l) {
       const n = TW * TH, MASK = TW - 1, base = new Float32Array(n), wx = new Float32Array(n), wy = new Float32Array(n), warped = new Float32Array(n);
       periodic(base, TW, TH, l.cells.map(([cx, cy], k) => [cx, cy, OCTAVES[k], l.seed + k]));
@@ -1219,7 +1223,15 @@ const Sky = (() => {
     // leaves coming in at the right edge. Blowing rightward (+1) it is drawn as worked out, x on screen as it is, the
     // sprites as drawn: the exact mirror image. The wind turning (dir, above): its steady push |dir.f| of its full, slowing to a
     // calm and rising again the other way; at the calm everything standing is turned over to the new side (flip()).)
+    // (the layers' speeds at 25 km/h, the speed whose pace they are; the leaves' pace follows the measured wind: see PACE)
     const LAYERS = [{speed: 40, alpha: 0.5, share: 0.4}, {speed: 60, alpha: 0.75, share: 0.35}, {speed: 85, alpha: 1, share: 0.25}];
+    // The leaves' pace factor k = clamp(0.4 + 0.024 * s, 0.5, 1.6) for the wind's effective speed s (km/h: the rain's, the reading plus
+    // 0.3 of the gust over it, low-passed the same way): 25 km/h the speeds above (k = 1), 15 km/h 0.76, 40 km/h 1.36, 50 and over 1.6,
+    // under 4 km/h 0.5. It scales the leaves' speed, the gust bands' carrying speed, the turbulence's drift and its swirl, and the eddies' drift
+    // (all one frame, which the wind carries); a test link's wind on over a calmer real one: 1. Not the eddies' spin, size or life, the U-turn or the mirror.
+    const PACE = {at: 25, base: 0.4, per: 0.024, least: 0.5, most: 1.6};
+    const paceOf = (s) => clamp(PACE.base + PACE.per * s, PACE.least, PACE.most);
+    let wspeed = 0, wseeded = false, pacing = 1;   // (the smoothed effective speed, km/h, and the factor from it)
     const CALM = 0.6;                  // on narrow art (a phone's) the wind slower, down to this (else leaves cross before they loop)
     const DRIFT = 60;                  // the turbulence's own speed along (px/s, at no gust); the eddies lag it
     const EDDY_DRAW = 150;             // how hard an eddy draws leaves onto its ring, and flings them off (px/s, about)
@@ -1332,7 +1344,7 @@ const Sky = (() => {
       f.x = anywhere ? between(-10, W) : between(-30, -8);
       f.y = between(H * 0.05, clamp(flood.clear() - 7, H * 0.05, H * 0.95));   // (never in a flood: above its highest crest)
       f.gap = Infinity;            // (its lowest row's height over the water as last drawn, px: none yet)
-      f.vx = LAYERS[f.layer].speed * calm * Math.abs(dir.f); f.vy = 0;
+      f.vx = LAYERS[f.layer].speed * pacing * calm * Math.abs(dir.f); f.vy = 0;
       f.weight = between(0.12, 0.3);   // (s: how long it takes to catch the air's speed)
       f.turn = between(0, 10);
       f.spin = between(4, 9);
@@ -1367,7 +1379,8 @@ const Sky = (() => {
       // (on screen: the leaves' mean speed across, px/s, negative leftward; how many go rightward, against the wind, in a loop)
       // (and the rain's hits on them so far, and their mean push, px/s, and the mean change it made in a hit leaf's own velocity, px/s;
       // the most spin knocks have left on one now, frames/s)
-      probe: () => ({vx: dir.side * flying.reduce((sum, f) => sum + f.vx, 0) / Math.max(flying.length, 1),
+      probe: () => ({k: pacing, speed: wspeed,   // (the leaves' pace factor, and the effective wind speed it follows, eased: km/h)
+                     vx: dir.side * flying.reduce((sum, f) => sum + f.vx, 0) / Math.max(flying.length, 1),
                      dir: dir.side, factor: dir.f,
                      against: flying.filter((f) => f.vx < 0).length, hits, push: pushed / Math.max(hits, 1),
                      kick: kicked / Math.max(hits, 1),
@@ -1407,7 +1420,7 @@ const Sky = (() => {
         return false;
       },
       resize() { flying = []; eddies = []; splashes = []; lab = null; },
-      forget() { flying = []; eddies = []; splashes = []; gust = 0; owed = 0; lab = null; },
+      forget() { flying = []; eddies = []; splashes = []; gust = 0; owed = 0; lab = null; wseeded = false; },
       // (test-only) The air set up by hand, nothing random: `eddy` {x, y (on screen), r, spin (px/s a ring away, either sign), drift,
       // u} a vortex held where it is (or, with `drift`, drifting on its own way at u px/s), or none; `leaf` {x, y (on screen), layer, pinned} the only leaf; `still` the turbulence off. gust 0.
       // lab(null) puts the wind back to itself.
@@ -1432,8 +1445,8 @@ const Sky = (() => {
       // (test-only) the air at screen (x, y) for a layer, in parts as a leaf takes them, on screen: the eddies' [vx, vy] and curl, the mean
       // wind's at full strength, the eddy strength 0-1, the straight and veering mean wind and what the leaf takes of them
       sample(x, y, layer, t = lastT) {
-        const [vx, vy, curl, w, straight, veer, mean] = leafAir(sx(x), y, LAYERS[layer].speed, t);
-        const [ex, ey, ec] = airAt(sx(x), y, LAYERS[layer].speed, t, 0);
+        const [vx, vy, curl, w, straight, veer, mean] = leafAir(sx(x), y, LAYERS[layer].speed * pacing, t);
+        const [ex, ey, ec] = airAt(sx(x), y, LAYERS[layer].speed * pacing, t, 0);
         return {eddy: [dir.side * ex, ey], curl: dir.side * ec, strength: w, straight, veer, mean, total: [dir.side * vx, vy]};
       },   // (not those in a flood: the flood's now)
       // The wind has turned (its factor crossed 0: dir.side is the new side, the steady wind nothing just now): everything worked out
@@ -1493,8 +1506,14 @@ const Sky = (() => {
         else if ((nextGust -= dt) <= 0) { gust += between(0.5, 1.1); nextGust = between(2.5, 6); }
         gust *= Math.exp(-0.9 * dt);
         const m = Math.abs(dir.f);   // (how hard it blows: 1, or less as it turns)
-        tdrift += tau * DRIFT * calm * (1 + gust) * m * dt;
-        const slid = (riding || DRIFT * calm * (1 + gust) * 1.15 * m) * dt;
+        // (the pace factor: the wind's effective speed eased as the rain's is, at once the first time; a link's wind: the usual pace)
+        const goal = gale.forced ? PACE.at : effectiveSpeed();
+        wspeed = wseeded ? wspeed + (goal - wspeed) * (1 - Math.exp(-dt / (goal > wspeed ? TAU_UP : TAU_DOWN))) : goal;
+        if (Math.abs(goal - wspeed) < 0.02) wspeed = goal;
+        wseeded = true;
+        pacing = paceOf(wspeed);
+        tdrift += tau * DRIFT * pacing * calm * (1 + gust) * m * dt;
+        const slid = (riding || DRIFT * pacing * calm * (1 + gust) * 1.15 * m) * dt;
         swept += slid;
         lswept += tau * slid;
         riding = 0;
@@ -1507,7 +1526,7 @@ const Sky = (() => {
           d.draw = clamp((0.72 - k) * 6, -1, 1);          // (drawing in, then flinging off)
           // (its drift the way the wind blew when it rose, whatever the wind does since: an eddy in progress isn't stopped or turned
           // round by the wind turning, it drifts on to the end of its life, as swirling the same way; the leaves in it veer, see leafAir)
-          d.u = d.v * (1 + 0.6 * gust);
+          d.u = d.v * pacing * (1 + 0.6 * gust);
           d.vx = d.sd * dir.side * d.u;
           d.vy = Math.sin(t * 0.5 + d.wander) * 6;
           if (lab && lab.hold) { d.vy = 0; if (!lab.drift) d.vx = 0; }   // (a test's: it stays where it was put, or drifts on)
@@ -1519,7 +1538,7 @@ const Sky = (() => {
         for (const f of flying) {
           f.px = f.x;   // (where it was: if it crosses a flood's surface this frame, where it did)
           // (the eddies' swirl as it is; the mean wind straight along its line, or, in an eddy, veering round: see leafAir)
-          const [vx, vy, curl, w, straight, veer, mean] = leafAir(f.x, f.y, LAYERS[f.layer].speed, t), ease = 1 - Math.exp(-dt / f.weight);
+          const [vx, vy, curl, w, straight, veer, mean] = leafAir(f.x, f.y, LAYERS[f.layer].speed * pacing, t), ease = 1 - Math.exp(-dt / f.weight);
           f.eddy = w; f.straight = straight; f.veer = veer; f.mean = mean;
           f.vx += (vx - f.vx) * ease;
           f.vy += (vy + f.sink + f.batter - f.vy) * ease;
@@ -1575,7 +1594,7 @@ const Sky = (() => {
   // Every bead, condensed or rain, one set of rules (a merged one too):
   //   The glass under it (the row just below it): FOG (fog shown there: FOG_AT or more), a TRAIL (a streak a bead has left: wiped
   //   through the fog, or wet on clear glass) or DRY (clear glass, no trail).
-  //   Its speed: none under RUN_R; from there its water (r³) times SPEED times the glass's PACE (dry slowest, fog quicker, a trail
+  //   Its speed: none under RUN_R; from there (for r of 2.8 and above its water, r³; below that x^5) times SPEED times the glass's PACE (dry slowest, fog quicker, a trail
   //   fastest: water on water); so it rises gradually with its size (tiny and small ones not at all, large ones creeping extremely slowly at
   //   first, larger ones faster and faster: no fastest); on a trail, never slower than a freshly landed rain bead (RAIN_R's least)
   //   would go there, however small (from RUN_R: a condensed one as quick as a rain one down a track), each
@@ -1628,7 +1647,7 @@ const Sky = (() => {
     const BORN = [0.5, 0.6];           // a bead condensing: its radius, tiny (a px: two of them together small, r 0.63 or more)
     const TINY = 0.61;                 // a condensed bead this small or less: tiny, never running (see snaps())
     const SWELL = 0.0007;              // water a tiny bead gathers for each s it sits on fog (fog at 1), each bead SWELLS times that:
-    const SWELLS = [0.6, 1.6];         // ... from BORN (r 0.5-0.6) past TINY in about a minute or two on a heavy fog (as felt, about 0.4); none off it
+    const SWELLS = [0.6, 1.6];         // ... from BORN (r 0.5-0.6) past TINY in about a minute and a half on the thickest fog (felt 1), about 3.6 minutes at a felt 0.4; none off it
     const MIN_FELT = 0.25;             // the least fog (0-1) a bead on fog (or a tiny one on a trail wiped through it) grows by, thin fog or not
     const SOAK = 0.5;                  // s between a tiny bead's swellings (its glass looked at then: cheap)
     const DROPLET = BORN[0] + 0.05;    // a splash's droplet left on the glass: its radius (tiny)
@@ -1799,7 +1818,7 @@ const Sky = (() => {
     const BANDS = [1, 1.6, 2.4, 3.2];
     const log = (list, v, most) => { list.push(v); if (list.length > most) list.shift(); };   // (the latest `most` kept)
     const heightOf = (r) => sprite(r).height;
-    const thickness = (v) => 0.5 + 0.5 * v;   // the fog at a level (90 %: 0, 100 %: 1), at most
+    const thickness = (v) => 0.5 + 0.5 * v;   // the fog at a level (at 90 % 0.525, at 100 % 1: the level floors at 0.05), at most
     const front = (i, c) => clamp((c - starts[i]) / 0.35, 0, 1);   // how far the fog has formed at a pixel (c: cover)
     const BINS = 512, binOf = (v) => clamp(Math.floor(v / 0.65 * BINS), 0, BINS - 1);
     const wetOf = (i) => (listed[i] ? Math.max(0, (till[i] - clock) / life[i]) : 0);   // how fresh a trail is there
@@ -4014,7 +4033,7 @@ const Sky = (() => {
   // in-plane / total (theta: the screen's normal off vertical: 0 lying face up, 90 upright, 180 face down; the readings' size
   // doesn't matter, only their ratio), is a speed factor, grav.steep (0-1, smoothed, also by TAU): 0 under POOL_IN (5 degrees: the
   // water pools: nothing runs; kept till POOL_OUT, 7 degrees, so a wobbling tablet doesn't flicker), rising smoothly (smoothstep) to 1
-  // at STEEP_FULL (40 degrees), 1 beyond; sin being symmetric about 90, it falls again from 140 degrees to 0 at 180 (face down: flat
+  // at STEEP_FULL (40 degrees; the thresholds are on sin(theta), so the ramp's midpoint is at 21.4 degrees, not 22.5), 1 beyond; sin being symmetric about 90, it falls again from 140 degrees to 0 at 180 (face down: flat
   // again). A reading of nothing (all zero) is ignored. Ignored while nothing is drawn (the animations off, low or stopped)
   const POOL_IN = Math.sin(5 * Math.PI / 180), POOL_OUT = Math.sin(7 * Math.PI / 180), STEEP_FULL = Math.sin(40 * Math.PI / 180);
   const TAU = 0.25, SNAP_DEG = 4, STEP_DEG = 1.5, DEG = 180 / Math.PI;
@@ -4075,10 +4094,11 @@ const Sky = (() => {
     return sent;
   }
 
-  // setWindSpeed(speed, gust): the live wind's speed and gust, km/h (null or none: 0), which the rain's slant and the haze's pan follow (see the rain, the haze)
-  function setWindSpeed(speed, gust) {
+  // setWindSpeed(speed, gust, forced): the live wind's speed and gust, km/h (null or none: 0), which the rain's slant, the haze's pan and the leaves' pace follow (see the rain, the haze, the wind); forced: a test link's wind, the leaves at their usual pace
+  function setWindSpeed(speed, gust, forced = false) {
     gale.speed = Number.isFinite(speed) && speed > 0 ? speed : 0;
     gale.gust = Number.isFinite(gust) && gust > 0 ? gust : 0;
+    gale.forced = !!forced;
   }
 
   const running = () => DRIVEN ? animate && alive() : !!frame;
@@ -4126,7 +4146,7 @@ const Sky = (() => {
   const TOUCH_SLOP = 10, MOUSE_SLOP = 5;   // moved further (CSS px) first: a touch scrolls instead, a mouse press becomes a drag
   const BUZZ_MS = 15;                  // the vibration as a long press picks a tile up (where navigator.vibrate exists: not iOS)
   const LIFT = 1.04;                   // a picked-up tile, a little larger
-  const TABLE_TOP = 372;               // where the Daily/Monthly/Yearly table starts, in the tile's own pixels (table(): 378); above
+  const TABLE_TOP = 372;               // where the Daily/Monthly/Yearly table starts, in the tile's own pixels (table(): 378; by design, the 6 px margin); above
                                        // it, the title and the gauge: all the zoomed view shows
   const DROP = 14;                     // every gauge (a dial, thermometer, beaker or compass, with its reading) drawn this far (the
                                        // tile's own px) below its place in lib/gauge_look.py: room under the title
@@ -5320,13 +5340,18 @@ const Sky = (() => {
   // (And with each new live gust reading over 99 km/h, something big blown across once: gusting(), below.)
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
   // stronger to 8 mm/h), haze from the AQI tile's (the US AQI's) Moderate band up (1-5, a band each), uv at a UV index of 11, humidity at 90 %
-  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself), wind above 15 km/h (the reading now, not the gust), heat at 35 °C (stronger to 43 °C: 0.3 to 1), ice below 0 °C (how far below), a flash flood
-  // over 30 mm/h (the rain's too). A tile
+  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself, and down to 85 % once on: hysteresis), wind above 15 km/h (the reading now, not the gust), heat at 35 °C (stronger to 43 °C: 0.3 to 1), ice below 0 °C (how far below), a flash flood
+  // over 30 mm/h (the rain's too; once on, down to 24 mm/h: hysteresis). A tile
   // with no reading now calls for nothing.
   const CALLED_BY = {rain: "Rain", haze: "AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
                      ice: "Temperature", flood: "Rain"};
   const BANDS = [50, 100, 150, 200, 300];   // the US AQI's bands' upper edges, Good to Very Unhealthy (the tile's own bounds if it has them)
   let real = {}, simulated = {}, conditions = {};
+  // Two marks have a hysteresis, so a reading hovering at one doesn't toggle its effect with each fetch: the flash flood, on over 30 mm/h
+  // and kept on down to 24 (it goes off below that); the humidity's fog, on from 90 % and kept on down to 85 % (off below that). The state
+  // is the page's, from the data it has fetched (a page load starts with the plain mark); a tile with no reading now clears it.
+  const FLOOD_ON = 30, FLOOD_OFF = 24, FOG_ON = 90, FOG_OFF = 85;
+  let flooding = false, fogging = false;
   function conditionsOf(data) {
     const now = (title) => {
       const t = (data.tiles || []).find((tile) => idOf(tile) === title);
@@ -5336,12 +5361,14 @@ const Sky = (() => {
     const humidity = now("Humidity"), wind = now("Wind"), temperature = now("Temperature");
     const aqiTile = (data.tiles || []).find((t) => idOf(t) === "AQI"), bands = aqiTile && aqiTile.bounds && aqiTile.bounds.length > 2
       ? aqiTile.bounds.slice(1, -1) : BANDS;
+    flooding = rate !== null && (rate > FLOOD_ON || (flooding && rate >= FLOOD_OFF));
+    fogging = humidity !== null && (humidity >= FOG_ON || (fogging && humidity >= FOG_OFF));
     return {rain: rate > 0 ? 0.3 + 0.7 * Math.min(1, rate / 8) : 0,
             haze: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),
             uv: uvi !== null && uvi >= 11 ? 1 : 0,
-            humidity: humidity !== null && humidity >= 90 ? Math.max(0.05, Math.min(1, (humidity - 90) / 10)) : 0,
+            humidity: fogging ? Math.max(0.05, Math.min(1, (humidity - 90) / 10)) : 0,
             wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 0.3 + 0.7 * Math.min(1, (temperature - 35) / 8) : 0,
-            ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: rate > 30 ? 1 : 0};
+            ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: flooding ? 1 : 0};
   }
   // The wind's direction (the compass tile's reading: degrees, where it comes FROM, 0 north, 90 east, clockwise; east is the right of
   // the screen, as on the dial): from the east side, 0 to 180 (not either), it blows toward the west: leftward, -1; from the west
@@ -5374,7 +5401,7 @@ const Sky = (() => {
   function weather() {
     const was = calling();
     conditions = Object.fromEntries(Object.keys(CALLED_BY).map((k) => [k, Math.max(real[k] || 0, simulated[k] || 0)]));
-    Sky.setWindSpeed(Math.max(realSpeed, simulated.wind > 0 ? TEST_WIND : 0), Math.max(realGust, simulated.wind > 0 ? TEST_WIND : 0));
+    Sky.setWindSpeed(Math.max(realSpeed, simulated.wind > 0 ? TEST_WIND : 0), Math.max(realGust, simulated.wind > 0 ? TEST_WIND : 0), simulated.wind > 0 && realSpeed < TEST_WIND);   // (a link's wind over a calmer real one: the leaves at their usual pace)
     Sky.setWind(simulated.windDir || realSide);   // (a test link's way, else the reading's: 0 holds it; first, so with nothing yet drawn it's the way from the start)
     Sky.set(conditions, animated());
     const framed = new Set(Object.keys(CALLED_BY).filter((k) => conditions[k] > 0).map((k) => CALLED_BY[k]));

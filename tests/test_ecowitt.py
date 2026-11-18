@@ -1707,3 +1707,13 @@ async def test_a_failed_live_reading_fails_each_waiting_caller_and_the_next_asks
     assert "Live reading at start failed: EcowittError: busy" in caplog.text and eco._live is None
     held.fail = None
     assert "outdoor" in await eco._live_data(LIVE_GROUPS) and len(held.asked) == 2
+
+
+def test_the_uv_dial_is_twelve_one_uv_slices_cut_to_the_who_categories():
+    from lib.ecowitt.dashboard import GAUGES, UV
+    gauge = next(g for g in GAUGES if g.title == "UV index")
+    assert gauge.colours == UV and (gauge.low, gauge.high) == (0, 12) and gauge.ticks == (0, 3, 6, 8, 11)
+    assert len(UV) == 12                                         # (the page draws one arc slice a colour: 1 UV each)
+    low, moderate, high, very_high, extreme = UV[0], UV[3], UV[6], UV[8], UV[11]
+    assert UV == (low,) * 3 + (moderate,) * 3 + (high,) * 2 + (very_high,) * 3 + (extreme,)   # 0-2, 3-5, 6-7, 8-10, 11+
+    assert len({low, moderate, high, very_high, extreme}) == 5
