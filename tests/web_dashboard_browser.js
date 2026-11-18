@@ -1566,14 +1566,14 @@ const gridShare = (page) => page.evaluate(() => {
   for (const b of by.values()) { const all = b.reduce((s, v) => s + v, 0); if (all > n) { n = all; bins = b; } }
   return { share: [...bins].sort((a, b) => b - a).slice(0, 4).reduce((s, v) => s + v, 0) / Math.max(n, 1), n };
 });
-// The haze alone (faded in), at each band in turn, 1 to 5, once its look has eased to the band's and its textures are baked: of the canvas
-// drawn, the share covered (its cover) and its mean alpha (0-255), its strongest regular pattern (gridPeak), the mean colour of what is
-// drawn (by its alpha) and its luminance, the luminance (by alpha) of the upper half and of the lower, and how far the density runs
-// along the canvas against across it: the autocorrelation's sum over lags 1 to 24 of the alpha (its mean taken out) along each row, and down
-// each column. Then on a clock 4 times as fast, the haze 5 with no wind, then with it (faded in): over 30 frames its motes' moves and its
-// layers' (the layers' x as probed, each the same one), how many went left, right, their mean speed leftward (px/s of the weather's
-// time); its drift's (slide), the same; and how far the picture itself moved: the whole canvas's alpha before and after, the sideways
-// shift (px, leftward positive) at which the later matches the earlier best; and Hazardous's cost a frame (ms)
+// The haze alone (faded in), at each band in turn, 1 to 5, once it is baked: of the canvas drawn, the share covered (its cover) and its
+// mean alpha (0-255), its strongest regular pattern (gridPeak), the mean colour of what is drawn (by its alpha) and its luminance, the
+// luminance (by alpha) of the upper half and of the lower, and how far the density runs along the canvas against across it: the
+// autocorrelation's sum over lags 1 to 24 of the alpha (its mean taken out) along each row, and down each column. Then on a clock 4 times
+// as fast, Hazardous: with no wind (still: the picture and slide unchanged 2 s apart, and again after a minute), with the live wind at 3, 40
+// and 25 (gusting 40) km/h (each: the pan's px/s and speed, the picture's best sideways shift, rows down, and the share of pixels
+// matching exactly there, the motes' mean move and spread, the bakes before and after), a minute of it in steps, the wind turned (mirrored),
+// a band change (the bakes, the cross-fade), the baked image's seam; and Hazardous's cost a frame (ms)
 const hazeSeen = async (page) => {
   const out = { levels: [] };
   for (let level = 1; level <= 5; level++) {
@@ -1616,38 +1616,84 @@ const hazeSeen = async (page) => {
     out.levels.push(seen);
   }
   out.cost = await frameCost(page);   // (Hazardous, alone: the script's ms a frame)
-  return page.evaluate(async (out) => {
-    const frames = (n) => new Promise((resolve) => { const end = Sky.state().frames + n; const on = () => Sky.state().frames >= end ? resolve() : __next(on); on(); });
-    const fx = (detail) => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail }));
+  return page.evaluate((out) => {
     Sky.timeScale(4);
-    const moved = (a, b, dt, key, at) => {   // (at: where its x is in each entry)
-      const was = new Map(a[key].map((m) => [m[0], m[at]])), dx = [];
-      for (const m of b[key]) if (was.has(m[0])) dx.push(m[at] - was.get(m[0]));
-      return { n: dx.length, left: dx.filter((v) => v < 0).length, right: dx.filter((v) => v > 0).length,
-               speed: -dx.reduce((s, v) => s + v, 0) / Math.max(dx.length, 1) / dt };
-    };
-    const picture = () => { const c = document.querySelector("#sky canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; return { w: c.width, h: c.height, a: Float32Array.from({ length: d.length / 4 }, (_, i) => d[i * 4 + 3]) }; };
-    const shifted = (p, q) => {   // (the sideways shift, leftward positive, at which q matches p best: q(x) = p(x + s); each less its mean)
-      const mean = (v) => v.a.reduce((s, x) => s + x, 0) / v.a.length, mp = mean(p), mq = mean(q);
-      let best = 0, top = -Infinity;
-      for (let s = -120; s <= 120; s++) {
-        let sum = 0, n = 0;
-        for (let y = 0; y < p.h; y += 2) for (let x = Math.max(0, -s); x < Math.min(p.w, p.w - s); x += 2) { sum += (p.a[y * p.w + x + s] - mp) * (q.a[y * p.w + x] - mq); n++; }
-        if (sum / n > top) { top = sum / n; best = s; }
+    const fx = (detail) => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail }));
+    const picture = () => { const c = document.querySelector("#sky canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; return { w: c.width, h: c.height, d: Uint8ClampedArray.from(d) }; };
+    const same = (p, q) => p.d.length === q.d.length && p.d.every((v, i) => v === q.d[i]);
+    // (the shift, leftward positive, and the down-shift at which q matches p best, over lags up to `reach` across and 3 down: q(x, y) = p(x + s, y + t); with the share of the pixels that match exactly there)
+    const shifted = (p, q, reach) => {
+      let best = null;
+      for (let t = -3; t <= 3; t++) for (let s = -reach; s <= reach; s++) {
+        let n = 0, hit = 0;
+        for (let y = Math.max(0, -t); y < Math.min(p.h, p.h - t); y += 2) for (let x = Math.max(0, -s); x < Math.min(p.w, p.w - s); x += 2) {
+          const i = ((y + t) * p.w + x + s) * 4, j = (y * p.w + x) * 4;
+          n++; if (p.d[i + 3] === q.d[j + 3] && p.d[i] === q.d[j] && p.d[i + 1] === q.d[j + 1]) hit++;
+        }
+        if (!best || hit / n > best.share) best = { s, t, share: hit / n };
       }
       return best;
     };
-    const moves = async () => {
-      const a = Sky.state(), was = picture();
-      await frames(30);
-      const b = Sky.state(), dt = b.clock - a.clock;
-      return { ...moved(a.haze, b.haze, dt, "motes", 1), layers: moved(a.haze, b.haze, dt, "layers", 2), slide: (b.haze.slide - a.haze.slide) / dt,
-               picture: shifted(was, picture()) / dt };
+    // (the weather's time: so many seconds on, in frames of 4 x 1/30 s)
+    const run = (seconds) => { const end = Sky.state().clock + seconds; let n = 0; while (Sky.state().clock < end && n++ < 20000) Sky.advance(1); };
+    const rows = (p) => { const r = new Float32Array(p.h); for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) r[y] += p.d[(y * p.w + x) * 4 + 3] / p.w; return r; };
+    const correlation = (a, b) => {
+      const m = (v) => v.reduce((s, x) => s + x, 0) / v.length, ma = m(a), mb = m(b);
+      let sab = 0, saa = 0, sbb = 0;
+      for (let i = 0; i < a.length; i++) { sab += (a[i] - ma) * (b[i] - mb); saa += (a[i] - ma) ** 2; sbb += (b[i] - mb) ** 2; }
+      return sab / Math.sqrt(saa * sbb);
     };
-    out.calm = await moves();
-    fx({ haze: 5, wind: 1 });
-    await frames(15);   // (the wind faded in: 1.5 s of the weather's time)
-    out.windy = await moves();
+    const motion = (seconds, reach) => {   // the weather's `seconds`: its slide, picture, motes and bakes before and after
+      const a = Sky.state(), was = picture();
+      run(seconds);
+      const b = Sky.state(), now = picture(), dt = b.clock - a.clock;
+      const kept = new Map(a.haze.motes.map((m) => [m[0], m])), dx = [], dy = [];
+      for (const m of b.haze.motes) if (kept.has(m[0])) { dx.push(m[1] - kept.get(m[0])[1]); dy.push(m[2] - kept.get(m[0])[2]); }
+      const shift = shifted(was, now, reach);
+      return { dt, slide: b.haze.slide - a.haze.slide, rate: (b.haze.slide - a.haze.slide) / dt, speed: b.haze.speed, renders: [a.haze.renders, b.haze.renders],
+               shift: shift.s, down: shift.t, match: shift.share, identical: same(was, now), motes: dx.length,
+               moteDx: dx.length ? dx.reduce((s, v) => s + v, 0) / dx.length : 0, moteSpread: dx.length ? Math.max(...dx) - Math.min(...dx) : 0, moteDy: dy.length ? Math.max(...dy.map(Math.abs)) : 0 };
+    };
+    // no wind at all (the live speed 0): perfectly still, 2 s apart, the motes too
+    Sky.setWindSpeed(0, 0);
+    run(40);   // (whatever wind the page had, low-passed away)
+    out.still = motion(2, 3);
+    run(60);
+    out.stillLong = motion(2, 3);
+    // wind at 3 km/h (gusting a little): a slow pan; and at 40 km/h; a pure sideways shift (the shift's best match at no rows down), the bake count unchanged
+    for (const [speed, gust, key, seconds] of [[3, 3, "light", 30], [40, 40, "strong", 12], [25, 40, "gusty", 12]]) {
+      Sky.setWindSpeed(speed, gust);
+      run(30);   // (the low-pass settled)
+      out[key] = motion(seconds, key === "light" ? 20 : 45);
+    }
+    // a minute of it at 40 km/h in steps: each step a pure shift again, and the rows' profile as it was
+    Sky.setWindSpeed(40, 40);
+    run(20);
+    const first = picture(), steps = [];
+    for (let i = 0; i < 6; i++) steps.push(motion(10, 45));
+    out.minute = { steps: steps.map((m) => ({ down: m.down, match: m.match, renders: m.renders })), rows: correlation(rows(first), rows(picture())) };
+    // the wind's other side: the pan reverses (the speed through 0 as the direction turns), no new bake; mirrored
+    const before = Sky.state().haze.renders;
+    Sky.setWind(1);
+    run(8);
+    out.mirrored = motion(10, 45);
+    out.mirrored.baked = Sky.state().haze.renders - before;
+    Sky.setWind(-1);
+    run(8);
+    // a new band: baked once more, cross-fading over about a second
+    Sky.setWindSpeed(0, 0);
+    run(30);
+    const baked = Sky.state().haze.renders;
+    fx({ haze: 3 });
+    let n = 0;
+    while (Sky.state().haze.level !== 3 && n++ < 100) Sky.advance(1);
+    Sky.advance(1);
+    const mid = Sky.state().haze;
+    n = 0;
+    while (Sky.state().haze.settling && n++ < 600) Sky.advance(1);
+    out.band = { baked: Sky.state().haze.renders - baked, mid: { settling: mid.settling, pending: mid.pending }, settled: Sky.state().haze.settling };
+    out.seam = Sky.state().haze.seam;
+    out.width = [Sky.state().haze.width, Sky.state().size[0]];
     Sky.timeScale(1);
     return out;
   }, out);
@@ -2721,6 +2767,13 @@ const WEATHER = {
     const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=haze5", driven: true });
     await drive(page, 56);   // (faded in: 1.5 s)
     out.haze = await hazeSeen(page);
+    // the window resized: baked again at its size (once, after the debounce), the pan unchanged
+    const baked = await page.evaluate(() => Sky.state().haze.renders);
+    const size = page.viewportSize();
+    await page.setViewportSize({ width: size.width + 120, height: size.height });
+    await page.waitForTimeout(400);   // (the page's own debounce: 150 ms)
+    await driveUntil(page, (was) => { const h = Sky.state().haze; return h.level === 3 && !h.pending && !h.settling && h.renders > was; }, baked);
+    out.resized = await page.evaluate((baked) => ({ baked: Sky.state().haze.renders - baked, width: Sky.state().haze.width, art: Sky.state().size[0] }), baked);
     out.errors = errors;
     await context.close();
   },
@@ -3890,15 +3943,15 @@ const WEATHER = {
       return { dirs: [seen.east.dir, seen.west.dir], vx: [seen.east.state.vx, seen.west.state.vx], ink, wrong, size: [w, h],
                errors: [...seen.east.errors, ...seen.west.errors] };
     };
-    // the haze: its layers' mean move over 3 s each way (and the slide)
+    // the haze: its pan over 6 s each way, and its motes' mean move
     const haze = async (way) => {
       const p = await open(`?fx=haze3,wind-${way}`);
       await drive(p.page, 60);
       const r = await p.page.evaluate(() => {
-        const at = () => Object.fromEntries(Sky.state().haze.layers.map((c) => [c[0], c[2]]));
+        const at = () => new Map(Sky.state().haze.motes.map((m) => [m[0], m[1]]));
         const a = at(), s0 = Sky.state().haze.slide;
-        Sky.advance(90);
-        const b = at(), moved = Object.keys(a).filter((k) => k in b && Math.abs(b[k] - a[k]) < 300).map((k) => b[k] - a[k]);
+        Sky.advance(180);
+        const b = at(), moved = [...a.keys()].filter((k) => b.has(k) && Math.abs(b.get(k) - a.get(k)) < 300).map((k) => b.get(k) - a.get(k));
         const m = Sky.state().haze.motes;
         return { moved: moved.reduce((x, y) => x + y, 0) / Math.max(moved.length, 1), n: moved.length, slide: Sky.state().haze.slide - s0,
                  motes: m.length, size: Sky.state().size };

@@ -1894,7 +1894,7 @@ def _hue(rgb: list[float]) -> float:
 
 
 @needs_browser
-async def test_the_haze_alone_in_each_band_a_toxic_smog_veil_tinted_by_the_band_streaming_with_the_wind(server, station):
+async def test_the_haze_alone_in_each_band_a_static_smog_veil_tinted_by_the_band_panned_slowly_only_with_wind(server, station):
     got = await weather(server, "haze")
     # the haze (the particulates), each band alone: one translucent veil over the whole window (no clouds), more of it covered and
     # more opaque with each band (at Moderate thin and patchy, at Hazardous nearly everywhere)
@@ -1920,15 +1920,40 @@ async def test_the_haze_alone_in_each_band_a_toxic_smog_veil_tinted_by_the_band_
     # ... dithered irregularly: no grid in its pixels (its strongest fine frequency's power, over the median's: under 400; an ordered
     # dither's, 75000 and more)
     assert all(lv["grid"] < 400 for lv in levels), [round(lv["grid"]) for lv in levels]
-    # ... drifting right to left, the wind's way: every layer and mote leftward (about 3 px/s), its drift too, and the picture itself;
-    # faster in the wind
-    calm, windy = got["haze"]["calm"], got["haze"]["windy"]
-    assert calm["n"] >= 20 and calm["left"] == calm["n"] and 1.5 < calm["speed"] < 6 and calm["slide"] > 2, calm
-    assert windy["n"] >= 20 and windy["left"] == windy["n"] and windy["speed"] > 2 * calm["speed"] and windy["slide"] > 2 * calm["slide"], windy
-    for layers in (calm["layers"], windy["layers"]):
-        assert layers["n"] == 3 and layers["left"] == 3 and layers["speed"] > 1, layers
-    assert windy["layers"]["speed"] > 2 * calm["layers"]["speed"], (calm, windy)
-    assert calm["picture"] > 1 and windy["picture"] > 2 * calm["picture"], (calm["picture"], windy["picture"])
+    # ... static, baked once and panned sideways, only with wind: with no wind (the live speed 0) nothing moves at all, the picture
+    # identical 2 s apart (and again a minute on), its motes too, no new bake
+    h = got["haze"]
+    for still in (h["still"], h["stillLong"]):
+        assert still["identical"] and still["slide"] == 0 and still["speed"] == 0 and still["moteSpread"] == 0 and still["moteDx"] == 0 and still["renders"][0] == still["renders"][1], still
+    # ... with wind a pure sideways shift (the best match at no rows up or down, nearly every pixel identical: the pan is whole pixels
+    # of one baked image), leftward, at about 0.4 px/s at 3 km/h and about 3 at 40 (a gentle curve: 3.15 * (1 - exp(-w / 22.1)), w the
+    # speed plus 0.3 of the gust over it), no bake while it pans, the motes carried along at the same pace and none moving up or down
+    pan = lambda w: 3.15 * (1 - math.exp(-w / 22.1))
+    assert 0.32 < pan(3) < 0.48 and 2.4 < pan(40) < 3.6
+    for key, w in (("light", 3), ("strong", 40), ("gusty", 25 + 0.3 * 15)):
+        m = h[key]
+        assert m["rate"] == pytest.approx(pan(w), rel=0.2) and m["speed"] == pytest.approx(pan(w), rel=0.2), (key, m)
+        assert m["down"] == 0 and m["match"] > 0.97 and not m["identical"], (key, m)
+        assert abs(m["shift"] - m["slide"]) <= 1.01, (key, m)   # (the picture's shift, leftward positive, the pan's)
+        assert m["renders"][0] == m["renders"][1], (key, m)
+        assert m["motes"] >= 20 and m["moteDx"] == pytest.approx(-m["slide"], abs=0.05) and m["moteSpread"] < 0.05 and m["moteDy"] == 0, (key, m)
+    assert 0.3 < h["light"]["rate"] < 0.5 and 2.4 < h["strong"]["rate"] < 3.6 and h["strong"]["rate"] > 4 * h["light"]["rate"], (h["light"], h["strong"])
+    assert h["gusty"]["rate"] > h["light"]["rate"] and h["gusty"]["rate"] < h["strong"]["rate"], (h["light"], h["gusty"], h["strong"])
+    # ... a minute of weather time: still no vertical change (every step a pure sideways shift, the rows' profile as it was)
+    assert all(m["down"] == 0 and m["match"] > 0.97 and m["renders"][0] == m["renders"][1] for m in h["minute"]["steps"]), h["minute"]
+    assert h["minute"]["rows"] > 0.6, h["minute"]   # (the window slides along streaks: its rows alike, not equal)
+    # ... the wind's other side: panning rightward, the same baked image drawn mirrored (no new bake)
+    mirrored = h["mirrored"]
+    assert mirrored["slide"] < 0 and mirrored["down"] == 0 and mirrored["match"] > 0.97 and mirrored["baked"] == 0, mirrored
+    assert abs(mirrored["shift"] - mirrored["slide"]) <= 1.01 and mirrored["rate"] == pytest.approx(-pan(40), rel=0.2), mirrored
+    # ... baked again only for a new band (once, the old and new cross-fading: pending, then settling, then done) or a resized window
+    band = h["band"]
+    assert band["baked"] == 1 and band["mid"]["settling"] == 1 and band["settled"] == 0, band
+    assert got["resized"]["baked"] == 1 and got["resized"]["width"] >= 2 * got["resized"]["art"], got["resized"]
+    # ... wider than the window and seamless: its left and right edges continue each other (the alpha step across the seam as small as
+    # between neighbouring columns)
+    assert h["width"][0] >= 2 * h["width"][1], h["width"]
+    assert h["seam"]["edge"] <= 1.3 * h["seam"]["inner"], h["seam"]
     # ... and cheap: Hazardous, the dearest, under 4 ms a frame
     assert got["haze"]["cost"] < 4, got["haze"]["cost"]
 
@@ -3275,8 +3300,9 @@ async def test_the_winds_side_follows_the_wind_direction_reading_east_leftward_w
     assert mirror["ink"] > 100 and mirror["wrong"] <= mirror["ink"] * 0.003, mirror
     # the haze drifts with it, the clouds and the motes
     haze = got["haze"]
-    assert haze["east"]["moved"] < -3 and haze["west"]["moved"] > 3 and haze["east"]["slide"] > 0 > haze["west"]["slide"], haze
+    assert haze["east"]["moved"] < -3 and haze["west"]["moved"] > 3 and haze["east"]["slide"] > 3 and haze["west"]["slide"] < -3, haze
     assert haze["east"]["moved"] == pytest.approx(-haze["west"]["moved"], rel=0.15), haze
+    assert haze["east"]["moved"] == pytest.approx(-haze["east"]["slide"], rel=0.1), haze   # (the motes carried at the pan's pace)
     # the rain slants with it: with the wind effect and without it (the reading alone), its drops' mean speed across, and its streaks
     # drawn mirrored
     rain = got["rain"]
