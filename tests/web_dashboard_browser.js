@@ -1796,10 +1796,10 @@ const heatSeen = (page, levels, times = []) => page.evaluate(async ([levels, tim
     for (let y = 0; y < H; y++) { let a = 0; for (let x = 0; x < W; x++) a += d[(y * W + x) * 4 + 3]; out.push(a / 255 / W); }
     return out;
   };
-  const centroidOf = (d) => {   // (the alpha's centroid across the top third, a fraction of the width)
+  const centroidOf = (d) => {   // (the alpha's centroid across, a fraction of the width)
     const W = c.width, H = c.height;
     let sum = 0, at = 0;
-    for (let y = 0; y < Math.floor(H / 3); y++) for (let x = 0; x < W; x++) { const a = d[(y * W + x) * 4 + 3]; sum += a; at += a * x; }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const a = d[(y * W + x) * 4 + 3]; sum += a; at += a * x; }
     return at / Math.max(sum, 1) / W;
   };
   for (const detail of levels) {
@@ -1855,14 +1855,55 @@ const heatSeen = (page, levels, times = []) => page.evaluate(async ([levels, tim
   for (const minutes of times) {
     Sky.setTime(minutes);
     Sky.heatPhase(0.6);   // (the hold)
-    Sky.advance(10);
+    Sky.advance(240);   // (the drawn lean catching up with the sun's: HEAT_SLEW a second)
+    Sky.heatPhase(0.6);
+    Sky.advance(1);
     const d = grab(), rows = rowsOf(d);
     leans.push({ minutes, beam: Sky.state().beam, bare: bareOf(), uv: Sky.state().effects.includes("uv"), centroid: centroidOf(d), rows: rows.slice(0, 8) });
   }
   Sky.setTime(720);
-  Sky.advance(10);
+  Sky.advance(240);
   return { looks, leans, cost: Sky.state().cost, order: Sky.state().effects };
 }, [levels, times]);
+// The heat's lean with the sun, on a driven page with only the heat on (level 1): for each [az, el] of `places` (Sky.setSunPosition; null: the
+// sun unpinned and the clock, Sky.setTime(`time`)), after 400 frames (the drawn lean caught up) at the hold: the heat's and the beams' lean
+// (Sky.state()), the heat's drawn lean, the columns bare in the top 12 %, the alpha's centroid across (a fraction of the
+// width), the mean alpha in a 10 px square at each of the window's top corners, the lowest inked row in the 9 columns about the pivot, the bakes so far, and the grid's power (gridPeak's ratio, over the page's top-left square)
+const heatLeans = async (page, places) => {
+  const out = [];
+  for (const [az, el] of places) {
+    const seen = await page.evaluate(async ([az, el]) => {
+      const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), W = c.width, H = c.height;
+      Sky.setSunPosition(az, el);
+      Sky.heatPhase(0.6);
+      Sky.advance(400);
+      Sky.heatPhase(0.62);
+      Sky.advance(1);
+      const d = g.getImageData(0, 0, W, H).data, h = Sky.state().heat;
+      const alpha = (x, y) => d[(y * W + x) * 4 + 3];
+      let bare = 0, sum = 0, at = 0, last = -1;
+      for (let x = 0; x < W; x++) {
+        let inked = false;
+        for (let y = 0; y < Math.ceil(H * 0.12) && !inked; y++) inked = alpha(x, y) > 0;
+        if (!inked) bare++;
+      }
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { sum += alpha(x, y); at += alpha(x, y) * x; }
+      const pv = h.gradient.pivot[0];
+      for (let y = 0; y < H; y++) for (let x = Math.max(0, pv - 4); x <= Math.min(W - 1, pv + 4); x++) if (alpha(x, y) > 0) last = y;
+      let half = 0;   // (the alpha right of the middle less the left's, of the whole)
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) half += alpha(x, y) * (x >= W / 2 ? 1 : -1);
+      let wsum = 0, wat = 0;   // (below the quarter: the sun's side's deeper reach only)
+      for (let y = Math.ceil(H * 0.26); y < H; y++) for (let x = 0; x < W; x++) { wsum += alpha(x, y); wat += alpha(x, y) * x; }
+      const patch = (x0) => { let a = 0; for (let y = 0; y < 10; y++) for (let x = x0; x < x0 + 10; x++) a += alpha(x, y) / 255; return a / 100; };
+      return { az, el, lean: h.lean, drawn: h.drawn, baked: h.baked, beam: Sky.state().beam.lean, bare, centroid: at / Math.max(sum, 1) / W, lopsided: half / Math.max(sum, 1), deepSum: wsum / 255, deepAt: wsum ? wat / wsum / W : 0.5, left: patch(0), right: patch(W - 10),
+               last, size: [W, H], bakes: h.bakes, cost: Sky.state().cost, vertical: h.gradient.vertical };
+    }, [az, el]);
+    seen.grid = (await gridPeak(page)).ratio;
+    out.push(seen);
+  }
+  await page.evaluate(() => { Sky.setSunPosition(null, null); });
+  return out;
+};
 // The beams' lean through the day (Sky.setTime, no frames needed): `curve`, every minute of the day on the page's fallback day
 // (06:00-18:00), then a given day's (07:00-19:00, Sky.setSun): the lean at sunrise, at its midday, and 60 s of the weather's time after
 // (the beams on: heat) the page's own clock going on
@@ -3167,12 +3208,14 @@ const WEATHER = {
       return [seen, frost];
     })();
     // the heat's red gradient at 35 °C, between and at 43 °C; and at 43 °C with the UV's beams on too; and the UV's alone (small: cheap)
+    const sinFor = (lean, el) => (Math.asin(-Math.tan(lean * Math.PI / 180) * Math.tan(el * Math.PI / 180)) * 180 / Math.PI + 360) % 360;
+    const LEAN_PLACES = [[sinFor(-75, 10), 10], [sinFor(-60, 20), 20], [sinFor(-30, 20), 20], [0, 60], [sinFor(30, 20), 20], [sinFor(60, 20), 20], [90, 3], [270, 3], [60, 15], [250, 1]];   // (leans -75 (capped), -60, -30, 0, 30, 60, then the cap both ways (a low sun), a low sun, a very low one)
     const SUN_TIMES = [360, 420, 480, 600, 720, 840, 960, 1020, 1080];   // (6:00 sunrise to 18:00 sunset, with the fallback day)
     const hot = Promise.all([["heat", [{ heat: 0.05 }, { heat: 0.65 }, { heat: 1 }]], ["heat,uv", [{ heat: 1, uv: 1 }]], ["uv", [{ uv: 1 }]]].map(async ([name, levels]) => {
       const times = SUN_TIMES;
       const p = await weatherPage(browser, url, { query: `?fx=${name}`, driven: true, context: { viewport: { width: 640, height: 480 } } });
       const seen = await heatSeen(p.page, levels, times);
-      if (name === "heat") { seen.sun = await sunSeen(p.page); seen.place = await placeSeen(p.page, require("./sun_days.json").days); }
+      if (name === "heat") { seen.byLean = await heatLeans(p.page, LEAN_PLACES); seen.sun = await sunSeen(p.page); seen.place = await placeSeen(p.page, require("./sun_days.json").days); }
       seen.grid = (await gridPeak(p.page)).ratio;   // (its shafts' dithering)
       seen.errors = p.errors;
       await p.context.close();
