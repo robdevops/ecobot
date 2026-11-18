@@ -259,6 +259,7 @@ With `d` = degrees below 0 C.
 | Drop hit | `hit` | Gaussian poke of `-power` px, width 1.3; power 0.3/0.6/1.1 by layer | ARTISTIC | |
 | Chop | `CALMS` 25 s | chop eases to 1 with a 3 s time constant, back to 0 with 25 s; pokes per second `chop*30*W/300` | TUNED | |
 | Frog timing | ~2767-3062 | first frog after 30 s, then exponential with mean 180 s (`-mean*ln(1 - U)`), minimum gap 40 s; speed `U(7, 10)` px/s | ARTISTIC | Whimsy. |
+| Frog throat pulse | page `THROAT_PERIOD`, `throatAt` | period 0.67 s (about 1.5 a second, a resting frog's throat rate), a random phase per frog; amount = smoothstep(t/0.25) out, held to 0.4 s, `1 - smoothstep((t - 0.4)/0.27)` back; swollen (amount >= 0.5) adds a 5 x 1 patch row and a 3 x 1 row under it, 2 + 3 = 5 pixels | ARTISTIC | A small touch at a real rate; independent of the stroke clock. |
 | Gust-object trigger | `GUST_MARK` :5430 | a new gust reading above 99 km/h flings one object | TUNED | 99 km/h is 27.5 m/s, in Beaufort 10 to 11 (89 to 117 km/h). The mark is "about a hundred". |
 | Gust-object flight | `gust` step | speed `U(42, 56)` px/s `* (1 + 0.35*wind amount)`; shed bits every 0.15 to 0.45 s, up to 14 | ARTISTIC | |
 

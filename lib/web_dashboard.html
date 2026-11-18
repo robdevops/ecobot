@@ -2867,7 +2867,7 @@ const Sky = (() => {
   // the wind's leaves its surface reaches (its waves as they are, wherever a leaf meets them) sticks there, floats, then sinks and
   // rests on the bottom, every one, the flood's own from then on: there while it lasts, the wind gone or not, gone as it drains away; the haze
   // is drawn above it (above(): down to its surface, as low as its troughs go). Rarely (about every FROG_EVERY s on
-  // average, never in its first FROG_FIRST s) a small, bemused, long-bodied frog swims a steady breast stroke across (head above the water, a long soft teardrop belly under it tapering to the hips, short stubby arms and thin curving legs, fingers and splayed toes; both sides always mirror images), right to left with the wind, bobbing; the
+  // average, never in its first FROG_FIRST s) a small, bemused, long-bodied frog swims a steady breast stroke across (head above the water, a long soft teardrop belly under it tapering to the hips, short stubby arms and thin curving legs, fingers and splayed toes; both sides always mirror images; its throat pulsing about 1.5 times a second), right to left with the wind, bobbing; the
   // test link's flood (level 2) sends its first one FROG_FIRST s after the water starts rising. Drawn after the drips and the
   // leaves (the sunken ones show through it, tinted and dimmed), before the ice.
   const FLOOD = ["#06161A", "#0A2226", "#0F2F31", "#163E3E", "#1F4F4B", "#2A625B"].map(rgb);   // the body, deep to shallow
@@ -2929,6 +2929,16 @@ const Sky = (() => {
     // ... and each one's mirror image, for a frog swimming rightward (the head lopsided: it faces the way it swims; the body, symmetric
     // about its middle column, unchanged)
     const FROGS_R = FROGS.map((blinks) => blinks.map((p) => ({top: flipped(p.top), under: flipped(p.under)})));
+    // Its throat (gular) pulse: a frog breathes visibly through the throat, about 1.5 times a second at rest (an ARTISTIC touch at a
+    // real rate: THROAT_PERIOD 0.67 s). The pale patch under the chin (the neck rows 7 and 8, below the mouth) swells: eased out over
+    // 0.25 s, held to 0.4 s, eased back by 0.67 s; swollen (more than half out) it is one pixel wider each side and one row lower.
+    // Two tiny overlays drawn after the frame (symmetric about the centre column, so the same for either facing and every stroke
+    // frame: no new frames), on the frog's own clock, a random phase each, apart from the stroke's.
+    const THROAT_PERIOD = 0.67, THROAT_OUT = 0.25, THROAT_HOLD = 0.4;
+    const ease = (u) => { const c = Math.max(0, Math.min(1, u)); return c * c * (3 - 2 * c); };
+    const throatAt = (t) => { t = ((t % THROAT_PERIOD) + THROAT_PERIOD) % THROAT_PERIOD; return t < THROAT_HOLD ? ease(t / THROAT_OUT) : 1 - ease((t - THROAT_HOLD) / (THROAT_PERIOD - THROAT_HOLD)); };
+    const THROAT_ROWS = [[".yyy.", "....."], ["yyyyy", ".yyy."]];   // (relaxed, swollen: its row 7 above the water, its row 8 under it; 5 wide, columns 21 to 25)
+    const THROAT = THROAT_ROWS.map(([top, under]) => ({top: mapped([top], FROG), under: mapped([under], FROG_UNDER)}));
     // A splash where a drop or a drip lands, frame by frame: a bead thrown up, two droplets, falling back ([dx, dy, colour])
     const SPLASH = [[[0, -1, SURFACE]], [[0, -2, SURFACE], [-1, -1, BAND], [1, -1, BAND]], [[-2, -2, BAND], [2, -2, BAND]],
                     [[-2, -1, FAR], [3, -1, FAR]]]
@@ -3166,13 +3176,14 @@ const Sky = (() => {
         splashes = splashes.filter((s) => s.age < 0.2);
         // the frog: rarely, never at once; drifting across with the wind, bobbing on the waves
         if (!frog && since >= nextFrog && depth >= FROG_DEPTH * full) {   // (only in deep water, the bucket 0.9 full or more: his sprite's underwater rows need it; in from upwind: the right edge for a wind blowing leftward, the left for rightward)
-          frog = {x: dir.side < 0 ? W + 24 : -24, v: between(...FROG_SPEED), blink: between(2, 5), clock: between(0, FROG_LAP), seen: false, born: since};
+          frog = {x: dir.side < 0 ? W + 24 : -24, v: between(...FROG_SPEED), blink: between(2, 5), clock: between(0, FROG_LAP), throat: between(0, THROAT_PERIOD), seen: false, born: since};
           frogs++;
         }
         if (frog) {
           frog.x += dir.f * frog.v * (wind.amount > 0 ? 1.4 : 1) * FROG_PACE[strokeAt(frog.clock)] * dt;   // (downwind: it swims with the wind)
           if (frog.x >= 0 && frog.x <= W) frog.seen = true;
           frog.clock += dt;
+          frog.throat = (frog.throat + dt) % THROAT_PERIOD;
           const now = strokeAt(frog.clock);   // (a pair of ripples as the pull and the kick begin: the same each side)
           if (now !== frog.last && FROG_RIPPLES[now] && frog.last !== undefined) for (const d of [-1, 1]) splashes.push({x: Math.round(frog.x) + d * FROG_RIPPLES[now], age: 0});
           frog.last = now;
@@ -3237,10 +3248,16 @@ const Sky = (() => {
           const left = x - (pic.top.width >> 1), top = frog.y - FROG_SITS;
           g.globalAlpha = Math.min(1, o * 1.1);
           g.drawImage(pic.top, left, top + FROG_BOB[stroke]);
+          const swollen = throatAt(frog.throat) >= 0.5 ? 1 : 0;
+          frog.swollen = swollen;
+          g.drawImage(THROAT[swollen].top, left + 21, top + FROG_BOB[stroke] + FROG_SITS - 1);
           g.globalAlpha = Math.min(1, o * FROG_WET);
           const rowsBelow = Math.max(0, Math.min(pic.under.height, H - frog.y));   // (only what's within the flood: none below its floor, the canvas's bottom)
           frog.drawn = rowsBelow;
-          if (rowsBelow > 0) g.drawImage(pic.under, 0, 0, pic.under.width, rowsBelow, left, frog.y, pic.under.width, rowsBelow);
+          if (rowsBelow > 0) {
+            g.drawImage(pic.under, 0, 0, pic.under.width, rowsBelow, left, frog.y, pic.under.width, rowsBelow);
+            g.drawImage(THROAT[swollen].under, left + 21, frog.y);
+          }
         }
       },
       // (for the tests: its depth now and full, art px; the surface's row in each column; how long since it began rising, s; the
@@ -3257,7 +3274,7 @@ const Sky = (() => {
                        for (let t = 0; t <= s + 1e-9; t += every) { out.push(Array.from(h)); waves(h, v, a, every, drift); }
                        return out;
                      },
-                     frog: frog && {x: frog.x, y: frog.y || null, stroke: frog.stroke ?? null, drawn: frog.drawn ?? null, flipped: frog.flip ?? null}, frogRows: FROG_FRAMES, strokes: FROG_FRAMES.length, beats: FROG_BEATS, leaves: leafProbe(),
+                     frog: frog && {throat: {phase: frog.throat / THROAT_PERIOD, amount: throatAt(frog.throat), state: frog.swollen ?? null, period: THROAT_PERIOD, rows: THROAT_ROWS}, x: frog.x, y: frog.y || null, stroke: frog.stroke ?? null, drawn: frog.drawn ?? null, flipped: frog.flip ?? null}, frogRows: FROG_FRAMES, strokes: FROG_FRAMES.length, beats: FROG_BEATS, leaves: leafProbe(),
                      surface: depth > 0 ? Array.from({length: W}, (_, x) => surfaceAt(x)) : []}),
     };
   });

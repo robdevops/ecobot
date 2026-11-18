@@ -4138,16 +4138,23 @@ const WEATHER = {
           }
           return draw.apply(this, args);
         };
-        let n = 0, first = null, last = null;
+        let n = 0, first = null, last = null, prev = null;
+        const swells = [], throatStrokes = [];   // (when its throat swells, by the page's clock; the stroke frames it swelled or relaxed in)
         while (n++ < 3000 && Sky.advance(1)) {   // (the first frog, then 8 s of it)
-          const f = Sky.state().flood.frog;
+          const fl = Sky.state().flood, f = fl.frog;
           if (!f) continue;
+          if (f.throat.state !== null) {
+            if (prev === 0 && f.throat.state === 1) swells.push(fl.since);
+            if (prev !== null && f.throat.state !== prev && !throatStrokes.includes(f.stroke)) throatStrokes.push(f.stroke);
+            prev = f.throat.state;
+          }
           if (!first) first = { x: f.x };
           last = f;
           if (at.push(f.x) >= 240) break;
         }
         delete g.drawImage;
         return { first, width: Sky.state().size[0], travelled: last ? last.x - first.x : 0, frames: at.length, flipped: last && last.flipped,
+                 swells, throatStrokes,
                  pics: [...seen.values()] };
       });
       got.errors = p.errors;
