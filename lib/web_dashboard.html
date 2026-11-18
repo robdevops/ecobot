@@ -181,7 +181,8 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 // Drawn at a low resolution (one art pixel: P CSS px, about a third of the window across) and scaled up crisply (image-rendering:
 // pixelated). Every sprite and texture is drawn once to a small offscreen canvas and blitted; one loop (at most 30 frames a second)
 // for every effect, each frame cleared once and drawn back to front (ORDER). The effects share a particle budget and a cap on their
-// strength together, so several at once are no busier or brighter than one strong one; but the humidity's beads stay out of the
+// strength together (the cap scales every effect but the sun's two layers, the heat and the UV, which stay at their own strength
+// and count in the sum), so several at once are no busier or brighter than one strong one; but the humidity's beads stay out of the
 // budget (OWN_BUDGET: their own limits bound them, so heavy rain keeps every drop beside them), and the rain out of the cap
 // (OWN_STRENGTH: drawn at its own strength whatever else is on). Nothing runs while no effect is on or fading
 // out; the tab hidden, it waits. Only with MCP_DASHBOARD_ANIMATIONS on and no reduced motion asked for: otherwise the page never
@@ -300,7 +301,8 @@ const Sky = (() => {
   const CAP = 1.5;                     // ... and their strengths together at most this (one strong effect: about 0.8)
   const ORDER = ["heat", "uv", "gust", "haze", "rain", "wind", "humidity", "flood", "ice"];   // back to front: the heat and the UV the bottom layer (below everything else), then the rest
   const OWN_BUDGET = new Set(["humidity"]);   // (its beads outside the shared budget: their own limits keep their cost bounded)
-  const OWN_STRENGTH = new Set(["rain"]);     // (drawn at its own strength whatever else is on: outside the cap)
+  const OWN_STRENGTH = new Set(["rain"]);     // (drawn at its own strength whatever else is on: outside the cap, and outside the sum it scales)
+  const SUN = new Set(["heat", "uv"]);        // (the sun's two layers: counted in the sum, but never scaled by the cap, so a gust or a wind never dims the sun)
   let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
   const OVER = 100;                    // CSS px: the weather's margin past the window's top and bottom (the page's --over, in #sky's rule)
   const [above, below] = [...holder.querySelectorAll("canvas")].slice(1);   // the margins' canvases: the window's rows mirrored into them
@@ -4278,7 +4280,7 @@ const Sky = (() => {
     for (const k of ORDER) if (!OWN_STRENGTH.has(k)) sum += effects[k].strength() * effects[k].amount;
     const cap = Math.min(1, CAP / Math.max(sum, 1e-6));
     for (const k of ORDER) {
-      const fx = effects[k], a = fx.strength() * fx.amount * (OWN_STRENGTH.has(k) ? 1 : cap);
+      const fx = effects[k], a = fx.strength() * fx.amount * (OWN_STRENGTH.has(k) || SUN.has(k) ? 1 : cap);
       drawn[k] = fx.amount > 0 ? a : 0;
       if (fx.amount > 0) fx.draw(ctx, a, clock);
     }

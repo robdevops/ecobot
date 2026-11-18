@@ -3027,6 +3027,33 @@ const WEATHER = {
     out.errors = errors;
     await context.close();
   },
+  // The sun is never dimmed by the other effects: with the heat and the UV on, the wind with a strong gust, the rain and a flung cow
+  // switched on and off: the sun's two layers' drawn strengths, its centre pixel and the cap's sum over the other effects, at each step
+  async sunkeep(browser, url, out) {
+    const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=heat,uv", driven: true, context: { viewport: { width: 640, height: 480 } } });
+    const fx = (detail) => page.evaluate((detail) => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail })), detail);
+    await page.evaluate(() => { window.__c = document.querySelector("#sky canvas"); window.__g = window.__c.getContext("2d");
+      Sky.setSun({ rise: 354.36, set: 1241.24, now: 720, noon_el: 75.61 }); Sky.setTime(720); Sky.setSunPosition(0, 70); });
+    const look = (label) => page.evaluate((label) => {
+      Sky.advance(60);
+      const s = Sky.state(), r = s.heat.sun, d = __g.getImageData(Math.round(r.x), Math.round(r.y), 1, 1).data;
+      return { label, effects: s.effects, heat: s.drawn.heat, uv: s.drawn.uv, centre: [...d], cap: s.cap, others: Object.entries(s.drawn).filter(([k]) => !["heat", "uv", "rain"].includes(k)).reduce((a, [, v]) => a + v, 0), drawn: s.drawn };
+    }, label);
+    out.steps = [await look("alone")];
+    await page.evaluate(() => Sky.setWindSpeed(60, 120, true));
+    await fx({ heat: 1, uv: 1, wind: 1 });
+    out.steps.push(await look("wind"));
+    await page.evaluate(() => Sky.fling("cow"));
+    out.steps.push(await look("cow"));
+    await fx({ heat: 1, uv: 1, wind: 1, rain: 1 });
+    out.steps.push(await look("wind, rain and cow"));
+    await fx({ heat: 1, uv: 1 });
+    await page.evaluate(() => Sky.setWindSpeed(0, 0));
+    await drive(page, 200);
+    out.steps.push(await look("off"));
+    out.errors = errors;
+    await context.close();
+  },
   // A flash flood: the station's rain rate over 30 mm/h (not at 30): the water rising steadily to a quarter of the window's height,
   // its surface choppy all across and higher at the sides, the rain ending at it in ripples and splashes; its waves alone (one
   // push: travelling both ways, reflecting off a side); draining at 30, its chop calming slowly. Beside it, every other effect on

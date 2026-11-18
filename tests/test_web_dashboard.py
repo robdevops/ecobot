@@ -1817,7 +1817,7 @@ EFFECTS = {"rain": "Rain", "flood": "Rain", "haze": "AQI", "uv": "UV index", "hu
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"push", "trails", "frost", "budget", "flood", "bucket", "pm25", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies", "gives"}
+DRIVEN = {"push", "trails", "frost", "budget", "flood", "bucket", "pm25", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies", "gives", "sunkeep"}
 
 
 async def weather(server, part: str) -> dict:
@@ -2142,6 +2142,25 @@ async def test_heavy_humidity_alone_costs_no_more_as_its_trails_build_up_and_its
 async def test_the_ice_grown_all_the_way_in_is_cheap_with_its_frost_across_the_glass(server, station):
     got = await weather(server, "frost")
     assert got["frosted"]["cost"] < 8 and got["frosted"]["crystals"] > 0.15, got["frosted"]
+
+
+@needs_browser
+async def test_the_sun_is_never_dimmed_by_a_gust_wind_rain_or_a_flung_cow_while_the_cap_still_scales_the_other_effects(server, station):
+    """The cap scales every effect except the sun's two layers (heat, uv) and the rain: with the sun on, the wind with a strong gust, the
+    rain and a cow switched on and off leave the sun's drawn strength and its centre pixel as they were, while the others still sum to at most CAP."""
+    got = await weather(server, "sunkeep")
+    steps = got["steps"]
+    alone = steps[0]
+    assert alone["effects"] == ["heat", "uv"] and alone["heat"] == 1 and alone["uv"] == 0, alone
+    for step in steps[1:]:
+        assert step["heat"] == alone["heat"] and step["uv"] == alone["uv"], step          # (the sun's strength unchanged)
+        assert step["centre"] == alone["centre"], (step["label"], step["centre"], alone["centre"])   # (and its centre pixel, as bright)
+        assert step["others"] <= step["cap"] + 1e-9, step                                   # (the others' strengths together under the cap)
+    assert steps[1]["effects"] == ["heat", "wind"] or "wind" in steps[1]["effects"], steps[1]
+    assert "gust" in steps[2]["effects"] and steps[2]["drawn"]["gust"] > 0, steps[2]       # (the cow's gust on while it crosses)
+    assert all(0 < steps[i]["drawn"]["wind"] for i in (1, 2, 3)) and steps[3]["drawn"]["rain"] > 0, steps
+    # the others are still scaled down: with the sun in the sum, the wind and the gust and the rain together drawn under their own strengths
+    assert steps[3]["drawn"]["wind"] < 0.8 and steps[3]["drawn"]["gust"] < 0.45, steps[3]
 
 
 @needs_browser
@@ -2899,7 +2918,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # ... faded out short of the window's edge: no violet in its outer ring
     assert hot["edge"]["violet"] == 0 and hot["edge"]["whole"] > 100, hot["edge"]
     # no dot pattern in the dither (its grid power), no flash faster than 0.5 Hz (the brightness over 24 s: its dominant frequency, the heat
-    # alone and with the UV), none drawn stronger than its strength under the cap
+    # alone and with the UV), none drawn stronger than its strength (the sun is not scaled by the cap)
     assert all(g < 400 for g in hot["grid"]), hot["grid"]
     for flash in hot["flash"]:
         assert flash["dominant"] <= 0.5 and flash["maxAlpha"] <= flash["drawn"] + 0.01 and flash["drawn"] <= flash["cap"], flash
