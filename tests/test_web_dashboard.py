@@ -1604,7 +1604,7 @@ EFFECTS = {"rain": "Rain", "haze": "AQI", "uv": "UV index", "humidity": "Humidit
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over"}
+DRIVEN = {"trails", "frost", "budget", "flood", "opened", "gust", "over", "direction"}
 
 
 async def weather(server, part: str) -> dict:
@@ -3047,3 +3047,54 @@ def test_the_frogs_feet_are_webbed_between_the_toes_and_the_hands_are_not():
     assert n_web(5) > n_web(6), (n_web(5), n_web(6))
     for n in (3, 4):   # (it shows on the tucked feet too)
         assert n_web(n) >= 3, n
+
+
+# ---------- the wind's direction ----------
+@needs_browser
+async def test_the_winds_side_follows_the_wind_direction_reading_east_leftward_west_rightward_north_and_south_hold_and_a_flip_eases(server, station):
+    got = await weather(server, "direction")
+    assert got["start"]["dir"] == got["start"]["target"] == -1 and got["start"]["flips"] == 0, got["start"]   # (leftward as the page opens)
+    # 0 < deg < 180 (from the east side): leftward (-1); 180 < deg < 360: rightward (+1); exactly 0, 180, 360, or none: as it was
+    assert got["readings"] == [[180, -1], [90, -1], [270, 1], [0, 1], [180, 1], [360, 1], [359.5, 1], [0.5, -1], [270, 1], [None, 1],
+                               [180, 1], [45, -1], [315.5, 1], [360, 1], [179.5, -1], [180.5, 1]], got["readings"]
+    # a flip: the factor from -1 to +1 over about 4 s, never more than a frame's smooth step, the side changing as it crosses 0 (once),
+    # the leaves' mean speed across going from leftward through none to rightward; and back again
+    flip = got["flip"]
+    assert flip["first"] == -1 and flip["last"] == 1 and flip["flips"] == 1 and flip["sides"] == [-1, 1] and flip["monotonic"], flip
+    assert flip["maxStep"] < 0.03 and 3.5 <= flip["seconds"] <= 4.6, flip
+    assert flip["vx"][0] < -10 and abs(flip["vx"][1]) < 12 and flip["vx"][2] > 10, flip
+    assert got["flipBack"]["maxStep"] < 0.03 and got["flipBack"]["last"] == -1, got["flipBack"]
+    # the wind alone, blowing rightward: the exact mirror of leftward, the streaks, the leaves in their sprites mirrored
+    mirror = got["mirrorWind"]
+    assert mirror["dirs"] == [-1, 1] and mirror["vx"][0] < -10 < 10 < mirror["vx"][1], mirror
+    assert mirror["ink"] > 100 and mirror["wrong"] <= mirror["ink"] * 0.003, mirror
+    # the haze drifts with it, the clouds and the motes
+    haze = got["haze"]
+    assert haze["east"]["moved"] < -3 and haze["west"]["moved"] > 3 and haze["east"]["slide"] > 0 > haze["west"]["slide"], haze
+    assert haze["east"]["moved"] == pytest.approx(-haze["west"]["moved"], rel=0.15), haze
+    # the rain slants with it: with the wind effect and without it (the reading alone), its drops' mean speed across, and its streaks
+    # drawn mirrored
+    rain = got["rain"]
+    for way, sign in (("east", -1), ("west", 1)):
+        for key in (way, f"{way}Read"):
+            assert sign * rain[key]["vx"] > 20 and (rain[key]["mirrored"] > 0) == (sign > 0), (key, rain[key])
+    assert rain["east"]["vx"] == pytest.approx(-rain["west"]["vx"], rel=0.25), rain
+    # the frog comes in from upwind and swims downwind, its sprites the leftward ones exactly mirrored
+    frog = got["frog"]
+    assert frog["east"]["first"]["x"] > frog["east"]["width"] and frog["east"]["travelled"] < -10 and not frog["east"]["flipped"], frog["east"]
+    assert frog["west"]["first"]["x"] < 0 and frog["west"]["travelled"] > 10 and frog["west"]["flipped"], frog["west"]
+    assert frog["east"]["pics"] and frog["west"]["pics"], frog
+    mirrored = {tuple(tuple(reversed(row.split(" "))) for row in pic) for pic in frog["east"]["pics"]}
+    right = {tuple(tuple(row.split(" ")) for row in pic) for pic in frog["west"]["pics"]}
+    assert right == mirrored and any(pic != tuple(tuple(reversed(r)) for r in pic) for pic in right), (len(right), len(mirrored))   # (the head lopsided)
+    # the flood's waves run downwind faster than up, the surface carried along
+    waves = got["waves"]
+    assert waves["push"] == waves["PUSH"] > 0 and waves["still"]["right"] == pytest.approx(waves["still"]["left"], abs=2), waves
+    assert waves["downRight"]["right"] > waves["downRight"]["left"] + 8 and waves["downLeft"]["left"] > waves["downLeft"]["right"] + 8, waves
+    # a gust over 99 km/h: the cow comes in from upwind, flown downwind
+    gust = got["gust"]
+    assert gust["east"]["to"] == -1 and gust["east"]["x0"] > gust["east"]["width"] and gust["east"]["x1"] < gust["east"]["x0"], gust["east"]
+    assert gust["west"]["to"] == 1 and gust["west"]["x0"] < 0 and gust["west"]["x1"] > gust["west"]["x0"], gust["west"]
+    assert gust["chickenWest"]["to"] == 1 and gust["chickenWest"]["x1"] > gust["chickenWest"]["x0"], gust["chickenWest"]
+    # everything on, the wind turning back and forth under it: no error, each effect still on
+    assert got["busy"]["flips"] == 3 and got["busy"]["dir"] == 1 and {"haze", "rain", "wind", "flood"} <= set(got["busy"]["effects"]), got["busy"]

@@ -308,7 +308,7 @@ swipe, a drag on the gauge, or a two-finger sideways swipe on a trackpad; it sto
 
 Behind the gauges, the weather is drawn as faint pixel art while the readings call for it: rain while it rains, hazy clouds drifting across from the US
 AQI's Moderate band up, UV beams at a UV index of 11, the glass fogging over at 90 % humidity (heavier to 100 %), beads condensing in the fog and running down it, wiping clear tracks, leaves blowing past
-above 15 km/h of wind, faint red beams between the UV's from 35 °C (more and brighter to 43 °C) and ice below 0 °C. "stop" at the bottom left stops and clears them for that page view only, and ends any effect a temporary test link turned on;
+above 15 km/h of wind (the haze, leaves, rain, flood waves, the frog and the gust's cow, barn or chicken all going the wind's way: leftward for a wind direction reading from the east side, 0 to 180 degrees, rightward from the west side, 180 to 360; due north or south or no reading keeps the way it was, leftward when the page opens; a change eases over a few seconds), faint red beams between the UV's from 35 °C (more and brighter to 43 °C) and ice below 0 °C. "stop" at the bottom left stops and clears them for that page view only, and ends any effect a temporary test link turned on;
 nothing is saved, so a reload brings them back. `MCP_DASHBOARD_ANIMATIONS` sets how much moves, for everyone: `on` (the default)
 animates everything; `low` keeps the gauges sweeping and the tiles rearranging animated but draws no weather (no "stop" or test links)
 and zooms at once; `off` draws no weather and animates nothing (the gauges jump to each new reading, zooming and rearranging happen at

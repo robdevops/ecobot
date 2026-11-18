@@ -3616,6 +3616,184 @@ const WEATHER = {
     out.opened = await opened;
     out.phone = await phone;
   },
+
+  // The wind's direction (Sky.setWind; the page's: the Wind direction tile's reading, or the test link's ?fx=wind-east / wind-west):
+  // which side each reading calls for and how a flip eases; then each effect with the wind blowing leftward (wind-east) and
+  // rightward (wind-west), side by side on pages of their own (the same seed, so the same weather: the rightward mirrors the leftward)
+  async direction(browser, url, out) {
+    const small = { viewport: { width: 640, height: 480 } };
+    const errored = [];   // (every page's console errors, to the end)
+    const open = async (query, extra = {}) => { const p = await weatherPage(browser, url, { query, driven: true, context: small, ...extra }); errored.push(p.errors); return p; };
+    const dirs = () => ({ dir: Sky.state().windDir, target: Sky.state().windTarget, factor: Sky.state().windFactor, flips: Sky.state().windFlips });
+    // each reading (degrees, where the wind comes from) and the way called for: the page opens leftward; 0, 180, 360 and none hold it
+    const readings = async () => {
+      const p = await open("?fx=wind");
+      const seq = [];
+      out.start = await p.page.evaluate(dirs);
+      for (const v of [180, 90, 270, 0, 180, 360, 359.5, 0.5, 270, null, 180, 45, 315.5, 360, 179.5, 180.5]) {
+        await p.reads({ "Wind direction": v });
+        await drive(p.page, 1);
+        seq.push([v, (await p.page.evaluate(dirs)).target]);
+      }
+      out.readings = seq;
+      out.readingErrors = p.errors;
+      await p.context.close();
+    };
+    // a flip: the factor across over seconds, no frame's jump; the wind's own at once with nothing drawn
+    const flip = async () => {
+      const p = await open("?fx=wind");
+      await drive(p.page, 90);
+      await p.reads({ "Wind direction": 270 });
+      out.flip = await p.page.evaluate(() => {
+        const f = [Sky.state().windFactor], sides = [Sky.state().windDir], vx = [Sky.state().wind.vx];
+        for (let i = 0; i < 300; i++) { Sky.advance(1); const s = Sky.state(); f.push(s.windFactor); sides.push(s.windDir); vx.push(s.wind.vx); }
+        const steps = f.slice(1).map((v, i) => Math.abs(v - f[i]));
+        const crossed = f.findIndex((v) => v > 0);
+        return { first: f[0], last: f[f.length - 1], maxStep: Math.max(...steps), crossedAt: crossed, flips: Sky.state().windFlips, sides: [sides[0], sides[sides.length - 1]],
+                 monotonic: f.every((v, i) => i === 0 || v >= f[i - 1]), vx: [vx[0], vx[crossed], vx[vx.length - 1]], seconds: f.findIndex((v) => v >= 0.999) / 30 };
+      });
+      // flipped again, partway: back the other way without a jump
+      await p.reads({ "Wind direction": 90 });
+      out.flipBack = await p.page.evaluate(() => {
+        const f = [];
+        for (let i = 0; i < 400; i++) { Sky.advance(1); f.push(Sky.state().windFactor); }
+        return { maxStep: Math.max(...f.slice(1).map((v, i) => Math.abs(v - f[i]))), last: f[f.length - 1] };
+      });
+      out.flipErrors = p.errors;
+      await p.context.close();
+    };
+    // with the wind alone, rightward the exact mirror of leftward: the canvases after the same frames, one flipped
+    const mirror = async (query, frames) => {
+      const seen = {};
+      for (const way of ["east", "west"]) {
+        const p = await open(`${query},wind-${way}`);
+        await drive(p.page, frames);
+        seen[way] = await p.page.evaluate(() => {
+          const c = document.querySelector("#sky canvas"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height);
+          return { w: c.width, h: c.height, data: Array.from(d.data), state: Sky.state().wind, dir: Sky.state().windDir };
+        });
+        seen[way].errors = p.errors;
+        await p.context.close();
+      }
+      const { w, h, data: a } = seen.east, b = seen.west.data;
+      let wrong = 0, ink = 0;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4, j = (y * w + (w - 1 - x)) * 4;
+        if (a[i + 3]) ink++;
+        if (a[i] !== b[j] || a[i + 1] !== b[j + 1] || a[i + 2] !== b[j + 2] || a[i + 3] !== b[j + 3]) wrong++;
+      }
+      return { dirs: [seen.east.dir, seen.west.dir], vx: [seen.east.state.vx, seen.west.state.vx], ink, wrong, size: [w, h],
+               errors: [...seen.east.errors, ...seen.west.errors] };
+    };
+    // the haze: its clouds' mean move over 3 s each way (and the slide)
+    const haze = async (way) => {
+      const p = await open(`?fx=haze3,wind-${way}`);
+      await drive(p.page, 60);
+      const r = await p.page.evaluate(() => {
+        const at = () => Object.fromEntries(Sky.state().haze.clouds.map((c) => [c[0], c[2]]));
+        const a = at(), s0 = Sky.state().haze.slide;
+        Sky.advance(90);
+        const b = at(), moved = Object.keys(a).filter((k) => k in b && Math.abs(b[k] - a[k]) < 60).map((k) => b[k] - a[k]);
+        const m = Sky.state().haze.motes;
+        return { moved: moved.reduce((x, y) => x + y, 0) / Math.max(moved.length, 1), n: moved.length, slide: Sky.state().haze.slide - s0,
+                 motes: m.length, size: Sky.state().size };
+      });
+      r.errors = p.errors;
+      await p.context.close();
+      return r;
+    };
+    // the rain: its drops' mean speed across, how many drawn mirrored, with and without the wind
+    const rain = async (way, withWind) => {
+      const p = await open(`?fx=rain2${withWind ? `,wind-${way}` : ""}`);
+      if (!withWind) await p.reads({ "Wind direction": way === "east" ? 90 : 270 });
+      await drive(p.page, 120);
+      const r = await rainSeen(p.page, 2000);
+      r.mirrored = await p.page.evaluate(() => Sky.state().rain.mirrored);
+      r.drops = await p.page.evaluate(() => Sky.state().particles.rain);
+      r.errors = p.errors;
+      await p.context.close();
+      return r;
+    };
+    // the frog and the flood's waves: where the frog is as it comes and goes, its sprites (as drawn, each rows mirrored) against
+    // the other way's; the waves' pulse
+    const frog = async (way) => {
+      const p = await open(`?fx=rain3,wind-${way}`, { seed: 0 });
+      const got = await p.page.evaluate(() => {
+        const g = document.querySelector("#sky canvas").getContext("2d"), draw = g.drawImage, seen = new Map(), at = [];
+        g.drawImage = function (...args) {
+          const img = args[0];
+          if (img && img.width === 47 && img.height === 8) {   // (the frog's top)
+            const d = img.getContext("2d").getImageData(0, 0, 47, 8).data;
+            seen.set(Array.from(d).join(","), Array.from({ length: 8 }, (_, y) => Array.from({ length: 47 }, (_, x) => Array.from(d.slice((y * 47 + x) * 4, (y * 47 + x) * 4 + 4)).join("/")).join(" ")));
+          }
+          return draw.apply(this, args);
+        };
+        let n = 0, first = null, last = null;
+        while (n++ < 3000 && Sky.advance(1)) {   // (the first frog, then 8 s of it)
+          const f = Sky.state().flood.frog;
+          if (!f) continue;
+          if (!first) first = { x: f.x };
+          last = f;
+          if (at.push(f.x) >= 240) break;
+        }
+        delete g.drawImage;
+        return { first, width: Sky.state().size[0], travelled: last ? last.x - first.x : 0, frames: at.length, flipped: last && last.flipped,
+                 pics: [...seen.values()] };
+      });
+      got.errors = p.errors;
+      await p.context.close();
+      return got;
+    };
+    const waves = async () => {
+      const p = await open("?fx=rain3,wind-west");
+      await drive(p.page, 60);   // (the wind faded in)
+      const r = await p.page.evaluate(() => {
+        const f = Sky.state().flood, W = 400, every = 0.05, s = 3, ended = (drift) => {
+          const h = f.waves(W, 200, 4, s, every, drift).pop();
+          const best = (lo, hi) => { let at = lo; for (let i = lo; i < hi; i++) if (h[i] < h[at]) at = i; return at; };
+          // the pulse pushed down splits, a dip running each way: how far each has gone
+          return { right: best(201, W - 40) - 200, left: 200 - best(40, 199) };
+        };
+        return { still: ended(0), downRight: ended(f.PUSH), downLeft: ended(-f.PUSH), push: f.push, PUSH: f.PUSH, wave: f.wave };
+      });
+      r.errors = p.errors;
+      await p.context.close();
+      return r;
+    };
+    // the gust: something flung with each way blowing: its side, its path, its sprite
+    const gust = async (way, kind) => {
+      const p = await open(`?fx=wind-${way}`);
+      await drive(p.page, 40);
+      const r = await p.page.evaluate((kind) => {
+        const g = Sky.fling(kind), a = Sky.state().gust.flyers[0], xs = [a.x];
+        for (let i = 0; i < 60; i++) { Sky.advance(1); const f = Sky.state().gust.flyers[0]; if (f) xs.push(f.x); }
+        return { kind: g, to: a.to, x0: xs[0], x1: xs[xs.length - 1], width: Sky.state().size[0] };
+      }, kind);
+      r.errors = p.errors;
+      await p.context.close();
+      return r;
+    };
+    await Promise.all([readings(), flip()]);
+    out.mirrorWind = await mirror("?fx=wind", 240);
+    out.haze = { east: await haze("east"), west: await haze("west") };
+    out.rain = { east: await rain("east", true), west: await rain("west", true), eastRead: await rain("east", false), westRead: await rain("west", false) };
+    out.frog = { east: await frog("east"), west: await frog("west") };
+    out.waves = await waves();
+    out.gust = { east: await gust("east", "cow"), west: await gust("west", "cow"), chickenWest: await gust("west", "chicken") };
+    // everything on and the wind turning each way twice, a frog crossing, a gust flung: no error, every effect still going
+    const p = await open("?fx=haze4,rain3,wind,humidity,ice");
+    await drive(p.page, 900);
+    await p.page.evaluate(() => Sky.fling("barn"));
+    await p.reads({ "Wind direction": 270 });
+    await drive(p.page, 400);
+    await p.reads({ "Wind direction": 45 });
+    await drive(p.page, 400);
+    await p.reads({ "Wind direction": 300 });
+    await drive(p.page, 400);
+    out.busy = await p.page.evaluate(() => ({ flips: Sky.state().windFlips, dir: Sky.state().windDir, effects: Sky.state().effects, leaves: Sky.state().wind.leaves }));
+    await p.context.close();
+    out.errors = errored.flat();
+  },
 };
 
 const PARTED = { "--arrange": arrangeMode, "--touch": touchMode, "--zoom": zoomMode, "--zoom-touch": zoomTouchMode };
