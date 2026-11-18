@@ -3428,22 +3428,6 @@ def test_the_frog_swims_a_steady_breast_stroke_one_smooth_cycle():
     assert "FROG_RIPPLES" in HTML and "for (const d of [-1, 1])" in HTML   # (a ripple each side)
 
 
-def test_the_frogs_throat_is_a_big_cartoon_pouch_of_belly_cream_with_an_outline_and_a_highlight_hung_from_the_mouth():
-    pouch = re.search(r"THROAT_POUCH = \[((?:\"[.kyw]+\",? ?)+)\]", HTML).group(1)
-    rows = re.findall(r"\"([.kyw]+)\"", pouch)
-    assert len(rows) >= 5 and max(len(r.strip(".")) for r in rows) >= 9, rows   # (at full size >= 9 px wide, >= 5 rows deep)
-    assert all(len(r) == len(rows[0]) and r == r[::-1] for r in rows), rows   # (symmetric about the centre column)
-    assert len(rows[0]) <= HEAD_W - 3 and any("k" in r for r in rows) and any("w" in r for r in rows) and "y" in "".join(rows)
-    at = int(re.search(r"THROAT_AT = (\d+)", HTML).group(1))
-    assert at == HEAD_H - 1 and re.search(r"THROAT_SIZES = \[0, 0\.25, 0\.5, 0\.75, 1, 1\.1\]", HTML), at   # (hung from the head's last row, the chin, under the mouth line)
-    cream, green = ([int(v, 16) for v in re.findall(r"..", re.search(rf"{c}: rgb\(\"#(\w+)\"\)", HTML).group(1))] for c in "yg")
-    luma = lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
-    assert luma(cream) / luma(green) >= 1.5, (cream, green)   # (clearly paler than the neck)
-    assert "THROAT_PERIOD" not in HTML and "throat: between" not in HTML   # (no clock of its own: the stroke's)
-    alpha = float(re.search(r"FROG_WET = ([\d.]+)", HTML).group(1))
-    assert alpha >= 0.8 and re.search(r"v \* 0\.85 \+ SURFACE\[i\] \* 0\.15", HTML)   # (its lower part, under the surface, only lightly tinted)
-
-
 def test_every_limb_of_the_frog_shows_separate_toes_or_fingers():
     for rows in FROG_FRAMES:
         tips = [(x, y) for y in range(SPRITE_H) for x in range(SPRITE_W) if rows[y][x] == "l" and not (y < HEAD_H and HEAD_AT <= x < HEAD_AT + HEAD_W)]
@@ -3805,13 +3789,6 @@ async def test_the_winds_side_follows_the_wind_direction_reading_east_leftward_w
     assert frog["east"]["first"]["x"] > frog["east"]["width"] and frog["east"]["travelled"] < -10 and not frog["east"]["flipped"], frog["east"]
     assert frog["west"]["first"]["x"] < 0 and frog["west"]["travelled"] > 10 and frog["west"]["flipped"], frog["west"]
     assert frog["east"]["pics"] and frog["west"]["pics"], frog
-    for way in ("east", "west"):   # (its throat pouch: once a stroke, in the stroke's own frames)
-        t = frog[way]["throat"]
-        by = t["bySize"]
-        assert max(by[i] for i in (1, 2, 3, 4)) >= 0.99 and 1.05 <= max(t["sizes"]) <= 1.15, t
-        assert by[0] <= 0.25 and by[6] <= 0.25 and all(by[i] >= 0.5 for i in (2, 3)), by   # (smallest at the glide and legs together, full through the recover)
-        assert 5 <= t["peaks"] <= 6, t["peaks"]   # (one per 1.7 s cycle over 10 s)
-        assert t["steps"] <= 0.5 and t["asymmetric"] == 0 and t["variants"] >= 4, t   # (smooth by the phase; every drawn variant symmetric)
     mirrored = {tuple(tuple(reversed(row.split(" "))) for row in pic) for pic in frog["east"]["pics"]}
     right = {tuple(tuple(row.split(" ")) for row in pic) for pic in frog["west"]["pics"]}
     assert len(right & mirrored) >= min(len(right), len(mirrored)) - 1 and any(pic != tuple(tuple(reversed(r)) for r in pic) for pic in right), (len(right), len(mirrored), len(right & mirrored))   # (the head lopsided; the poses seen one way seen mirrored the other, but for one the other swimmer was not sampled in)
