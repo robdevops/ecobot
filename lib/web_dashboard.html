@@ -1048,7 +1048,7 @@ const Sky = (() => {
   // elliptical ember bloom, both scaled by the heat, their outlines wobbling. The heat's h is its level: 0.3 at 35 C to 1 at 43 C
   // (0.3 where only the UV is on).
   // The UV: NB = 12 thick beams spaced 30 degrees all round the sun (each a little off its place, and its length 0.9 to 1.1 times), each
-  // 1.3 sun diameters wide at its base (0.92 to 1.08 times that) and widening along its length (to 3.3 times at its end), blunt-ended: no
+  // 1.3 sun diameters wide at its base (0.915 to 1.07 times that) and widening along its length (to 3.3 times at its end), blunt-ended: no
   // taper, its brightness falling smoothly to zero over the last 60 % of its length (BEAM_FADE, a cosine to the 1.35th power, whose
   // first and last slopes are zero: no end edge shows), a flat core with a soft dithered edge, a brighter edge line and a few streaks
   // inside, and a hot pink-white root at the sun. The ones nearest the sun's real direction, the beams' lean (beamState().lean: -atan(sin
@@ -1063,10 +1063,10 @@ const Sky = (() => {
   // sun has moved a quarter art pixel: each disc and halo pixel's distance, angle and steady parts, the bloom's, the beams' mask of
   // the window's edges and the sun's rim, a dither threshold at every pixel), the beams are worked out on half the resolution (cells
   // of 2 x 2 art px: the beams' own field, then interpolated up) through tables of their profile, and all of it is made again only
-  // every SUN_EVERY (0.1 s: every third frame at 30 a second; the beams move 0.1 Hz at most), the in-between frames drawing the last.
+  // every SUN_EVERY (0.09 s: every third frame at 30 a second; the beams move 0.1 Hz at most), the in-between frames drawing the last.
   const SUN_R = 0.042, SUN_X = 0.42, SUN_Y = 0.30, SUN_RY0 = 0.04, SUN_RY1 = 0.12, SUN_NOON_EL = 50, SUN_HORIZON = -1;
   const SUN_CYCLE = 20, SUN_W = 2 * Math.PI / SUN_CYCLE;   // (s: everything comes round again; rad/s)
-  const SUN_EVERY = 0.1, SUN_STEP = 0.25;                  // (s; art px: the sun's place kept to this)
+  const SUN_EVERY = 0.09, SUN_STEP = 0.25;                  // (s; art px: the sun's place kept to this)
   const SUN_STRENGTH = 1;
   const BEAMS_N = 12, BEAM_BW = 1.3, BEAM_LOBE = 0.6, BEAM_WK = 2.3, BEAM_EDGE = 34, BEAM_REACH = 0.8, BEAM_FADE = 0.4;
   const UV_FROM = 6, UV_TO = 11, UV_SOFT = 7.5;            // (the UV index: none below, full from, and the violet's first rise)
@@ -1106,7 +1106,7 @@ const Sky = (() => {
   const BEAMS = (() => {
     const r = lcg(9091);
     return Array.from({length: BEAMS_N}, (_, i) => {
-      const off = i / BEAMS_N * 2 * Math.PI - Math.PI + (r() - 0.5) * 0.12, wj = 0.92 + 0.16 * r();
+      const off = i / BEAMS_N * 2 * Math.PI - Math.PI + (r() - 0.5) * 0.12, wj = 0.93 + 0.14 * r();
       r(); r();   // (two numbers the first drawings of the beams used for their tips)
       const lj = 0.9 + 0.2 * r(), ph = r() * 6.28, aj = 0.9 + 0.2 * r();
       return {off, wj, lj, ph, sw: 1 + (i % 2), aj, sk: [-0.5 + 0.2 * (r() - 0.5), 0.02 + 0.3 * (r() - 0.5), 0.5 + 0.2 * (r() - 0.5)].map((v) => v),
@@ -1258,7 +1258,7 @@ const Sky = (() => {
         for (const b of BEAMS) {
           const wt = 0.5 + 0.5 * Math.cos(b.off), kk = (1 - BEAM_LOBE) + BEAM_LOBE * wt, Ls = 0.2 + 0.8 * kk, As = 0.3 + 0.7 * kk;
           const an = lean + b.off + 0.05 * Math.sin(SUN_W * b.sw * t + b.ph), bx = Math.sin(an), by = Math.cos(an), qx = by, qy = -bx;
-          const len = Lbase * b.lj * Ls * (0.6 + 0.4 * be) + R, hw0 = R * BEAM_BW * b.wj * (0.97 + 0.03 * Math.sin(a + b.ph)), ext = hw0 * (1 + BEAM_WK) * 1.05;
+          const len = Lbase * b.lj * Ls * (0.6 + 0.4 * be) + R, hw0 = R * BEAM_BW * b.wj * (0.985 + 0.015 * Math.sin(a + b.ph)), ext = hw0 * (1 + BEAM_WK) * 1.05;
           const I = 0.55 * b.aj * As * uamp * be * (0.6 + 0.4 * h);
           sunNowBeams.push({angle: an * 180 / Math.PI, length: len, width: 2 * hw0, bright: I, weight: kk, off: b.off});
           // the orange glow where the beam leaves the sun (outside the disc)
