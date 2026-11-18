@@ -30,7 +30,7 @@ Key facts of the code as it is:
 - The flash flood is a leaky bucket run on the server (`flood_of`, tau 30 min, runoff share 0.5, full at 15 mm). Section 4.5.
 - The pressure arrow is the WMO 3-hour tendency in its classes (slow, moderate, quick, rapid). Section 7.3.
 - Sunrise and sunset come from the sunrise equation (`solar.sun_times`). Sections 2.2 and 8.1.
-- The frog's throat pulses 1.5 times a second on its own clock. Section 4.5.
+- The frog's throat pouch swells once per stroke cycle (1.7 s), by the stroke's phase. Section 4.5.
 - Section 9 lists the known limitations: where the code departs from reality.
 
 ## 1. Summary of formula groups
@@ -267,7 +267,7 @@ With `d` = degrees below 0 C.
 | Drop hit | `hit` | Gaussian poke of `-power` px, width 1.3; power 0.3/0.6/1.1 by layer | ARTISTIC | |
 | Chop | `CALMS` 25 s | chop eases to 1 with a 3 s time constant, back to 0 with 25 s; pokes per second `chop*30*W/300` | TUNED | |
 | Frog timing | ~2767-3062 | first frog after 30 s, then exponential with mean 180 s (`-mean*ln(1 - U)`), minimum gap 40 s; speed `U(7, 10)` px/s | ARTISTIC | Whimsy. |
-| Frog throat pulse | page `THROAT_PERIOD`, `throatAt` | period 0.67 s (about 1.5 a second, a resting frog's throat rate), a random phase per frog; amount = smoothstep(t/0.25) out, held to 0.4 s, `1 - smoothstep((t - 0.4)/0.27)` back; swollen (amount >= 0.5) adds a 5 x 1 patch row and a 3 x 1 row under it, 2 + 3 = 5 pixels | ARTISTIC | A small touch at a real rate; independent of the stroke clock. |
+| Frog throat pouch | page `THROAT_KEYS`, `throatAt`, `THROAT_POUCH`, `THROAT_SIZES` | once per stroke cycle (1.7 s), tied to the stroke clock: size by the time into the stroke, eased between keys: 0 at 0 s, 0.05 at 0.5 s (the pull begins), 1.1 at 0.68 s (the snap), 1 from 0.8 s to 1.25 s (the recover), 0 at 1.4 s (the kick), 0 to 1.7 s; drawn as the nearest of the variants 0, 0.25, 0.5, 0.75, 1, 1.1 of an 11 x 6 px pouch scaled about the mouth's centre | ARTISTIC | A cartoon vocal sac tied to the stroke cycle; no real rate. |
 | Gust-object trigger | `GUST_MARK` :5516 | a new gust reading above 99 km/h flings one object | TUNED | 99 km/h is 27.5 m/s, in Beaufort 10 to 11 (89 to 117 km/h). The mark is "about a hundred". |
 | Gust-object flight | `gust` step | speed `U(42, 56)` px/s `* (1 + 0.35*wind amount)`; shed bits every 0.15 to 0.45 s, up to 14 | ARTISTIC | |
 
@@ -520,7 +520,7 @@ Constants to grep when checking that the numbers here match the code:
 | Haze | `PM_EXT`, `PM_CAP`, `PM_EDGES`, `pmOpacity`, `PAN_MAX`, `PAN_K`, `bakeTexture`, `HOLLOW` |
 | Heat | `heatOf`, `HEAT_STEPS`, `HEAT_PERIOD`, `HEAT_PEAK`, `heatWave`, `wanted`, `HEAT_SLEW`, `HEAT_FADE`, `HEAT_SOFT`, `HEAT_BANDS`, `band` |
 | UV and sun | `BEAM_MAX`, `BEAM_CURVE`, `EL_LOW`, `RUN_ON`, `SUN_FALLBACK`, `leanAt`, `leanOf` |
-| Ice, flood | `reachFor`, `growRate`, `MELT`, `RISE = 4`, `DRAIN`, `CALMS`, `PUSH`, `THROAT_PERIOD`, `EDDY_REST`, `flood_of` |
+| Ice, flood | `reachFor`, `growRate`, `MELT`, `RISE = 4`, `DRAIN`, `CALMS`, `PUSH`, `THROAT_KEYS`, `EDDY_REST`, `flood_of` |
 | Beads | `RUN_R`, `critOf`, `LEAN_FROM`, `BRAKE_S`, `GONE`, `TINY`, `SWELL`, `PACE`, `sized`, `HEAVY_RAIN`, `FOG_AT`, `FORM`, `CLEAR`, `THICKEN` |
 | Tilt, wind push | `POOL_IN`, `POOL_OUT`, `STEEP_FULL`, `SNAP_DEG`, `screenGravity`, `tilt(`, `PUSH_ON`, `PUSH_FULL`, `PUSH_MAX`, `pushOf`, `aim(` |
 | Gauges | `STEPS = [0.1`, `START, SWEEP`, `MIN_TILE`, `TABLE_TOP`, `STALE_MS`, `TENDENCY_STEADY`, `TENDENCY_AGO`, `TENDENCY_CLASSES`, `FLOOD_TAU`, `FLOOD_RUNOFF`, `FLOOD_FULL`, `FLOOD_ROW`, `FLOOD_SHOW`, `ROSE_REACH`, `33.8639`, `1.609344`, `25.4` |

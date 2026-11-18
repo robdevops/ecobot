@@ -3061,7 +3061,7 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
   // the wind's leaves its surface reaches (its waves as they are, wherever a leaf meets them) sticks there, floats, then sinks and
   // rests on the bottom, every one, the flood's own from then on: there while it lasts, the wind gone or not, gone as it drains away; the haze
   // is drawn above it (above(): down to its surface, as low as its troughs go). Rarely (about every FROG_EVERY s on
-  // average, never in its first FROG_FIRST s) a small, bemused, long-bodied frog swims a steady breast stroke across (head above the water, a long soft teardrop belly under it tapering to the hips, short stubby arms and thin curving legs, fingers and splayed toes; both sides always mirror images; its throat pulsing about 1.5 times a second), right to left with the wind, bobbing; the
+  // average, never in its first FROG_FIRST s) a small, bemused, long-bodied frog swims a steady breast stroke across (head above the water, a long soft teardrop belly under it tapering to the hips, short stubby arms and thin curving legs, fingers and splayed toes; both sides always mirror images; a cartoon throat pouch swelling once a stroke), right to left with the wind, bobbing; the
   // test link's flood (level 2) sends its first one FROG_FIRST s after the water starts rising. Drawn after the drips and the
   // leaves (the sunken ones show through it, tinted and dimmed), before the ice.
   const FLOOD = ["#06161A", "#0A2226", "#0F2F31", "#163E3E", "#1F4F4B", "#2A625B"].map(rgb);   // the body, deep to shallow
@@ -3123,16 +3123,35 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
     // ... and each one's mirror image, for a frog swimming rightward (the head lopsided: it faces the way it swims; the body, symmetric
     // about its middle column, unchanged)
     const FROGS_R = FROGS.map((blinks) => blinks.map((p) => ({top: flipped(p.top), under: flipped(p.under)})));
-    // Its throat (gular) pulse: a frog breathes visibly through the throat, about 1.5 times a second at rest (an ARTISTIC touch at a
-    // real rate: THROAT_PERIOD 0.67 s). The pale patch under the chin (the neck rows 7 and 8, below the mouth) swells: eased out over
-    // 0.25 s, held to 0.4 s, eased back by 0.67 s; swollen (more than half out) it is one pixel wider each side and one row lower.
-    // Two tiny overlays drawn after the frame (symmetric about the centre column, so the same for either facing and every stroke
-    // frame: no new frames), on the frog's own clock, a random phase each, apart from the stroke's.
-    const THROAT_PERIOD = 0.67, THROAT_OUT = 0.25, THROAT_HOLD = 0.4;
+    // Its throat pouch (a cartoon vocal sac, an ARTISTIC touch): once per stroke, tied to the stroke clock. A big rounded pouch in the
+    // belly's pale cream (y) with a dark outline (k) and a light highlight (w) hangs from the mouth line over the neck and the top of
+    // the belly: 11 px wide at its widest, 6 rows deep (the head is 15 px wide), its first 2 rows (the sprite's rows 6 and 7) above the
+    // surface in full colour, the other 4 under the water with only a light tint. It inflates during the pull (frames 1 and 2: from
+    // small to full with a quick overshoot of 10 %, the cartoon snap), holds full through the recover (frames 3 and 4), deflates at the
+    // kick (frame 5) and is smallest through the legs-together and the glide (frames 6 and 0). Its size is a smooth function of the
+    // stroke's phase (THROAT_KEYS, eased between keys), drawn as the nearest of 6 pre-rendered size variants (THROAT_SIZES), each
+    // scaled about the mouth's centre; every variant symmetric about the centre column, so the same for either facing: no new frames.
     const ease = (u) => { const c = Math.max(0, Math.min(1, u)); return c * c * (3 - 2 * c); };
-    const throatAt = (t) => { t = ((t % THROAT_PERIOD) + THROAT_PERIOD) % THROAT_PERIOD; return t < THROAT_HOLD ? ease(t / THROAT_OUT) : 1 - ease((t - THROAT_HOLD) / (THROAT_PERIOD - THROAT_HOLD)); };
-    const THROAT_ROWS = [[".yyy.", "....."], ["yyyyy", ".yyy."]];   // (relaxed, swollen: its row 7 above the water, its row 8 under it; 5 wide, columns 21 to 25)
-    const THROAT = THROAT_ROWS.map(([top, under]) => ({top: mapped([top], FROG), under: mapped([under], FROG_UNDER)}));
+    const THROAT_POUCH = [".kyyyyyyyk.", "kyyyyyyyyyk", "kyyywwwyyyk", "kyyyyyyyyyk", ".kyyyyyyyk.", "..kkkkkkk.."];   // (11 wide, 6 deep; its centre column 5)
+    const THROAT_SIZES = [0, 0.25, 0.5, 0.75, 1, 1.1], THROAT_AT = 6, THROAT_ABOVE = 2, THROAT_W = 13, THROAT_H = 7;   // (the variants' sizes; the sprite row it hangs from; its rows above the surface; the canvases' size)
+    const THROAT_KEYS = [[0, 0], [0.5, 0.05], [0.68, 1.1], [0.8, 1], [1.25, 1], [1.4, 0], [1.7, 0]];   // ([s into the stroke, size]: glide small, the pull snaps out past full, the recover holds, the kick deflates)
+    const throatAt = (clock) => {
+      const t = ((clock % FROG_LAP) + FROG_LAP) % FROG_LAP;
+      const i = THROAT_KEYS.findIndex(([at], j) => j + 1 < THROAT_KEYS.length && t < THROAT_KEYS[j + 1][0]);
+      const [t0, s0] = THROAT_KEYS[i], [t1, s1] = THROAT_KEYS[i + 1];
+      return s0 + (s1 - s0) * ease((t - t0) / (t1 - t0));
+    };
+    const throatWet = (c) => c.map((v, i) => Math.round(v * 0.85 + SURFACE[i] * 0.15));   // (a light water tint: it reads under the surface)
+    const THROAT_UNDER = Object.fromEntries(Object.entries(FROG).map(([c, v]) => [c, throatWet(v)]));
+    const THROAT = THROAT_SIZES.map((s) => {
+      const cell = (x, y) => {   // (the pouch's pixel at this scaled spot: mirrored about the centre column by sampling at |offset|)
+        const v = (x - (THROAT_W >> 1)) / s, sx = 5 + Math.sign(v) * Math.round(Math.abs(v)), sy = Math.floor((y + 0.5) / s);
+        return s > 0 && sy < THROAT_POUCH.length && sx >= 0 && sx < 11 ? THROAT_POUCH[sy][sx] : ".";
+      };
+      return {top: painted(THROAT_W, THROAT_ABOVE, (x, y) => FROG[cell(x, y)]),
+              under: painted(THROAT_W, THROAT_H - THROAT_ABOVE, (x, y) => THROAT_UNDER[cell(x, y + THROAT_ABOVE)])};
+    });
+    const throatVariant = (size) => THROAT_SIZES.reduce((best, s, i) => Math.abs(s - size) < Math.abs(THROAT_SIZES[best] - size) ? i : best, 0);
     // A splash where a drop or a drip lands, frame by frame: a bead thrown up, two droplets, falling back ([dx, dy, colour])
     const SPLASH = [[[0, -1, SURFACE]], [[0, -2, SURFACE], [-1, -1, BAND], [1, -1, BAND]], [[-2, -2, BAND], [2, -2, BAND]],
                     [[-2, -1, FAR], [3, -1, FAR]]]
@@ -3370,14 +3389,13 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
         splashes = splashes.filter((s) => s.age < 0.2);
         // the frog: rarely, never at once; drifting across with the wind, bobbing on the waves
         if (!frog && since >= nextFrog && depth >= FROG_DEPTH * full) {   // (only in deep water, the bucket 0.9 full or more: his sprite's underwater rows need it; in from upwind: the right edge for a wind blowing leftward, the left for rightward)
-          frog = {x: dir.side < 0 ? W + 24 : -24, v: between(...FROG_SPEED), blink: between(2, 5), clock: between(0, FROG_LAP), throat: between(0, THROAT_PERIOD), seen: false, born: since};
+          frog = {x: dir.side < 0 ? W + 24 : -24, v: between(...FROG_SPEED), blink: between(2, 5), clock: between(0, FROG_LAP), seen: false, born: since};
           frogs++;
         }
         if (frog) {
           frog.x += dir.f * frog.v * (wind.amount > 0 ? 1.4 : 1) * FROG_PACE[strokeAt(frog.clock)] * dt;   // (downwind: it swims with the wind)
           if (frog.x >= 0 && frog.x <= W) frog.seen = true;
           frog.clock += dt;
-          frog.throat = (frog.throat + dt) % THROAT_PERIOD;
           const now = strokeAt(frog.clock);   // (a pair of ripples as the pull and the kick begin: the same each side)
           if (now !== frog.last && FROG_RIPPLES[now] && frog.last !== undefined) for (const d of [-1, 1]) splashes.push({x: Math.round(frog.x) + d * FROG_RIPPLES[now], age: 0});
           frog.last = now;
@@ -3442,15 +3460,15 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
           const left = x - (pic.top.width >> 1), top = frog.y - FROG_SITS;
           g.globalAlpha = Math.min(1, o * 1.1);
           g.drawImage(pic.top, left, top + FROG_BOB[stroke]);
-          const swollen = throatAt(frog.throat) >= 0.5 ? 1 : 0;
-          frog.swollen = swollen;
-          g.drawImage(THROAT[swollen].top, left + 21, top + FROG_BOB[stroke] + FROG_SITS - 1);
+          frog.size = throatAt(frog.clock);
+          const pouch = THROAT[throatVariant(frog.size)];
+          if (frog.size > 0.05) g.drawImage(pouch.top, left + 23 - (THROAT_W >> 1), top + FROG_BOB[stroke] + THROAT_AT);
           g.globalAlpha = Math.min(1, o * FROG_WET);
           const rowsBelow = Math.max(0, Math.min(pic.under.height, H - frog.y));   // (only what's within the flood: none below its floor, the canvas's bottom)
           frog.drawn = rowsBelow;
           if (rowsBelow > 0) {
             g.drawImage(pic.under, 0, 0, pic.under.width, rowsBelow, left, frog.y, pic.under.width, rowsBelow);
-            g.drawImage(THROAT[swollen].under, left + 21, frog.y);
+            if (frog.size > 0.05) g.drawImage(pouch.under, 0, 0, THROAT_W, Math.min(pouch.under.height, rowsBelow), left + 23 - (THROAT_W >> 1), frog.y, THROAT_W, Math.min(pouch.under.height, rowsBelow));
           }
         }
       },
@@ -3468,7 +3486,7 @@ const BAND_BREATH = 0.22;            // the most its thickness changes (each way
                        for (let t = 0; t <= s + 1e-9; t += every) { out.push(Array.from(h)); waves(h, v, a, every, drift); }
                        return out;
                      },
-                     frog: frog && {throat: {phase: frog.throat / THROAT_PERIOD, amount: throatAt(frog.throat), state: frog.swollen ?? null, period: THROAT_PERIOD, rows: THROAT_ROWS}, x: frog.x, y: frog.y || null, stroke: frog.stroke ?? null, drawn: frog.drawn ?? null, flipped: frog.flip ?? null}, frogRows: FROG_FRAMES, strokes: FROG_FRAMES.length, beats: FROG_BEATS, leaves: leafProbe(),
+                     frog: frog && {throat: {phase: (frog.clock % FROG_LAP) / FROG_LAP, size: frog.size ?? 0, stroke: frog.stroke ?? null}, x: frog.x, y: frog.y || null, stroke: frog.stroke ?? null, drawn: frog.drawn ?? null, flipped: frog.flip ?? null}, frogRows: FROG_FRAMES, strokes: FROG_FRAMES.length, beats: FROG_BEATS, leaves: leafProbe(),
                      surface: depth > 0 ? Array.from({length: W}, (_, x) => surfaceAt(x)) : []}),
     };
   });

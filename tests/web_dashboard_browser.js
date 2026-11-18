@@ -4346,32 +4346,42 @@ const WEATHER = {
     const frog = async (way) => {
       const p = await open(`?fx=rain3,wind-${way}`, { seed: 0 });
       const got = await p.page.evaluate(() => {
-        const g = document.querySelector("#sky canvas").getContext("2d"), draw = g.drawImage, seen = new Map(), at = [];
+        const g = document.querySelector("#sky canvas").getContext("2d"), draw = g.drawImage, seen = new Map(), at = [], asym = { bad: 0, keys: new Set() };
         g.drawImage = function (...args) {
           const img = args[0];
           if (img && img.width === 47 && img.height === 8) {   // (the frog's top)
             const d = img.getContext("2d").getImageData(0, 0, 47, 8).data;
             seen.set(Array.from(d).join(","), Array.from({ length: 8 }, (_, y) => Array.from({ length: 47 }, (_, x) => Array.from(d.slice((y * 47 + x) * 4, (y * 47 + x) * 4 + 4)).join("/")).join(" ")));
           }
+          if (img && img.width === 13 && img.height <= 5) {   // (the throat pouch's variants: each mirror-symmetric)
+            const d = img.getContext("2d").getImageData(0, 0, 13, img.height).data;
+            let bad = 0, ink = 0;
+            for (let y = 0; y < img.height; y++) for (let x = 0; x < 13; x++) { const a = (y * 13 + x) * 4, b = (y * 13 + 12 - x) * 4; ink += d[a + 3] > 0; if (d[a] !== d[b] || d[a + 1] !== d[b + 1] || d[a + 3] !== d[b + 3]) bad++; }
+            asym.bad += bad; asym.keys.add(img.height + ":" + ink);
+          }
           return draw.apply(this, args);
         };
-        let n = 0, first = null, last = null, prev = null;
-        const swells = [], throatStrokes = [];   // (when its throat swells, by the page's clock; the stroke frames it swelled or relaxed in)
+        let n = 0, first = null, last = null;
+        const sizes = [], bySize = [];   // (the pouch's size each step; its largest in each stroke frame)
+        let peaks = 0, up = false, steps = 0, before = null;
         while (n++ < 3000 && Sky.advance(1)) {   // (the first frog, then 8 s of it)
           const fl = Sky.state().flood, f = fl.frog;
           if (!f) continue;
-          if (f.throat.state !== null) {
-            if (prev === 0 && f.throat.state === 1) swells.push(fl.since);
-            if (prev !== null && f.throat.state !== prev && !throatStrokes.includes(f.stroke)) throatStrokes.push(f.stroke);
-            prev = f.throat.state;
+          const sz = f.throat.size;
+          if (sizes.length < 300) {
+            sizes.push(sz);
+            bySize[f.stroke] = Math.max(bySize[f.stroke] ?? 0, sz);
+            if (before !== null) steps = Math.max(steps, Math.abs(sz - before));
+            before = sz;
+            if (!up && sz >= 0.9) { peaks++; up = true; } else if (up && sz < 0.5) up = false;
           }
           if (!first) first = { x: f.x };
           last = f;
-          if (at.push(f.x) >= 240) break;
+          if (at.push(f.x) >= 240 && sizes.length >= 300) break;
         }
         delete g.drawImage;
         return { first, width: Sky.state().size[0], travelled: last ? last.x - first.x : 0, frames: at.length, flipped: last && last.flipped,
-                 swells, throatStrokes,
+                 throat: { sizes, bySize, peaks, steps, asymmetric: asym.bad, variants: asym.keys.size },
                  pics: [...seen.values()] };
       });
       got.errors = p.errors;
