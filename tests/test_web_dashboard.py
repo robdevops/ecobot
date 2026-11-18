@@ -9,7 +9,7 @@ across reloads, reset), the strip's reading time with a device's reading over an
 fill the window and the gallery through the others (keys, mouse drags, a trackpad's swipe, touch swipes, both ends, the text still
 selectable, live readings); the weather behind the tiles (each effect at its reading's mark, its tile framed in red, several at once on
 one canvas behind the tiles, "stop", the temporary test links and ?fx=, MCP_DASHBOARD_ANIMATIONS on, low and off and reduced motion
-(what moves in each), uv's beams swaying slowly in place
+(what moves in each), uv's beams sweeping slowly back and forth round the sun
 with no particles, the wind's leaves within the budget and blowing right to left, rain in the wind bunched into curtains, its drops
 knocking the leaves they hit, humidity's fog and its beads, heavy rain's drops sticking to the glass, a flash flood filling the window
 a quarter up, its waves, its leaves and its frog, a cow, a barn or a chicken blown across in a gust over 99 km/h), the data's rain
@@ -2206,11 +2206,24 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert got["particles"]["uv"] == {"uv": 0, "budget": got["particles"]["uv"]["budget"]}, got["particles"]
     wind = got["particles"]["wind"]
     assert 0 < wind["wind"] <= wind["budget"], wind
-    # uv's beams over 40 s at a fixed sun position: static between frames (every frame pixel-identical to the first; no beam's angle,
-    # length, strength or width changes)
+    # uv's beams over 120 s at a fixed sun position: their strength, length and width constant (no pulsing); the whole fan sweeping
+    # rigidly back and forth within +-12 degrees at no more than 0.1 Hz, reaching both signs and reversing; each beam's own sway within
+    # +-2.5 degrees at no more than 0.1 Hz; no neighbour pair's gap off the static 30 degrees by over 5; the coverage at half the longest
+    # reach with no hole wider than the static fan's; the weather paused, it stops; and ten seconds on the picture is different while
+    # the ball's centre and the beams' strength are the same
     uv = got["uv"]
-    assert uv["errors"] == [] and uv["frames"] >= 400, uv
-    assert uv["changed"] == 0 and uv["most"] == 0 and uv["moved"] == 0, uv
+    assert uv["errors"] == [] and uv["frames"] >= 1200, uv
+    assert uv["still"] == 0, uv
+    fan = uv["fan"]
+    assert 11 <= fan["hi"] <= 12.01 and -12.01 <= fan["lo"] <= -11 and fan["flips"] >= 3, fan
+    assert fan["fast"] <= 0.1 and uv["sway"]["fast"] <= 0.1, uv
+    assert 1 <= uv["sway"]["max"] <= 2.5, uv["sway"]
+    assert uv["spacing"] <= 5, uv["spacing"]
+    assert uv["gap"]["worst"] <= uv["gap"]["still"] + 5, uv["gap"]
+    assert uv["paused"] == 0, uv
+    later = uv["later"]
+    assert later["span"] == pytest.approx(10, abs=0.2) and later["ball"] == 0 and later["bright"] == 0, later
+    assert later["differ"] > 0.1 * later["lit"] > 100, later
     # ... their dither irregular: no grid in its pixels (as gridPeak sees it: under 400)
     assert uv["grid"] < 400, uv["grid"]
     # heavy rain in the wind: its drops blown leftward, faster than with no wind; bunched by the gust bands into curtains and gaps,

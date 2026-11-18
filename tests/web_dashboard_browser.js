@@ -1912,12 +1912,12 @@ const sunLook = async (page) => {
     }, index));
   }
   await fx({ heat: 1, uv: 1 });
-  // the sun's real place does not show in the beams: their angles, lengths and strengths the same at five places of the sun
+  // the sun's real place does not show in the beams: their places at rest, lengths and strengths the same at five places of the sun
   out.alike = await inPage(() => {
     __day(354.36, 1241.24, 75.61, 600);
     return [[80, 40], [300, 30], [0, 70], [120, 10], [240, 60]].map(([az, el]) => {
       Sky.setSunPosition(az, el); Sky.advance(60);
-      return Sky.state().beam.beams.map((x) => ({ angle: x.angle, length: x.length, bright: x.bright }));
+      return Sky.state().beam.beams.map((x) => ({ angle: x.base, length: x.length, bright: x.bright }));
     });
   });
   // the ends: each beam's profile from half its length to its end (steady, then in the picture along the longest)
@@ -2122,26 +2122,68 @@ const placeSeen = (page, days) => page.evaluate((days) => {
   Sky.setTime(720);
   return { points, through, run, curve };
 }, days);
-// uv's beams alone over 40 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame 0.1 s on, Sky's longest
-// step), the sun at a fixed place: the canvas outside the ball's box every frame from 60 frames in (the beams faded in) against the first of them: how many
-// frames differ in any pixel (`changed`) and by how much at most (`most`), and the beams' angles, lengths and strengths at the start and
-// the end of it (`moved`: the largest change in any)
+// uv's beams alone over 120 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame 0.1 s on, Sky's longest
+// step), the sun at a fixed place: every frame the beams' angle (degrees from straight down), base place, fan sweep, length, strength and
+// width. `still`: the largest change in any beam's length, strength or width; `fan`: the fan's sweep (its largest and smallest, and
+// the fastest it moved, in cycles a second, and how often it reversed); `sway`: the largest beam's own sway about base + fan and the
+// fastest any moved (cycles a second); `spacing`: the widest change of any neighbour pair's gap from the static one (degrees);
+// `gap`: the widest angular gap in the beams' coverage at half the longest beam's reach, at its worst over the run, and the static fan's;
+// `paused`: the angles' largest change over 50 frames with the weather's time stopped (timeScale 0); `later`: the canvas outside the
+// ball's box at the clock's t and t + 10 s: the pixels that differ and the ball's centre and the beams' strengths' differences
 const uvSeen = (page) => page.evaluate(() => {
   Sky.setSun({ rise: 354.36, set: 1241.24, now: 600, noon_el: 75.61 }); Sky.setTime(600); Sky.setSunPosition(80, 40);
   Sky.advance(60);
   const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), grab = () => g.getImageData(0, 0, c.width, c.height).data;
-  const look = () => Sky.state().beam.beams.map((b) => [b.angle, b.length, b.bright, b.width]);
-  const first = grab(), was = look(), W = c.width, [bx0, by0, bx1, by1] = Sky.state().heat.ball.box;   // (outside the ball's own box: its slow shimmer stays)
-  let changed = 0, most = 0, moved = 0;
-  for (let k = 0; k < 400; k++) {
+  const look = () => Sky.state().beam.beams;
+  const lite = () => ({ t: Sky.clock().clock, beams: look().map((b) => ({ ...b })) });
+  const at = () => ({ ...lite(), ball: Sky.state().heat.sun, px: grab(), box: Sky.state().heat.ball.box });
+  const first = lite(), W = c.width, n = first.beams.length;
+  const wrap = (d) => ((d + 540) % 360) - 180;
+  // (the coverage at half the longest reach: each beam's angular span there, its width at that distance (1 + 0.9 of the way) over the distance; the widest hole between the spans)
+  const reach = Math.max(...first.beams.map((b) => b.length)) / 2;
+  const hole = (angles, beams) => {
+    const iv = angles.map((a, i) => { const hw = Math.atan(beams[i].width / 2 * (1 + 0.9 * Math.min(1, reach / beams[i].length)) / reach) * 180 / Math.PI; return [a - hw, a + hw]; })
+      .sort((p, q) => p[0] - q[0]);
+    let worst = 0, end = iv[0][1];
+    for (let i = 1; i < iv.length; i++) { worst = Math.max(worst, iv[i][0] - end); end = Math.max(end, iv[i][1]); }
+    return Math.max(worst, iv[0][0] + 360 - end);
+  };
+  const stat = first.beams.map((b) => b.base).sort((p, q) => p - q), order = first.beams.map((b, i) => i).sort((p, q) => first.beams[p].base - first.beams[q].base);
+  const staticHole = hole(stat, order.map((i) => first.beams[i]));
+  let prev = first, still = 0, frames = 0, hi = -1e9, lo = 1e9, fanFast = 0, swayFast = 0, swayMax = 0, spacing = 0, worstHole = 0, flips = 0, lastDir = 0;
+  const startGap = order.map((k, j) => wrap(first.beams[order[(j + 1) % n]].base - first.beams[k].base));
+  for (let k = 0; k < 1200; k++) {
     Sky.advance(1);
-    const d = grab(); let diff = 0;
-    for (let i = 0; i < d.length; i++) { const x = (i >> 2) % W, y = ((i >> 2) - x) / W; if (x >= bx0 && x <= bx1 && y >= by0 && y <= by1) continue; diff = Math.max(diff, Math.abs(d[i] - first[i])); }
-    if (diff > 0) changed++;
-    most = Math.max(most, diff);
-    if (k % 100 === 0) look().forEach((b, i) => b.forEach((v, j) => { moved = Math.max(moved, Math.abs(v - was[i][j])); }));
+    const now = lite(), dt = now.t - prev.t, f = now.beams[0].fan;
+    hi = Math.max(hi, f); lo = Math.min(lo, f);
+    if (dt > 0) {
+      fanFast = Math.max(fanFast, Math.abs(f - prev.beams[0].fan) / dt / 360);
+      const d = Math.sign(f - prev.beams[0].fan); if (d && lastDir && d !== lastDir) flips++; if (d) lastDir = d;
+    }
+    now.beams.forEach((b, i) => {
+      const o = first.beams[i], sw = b.angle - b.base - b.fan;
+      still = Math.max(still, Math.abs(b.length - o.length), Math.abs(b.bright - o.bright), Math.abs(b.width - o.width));
+      swayMax = Math.max(swayMax, Math.abs(sw));
+      if (dt > 0) swayFast = Math.max(swayFast, Math.abs(sw - (prev.beams[i].angle - prev.beams[i].base - prev.beams[i].fan)) / dt / 360);
+    });
+    order.forEach((k2, j) => { const nx = order[(j + 1) % n]; spacing = Math.max(spacing, Math.abs(wrap(now.beams[nx].angle - now.beams[k2].angle) - startGap[j])); });
+    if (k % 4 === 0) { const idx = now.beams.map((b, i) => i).sort((p, q) => wrap(now.beams[p].angle) - wrap(now.beams[q].angle)); worstHole = Math.max(worstHole, hole(idx.map((i) => wrap(now.beams[i].angle)), idx.map((i) => now.beams[i]))); }
+    prev = now; frames++;
   }
-  return { frames: Sky.clock().frames, changed, most, moved };
+  const span = prev.t - first.t;
+  const before = look().map((b) => b.angle);
+  Sky.timeScale(0); Sky.advance(50); Sky.timeScale(1);
+  const paused = Math.max(...look().map((b, i) => Math.abs(b.angle - before[i])));
+  const one = at(); Sky.advance(100); const two = at();
+  const [bx0, by0, bx1, by1] = one.box; let differ = 0, lit = 0;
+  for (let i = 0; i < one.px.length; i += 4) {
+    const x = (i >> 2) % W, y = ((i >> 2) - x) / W;
+    if (x >= bx0 && x <= bx1 && y >= by0 && y <= by1) continue;
+    if (one.px[i + 3] > 0 || two.px[i + 3] > 0) lit++;
+    if (Math.abs(one.px[i] - two.px[i]) + Math.abs(one.px[i + 1] - two.px[i + 1]) + Math.abs(one.px[i + 2] - two.px[i + 2]) > 6) differ++;
+  }
+  const later = { span: two.t - one.t, differ, lit, ball: Math.hypot(one.ball.x - two.ball.x, one.ball.y - two.ball.y), bright: Math.max(...one.beams.map((b, i) => Math.abs(b.bright - two.beams[i].bright))) };
+  return { frames: Sky.clock().frames, still, span, fan: { hi, lo, fast: fanFast, flips }, sway: { max: swayMax, fast: swayFast }, spacing, gap: { worst: worstHole, still: staticHole }, paused, later };
 });
 // humidity's beads condensing on the glass and running down it, every frame over `frames` of Sky's (each 0.1 s of the page's time,
 // its clock run on fast: `pace`; times Sky.timeScale's, if set): how many ran (moved 10 px or more); any that went up (between two

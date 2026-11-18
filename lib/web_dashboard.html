@@ -199,7 +199,7 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   Sky.setSunPosition(az, el) (test-only): the place pinned (null: unpinned); Sky.setTime(minutes) (test-only): the time of day fixed there
 //   (null: by the clock again; window.__skyTest.time: at the start). Sky.state().beam: {lean: degrees from vertical now, negative
 //   down-left (morning), positive down-right, az, el (null on the curve), up, real, minutes, rise, set, noon, noonEl, t, day, fixed, and the UV's
-//   own: level, index, uvn, amp, count, diameter, beams [{angle, length, width, bright}], at(i, f)}.
+//   own: level, index, uvn, amp, count, diameter, beams [{angle, base, fan, length, width, bright}], at(i, f)}.
 //   Sky.setWindSpeed(speed, gust): the live wind's speed and gust, km/h (the Wind tile's reading and the gust, from the page's data): the
 //   rain's slant follows them continuously (per layer, tan of its angle from vertical = speed / its drops' terminal speed, see Sky.setRainRate: 25 km/h at 5 mm/h about 66, 55 and 48 degrees far, mid, near; none at no wind: straight
 //   down; at most 70 degrees; the gust adding 0.3 of what it is over the speed; the speed eased, rising over about 2 s, falling over
@@ -1038,7 +1038,7 @@ const Sky = (() => {
   // One picture for the heat and the UV together: the ball with its halo and ember flare (the heat's) and the violet beams round it (the
   // UV's), made in one pass and drawn once, by the heat while it is on, else by the UV, at the strength of the stronger of the two
   // (the ball's flare as the heat's share of that, the beams as the UV's: see draw()); the ball's flare moves no faster than 0.5 Hz and comes
-  // round again every 20 s; the beams hold still (their length, strength and place never change with time).
+  // round again every 20 s; the whole fan of beams sweeps rigidly and slowly back and forth round the sun as one (the fan's angle 12 degrees times the sine of the weather's clock at 0.025 Hz, a period of 40 s, so the even 30 degree spacing and the coverage stay as they are), each beam swaying a further 2.4 degrees at its own 0.05 to 0.1 Hz and phase; the angles follow the weather's clock (they stop with the weather); the length, strength and width of a beam never change with time).
   // The place. The day fraction t = (time - sunrise) / (sunset - sunrise) of the station's own day (the page's `sun`: rise, set, now),
   // 0 at sunrise to 1 at sunset; the sun is at x = W / 2 + 0.42 W cos(pi t), y = yLo - yLo sin(noon elevation) / sin(75.6 degrees) sin(pi t): a clean
   // elliptical arc from the right (the east: the compass dial's east is the screen's right, west the left) to the left along the strip above the first row of tiles (SUN_STRIP0: the first tile's top read from the page,
@@ -1070,7 +1070,7 @@ const Sky = (() => {
   // sun has moved a quarter art pixel: each glow pixel's distance, angle and steady part, in shells of a pixel (a render stops at its own reach), the bloom's, the beams' mask of
   // the window's edges and the sun's root, a dither threshold at every pixel; the profile itself is a table of 4 steps to a pixel made at each render), the beams are worked out on half the resolution (cells
   // of 2 x 2 art px: the beams' own field, then interpolated up) through tables of their profile, and all of it is made again only
-  // every SUN_EVERY (0.09 s: every third frame at 30 a second; the beams move 0.1 Hz at most), the in-between frames drawing the last.
+  // every SUN_EVERY (0.09 s: every third frame at 30 a second; the beams' angles change by well under a degree between), the in-between frames drawing the last.
   const SUN_X = 0.42, SUN_NOON_EL = 50, SUN_NOON_MAX = 75.6, SUN_HORIZON = -1;
   const SUN_NOON_SIN = Math.sin(SUN_NOON_MAX * Math.PI / 180);   // (the sine of the highest noon elevation of the year: the summer solstice's, 75.6 degrees)
   // The strip above the first row of tiles, where the sun lives: S = its height (art px: the first tile's top, at least 0.06 H and at most 0.16 H),
@@ -1080,6 +1080,7 @@ const Sky = (() => {
   const SUN_CYCLE = 20, SUN_W = 2 * Math.PI / SUN_CYCLE;   // (s: everything comes round again; rad/s)
   const SUN_EVERY = 0.09, SUN_STEP = 0.25;                  // (s; art px: the sun's place kept to this)
   const SUN_STRENGTH = 1;
+  const BEAM_SWEEP = 12, BEAM_SWEEP_T = 40, BEAM_SWAY = 2.4, BEAM_SWAY_F0 = 0.05, BEAM_SWAY_F1 = 0.1;   // (degrees, s: the fan's sweep amplitude (under half the 30 degree spacing) and period; each beam's own sway: degrees and 0.05 to 0.1 Hz)
   const BEAMS_N = 12, BEAM_BL = 0.13, BEAM_WK = 0.9, BEAM_EDGE = 34, BEAM_FADE = 0.65;
   const UV_FROM = 6, UV_TO = 11, UV_SOFT = 7.5, UV_SEEN = 0.02;   // (the UV index: none below, full from, and the violet's first rise; the least amount that shows: the mark)
   const SUN_BALL0 = 3.4, SUN_BALL1 = 2.6, SUN_PROF = 4, SUN_EMBER = 4, SUN_BLOOM = 1;   // (the ball's reach Rh = R (3.4 + 2.6 heat); the profile's steps to a pixel; the ember's gain near the ball and the bloom's)
@@ -1122,7 +1123,8 @@ const Sky = (() => {
       const off = i / BEAMS_N * 2 * Math.PI - Math.PI + (r() - 0.5) * 0.12, wj = 0.93 + 0.14 * r();
       r(); r();   // (two numbers the first drawings of the beams used for their tips)
       const lj = 0.9 + 0.2 * r(), ph = r() * 6.28, aj = 0.9 + 0.2 * r();
-      return {off, wj, lj, ph, aj, sk: [-0.5 + 0.2 * (r() - 0.5), 0.02 + 0.3 * (r() - 0.5), 0.5 + 0.2 * (r() - 0.5)].map((v) => v),
+      const swf = (BEAM_SWAY_F0 + (BEAM_SWAY_F1 - BEAM_SWAY_F0) * ((i * 5) % BEAMS_N) / (BEAMS_N - 1)) * 2 * Math.PI, swp = (i * 7 % BEAMS_N) / BEAMS_N * 2 * Math.PI + 0.4;   // (the sway's rate, rad/s, and phase: spread over the beams)
+      return {off, swf, swp, wj, lj, ph, aj, sk: [-0.5 + 0.2 * (r() - 0.5), 0.02 + 0.3 * (r() - 0.5), 0.5 + 0.2 * (r() - 0.5)].map((v) => v),
               sp: [r() * 6.28, r() * 6.28, r() * 6.28], sa: [0.5 + 0.5 * r(), 0.4 + 0.5 * r(), 0.5 + 0.5 * r()]};
     });
   })();
@@ -1232,7 +1234,7 @@ const Sky = (() => {
         gn: tn, shell, gI, gR, gA, gE, bn: bI.length, bI: Int32Array.from(bI), bA: Uint8Array.from(bA), bR: Float32Array.from(bR), bF: Float32Array.from(bF)}));
     };
     // The picture at time t (0-20 s) for the heat h (0.3-1), the flare's share kF, the UV level and the violet's share kU
-    const render = (t, h, kF, level, kU) => {
+    const render = (t, h, kF, level, kU, clk) => {
       const start = performance.now();
       const p = sunNow(), sx = Math.round(p.x / SUN_STEP) * SUN_STEP, sy = Math.round(p.y / SUN_STEP) * SUN_STEP, R = p.r, k = bake(sx, sy, R, p);
       const a = SUN_W * t, cyc = 0.5 + 0.5 * Math.cos(SUN_W * (t - 4)), TAU = 2 * Math.PI;
@@ -1286,10 +1288,11 @@ const Sky = (() => {
         const {wh, hh, cx, cy, mask} = k;
         fBh.fill(0); rowLo.fill(wh); rowHi.fill(-1);
         for (const b of BEAMS) {
-          const an = b.off, bx = Math.sin(an), by = Math.cos(an), qx = by, qy = -bx;
+          const fan = BEAM_SWEEP * Math.sin(2 * Math.PI * clk / BEAM_SWEEP_T) * Math.PI / 180, sway = BEAM_SWAY * Math.sin(b.swf * clk + b.swp) * Math.PI / 180;
+          const an = b.off + fan + sway, bx = Math.sin(an), by = Math.cos(an), qx = by, qy = -bx;
           const len = Lbase * b.lj + R, hw0 = Math.max(0.5, Lw * b.wj), ext = hw0 * (1 + BEAM_WK) * 1.05;
           const I = 0.5 * b.aj * uamp * (0.6 + 0.4 * h);
-          sunNowBeams.push({angle: an * 180 / Math.PI, length: len, width: 2 * hw0, bright: I});
+          sunNowBeams.push({angle: an * 180 / Math.PI, base: b.off * 180 / Math.PI, fan: fan * 180 / Math.PI, length: len, width: 2 * hw0, bright: I});
           const nl = Math.ceil(len) + 3;
           if (nl > als.length) { als = new Float32Array(nl * 2); hws = new Float32Array(nl * 2); }
           const ripple = b.ph;
@@ -1404,7 +1407,7 @@ const Sky = (() => {
         const ts = ((t % SUN_CYCLE) + SUN_CYCLE) % SUN_CYCLE;
         if (dirty || t - at >= SUN_EVERY || t < at) {
           at = t; dirty = false;
-          render(ts, hAm > 0 ? lastH : 0.3, heatA, uAm > 0 ? lastLevel : 0, uvA);
+          render(ts, hAm > 0 ? lastH : 0.3, heatA, uAm > 0 ? lastLevel : 0, uvA, t);
         }
         flood.above(g, () => {
           g.save();
@@ -1443,7 +1446,7 @@ const Sky = (() => {
   const uv = effect((e) => ({
     strength: () => effects.heat.amount > 0 ? 0 : SUN_STRENGTH,   // (the heat and the UV one picture: counted once under the cap)
     // (for the tests: the UV index the level stands for, its amount (the violet's strength) and the beams made last,
-    // {angle: degrees from vertical, length, width at the base (art px), bright (its strength at the root)}, and
+    // {angle: degrees from straight down now (base place + the fan's sweep + the beam's own sway, by the weather's clock), base: its place at rest, fan: the fan's sweep (the same for all), length, width at the base (art px), bright (its strength at the root)}, and
     // at(i, f): the brightness along beam i at the fraction f of its length, steady (what the dither is given))
     probe: () => {
       const p = art.probe(), s = sunNow(), a = uvAmount(e.level), l = p.last || {};
