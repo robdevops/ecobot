@@ -169,8 +169,7 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     assert data.status_code == 200
     got = data.json()
     sheet = gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False}))
-    assert got["tiles"] == [{**tile_json(t), **({"rose": []} if t.kind == "compass" else {}),             # (no file: no rose, no
-                             **({"common": dict.fromkeys(("Daily", "Monthly", "Yearly"))} if "Gust" in t.columns else {}),   # common point,
+    assert got["tiles"] == [{**tile_json(t), **({"rose": [], "common": dict.fromkeys(("Daily", "Monthly", "Yearly"))} if t.kind == "compass" else {}),   # (no file: no rose, no common point,
                              **({"tendency": None} if t.title == "Atmospheric pressure" else {})} for t in sheet.tiles]   # arrow)
     assert got["as_of"] == AS_OF and got["look"] == look()
     titles = [t["title"] for t in got["tiles"]]
@@ -401,7 +400,7 @@ async def test_the_winds_readings_are_the_5_minute_ones_and_the_minutes_they_don
 
 async def test_the_data_carries_the_most_common_wind_direction_for_today_this_month_and_this_year_in_the_stations_zone(
         server, station, tmp_path, monkeypatch):
-    """The Wind tile's `common`: {"Daily", "Monthly", "Yearly"} the compass point the wind came from most often since the station's
+    """The Wind direction tile's `common`: {"Daily", "Monthly", "Yearly"} the compass point the wind came from most often since the station's
     midnight, the first of its month and of its year (its zone: Melbourne's, 11 hours ahead of UTC in November), from the file's wind readings,
     calm ones (under 1 km/h) left out, a tie to the point nearest the newest reading; None for a period with nothing left; no other tile has
     one."""
@@ -412,10 +411,10 @@ async def test_the_data_carries_the_most_common_wind_direction_for_today_this_mo
     storage = Storage(tmp_path / "s.sqlite", TZ)
     station.eco.storage, station.eco.mac = storage, "AA:BB"
     page = WebDashboard(server)
-    wind_tile = lambda got: next(t for t in got["tiles"] if t["title"] == "Wind")
+    wind_tile = lambda got: next(t for t in got["tiles"] if t["title"] == "Wind direction")
     got = await page.data()
     assert wind_tile(got)["common"] == {"Daily": None, "Monthly": None, "Yearly": None}                       # (no readings)
-    assert [t["title"] for t in got["tiles"] if "common" in t] == ["Wind"]
+    assert [t["title"] for t in got["tiles"] if "common" in t] == ["Wind direction"]
     rows: dict[int, tuple[str, str]] = {}
 
     def blow(start: tuple, n: int, degrees: float, speed: float = 5.0):
@@ -444,7 +443,7 @@ async def test_the_most_common_direction_is_kept_two_minutes_read_again_as_the_d
     """WebDashboard.common: read at most every COMMON_SECONDS, else kept; again at once as the station's day turns; None in each
     period with the file not read (an error is logged)."""
     page = WebDashboard(server)
-    common = lambda got: next(t for t in got["tiles"] if t["title"] == "Wind")["common"]
+    common = lambda got: next(t for t in got["tiles"] if t["title"] == "Wind direction")["common"]
     start = int(datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
     station.held(wind=[(start + 1, 90.0, 5.0)])
     first = common(await page.data())
@@ -1120,8 +1119,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
             assert g["bands"] == 0, (name, g)
             if g["kind"] == "dial":                                                # (besides its reading)
                 assert sorted(g["words"]) == sorted([*(str(int(x)) if float(x).is_integer() else str(x) for x in t.ticks), t.unit]), (name, g)
-            least = min(1, min(r["width"] for r in got["rects"]) / 160)   # (the px of a tile 160 wide: less in a narrower one, as at 154 with the Wind's table)
-            assert g["gap"] >= (GAPS_BEFORE[g["kind"]] + 12) * least and g["gap"] >= 15 * least, (name, g)
+            assert g["gap"] >= GAPS_BEFORE[g["kind"]] + 12 and g["gap"] >= 15, (name, g)
             assert g["bottom"] <= TABLE_TOP + 0.5, (name, g)
         # the thermometers' glass catches the light: one straight line down the tube (no curve on the bulb, no second line); no dial
         # or beaker has it
@@ -1137,12 +1135,9 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         # from (99°, east), its reading "99°" (the degrees only; its label keeps the compass point); no table, the same size as its neighbours
         c, rects = got["compass"], got["rects"]
         assert (c["label"], c["reading"], c["turn"], c["faded"]) == ("Wind direction 99° E", "99°", "rotate(99.00 240 203)", False), c
-        assert c["points"] == ["N", "E", "S", "W"] and c["table"] == 0, c
+        assert c["points"] == ["N", "E", "S", "W"] and c["table"] == 8, c   # (its table: the Direction head, 3 row buttons, 3 figures, its area)
         assert c["pointColours"] == [look()["soft"]] * 4 and "compass_north" not in look(), c
-        assert any(near(c["box"], r, 0.5) for r in rects), c
-        sizes = sorted({(round(r["width"]), round(r["height"])) for r in rects})   # (every tile one size, the Wind's, with its second table,
-        assert len(sizes) == 2 and sizes[0][0] == sizes[1][0] and abs(sizes[1][1] - 4 / 3 * sizes[0][1]) <= 3, (name, sizes)   # a third taller)
-        assert c["box"]["height"] == sizes[0][1] or round(c["box"]["height"]) == sizes[0][1], c
+        assert any(near(c["box"], r, 0.5) for r in rects) and len({(round(r["width"]), round(r["height"])) for r in rects}) == 1, c
         compass_as_a_dial(c)
         ring, head = c["ring"], c["head"]
         assert (head["left"] + head["right"]) / 2 > (ring["left"] + ring["right"]) / 2 + ring["width"] * 0.1 and abs((head["top"] + head["bottom"]) / 2 - (ring["top"] + ring["bottom"]) / 2) < ring["height"] * 0.1, c
@@ -1181,20 +1176,23 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         # ... its heads: Max grey, Gust in the red hand's very red (the hand and its column go together); every other tile's Max red
         assert hands["Wind"]["headColours"] == [rgb(look()["needle"]), rgb(look()["high_hand"])], hands["Wind"]
         others = got["headColours"]
-        assert others["Wind"] == [["▲ Max", rgb(look()["needle"])], ["» Gust", rgb(look()["high_hand"])],
-                                  ["Direction", rgb(look()["needle"])]], others   # (and its second table's head)
-        assert any(t != "Wind" and heads for t, heads in others.items()), others
-        assert all(c == rgb(CHIPS[n.split()[-1]]) for t, heads in others.items() if t != "Wind" for n, c in heads), others
-        assert all(c == rgb(MAX_CHIP) for t, heads in others.items() if t != "Wind" for n, c in heads if n.endswith("Max")), others
-        # ... its most common direction under it: a table of its own, three rows, in the first's classes and look, laid out as it is
-        c = hands["Wind"]["common"]
-        assert c["head"] == "Direction" and c["labels"] == ["Daily", "Monthly", "Yearly"] and c["values"] == ["SSW"] * 3, (name, c)
-        assert c["headLook"]["cls"] == c["maxLook"]["cls"] == "at chip head" and c["headLook"]["bg"] == c["maxLook"]["bg"] == rgb(look()["needle"]), c
-        assert c["labelLooks"] == c["firstLabelLooks"] and c["valueLooks"][0] == c["firstValueLooks"][0] and c["valueLooks"][0]["cls"] == "at figure", c
-        assert c["lefts"][0] == c["lefts"][1], c
-        assert {round(b - a, 1) for a, b in zip(c["tops"], c["tops"][1:])} == {round(c["tops"][1] - c["tops"][0], 1)}, c   # (one spacing, head to
-                                                                                                                             # row to row, on to the next head)
-        assert c["tall"] and c["tile"]["height"] > 1.3 * c["tile"]["width"] * 575 / 480, c
+        assert others["Wind"] == [["▲ Max", rgb(look()["needle"])], ["» Gust", rgb(look()["high_hand"])]], others
+        assert others["Wind direction"] == [["Direction", rgb(look()["needle"])]], others   # (its table's one head: the Max grey)
+        rest = {t: heads for t, heads in others.items() if t not in ("Wind", "Wind direction")}
+        assert any(rest.values()), others
+        assert all(c == rgb(CHIPS[n.split()[-1]]) for heads in rest.values() for n, c in heads), others
+        assert all(c == rgb(MAX_CHIP) for heads in rest.values() for n, c in heads if n.endswith("Max")), others
+        # the Wind direction tile's table, its most common direction, under the compass where the other tiles' tables are: a head and three rows
+        # in the Wind table's classes and look, one column, laid out as it is; the Wind tile has no second table; every tile one size
+        c = got["common"]
+        assert c["heads"] == ["Direction"] and c["labels"] == ["Daily", "Monthly", "Yearly"] and c["values"] == ["SSW"] * 3 and c["units"] == 0, (name, c)
+        assert c["headLook"] == c["windHeadLook"] and c["headLook"]["cls"] == "at chip head" and c["headLook"]["bg"] == rgb(look()["needle"]), c
+        assert c["labelLooks"] == c["windLabelLooks"] and c["valueLooks"] == c["windValueLooks"] and c["valueLooks"][0]["cls"] == "at figure", c
+        assert c["lefts"] == c["windLefts"] and c["figLefts"] == [c["windFigLeft"]] * 3 and c["area"], c
+        assert [round(t - c["tileTop"], 1) for t in c["tops"]] == [round(t - c["windTileTop"], 1) for t in c["windTops"]], c   # (as far down its tile as the Wind's)
+        assert c["windHeads"] == 2 and c["windFigures"] == 6 and c["tall"] == 0, c   # (the Wind's own: Max and Gust, Daily to Yearly, no more)
+        assert c["tile"]["width"] == c["wind"]["width"] and c["tile"]["height"] == c["wind"]["height"], c
+        assert len({(round(r["width"]), round(r["height"])) for r in rects}) == 1, (name, rects)
         assert hands["Wind"]["daily"] == [f"{v:.0f}" for v in wind.rows["Daily"]] and wind.rows["Daily"][1] >= 12, (hands["Wind"], wind)
         # every round dial's hub small (about half the old 25), its outline as thin, its needle pivoting on its centre; the compass's
         # smaller still; the pressure in whole hPa, its reading and its table; its arrow after its reading (risen 2 hPa over the past 3 hours: moderate, up, blue), no other's
@@ -1224,9 +1222,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         got = report[name]
         assert got["scroll"] == "no" and got["scrollHeight"] <= SIZES[name][1], (name, got)
         assert all(r["bottom"] <= SIZES[name][1] + 0.5 for r in got["rects"]), (name, got)
-        assert min(r["width"] for r in got["rects"]) >= 150, (name, got)   # (the Wind's second table costs a third of a row: 160 at least, but
-                                                                           # where that would scroll, 150)
-        assert min(r["width"] for r in got["rects"]) >= 160 or name == "tablet-portrait", (name, got)
+        assert min(r["width"] for r in got["rects"]) >= 160, (name, got)
     assert report["desktop"]["columns"] == "6" and report["tablet-portrait"]["columns"] == "4" and report["tablet-landscape"]["columns"] == "6"
     assert report["phone-portrait"]["columns"] == "2"                         # too small for all at once: two to a row, scrolling
     assert before["label"] == "Temperature 12.9 °C" and after["label"] == "Temperature 21.5 °C", (before, after)
@@ -2960,8 +2956,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             assert r["x"] - b["Rmax"] >= 0 and r["x"] + b["Rmax"] <= w, (day, r)   # (the glow too: whole across the window)
             assert r["y"] >= -1e-9 and r["y"] <= b["yLo"] and r["y"] - r["r"] >= -r["r"] - 1e-9 and b["S"] <= 0.16 * h + 1e-9 and r["y"] + b["Rmax"] < 0.2 * h, (day, r)
             if day == "winter":   # (a winter noon well inside the window: the ball whole)
-                assert r["y"] - b["Rmax"] >= 0 or r["t"] < 0.1 or r["t"] > 0.9 or r["y"] - r["r"] > 0.5, (day, r)   # (the ball whole at the least,
-                # where the Wind's taller tile leaves the strip above the tiles at its least: its glow may reach over the window's top)
+                assert r["y"] - b["Rmax"] >= 0 or r["t"] < 0.1 or r["t"] > 0.9 or r["y"] - r["r"] > 1, (day, r)
             if r["t"] < 0.08 or r["t"] > 0.92:   # (at sunrise and sunset: low in the strip, fully visible)
                 assert r["y"] - r["r"] > 1, (day, r)
             if b["top"] > b["S"] + 1:   # (tiles start below the strip: the ball and its pink halo, 3 R out, wholly above the first row)
@@ -2981,7 +2976,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             a1, a2 = math.atan2(q["y"] - p["y"], q["x"] - p["x"]), math.atan2(s["y"] - q["y"], s["x"] - q["x"])
             turns.append(abs((a2 - a1 + math.pi) % (2 * math.pi) - math.pi))   # (the arc runs leftward: the angle wraps at pi)
         assert max(turns) < 0.35, (day, max(turns))
-    # the real dashboard at 640 x 480 has its first row 8 px down: the strip is then its minimum (0.06 H); at 1024 x 834 the reach rows below
+    # the real dashboard at 640 x 480 has its first row 8 px down: the strip is then its minimum (0.06 H); at 1024 x 768 the reach rows below
     # have a strip of 24 art px: the arc's rise by the season there
     # a very wide window (1600 x 400): the arc a flat run along the strip at most, whole all day, symmetric about noon, the same x as before
     wide = [r for r in hot["wide"] if r["day"]]

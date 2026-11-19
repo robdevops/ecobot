@@ -20,7 +20,7 @@
     (`rain_rate`, mm/h: its rain gauge's, or its piezo gauge's where that's the one reporting, which no tile shows; null with
     neither), for the page's rain behind the tiles; today's highest of the dials with a thin red hand (`today_highs`, by title,
     the station's day in its zone: Wind's gust, Rain rate's, Solar radiation's, UV index's: their tiles' Daily Max, the Wind's its
-    Daily Gust, the reading now counted in: today_highs()), the Wind tile's `common` (the compass point the wind came from most often today, this month and this year: common()), the Wind direction tile's `rose` (today's
+    Daily Gust, the reading now counted in: today_highs()), the Wind direction tile's `common` (the compass point the wind came from most often today, this month and this year: common()), the Wind direction tile's `rose` (today's
     share of the wind's direction from each of the 16 compass points, N first, clockwise, from the file's readings, calm ones left out;
     [] with none: rose()), the Atmospheric pressure tile's `tendency` (its WMO 3-hour tendency, for the arrow after its reading:
     {"change": hPa, "way": "up", "down" or "steady", "class": "none", "slow", "moderate", "quick" or "rapid"}, the file's newest reading
@@ -288,8 +288,7 @@ class WebDashboard:
         for tile in tiles:
             if tile["kind"] == "compass":   # (the wind's direction: today's rose under its needle)
                 tile["rose"] = await self.rose()
-            elif "Gust" in tile["columns"]:   # (the wind's speed: its most common direction under its table)
-                tile["common"] = await self.common()
+                tile["common"] = await self.common()   # (and its most common direction, a table under it)
             elif tile["title"] == TENDENCY_TITLE:   # (the pressure: an arrow after its reading, its 3-hour tendency)
                 tile["tendency"] = await self.tendency()
         rate = rain_rate_of(result, live)

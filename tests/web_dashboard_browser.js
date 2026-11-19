@@ -126,6 +126,23 @@ async function sizes(browser, url, shots, wanted) {
     })), errors };
     await handsSettled(page);
     report[name].hands = await handsLook(page);   // the dials' thin red hands: today's highest
+    report[name].common = await page.evaluate(() => {   // the Wind direction tile's table (the most common direction) beside the Wind tile's own, in each one's classes and look
+      const tiles = Object.fromEntries([...document.querySelectorAll("#grid .tile")].map((t) => [t.querySelector(".title").textContent, t]));
+      const look = (e) => ({cls: e.className, size: getComputedStyle(e).fontSize, weight: getComputedStyle(e).fontWeight, h: e.style.height, w: e.style.width,
+                            bg: getComputedStyle(e).backgroundColor, colour: getComputedStyle(e).color, radius: getComputedStyle(e).borderRadius});
+      const top = (e) => e.getBoundingClientRect().top, t = tiles["Wind direction"], w = tiles["Wind"];
+      const heads = [...t.querySelectorAll(".chip.head")], rows = [...t.querySelectorAll(".chip.row")], figs = [...t.querySelectorAll(".figure")];
+      const wHeads = [...w.querySelectorAll(".chip.head")], wRows = [...w.querySelectorAll(".chip.row")], wFigs = [...w.querySelectorAll(".figure")];
+      return {heads: heads.map((e) => e.textContent), headLook: look(heads[0]), windHeadLook: look(wHeads[0]),
+              labels: rows.map((e) => e.textContent), labelLooks: rows.map(look), windLabelLooks: wRows.map(look),
+              values: figs.map((e) => e.textContent), valueLooks: figs.map(look), windValueLooks: wFigs.slice(0, 3).map(look),
+              units: t.querySelectorAll(".unit").length,
+              tops: [heads[0], ...rows].map(top), windTops: [wHeads[0], ...wRows].map(top), tileTop: top(t), windTileTop: top(w),
+              lefts: rows.map((e) => e.getBoundingClientRect().left - t.getBoundingClientRect().left), windLefts: wRows.map((e) => e.getBoundingClientRect().left - w.getBoundingClientRect().left),
+              figLefts: figs.map((e) => e.getBoundingClientRect().left - t.getBoundingClientRect().left), windFigLeft: wFigs[0].getBoundingClientRect().left - w.getBoundingClientRect().left,
+              tile: t.getBoundingClientRect().toJSON(), wind: w.getBoundingClientRect().toJSON(), windHeads: wHeads.length, windFigures: wFigs.length,
+              area: !!t.querySelector(".tablearea"), tall: [...document.querySelectorAll("#grid .tile.tall")].length};
+    });
     report[name].headColours = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#grid .tile")].map((t) =>   // every
       [t.querySelector(".title").textContent, [...t.querySelectorAll(".chip.head")].map((e) => [e.textContent, getComputedStyle(e).backgroundColor])])));   // table's heads
     await compassSettled(page);
@@ -203,20 +220,8 @@ const handsLook = (page) => page.evaluate(() => Object.fromEntries([...document.
                    colour: line ? line.getAttribute("stroke") : null, width: line ? Number(line.getAttribute("stroke-width")) : null,
                    limit, needleWidth: needle.getBBox().width,
                    order: [parts.indexOf(needle), parts.indexOf(hand), parts.indexOf(hub)],
-                   heads: title === "Wind" ? [...t.querySelectorAll(".chip.head")].slice(0, 2).map((e) => e.textContent) : undefined,
-                   headColours: title === "Wind" ? [...t.querySelectorAll(".chip.head")].slice(0, 2).map((e) => getComputedStyle(e).backgroundColor) : undefined,
-                   // (the second table, the most common direction: its head, row buttons and figures, each with the first table's counterparts' classes and look)
-                   common: title === "Wind" ? (() => {
-                     const look = (e) => ({cls: e.className, size: getComputedStyle(e).fontSize, weight: getComputedStyle(e).fontWeight, h: e.style.height,
-                                           w: e.style.width, bg: getComputedStyle(e).backgroundColor, colour: getComputedStyle(e).color, radius: getComputedStyle(e).borderRadius});
-                     const heads = [...t.querySelectorAll(".chip.head")], rows = [...t.querySelectorAll(".chip.row")], figs = [...t.querySelectorAll(".figure")];
-                     return {head: heads[2] && heads[2].textContent, headLook: heads[2] && look(heads[2]), maxLook: look(heads[0]),
-                             labels: rows.slice(3).map((e) => e.textContent), labelLooks: rows.slice(3).map(look), firstLabelLooks: rows.slice(0, 3).map(look),
-                             values: figs.slice(6).map((e) => e.textContent), valueLooks: figs.slice(6).map(look), firstValueLooks: figs.slice(0, 3).map(look),
-                             tops: [heads[0], rows[0], rows[1], rows[2], heads[2], rows[3], rows[4], rows[5]].map((e) => e && e.getBoundingClientRect().top),
-                             lefts: [rows[0], rows[3]].map((e) => e && e.getBoundingClientRect().left),
-                             tile: t.getBoundingClientRect().toJSON(), tall: t.classList.contains("tall")};
-                   })() : undefined,
+                   heads: title === "Wind" ? [...t.querySelectorAll(".chip.head")].map((e) => e.textContent) : undefined,
+                   headColours: title === "Wind" ? [...t.querySelectorAll(".chip.head")].map((e) => getComputedStyle(e).backgroundColor) : undefined,
                    daily: title === "Wind" ? [...t.querySelectorAll(".figure")].slice(0, 2).map((e) => e.textContent) : undefined }];
 })));
 // Every round dial's (and the compass's) hub and its needle's pivot, in its own px: the hub's centre, radius and outline width; the
@@ -1833,7 +1838,7 @@ const sunLook = async (page) => {
   const out = {};
   await fx({ heat: 1, uv: 1 });
   const DAYS = { summer: [354.36, 1241.24, 75.61], winter: [455.21, 1027.59, 28.74], equinox: [442.31, 1174.58, 52.81] };
-  await page.setViewportSize({ width: 1024, height: 834 });   // (its first row 73 px down, the Wind's taller tile counted in: a strip of 24 art px for the arc)
+  await page.setViewportSize({ width: 1024, height: 768 });   // (its first row 73 px down: a strip of 24 art px for the arc)
   await page.waitForTimeout(500);
   out.arcs = await inPage((DAYS) => {
     const run = {};

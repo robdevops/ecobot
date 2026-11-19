@@ -4793,32 +4793,35 @@ const Sky = (() => {
   }
 
   function table(box, tile, ink) {
-    if (!tile.columns.length) return () => {};   // (a gauge with no figures: the compass)
+    if (!tile.columns.length && tile.common === undefined) return () => {};   // (a gauge with no figures)
     const figures = {};
     const left = 60, top = 378, w = 128, h = 38, gap = 4;
     const xs = tile.columns.map((_, i) => left + (w + gap) * (i + 1));
-    place(box, left, top, w, h, 17, tile.unit, "unit", {color: ink(L.ink), fontWeight: 700});
-    const chips = tile.columns.includes("Gust") ? L.wind_chips : L.chips;   // (the Wind's: its Max the needle's colour, its Gust its limit mark's red)
-    tile.columns.forEach((name, i) =>
-      place(box, xs[i], top, w, h, 19, `${L.marks[name]} ${name}`, "chip head", {background: ink(chips[name]), color: ink("#FFFFFF"), fontWeight: 700}));
-    L.rows.forEach((name, r) => {
-      const y = top + (r + 1) * (h + 10);
-      place(box, left, y, w, h, 19, name, "chip row", {background: ink(L.chip), color: ink(L.soft)});
-      xs.forEach((x, i) => { figures[`${name}/${i}`] = place(box, x, y, w, h, 21, "", "figure", {color: ink(L.ink), fontWeight: 700}); });
-    });
-    const fill = (t) => L.rows.forEach((name) => xs.forEach((_, i) => {
-      const v = (t.rows[name] || [])[i];
-      figures[`${name}/${i}`].textContent = v === null || v === undefined ? (i < (t.rows[name] || []).length ? "-" : "") : figure(v, t.decimals);
-    }));
-    fill(tile);
-    let common = () => {};
-    if (tile.common !== undefined) {   // (the Wind's: its most common direction, a table of its own under the first, one column)
-      const top2 = top + (L.rows.length + 1) * (h + 10), points = {};
-      place(box, xs[0], top2, w, h, 19, "Direction", "chip head", {background: ink(L.wind_chips.Max), color: ink("#FFFFFF"), fontWeight: 700});
+    let fill = () => {};
+    if (tile.columns.length) {
+      place(box, left, top, w, h, 17, tile.unit, "unit", {color: ink(L.ink), fontWeight: 700});
+      const chips = tile.columns.includes("Gust") ? L.wind_chips : L.chips;   // (the Wind's: its Max the needle's colour, its Gust its limit mark's red)
+      tile.columns.forEach((name, i) =>
+        place(box, xs[i], top, w, h, 19, `${L.marks[name]} ${name}`, "chip head", {background: ink(chips[name]), color: ink("#FFFFFF"), fontWeight: 700}));
       L.rows.forEach((name, r) => {
-        const y = top2 + (r + 1) * (h + 10);
+        const y = top + (r + 1) * (h + 10);
         place(box, left, y, w, h, 19, name, "chip row", {background: ink(L.chip), color: ink(L.soft)});
-        points[name] = place(box, xs[0], y, w, h, 21, "", "figure", {color: ink(L.ink), fontWeight: 700});
+        xs.forEach((x, i) => { figures[`${name}/${i}`] = place(box, x, y, w, h, 21, "", "figure", {color: ink(L.ink), fontWeight: 700}); });
+      });
+      fill = (t) => L.rows.forEach((name) => xs.forEach((_, i) => {
+        const v = (t.rows[name] || [])[i];
+        figures[`${name}/${i}`].textContent = v === null || v === undefined ? (i < (t.rows[name] || []).length ? "-" : "") : figure(v, t.decimals);
+      }));
+      fill(tile);
+    }
+    let common = () => {};
+    if (tile.common !== undefined) {   // (the Wind direction's: its most common direction, a table of one column where the other tiles' tables are)
+      const points = {}, x = left + w + gap;
+      place(box, x, top, w, h, 19, "Direction", "chip head", {background: ink(L.wind_chips.Max), color: ink("#FFFFFF"), fontWeight: 700});
+      L.rows.forEach((name, r) => {
+        const y = top + (r + 1) * (h + 10);
+        place(box, left, y, w, h, 19, name, "chip row", {background: ink(L.chip), color: ink(L.soft)});
+        points[name] = place(box, x, y, w, h, 21, "", "figure", {color: ink(L.ink), fontWeight: 700});
       });
       common = (t) => L.rows.forEach((name) => { points[name].textContent = (t.common || {})[name] || "-"; });
       common(tile);
@@ -4849,8 +4852,7 @@ const Sky = (() => {
     const gauge = el("g", {class: "gauge", transform: `translate(0 ${DROP})`}, svg);   // (the gauge, a little below the title: room)
     const at = DRAW[tile.kind](gauge, tile, ink, `clip${clips++}`);
     place(box, 0, 38 - 25, L.cell[0], 50, 38, tile.title, "title", {color: ink(L.ink)});
-    if (tile.common !== undefined) box.classList.add("tall");   // (the Wind's: room for the second table, two rows of tiles high)
-    if (tile.columns.length) place(box, 0, TABLE_TOP, L.cell[0], (tile.common !== undefined ? 2 : 1) * L.cell[1] - TABLE_TOP, 0, "", "tablearea");   // (the table's area, under
+    if (tile.columns.length || tile.common !== undefined) place(box, 0, TABLE_TOP, L.cell[0], L.cell[1] - TABLE_TOP, 0, "", "tablearea");   // (the table's area, under
                                                                                                               // its chips: its cursor)
     const fill = table(box, tile, ink);
     const grip = document.createElement("div");   // (the whole gauge drags; the grip is the cue)
@@ -4912,30 +4914,17 @@ const Sky = (() => {
   // ---------- the layout: the columns that make the tiles largest with all of them on the screen ----------
   // The visible tiles as large as fits (fewer visible: larger, a single one filling the window), never smaller than every tile of the
   // data would be: where those scroll (a phone), fewer scroll at that size too rather than shrink to fit.
-  function columns(n, W, H, aspect, tall = 0) {
+  function columns(n, W, H, aspect) {
     let best = {w: 0, cols: 1, scroll: false};
     for (let cols = 1; cols <= n; cols++) {
-      const rows = Math.ceil(n / cols) + (tall ? 1 / 3 : 0), w = Math.min(W / cols, H / rows * aspect);
+      const rows = Math.ceil(n / cols), w = Math.min(W / cols, H / rows * aspect);
       if (w > best.w) best = {w, cols, scroll: false};
     }
-    if (best.w < (tall ? MIN_SCROLL_TILE : MIN_TILE)) {   // (a tall tile costs the others a third of a row: the least a column may be, then, as scrolling's)
-      // too small to read on one screen: as many columns as fit at a readable size, and the page scrolls
+    if (best.w < MIN_TILE) {   // too small to read on one screen: as many columns as fit at a readable size, and the page scrolls
       const cols = Math.max(1, Math.min(n, Math.floor(W / MIN_SCROLL_TILE)));
       best = {w: W / cols, cols, scroll: true};
     }
     return best;
-  }
-
-  // With a tall tile (the Wind's, a third taller) the rows are a third of a tile high: each tile spans three of them, the tall one four, each
-  // placed by hand (its column and the thirds above it), the tiles under a tall one a third of a tile lower; none: the tiles flow as they are
-  function placeTall(cols, any) {
-    const lower = new Array(cols).fill(0);
-    [...grid.children].forEach((box, i) => {
-      const c = i % cols, tall = box.classList.contains("tall");
-      box.style.gridColumn = any ? String(c + 1) : "";
-      box.style.gridRow = any ? `${3 * Math.floor(i / cols) + 1 + lower[c]} / span ${tall ? 4 : 3}` : "";
-      if (tall) lower[c]++;
-    });
   }
 
   function layout() {
@@ -4943,16 +4932,14 @@ const Sky = (() => {
     if (!n || !L) return;
     const aspect = L.cell[0] / L.cell[1];
     const W = screenRoom().w - 2 * PAD, H = screenRoom().h - 2 * PAD - STATUS;
-    const tall = grid.querySelectorAll(".tile.tall").length;   // (the Wind's tile, a third taller: the rows are a third of a tile high then)
-    let fit = columns(n, W, H, aspect, tall);
-    const all = columns(Math.max(tiles.length, n), W, H, aspect, tall || tiles.some((t) => t.common !== undefined));
+    let fit = columns(n, W, H, aspect);
+    const all = columns(Math.max(tiles.length, n), W, H, aspect);
     if (fit.w < all.w) fit = all;   // (only where every tile scrolls: then these do too, at that size)
     const w = Math.max(Math.floor(fit.w), 1), {cols, scroll} = fit;
     document.documentElement.style.setProperty("--pad", PAD + "px");
     document.documentElement.style.setProperty("--status", STATUS + "px");
     grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, ${w}px))`;
-    grid.style.gridAutoRows = `${Math.floor(w / aspect / (tall ? 3 : 1))}px`;
-    placeTall(cols, tall > 0);
+    grid.style.gridAutoRows = `${Math.floor(w / aspect)}px`;
     document.body.dataset.columns = cols;
     document.body.dataset.scroll = scroll ? "yes" : "no";
     document.documentElement.classList.toggle("scroll", scroll);   // (a scrolled page stops with a row at the top)
