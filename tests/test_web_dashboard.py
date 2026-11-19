@@ -3021,6 +3021,15 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert len(hot["edges"]) == 14, hot["edges"]
     for look in hot["edges"]:
         assert look["ball"]["n"] == 0 and look["all"]["n"] == 0 and look["ball"]["sides"] >= 2 and look["all"]["sides"] >= 2, look
+    # the heat's pictures are as they were, whether the UV is on or off (a hash of the canvas at three places of the sun)
+    assert hot["pictures"] == {"heat": [4158489489, 1602507761, 1993016501], "heatUv": [348796307, 3665128847, 841485416],
+                               "warmUv": [1429803645, 1047245285, 506380353]}, hot["pictures"]
+    # the UV alone (the heat off) has no dark ring round the sun: the mean luminance by half a sun radius of distance never rises again
+    # (by more than the dither's noise) from the centre out to 3 R, at summer noon and mid-morning, UV 5.5 and 11
+    assert len(hot["uvOnly"]) == 4, hot["uvOnly"]
+    for look in hot["uvOnly"]:
+        lum = look["lum"][:6]
+        assert lum[0] > 200 and all(b <= a + 6 for a, b in zip(lum, lum[1:])), look
     # the furnace's breathing (120 s of the weather's clock, a sample every half second): the halo's radius at 0.15 of the ball's field swings clearly more at 43 C
     # (peak to peak over 40 s: at least 25 % of its radius, and at least 3 times 35 C's, which stays under 8 %), its baseline radius at 43 C at least 20 % over 35 C's
     # (beyond the heat's own), the white ball's radius (where its profile falls through 1) varies under 5 %, and no glow measure has a pulse faster than 0.15 Hz

@@ -2199,6 +2199,41 @@ const sunLook = async (page) => {
       }, [heat, uv]));
     }
   }
+  // the UV alone (the heat off: no ball's glow to start the beams outside of) has no dark ring round the sun: the mean luminance by half
+  // a sun radius of distance, at summer noon and mid-morning, UV 5.5 and 11 (`uvOnly`); and the heat's pictures, alone and with the UV, as a hash of their
+  // pixels at the sun's places (`pictures`: the same whatever the UV's root does)
+  out.uvOnly = [];
+  for (const uv of [0.1, 1]) {
+    await fx({ heat: 0, uv });
+    out.uvOnly.push(...await inPage((uv) => {
+      const rows = [];
+      for (const [name, m] of [["noon", 798], ["mid-morning", 540]]) {
+        __day(354.36, 1241.24, 75.61, m); Sky.setSunPosition(null, null); Sky.advance(150);
+        const s = Sky.state().heat.sun, d = __grab(), W = __c.width, Hh = __c.height, n = 8, sum = new Float64Array(n), cnt = new Float64Array(n);
+        for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) {
+          const q = Math.floor(Math.hypot(x + 0.5 - s.x, y + 0.5 - s.y) / (0.5 * s.r)); if (q >= n) continue;
+          const i = (y * W + x) * 4, a = d[i + 3] / 255;
+          sum[q] += 0.2126 * (d[i] * a + 20 * (1 - a)) + 0.7152 * (d[i + 1] * a + 25 * (1 - a)) + 0.0722 * (d[i + 2] * a + 29 * (1 - a)); cnt[q]++;
+        }
+        rows.push({ name, uv, r: s.r, lum: Array.from(sum, (v, i) => v / Math.max(cnt[i], 1)) });
+      }
+      return rows;
+    }, uv));
+  }
+  out.pictures = {};
+  for (const [name, detail] of [["heat", { heat: 1, uv: 0 }], ["heatUv", { heat: 1, uv: 1 }], ["warmUv", { heat: 0.3, uv: 0.5 }]]) {
+    await fx(detail);
+    out.pictures[name] = await inPage(() => {
+      const hashes = [];
+      for (const m of [540, 798, 1000]) {
+        __day(354.36, 1241.24, 75.61, m); Sky.setSunPosition(null, null); Sky.advance(150);
+        const d = __grab(); let h = 2166136261;
+        for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d[i], 16777619) >>> 0;
+        hashes.push(h);
+      }
+      return hashes;
+    });
+  }
   await page.setViewportSize({ width: 640, height: 480 });
   await page.waitForTimeout(700);
   await inPage(() => { Sky.setSunPosition(null, null); Sky.setSun({ rise: 360, set: 1080, now: 720 }); Sky.setTime(720); Sky.advance(3); });   // (the page's own day again)

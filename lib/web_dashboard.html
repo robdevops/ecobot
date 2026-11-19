@@ -1064,7 +1064,7 @@ const Sky = (() => {
   // beams' length, not the little sun's size) and widening along its length (to 1.9 times at its end, 0.6 of that length), blunt-ended: no
   // taper, its brightness falling smoothly to zero over the last 35 % of its length (BEAM_FADE, a cosine to the 1.35th power, whose
   // first and last slopes are zero: no end edge shows), a flat core with a soft dithered edge, a brighter edge line and a few streaks
-  // inside, and each rising out of the ball (in from 0.6 R to 1.7 R from the sun). All twelve are alike (the same reach and strength, a small length jitter each), whatever the sun's real direction. Near the sun they overlap and brighten, and within 30 px of the sun each root is hot (pink-white: 0.9 exp(-(r - R) / 4) of the beams' level read on the ball's ramp). Where beams cross they add (soft: 1 - exp(-1.6 v)) and the sum is held to the violet's cap (BEAM_KNEE 0.45, BEAM_CAP 0.62 of the ramp: about rgb(118, 74, 229)), so overlaps stay violet and never climb to lavender or white; a beam's strength at its root is BEAM_I, 0.17 (the design mock's 0.161, its 0.23 at the beam intensity 0.7); the shaft's colour steps are dithered with the page's blue noise at BEAM_GRAIN (0.6) of its swing, so the shafts' edges and the dark valleys between them stay clean; they fade out near the window's edges over BEAM_EDGE (14 art px, 42 CSS px at the usual 3, or 0.15 of the narrower side if less); and where the ember
+  // inside, and each rising out of the ball (in from 0.6 R to 1.7 R from the sun; with the heat off they rise from the sun's centre, no ring between the ball and the beams). All twelve are alike (the same reach and strength, a small length jitter each), whatever the sun's real direction. Near the sun they overlap and brighten, and within 30 px of the sun each root is hot (pink-white: 0.9 exp(-(r - R) / 4) of the beams' level read on the ball's ramp). Where beams cross they add (soft: 1 - exp(-1.6 v)) and the sum is held to the violet's cap (BEAM_KNEE 0.45, BEAM_CAP 0.62 of the ramp: about rgb(118, 74, 229)), so overlaps stay violet and never climb to lavender or white; a beam's strength at its root is BEAM_I, 0.17 (the design mock's 0.161, its 0.23 at the beam intensity 0.7); the shaft's colour steps are dithered with the page's blue noise at BEAM_GRAIN (0.6) of its swing, so the shafts' edges and the dark valleys between them stay clean; they fade out near the window's edges over BEAM_EDGE (14 art px, 42 CSS px at the usual 3, or 0.15 of the narrower side if less); and where the ember
   // flare is lit the violet is held back (by up to 55 %), so the heat stays orange.
   // The UV amount, from the UV index (the effect's level is (UV - 6) / 5, 0 below UV 6 and 1 from UV 11, and 0 until the violet shows, about UV 6.24: Sky.uvLevel): no beams under UV 6; the
   // violet rises with uvn = clamp((UV - 6) / 5, 0, 1) as (0.3 + 0.7 uvn) smoothstep(6, 7.5, UV); the reach 0.6 + 0.4 uvn of its full reach, BEAM_REACH (0.95) of the way down to 0.34 H (SUN_CAP, TUNED) at the most: the longest beam's tip fades to 0 there (no other fade down the window: a beam's strength is the same over the tiles as above them); the window's top fades them over the sun's own height.
@@ -1232,7 +1232,7 @@ const Sky = (() => {
       // (the top's fade ends at the sun's height, from 0 at the window's top; with the sun on the top edge (sy 0: summer noon) that would
       // be all in one row, row 0 bare and row 1 whole, a hard band: so there the ramp starts above the window, E wide, and by 3 px down it is the plain one)
       const Et = Math.min(E, Math.max(sy, 0)), St = (Et - E) * (1 - soft(0, 3, sy));
-      const mask = new Float32Array(wh * hh), hot = new Float32Array(wh * hh), cx = new Float32Array(wh), cy = new Float32Array(hh), m0 = (R + 14) * (R + 14);   // (the root: in from 0.6 R to 1.7 R; hot, pink-white, within 30 px of the sun)
+      const mask = new Float32Array(wh * hh), maskU = new Float32Array(wh * hh), hot = new Float32Array(wh * hh), cx = new Float32Array(wh), cy = new Float32Array(hh), m0 = (R + 14) * (R + 14);   // (the root: in from 0.6 R to 1.7 R; hot, pink-white, within 30 px of the sun)
       for (let i = 0; i < wh; i++) cx[i] = i - sx;
       for (let j = 0; j < hh; j++) cy[j] = j - sy;
       for (let j = 0; j < hh; j++) {
@@ -1240,12 +1240,13 @@ const Sky = (() => {
         for (let i = 0; i < wh; i++) {
           const x = i; let m = soft(0, E, Math.min(x, W - 1 - x)) * fy;
           const sr2 = cx[i] * cx[i] + cy[j] * cy[j];
+          maskU[j * wh + i] = m;
           if (sr2 < m0) { const sr = Math.sqrt(sr2); m *= soft(0.6 * R, 1.7 * R, sr); if (sr2 < 900) hot[j * wh + i] = 0.9 * Math.exp(-Math.max(0, sr - R) / 4); }
           mask[j * wh + i] = m;
         }
       }
       bakes++;
-      return (bk = Object.assign(bk, {key, sx, sy, R, wh, hh, NA, NA2, Rb, RY, E, bloomBox: [bX0, bY0, bX1, bY1], mask, hot, cx, cy,
+      return (bk = Object.assign(bk, {key, sx, sy, R, wh, hh, NA, NA2, Rb, RY, E, bloomBox: [bX0, bY0, bX1, bY1], mask, maskU, hot, cx, cy,
         gn: tn, shell, gI, gR, gA, gE, gM, bn: bI.length, bI: Int32Array.from(bI), bA: Uint8Array.from(bA), bR: Float32Array.from(bR), bF: Float32Array.from(bF), bM: Float32Array.from(bM)}));
     };
     // The picture at time t (0-20 s) for the heat h (0.3-1), the flare's share kF, the UV level and the violet's share kU
@@ -1310,7 +1311,7 @@ const Sky = (() => {
       const sunNowBeams = [];
       if (beamsOn) {
         const Lbase = BEAM_REACH * Math.max(0, p.band.cap - SUN_CAP_GAP - sy - R) / SUN_JIT * (0.6 + 0.4 * uvn), Lw = BEAM_BL * Lbase * SUN_JIT;   // (the beams' width from their length: the longest tip's)
-        const {wh, hh, cx, cy, mask, hot} = k;
+        const {wh, hh, cx, cy, hot} = k, mask = kF > 0.002 ? k.mask : k.maskU;   // (the beams start at the sun's centre while the heat's ball and flare are off: the UV alone has a smooth root; with the heat on they start outside the ball)
         fBh.fill(0); fHh.fill(0); rowLo.fill(wh); rowHi.fill(-1);
         for (const b of BEAMS) {
           const fan = BEAM_SWEEP * Math.sin(2 * Math.PI * clk / BEAM_SWEEP_T) * Math.PI / 180, sway = BEAM_SWAY * Math.sin(b.swf * clk + b.swp) * Math.PI / 180;
