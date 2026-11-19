@@ -1974,7 +1974,7 @@ const sunLook = async (page) => {
   out.pulseBeams = await inPage(() => {
     __day(354.36, 1241.24, 75.61, 600); Sky.setSunPosition(80, 40); Sky.advance(150);
     const looks = [];
-    for (let k = 0; k < 40; k++) { Sky.advance(45); const st = Sky.state(); looks.push({ pulse: st.heat.ball.pulse, beams: st.beam.beams.map((b) => ({ length: b.length, width: b.width, bright: b.bright })) }); }
+    for (let k = 0; k < 40; k++) { Sky.advance(45); const st = Sky.state(); looks.push({ pulse: st.heat.ball.pulse, beams: st.beam.beams.map((b) => ({ length: b.length, extent: b.extent, fade: b.fade, width: b.width, bright: b.bright })) }); }
     return looks;
   });
   // the beams at UV 11
@@ -2006,19 +2006,27 @@ const sunLook = async (page) => {
       return Sky.state().beam.beams.map((x) => ({ angle: x.base, length: x.length, bright: x.bright }));
     });
   });
-  // the ends: each beam's profile from half its length to its end (steady, then in the picture along the longest)
-  out.ends = await inPage(() => {
-    __day(354.36, 1241.24, 75.61, 798); Sky.setSunPosition(0, 70); Sky.advance(150);
-    const st = Sky.state(), b = st.beam, s = st.heat.sun, W = __c.width, d = __grab();
-    const profiles = b.beams.map((_, i) => Array.from({ length: 21 }, (_, k) => b.at(i, 0.4 + 0.03 * k)));
-    const long = b.beams.reduce((a, x, i) => x.length > b.beams[a].length ? i : a, 0), L = b.beams[long], ang = L.angle * Math.PI / 180;
-    const violet = [0.3, 0.6, 0.8, 0.95, 1].map((f) => {   // (the mean of a 5 x 5 patch on its axis, the channel above the page's own)
-      const x = Math.round(s.x + Math.sin(ang) * f * L.length), y = Math.round(s.y + Math.cos(ang) * f * L.length); let sum = 0, n = 0;
-      for (let yy = y - 2; yy <= y + 2; yy++) for (let xx = x - 2; xx <= x + 2; xx++) { if (xx < 0 || yy < 0 || xx >= W || yy >= __c.height) continue; sum += Math.max(0, d[(yy * W + xx) * 4 + 2] - 29) * (d[(yy * W + xx) * 4 + 3] > 0); n++; }
-      return { f, x, y, v: sum / Math.max(n, 1), inside: x >= 0 && y >= 0 && x < W && y < __c.height };
-    });
-    return { profiles, violet, ends: b.beams.map((_, i) => b.at(i, 1)), start: b.beams.map((_, i) => b.at(i, 0.3)) };
-  });
+  // the fade: each beam's steady strength along its axis, every art pixel from the sun (b.at: no dither), at UV 11 and UV 7 (the beams' fade length and
+  // run: `fade`, `extent`, `length` the reference reach the width follows), and in the picture, the violet (the channel above the page's own, the mean of a
+  // 13 x 13 patch) on the axis of the beam nearest straight down at 0.1, 1/3, 2/3 and 0.9 of the window's height from the sun
+  out.fade = [];
+  for (const uvi of [11, 7]) {
+    await fx({ heat: 1, uv: (uvi - 6) / 5 });
+    out.fade.push(await inPage((uvi) => {
+      __day(354.36, 1241.24, 75.61, 798); Sky.setSunPosition(0, 75); Sky.advance(150);
+      const st = Sky.state(), b = st.beam, s = st.heat.sun, W = __c.width, H = __c.height, d = __grab();
+      const profiles = b.beams.map((x, i) => Array.from({ length: Math.ceil(x.extent) + 1 }, (_, k) => b.at(i, k)));
+      const wrap = (a) => Math.abs(((a + 540) % 360) - 180);
+      const down = b.beams.reduce((a, x, i) => wrap(x.angle) < wrap(b.beams[a].angle) ? i : a, 0), L = b.beams[down], ang = L.angle * Math.PI / 180;
+      const violet = [0.1, 1 / 3, 2 / 3, 0.9].map((f) => {
+        const x = Math.round(s.x + Math.sin(ang) * f * H), y = Math.round(s.y + Math.cos(ang) * f * H); let sum = 0, n = 0;
+        for (let yy = y - 6; yy <= y + 6; yy++) for (let xx = x - 6; xx <= x + 6; xx++) { if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue; sum += Math.max(0, d[(yy * W + xx) * 4 + 2] - 29) * (d[(yy * W + xx) * 4 + 3] > 0); n++; }
+        return { f, x, y, v: sum / Math.max(n, 1), inside: x >= 0 && y >= 0 && x < W && y < H };
+      });
+      return { uvi, H, W, profiles, violet, down, beams: b.beams.map((x) => ({ length: x.length, extent: x.extent, fade: x.fade, bright: x.bright, angle: x.angle })), fadeAt: b.fadeAt, fadeEnd: b.fadeEnd };
+    }, uvi));
+  }
+  await fx({ heat: 1, uv: 1 });
   // the shafts: the violet round the sun at half the longest beam's reach, by angle (one degree steps over the lower half, from 85 degrees
   // left of straight down to 85 right), smoothed over 5 degrees, its peaks and the
   // valleys between them
@@ -2101,11 +2109,11 @@ const sunLook = async (page) => {
   await fx({ heat: 1, uv: 1 });
   await page.setViewportSize({ width: 640, height: 480 });
   await page.waitForTimeout(700);
-  // the window's outer ring (one pixel): no violet there (the beams fade out over 14 px short of the edge)
+  // the window's outer ring (one pixel, its left, right and top: the beams run on to the bottom): no violet there (the beams fade out over 14 px short of those edges)
   out.edge = await inPage(() => {
     __day(354.36, 1241.24, 75.61, 450); Sky.setSunPosition(90, 5); Sky.advance(150);
     const d = __grab(), W = __c.width, H = __c.height; let n = 0;
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (x === 0 || y === 0 || x === W - 1 || y === H - 1) { const i = (y * W + x) * 4; if (d[i + 3] > 0 && d[i + 2] > d[i] + 30) n++; }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (x === 0 || y === 0 || x === W - 1) { const i = (y * W + x) * 4; if (d[i + 3] > 0 && d[i + 2] > d[i] + 30) n++; }
     return { violet: n, whole: __violet(d) };
   });
   // no band along the top at summer noon: the sun on the top edge, the beams' violet in row 0 as in row 1 (the top's fade must not be one row)
@@ -2114,6 +2122,29 @@ const sunLook = async (page) => {
     const d = __grab(), W = __c.width, row = (y) => { let n = 0; for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (d[i + 3] > 0 && d[i + 2] > d[i] + 30) n++; } return n; };
     return { rows: [0, 1, 2, 6].map(row) };
   });
+  // with a flood (a high water level and a low one, at noon, UV 11): no beam pixel (violet: bluer than red and green) at or below the water's surface in
+  // any column (the surface as the flood has it, rounded), and beams just above it
+  out.flood = [];
+  for (const level of [1, 0.3]) {
+    await fx({ heat: 1, uv: 1, flood: level });
+    out.flood.push(await inPage(async (level) => {
+      __day(354.36, 1241.24, 75.61, 798); Sky.setSunPosition(0, 75); Sky.timeScale(4); Sky.advance(500); Sky.timeScale(1); Sky.advance(100);
+      const f = Sky.state().flood, d = __grab(), W = __c.width, H = __c.height;
+      let below = 0, above = 0, over = 0, columns = 0;
+      for (let x = 0; x < W; x++) {
+        const sy = Math.max(0, Math.min(H, Math.round(f.surface[x])));
+        for (let y = 0; y < H; y++) {
+          const i = (y * W + x) * 4;
+          if (!(d[i + 3] > 0 && d[i + 2] > d[i] + 20 && d[i + 2] > d[i + 1] + 20)) continue;
+          if (y >= sy) below++; else if (y >= sy - 12) above++; else over++;
+        }
+        columns++;
+      }
+      return { level, depth: f.depth, full: f.full, height: f.height, below, above, over, columns, size: [W, H] };
+    }, level));
+  }
+  await fx({ heat: 1, uv: 1 });
+  await inPage(() => { Sky.timeScale(4); Sky.advance(600); Sky.timeScale(1); });   // (the water drained away)
   // the dither's grid power at three moments of the day
   out.grid = [];
   for (const m of [372, 798, 1225]) {
@@ -2172,28 +2203,36 @@ const sunLook = async (page) => {
   }, DAYS.summer);
   await page.setViewportSize({ width: 640, height: 480 });
   await page.waitForTimeout(700);
-  // the reach: the lowest lit pixel of everything the sun draws (the glow, the ember, the beams) against 0.20 of the window's height, at
-  // several window sizes (a laptop, a phone, a wide desktop, a very wide window), places of the sun (summer sunrise, morning, noon, winter
-  // noon, sunset) and UV levels (the heat alone, UV 9, UV 11 and 12 the same), the heat at 0.3 and 1
+  // the reach: the lowest lit pixel of everything the sun draws (the glow, the ember, the beams) against 0.34 of the window's height for the heat alone (the
+  // glow stays in the strip: with the UV the beams run on to the window's bottom, fading) and, with the UV, the lit pixels in the window's last
+  // tenth, at several window sizes (a laptop, a phone, a wide desktop, a very wide window), places of the sun (summer sunrise, morning, noon, winter
+  // noon, sunset) and effects (the heat alone, with UV 11, the heat at 0.3 with UV 11, UV 11 alone)
   out.reach = [];
   for (const [w, h] of [[640, 480], [1024, 768], [390, 844], [1600, 900], [1600, 400]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.waitForTimeout(500);
-    for (const [heat, uv] of [[1, 1], [1, 0.6], [1, 0], [0.3, 1], [0, 1]]) {
+    for (const [heat, uv] of [[1, 1], [1, 0], [0.3, 1], [0, 1]]) {
       await fx({ heat, uv });
       out.reach.push(...await inPage(([heat, uv]) => {
         const rows = [];
         for (const [name, rise, set, noon, m, az, el] of [["summer sunrise", 354.36, 1241.24, 75.61, 372, 100, 5], ["summer morning", 354.36, 1241.24, 75.61, 540, 80, 40], ["summer noon", 354.36, 1241.24, 75.61, 798, 0, 75],
                                                           ["winter noon", 455.21, 1027.59, 28.74, 741, 0, 28], ["summer sunset", 354.36, 1241.24, 75.61, 1225, 260, 3]]) {
-          __day(rise, set, noon, m); Sky.setSunPosition(az, el); Sky.advance(150);
-          let low = -1, lit = 0;
-          for (let k = 0; k < 4; k++) {   // (four moments of the 20 s round)
+          __day(rise, set, noon, m); Sky.setSunPosition(az, el); Sky.advance(100);
+          let low = -1, lit = 0, last = 0, leftEnd = 0, rightEnd = 0;
+          for (let k = 0; k < (uv > 0 ? 2 : 3); k++) {   // (two moments of the 20 s round with the beams, three without)
             const d = __grab(), W = __c.width, Hh = __c.height;
-            for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (d[i + 3] > 0 && d[i] + d[i + 1] + d[i + 2] > 0) { lit++; if (y > low) low = y; } }
-            Sky.advance(150);
+            for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) {
+              const i = (y * W + x) * 4;
+              if (d[i + 3] > 0 && d[i] + d[i + 1] + d[i + 2] > 0) {
+                lit++; if (y > low) low = y;
+                if (y >= 0.9 * Hh) last++;
+                if (d[i + 2] > d[i] + 20 && d[i + 2] > d[i + 1] + 20) { if (x >= 0.05 * W && x < 0.15 * W) leftEnd++; if (x >= 0.85 * W && x < 0.95 * W) rightEnd++; }
+              }
+            }
+            Sky.advance(100);
           }
           const st = Sky.state();
-          rows.push({ name, heat, uv, low, lit, size: st.heat.size, band: st.heat.sun.band, beams: st.beam.beams.length });
+          rows.push({ name, heat, uv, low, lit, last, leftEnd, rightEnd, size: st.heat.size, band: st.heat.sun.band, beams: st.beam.beams.length });
         }
         return rows;
       }, [heat, uv]));
@@ -2351,7 +2390,7 @@ const uvSeen = (page) => page.evaluate(() => {
     }
     now.beams.forEach((b, i) => {
       const o = first.beams[i], sw = b.angle - b.base - b.fan;
-      still = Math.max(still, Math.abs(b.length - o.length), Math.abs(b.bright - o.bright), Math.abs(b.width - o.width));
+      still = Math.max(still, Math.abs(b.length - o.length), Math.abs(b.extent - o.extent), Math.abs(b.fade - o.fade), Math.abs(b.bright - o.bright), Math.abs(b.width - o.width));
       swayMax = Math.max(swayMax, Math.abs(sw));
       if (dt > 0) swayFast = Math.max(swayFast, Math.abs(sw - (prev.beams[i].angle - prev.beams[i].base - prev.beams[i].fan)) / dt / 360);
     });
@@ -3634,6 +3673,7 @@ const WEATHER = {
       const p = await weatherPage(browser, url, { query: "?fx=heat,uv", driven: true, context: { viewport: { width: 640, height: 480 } } });
       const seen = await sunLook(p.page);
       seen.cost = await sunCost(browser, url);
+      await p.page.evaluate(() => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { heat: 1 } })));   // (the lean is the sun's, not the beams': none drawn while the clock runs on)
       seen.sun = await sunSeen(p.page); seen.place = await placeSeen(p.page, require("./sun_days.json").days);
       seen.errors = p.errors;
       await p.context.close();

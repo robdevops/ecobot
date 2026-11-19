@@ -2985,16 +2985,24 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert max(abs(a["y"] - b["y"]) for a, b in zip(wide, wide[::-1])) < 0.02 * h                         # (symmetric about solar noon)
     summer_ry, winter_ry = (min(r["y"] for r in hot["arcs"][d] if r["day"]) for d in ("summer", "winter"))
     assert summer_ry < hot["arcs"]["equinox"][len(hot["arcs"]["equinox"]) // 2]["y"] and summer_ry < winter_ry, (summer_ry, winter_ry)   # (higher in summer)
-    # the reach: nothing the sun draws (glow, ember, beams) lit below 0.34 of the window's height, at five window sizes (a phone's too),
-    # places of the sun, UV levels and heats; the beams there (with the UV) and some light drawn everywhere
-    assert len(hot["reach"]) == 5 * 5 * 5, len(hot["reach"])
+    # the reach: the heat alone (the glow, the ember) lit nowhere below 0.34 of the window's height; the beams (with the UV) run on to the window's bottom, so at UV 11 some light
+    # is drawn in the window's last tenth with the sun at noon (a faint tail in the beams that point down) and in the sides' tenth beyond the outer 5 % when the
+    # sun is at the other side (low, at sunrise and sunset: the sideways beams reach across), at five window sizes (a phone's too); the sideways beams fade over the window's height, so a window over 1.5 times as wide as high
+    # has them gone short of its far side
+    assert len(hot["reach"]) == 5 * 4 * 5, len(hot["reach"])
     for r in hot["reach"]:
         w, h = r["size"][:2]
-        assert r["lit"] > 0 and r["low"] < 0.34 * h, r
-        if r["uv"] >= 0.6:
+        assert r["lit"] > 0, r
+        if r["uv"] == 0:
+            assert r["low"] < 0.34 * h and r["last"] == 0 and r["beams"] == 0, r
+        else:
             assert r["beams"] == 12, r
-        if r["uv"] == 1 and r["heat"] == 1 and r["name"] == "summer noon":
-            assert r["low"] > 0.5 * r["band"]["cap"] and r["low"] > 0.2 * h, r   # (straight down at noon the beams really reach: over half the way to the line, and past the old fifth)
+            if r["name"] == "summer noon":
+                assert r["low"] > 0.5 * r["band"]["ref"] and r["low"] > 0.2 * h and r["last"] > 0, r   # (straight down at noon the beams really reach: past the reference line, and some light in the last tenth)
+            if r["name"] == "summer sunrise" and r["heat"] == 1 and w < 1.5 * h:
+                assert r["leftEnd"] > 0, r                                                                # (the sun on the right: the sideways beams reach the left edge, in a window not much wider than high: they fade over the window's height)
+            if r["name"] == "summer sunset" and r["heat"] == 1 and w < 1.5 * h:
+                assert r["rightEnd"] > 0, r
     # ... nothing drawn at night, the sun up at midday
     assert hot["night"]["early"] == {"ink": 0, "day": False} and hot["night"]["late"] == {"ink": 0, "day": False}, hot["night"]
     assert hot["night"]["noon"]["day"] and hot["night"]["noon"]["ink"] > 500, hot["night"]
@@ -3022,8 +3030,8 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     for look in hot["edges"]:
         assert look["ball"]["n"] == 0 and look["all"]["n"] == 0 and look["ball"]["sides"] >= 2 and look["all"]["sides"] >= 2, look
     # the heat's pictures are as they were, whether the UV is on or off (a hash of the canvas at three places of the sun)
-    assert hot["pictures"] == {"heat": [4158489489, 1602507761, 1993016501], "heatUv": [348796307, 3665128847, 841485416],
-                               "warmUv": [1429803645, 1047245285, 506380353]}, hot["pictures"]
+    assert hot["pictures"] == {"heat": [1204463063, 4104546420, 3615693614], "heatUv": [3187059569, 466609053, 3077445898],
+                               "warmUv": [1428103147, 2313773295, 3473614922]}, hot["pictures"]
     # the UV alone (the heat off) has no dark ring round the sun: the mean luminance by half a sun radius of distance never rises again
     # (by more than the dither's noise) from the centre out to 3 R, at summer noon and mid-morning, UV 5.5 and 11
     assert len(hot["uvOnly"]) == 4, hot["uvOnly"]
@@ -3076,7 +3084,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # ... the beams the same at the pulse's top and bottom: their length, width and strength do not change with the heat's breathing
     pb = hot["pulseBeams"]
     assert max(l["pulse"] for l in pb) > 0.5 and min(l["pulse"] for l in pb) < -0.5 and len(pb[0]["beams"]) == 12, [l["pulse"] for l in pb]
-    for key in ("length", "width", "bright"):
+    for key in ("length", "extent", "fade", "width", "bright"):
         for l in pb[1:]:
             assert [b[key] for b in l["beams"]] == pytest.approx([b[key] for b in pb[0]["beams"]], rel=1e-9), key
     # the beams: twelve, as wide at the base as their length says (0.26 of the longest tip: BEAM_BL 0.13 each side, within 20 %), their lengths varying, blunt
@@ -3112,15 +3120,37 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     # the page's own colour #14191D added), so no overlap of beams climbs to lavender or white, and the beams do reach the cap's blue
     assert capped["r"] <= 121 + 20 + 1 and capped["g"] <= 78 + 25 + 1 and capped["b"] <= 232 + 29 + 1, capped
     assert capped["b"] > 200 and capped["r"] > 90, capped
-    # the ends: blunt, their brightness falling smoothly to zero over the last 35 % of the length (never rising again from 0.4 on: no hard
-    # cut-off), nothing at the very end, in the picture too (the violet along the longest: fainter toward the end, none past it)
-    ends = hot["ends"]
-    for profile, end, start in zip(ends["profiles"], ends["ends"], ends["start"]):
-        assert all(b <= a + 1e-9 for a, b in zip(profile, profile[1:])), profile
-        assert end < 1e-6 and end < 0.01 * start and profile[-3] < 0.1 * profile[0], (profile, end, start)
-        assert max(abs(b - a) for a, b in zip(profile, profile[1:])) < 0.3 * profile[0], profile   # (no step in it)
-    seen = [v for v in ends["violet"] if v["inside"]]
-    assert len(seen) >= 4 and seen[0]["v"] > seen[1]["v"] * 0.9 and seen[1]["v"] > seen[2]["v"] and seen[-1]["v"] < 0.25 * seen[0]["v"], ends["violet"]
+    # the fade: each beam runs on along its direction (to the window's farthest corner, or where its strength is gone), its steady strength along its axis
+    # monotone non-increasing from the sun (from the end of its 5 % root, where it starts at a half), a smooth curve with a long tail, no step; at UV 11 the fade
+    # length is two thirds of the window's height and at two thirds of it a beam's strength is 5 % of its strength near the sun (at most 6 %, at least 0.5 %: barely
+    # visible, not gone), still lit in the window's last tenth (0.5 % of it at least) and nothing cut off; UV 7 fades over 0.68 times that, so at the same
+    # distance is fainter; in the picture the violet on the axis of the beam nearest straight down falls with the distance, a little still at two thirds
+    full, mild = hot["fade"]
+    assert full["uvi"] == 11 and mild["uvi"] == 7, (full["uvi"], mild["uvi"])
+    for look in (full, mild):
+        assert full["fadeAt"] == 0.05 and full["fadeEnd"] > 2.0, look
+        for prof, beam in zip(look["profiles"], look["beams"]):
+            d0 = math.ceil(0.06 * beam["length"]) + 1
+            near = prof[d0]
+            assert near > 0 and all(b <= a + 1e-12 for a, b in zip(prof[d0:], prof[d0 + 1:])), (beam, prof[d0:d0 + 20])
+            assert max(abs(b - a) for a, b in zip(prof[d0:], prof[d0 + 1:])) < 0.05 * near, beam                 # (smooth: no step anywhere)
+            assert beam["fade"] == pytest.approx(look["H"] * 2 / 3 * (1 if look["uvi"] == 11 else 0.6 + 0.4 * 0.2)), beam
+            assert beam["extent"] >= min(beam["fade"] * look["fadeEnd"], look["H"]) - 1, beam   # (runs at least as far as the window is high, or its strength is gone)
+    for prof, beam in zip(full["profiles"], full["beams"]):
+        d0 = math.ceil(0.06 * beam["length"]) + 1
+        near, at = prof[d0], lambda f: prof[min(len(prof) - 1, round(f * full["H"]))]
+        assert 0.03 <= at(2 / 3) / near <= 0.06 and at(2 / 3) / near >= 0.005, (at(2 / 3) / near, beam)
+        assert at(1 / 3) / near > 0.12 and at(1.0) > 0.005 * near and at(1.0) < at(2 / 3) < at(1 / 3), (beam, at(1 / 3) / near, at(1.0) / near)
+    for pf, pm in zip(full["profiles"], mild["profiles"]):
+        d = round(2 / 3 * full["H"])
+        assert pm[d] / pm[10] < pf[d] / pf[10] < 0.06 and pm[d] / pm[10] < 0.03, (pm[d] / pm[10], pf[d] / pf[10])   # (UV 7: fainter at the same distance)
+    assert mild["beams"][0]["fade"] == pytest.approx(0.68 * full["beams"][0]["fade"], rel=1e-6) and all(m["extent"] <= f["extent"] for m, f in zip(mild["beams"], full["beams"])), (mild["beams"][0], full["beams"][0])
+    v = [x["v"] for x in full["violet"] if x["inside"]]
+    assert len(v) == 4 and v[0] > v[1] > v[2] > 0 and v[2] < 0.45 * v[1] and v[3] <= v[2] * 1.3, full["violet"]
+    # the beams on with a flood (a high water level and a low one): none of them drawn at or below the water's surface in any column, and some in the rows just above it
+    for look in hot["flood"]:
+        assert look["depth"] > 0 and look["depth"] == pytest.approx(look["full"] * look["level"], rel=0.05), look
+        assert look["below"] == 0 and look["above"] > 3 and look["over"] > look["above"], look
     # the shafts: distinct, not a puff: at half the longest reach the violet round the sun (by angle over the lower half) has at least five
     # separate peaks (the beams 30 degrees apart: 0, +-30, +-60 about straight down) with valleys between them under 0.98 of the lower neighbouring peak (the red and green channels' sum, at 1024 x 768)
     sh = hot["shafts"]
