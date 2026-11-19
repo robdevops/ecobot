@@ -2953,8 +2953,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             assert r["x"] == pytest.approx(w / 2 + 0.42 * w * math.cos(math.pi * r["t"]), abs=1e-6), (day, r)
             assert r["y"] == pytest.approx(b["yLo"] - b["yLo"] * min(1, sin_el / math.sin(math.radians(75.6))) * math.sin(math.pi * r["t"]), abs=1e-6), (day, r)
             assert r["r"] == pytest.approx(b["R"]) and b["R"] <= 0.04 * w + 1e-9 and b["R"] >= 2.6 - 1e-9, (day, r)
-            assert r["x"] - b["Rmax"] >= 0 and r["x"] + b["Rmax"] <= w, (day, r)   # (the glow too: whole across the window)
-            assert r["y"] >= -1e-9 and r["y"] <= b["yLo"] and r["y"] - r["r"] >= -r["r"] - 1e-9 and b["S"] <= 0.16 * h + 1e-9 and r["y"] + b["Rmax"] < 0.2 * h, (day, r)
+            assert r["y"] >= -1e-9 and r["y"] <= b["yLo"] and r["y"] - r["r"] >= -r["r"] - 1e-9 and b["S"] <= 0.16 * h + 1e-9 and r["y"] + b["Rmax"] < 0.34 * h, (day, r)
             if day == "winter":   # (a winter noon well inside the window: the ball whole)
                 assert r["y"] - b["Rmax"] >= 0 or r["t"] < 0.1 or r["t"] > 0.9 or r["y"] - r["r"] > 1, (day, r)
             if r["t"] < 0.08 or r["t"] > 0.92:   # (at sunrise and sunset: low in the strip, fully visible)
@@ -2964,7 +2963,6 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         xs = [r["x"] for r in up]
         assert all(b < a for a, b in zip(xs, xs[1:])), (day, "x not falling")                     # (monotone: no stall; east, the screen's right, to west, the left)
         assert xs[0] > 0.8 * w and xs[-1] < 0.2 * w and abs(xs[len(xs) // 2] - w / 2) < 0.03 * w, (day, xs[0], xs[-1])   # (sunrise on the right, noon in the middle, sunset on the left)
-        assert all(r["x"] - r["band"]["Rmax"] > 1 and r["x"] + r["band"]["Rmax"] < w - 1 for r in up), day   # (no flat run along a side border)
         apex = min(r["y"] for r in up)
         if day == "summer":   # (the highest noon of the year: the centre on the top edge, half the ball showing)
             assert apex == pytest.approx(0, abs=0.35), (day, apex)
@@ -2982,7 +2980,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     wide = [r for r in hot["wide"] if r["day"]]
     w, h = wide[0]["size"][:2]
     assert w / h > 3.5 and len(wide) > 100, (w, h)
-    assert all(r["x"] - r["band"]["Rmax"] >= 0 and r["x"] + r["band"]["Rmax"] <= w and r["y"] >= -1e-9 and r["y"] + r["band"]["Rmax"] < 0.2 * h for r in wide), min(r["y"] - r["r"] for r in wide)
+    assert all(r["y"] >= -1e-9 and r["y"] + r["band"]["Rmax"] < 0.34 * h for r in wide), min(r["y"] - r["r"] for r in wide)
     assert all(r["x"] == pytest.approx(w / 2 + 0.42 * w * math.cos(math.pi * r["t"]), abs=1e-6) for r in wide)
     assert max(abs(a["y"] - b["y"]) for a, b in zip(wide, wide[::-1])) < 0.02 * h                         # (symmetric about solar noon)
     summer_ry, winter_ry = (min(r["y"] for r in hot["arcs"][d] if r["day"]) for d in ("summer", "winter"))
@@ -3008,7 +3006,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert cool["level"] == pytest.approx(0.3) and hotter["level"] == 1 and cool["drawn"] <= cool["cap"] and hotter["drawn"] <= hotter["cap"], hot["balls"]
     for ball in hot["balls"]:
         lum = ball["lum"]
-        assert ball["Rh"] == pytest.approx(1.4 * ball["r"] * (3.4 + 2.6 * ball["level"])), ball["Rh"]
+        assert ball["Rh"] == pytest.approx(1.4 * ball["r"] * (3.4 + 2.6 * ball["level"]) * ball["scale"], rel=1e-6), ball["Rh"]
         assert all(b <= a + 4 for a, b in zip(lum, lum[1:])), lum                                  # (never rising outward: the dither's grain aside)
         assert max(a - b for a, b in zip(lum, lum[1:])) < 0.4 * 255, lum                          # (no rim: a ball 1.6 art px across its core falls over a few pixels, no step over 0.4 of the scale)
         assert max(ball["centre"]) > 240 and max(lum[int(ball["Rh"]) + 4:]) < 3, (lum, ball["centre"])   # (bright at the middle; nothing past the reach)
@@ -3023,6 +3021,55 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert len(hot["edges"]) == 14, hot["edges"]
     for look in hot["edges"]:
         assert look["ball"]["n"] == 0 and look["all"]["n"] == 0 and look["ball"]["sides"] >= 2 and look["all"]["sides"] >= 2, look
+    # the furnace's breathing (120 s of the weather's clock, a sample every half second): the halo's radius at 0.15 of the ball's field swings clearly more at 43 C
+    # (peak to peak over 40 s: at least 25 % of its radius, and at least 3 times 35 C's, which stays under 8 %), its baseline radius at 43 C at least 20 % over 35 C's
+    # (beyond the heat's own), the white ball's radius (where its profile falls through 1) varies under 5 %, and no glow measure has a pulse faster than 0.15 Hz
+    def swing(rows, key, n=80):
+        v = [r[key] for r in rows[:n]]
+        return (max(v) - min(v)) / (sum(v) / len(v))
+    def spectrum(rows, key, dt=0.5):
+        v = [r[key] for r in rows]; mean = sum(v) / len(v); n = len(v)
+        v = [(x - mean) * (0.5 - 0.5 * math.cos(2 * math.pi * i / (n - 1))) for i, x in enumerate(v)]
+        out = []
+        for k in range(1, n // 2):
+            f = k / (n * dt)
+            out.append((f, math.hypot(sum(x * math.cos(2 * math.pi * f * i * dt) for i, x in enumerate(v)), sum(x * math.sin(2 * math.pi * f * i * dt) for i, x in enumerate(v)))))
+        return out
+    cool_p, hot_p = hot["pulse"]["0.3"], hot["pulse"]["1"]
+    assert swing(hot_p, "halo") >= 0.25 and swing(hot_p, "halo") >= 3 * swing(cool_p, "halo") and swing(cool_p, "halo") < 0.08, (swing(hot_p, "halo"), swing(cool_p, "halo"))
+    mean = lambda rows, key: sum(r[key] for r in rows) / len(rows)
+    assert mean(hot_p, "halo") >= 1.2 * mean(cool_p, "halo"), (mean(hot_p, "halo"), mean(cool_p, "halo"))
+    assert mean(hot_p, "Rh") >= 1.25 * mean(cool_p, "Rh") * (3.4 + 2.6) / (3.4 + 2.6 * 0.3) * 0.95, (mean(hot_p, "Rh"), mean(cool_p, "Rh"))   # (the old 1.44 times, and 25 % more)
+    for rows in (cool_p, hot_p):
+        assert max(r["white"] for r in rows) / min(r["white"] for r in rows) < 1.05 and all(r["white"] > 0 for r in rows), [r["white"] for r in rows][:5]
+        assert all(abs(r["pulse"]) <= 1 + 1e-9 for r in rows), rows[0]
+    for rows in (cool_p, hot_p):
+        for key in ("halo", "light", "Rh", "pulse"):
+            spec = spectrum(rows, key)
+            top = max(spec, key=lambda fa: fa[1])
+            assert 0 < top[0] <= 0.15 + 1e-9, (key, top)
+            assert all(a < 0.05 * top[1] for f, a in spec if f > 0.5), key                      # (nothing above 0.5 Hz: the sampling's own limit is 1 Hz)
+            assert max(spec, key=lambda fa: fa[1])[0] <= 0.15 and sum(a for f, a in spec if f > 0.2) < 0.15 * sum(a for f, a in spec), key
+    # ... not one period: the pulse's spectrum has at least two separate peaks (7, 11 and 17 s: 0.14, 0.09 and 0.06 Hz), each over a fifth of the strongest
+    spec = spectrum(hot_p, "pulse")
+    peaks = [(f, a) for i, (f, a) in enumerate(spec[1:-1], 1) if a > spec[i - 1][1] and a >= spec[i + 1][1] and a > 0.2 * max(x[1] for x in spec)]
+    assert len(peaks) >= 2 and all(0.04 < f <= 0.15 for f, a in peaks), peaks
+    assert all(len({round(r["pulse"], 2) for r in hot_p[i::28]}) > 1 for i in range(4)), "periodic with 14 s"   # (no single period: samples a fixed time apart differ)
+    # ... paused: the clock, pulse and reach stand still over 300 frames
+    held = hot["pulsePaused"]
+    assert held["before"]["clock"] == held["held"]["clock"] and held["before"]["pulse"] == held["held"]["pulse"] and held["before"]["Rh"] == held["held"]["Rh"], held
+    # ... the glow's box at the pulse's peak and trough, at six places of the sun: none of it lit on its edge, none of the white core in the first tile row, nothing of
+    # the glow lit below 0.34 H, none at the window's own sides
+    assert len(hot["pulseEdges"]) == 12, hot["pulseEdges"]
+    for look in hot["pulseEdges"]:
+        assert (look["pulse"] >= 0.9) == (look["want"] > 0) and abs(look["pulse"]) >= 0.8 and look["n"] == 0 and look["sides"] >= 1 and look["sideLit"] == 0, look
+        assert look["lowest"] < look["top"] and look["low"] < look["cap"], look
+    # ... the beams the same at the pulse's top and bottom: their length, width and strength do not change with the heat's breathing
+    pb = hot["pulseBeams"]
+    assert max(l["pulse"] for l in pb) > 0.5 and min(l["pulse"] for l in pb) < -0.5 and len(pb[0]["beams"]) == 12, [l["pulse"] for l in pb]
+    for key in ("length", "width", "bright"):
+        for l in pb[1:]:
+            assert [b[key] for b in l["beams"]] == pytest.approx([b[key] for b in pb[0]["beams"]], rel=1e-9), key
     # the beams: twelve, as wide at the base as their length says (0.26 of the longest tip: BEAM_BL 0.13 each side, within 20 %), their lengths varying, blunt
     beams = hot["beams"]
     assert beams["count"] == 12 and len(beams["widths"]) == 12 and "lobe" not in beams and beams["edge"] == 14, beams

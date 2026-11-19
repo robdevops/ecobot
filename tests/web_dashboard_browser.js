@@ -1872,7 +1872,7 @@ const sunLook = async (page) => {
     await fx({ heat: level, uv: 0 });
     out.balls.push(await inPage(() => {
       __day(354.36, 1241.24, 75.61, 798); Sky.advance(150);
-      const st = Sky.state(), s = st.heat.sun, d = __grab(), W = __c.width, n = Math.ceil(s.r * 8.4) + 8, sum = new Float64Array(n * 3), cnt = new Float64Array(n);
+      const st = Sky.state(), s = st.heat.sun, d = __grab(), W = __c.width, n = Math.ceil(s.band.Rmax) + 8, sum = new Float64Array(n * 3), cnt = new Float64Array(n);
       for (let y = Math.max(0, Math.floor(s.y - n)); y <= Math.min(__c.height - 1, Math.ceil(s.y + n)); y++) for (let x = Math.max(0, Math.floor(s.x - n)); x <= Math.min(W - 1, Math.ceil(s.x + n)); x++) {
         const q = Math.floor(Math.hypot(x + 0.5 - s.x, y + 0.5 - s.y)); if (q >= n) continue;
         const i = (y * W + x) * 4; for (let k = 0; k < 3; k++) sum[q * 3 + k] += d[i + k]; cnt[q]++;
@@ -1882,7 +1882,7 @@ const sunLook = async (page) => {
       const half = lum.findIndex((v) => v < 0.5 * lum[0]);
       const f = st.heat.fields(); let ember = 0;
       for (let y = 0; y < __c.height; y++) for (let x = 0; x < W; x++) if (Math.hypot(x - s.x, y - s.y) > 1.2 * s.r && f.R[y * W + x] > ember) ember = f.R[y * W + x];
-      return { level: st.heat.level, r: s.r, Rh: st.heat.ball.Rh, rgb, lum, half, ember, centre: [...d.slice((Math.round(s.y) * W + Math.round(s.x)) * 4, (Math.round(s.y) * W + Math.round(s.x)) * 4 + 3)], drawn: st.drawn.heat, cap: st.cap };
+      return { level: st.heat.level, r: s.r, Rh: st.heat.ball.Rh, scale: st.heat.ball.haloScale, rgb, lum, half, ember, centre: [...d.slice((Math.round(s.y) * W + Math.round(s.x)) * 4, (Math.round(s.y) * W + Math.round(s.x)) * 4 + 3)], drawn: st.drawn.heat, cap: st.cap };
     }));
   }
   // ... the edge of the ball's box (and of the bloom's, which is bigger) at the sun's places in summer and winter, heat 0.3 and 1
@@ -1911,6 +1911,72 @@ const sunLook = async (page) => {
       return seen;
     }));
   }
+  // the furnace's breathing: at heat 0.3 and 1, 120 s of the weather's clock every half second (the sun at summer noon, the UV off): the halo's radius (where the
+  // ring mean of the ball's field falls through 0.15), the white ball's (where its profile falls through 1), the pulse, the glow's total light and its reach Rh
+  out.pulse = {};
+  for (const level of [0.3, 1]) {
+    await fx({ heat: level, uv: 0 });
+    out.pulse[level] = await inPage(() => {
+      __day(354.36, 1241.24, 75.61, 798); Sky.setSunPosition(null, null); Sky.advance(150);
+      const rows = [];
+      for (let k = 0; k < 240; k++) {
+        Sky.advance(15);
+        const st = Sky.state(), s = st.heat.sun, f = st.heat.fields(), W = st.heat.size[0], Hh = st.heat.size[1], n = Math.ceil(s.band.Rmax) + 4, sum = new Float64Array(n), cnt = new Float64Array(n);
+        let light = 0;
+        for (let y = Math.max(0, Math.floor(s.y - n)); y <= Math.min(Hh - 1, Math.ceil(s.y + n)); y++) for (let x = Math.max(0, Math.floor(s.x - n)); x <= Math.min(W - 1, Math.ceil(s.x + n)); x++) {
+          const q = Math.floor(Math.hypot(x - s.x, y - s.y)); if (q >= n) continue;
+          sum[q] += f.S[y * W + x]; cnt[q]++; light += f.S[y * W + x] + f.R[y * W + x];
+        }
+        const m = Array.from(sum, (v, i) => v / Math.max(cnt[i], 1));
+        let halo = 0; for (let i = 1; i < n; i++) if (m[i] < 0.15 && m[i - 1] >= 0.15) { halo = i - 1 + (m[i - 1] - 0.15) / (m[i - 1] - m[i]); break; }
+        rows.push({ clock: st.clock, halo, white: st.heat.ball.white, pulse: st.heat.ball.pulse, light, Rh: st.heat.ball.Rh, R: s.r });
+      }
+      return rows;
+    });
+  }
+  // ... paused (the weather's time scale 0): the pulse and the glow's reach stay as they were over 300 frames; at four times the speed it moves four times as fast
+  await fx({ heat: 1, uv: 0 });
+  out.pulsePaused = await inPage(() => {
+    __day(354.36, 1241.24, 75.61, 798); Sky.setSunPosition(null, null); Sky.advance(150);
+    const at = () => { const st = Sky.state(); return { clock: st.clock, pulse: st.heat.ball.pulse, Rh: st.heat.ball.Rh }; };
+    const before = at(); Sky.timeScale(0); Sky.advance(300); const held = at(); Sky.timeScale(1);
+    return { before, held };
+  });
+  // ... the box's edge at the pulse's peak and trough (every glow term gone before the box's edge, the window's own sides aside), and at the peak the white core's (the ball's field of 1 and over) clear of the first tile row
+  out.pulseEdges = await inPage(() => {
+    Sky.timeScale(8);
+    const seekTo = (want) => { for (let k = 0; k < 8000; k++) { Sky.advance(1); const p = Sky.state().heat.ball.pulse; if (want > 0 ? p >= 0.9 : p <= -0.9) return p; } return null; };
+    const seen = [];
+    for (const want of [1, -1]) {
+      const p0 = seekTo(want); Sky.timeScale(1);
+      for (const [name, rise, set, noon, m] of [["summer sunrise", 354.36, 1241.24, 75.61, 372], ["summer morning", 354.36, 1241.24, 75.61, 540], ["summer noon", 354.36, 1241.24, 75.61, 798],
+                                                 ["summer sunset", 354.36, 1241.24, 75.61, 1225], ["winter sunrise", 455.21, 1027.59, 28.74, 470], ["winter noon", 455.21, 1027.59, 28.74, 741]]) {
+        __day(rise, set, noon, m); Sky.setSunPosition(null, null); Sky.advance(4);
+        const st = Sky.state(), d = __grab(), W = __c.width, Hh = __c.height, f = st.heat.fields(), ball = st.heat.ball, [x0, y0, x1, y1] = ball.bloomBox || ball.box;
+        let n = 0, sides = 0;
+        const edge = (xs, ys) => { for (const x of xs) for (const y of ys) { const i = (y * W + x) * 4; if (f.S[y * W + x] > 0 || f.R[y * W + x] > 0 || (d[i + 3] > 0 && d[i] + d[i + 1] + d[i + 2] > 0)) n++; } sides++; };
+        const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+        // (a box side on the window's own side or top edge is cut by the window: skipped; the glow fades to nothing at the sides)
+        if (x0 > 0) edge([x0], range(y0, y1)); if (x1 < W - 1) edge([x1], range(y0, y1)); if (y0 > 0) edge(range(x0, x1), [y0]); if (y1 < Hh - 1) edge(range(x0, x1), [y1]);
+        // (the white core (the ball's field of 1 or more): its lowest row against the strip S above the first tile row)
+        let lowest = -1; for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) if (f.S[y * W + x] >= 1) lowest = Math.max(lowest, y);
+        // (the lowest lit glow pixel at all, against the cap 0.34 H)
+        let low = -1; for (let y = 0; y < Hh; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (d[i + 3] > 0 && d[i] + d[i + 1] + d[i + 2] > 60) low = Math.max(low, y); }
+        let sideLit = 0; for (let y = 0; y < Hh; y++) sideLit += (f.S[y * W] > 0 || f.S[y * W + W - 1] > 0 || f.R[y * W] > 0 || f.R[y * W + W - 1] > 0) ? 1 : 0;
+        seen.push({ want, pulse: ball.pulse, name, n, sides, lowest, low, sideLit, top: st.heat.sun.band.S, cap: 0.34 * Hh, Rh: ball.Rh, R: st.heat.sun.r, size: [W, Hh], p0 });
+      }
+    }
+    Sky.timeScale(1);
+    return seen;
+  });
+  // ... and the beams are the heat's pulse's own: their strength, length and width the same at the pulse's peak and trough (UV 11, 100 frames apart at a pulse's swing)
+  await fx({ heat: 1, uv: 1 });
+  out.pulseBeams = await inPage(() => {
+    __day(354.36, 1241.24, 75.61, 600); Sky.setSunPosition(80, 40); Sky.advance(150);
+    const looks = [];
+    for (let k = 0; k < 40; k++) { Sky.advance(45); const st = Sky.state(); looks.push({ pulse: st.heat.ball.pulse, beams: st.beam.beams.map((b) => ({ length: b.length, width: b.width, bright: b.bright })) }); }
+    return looks;
+  });
   // the beams at UV 11
   await fx({ heat: 1, uv: 1 });
   out.beams = await inPage(() => {
@@ -1924,6 +1990,9 @@ const sunLook = async (page) => {
     await fx({ heat: 1, uv: Math.max(0, Math.min(1, (index - 6) / 5)) });
     out.amounts.push(await inPage((index) => {
       Sky.advance(120);
+      // (the glow breathes: each at the same moment of its pulse, the next rise through 0, so only the UV's amount differs)
+      let prev = Sky.state().heat.ball.pulse;
+      for (let k = 0; k < 2000; k++) { Sky.advance(1); const p = Sky.state().heat.ball.pulse; if (prev < 0 && p >= 0) break; prev = p; }
       const b = Sky.state().beam;
       return { index, amp: b.amp, violet: __violet(__grab()), beams: b.beams.length };
     }, index));
