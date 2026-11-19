@@ -1229,12 +1229,14 @@ const Sky = (() => {
         bI.push(y * W + x); bA.push(Math.min(NA2 - 1, ((Math.atan2(ey, ddx) + Math.PI) * NA2 / TAU) | 0)); bR.push(rr); bF.push(fin); bM.push(soft(0, E, Math.min(x, W - 1 - x)));
       }
       // the beams' mask: the window's edges' fade and the sun's root (in from 0.6 R to 1.7 R)
-      const Et = Math.min(E, Math.max(sy, 1));   // (the top's fade ends at the sun's height)
+      // (the top's fade ends at the sun's height, from 0 at the window's top; with the sun on the top edge (sy 0: summer noon) that would
+      // be all in one row, row 0 bare and row 1 whole, a hard band: so there the ramp starts above the window, E wide, and by 3 px down it is the plain one)
+      const Et = Math.min(E, Math.max(sy, 0)), St = (Et - E) * (1 - soft(0, 3, sy));
       const mask = new Float32Array(wh * hh), hot = new Float32Array(wh * hh), cx = new Float32Array(wh), cy = new Float32Array(hh), m0 = (R + 14) * (R + 14);   // (the root: in from 0.6 R to 1.7 R; hot, pink-white, within 30 px of the sun)
       for (let i = 0; i < wh; i++) cx[i] = i - sx;
       for (let j = 0; j < hh; j++) cy[j] = j - sy;
       for (let j = 0; j < hh; j++) {
-        const y = j, fy = soft(0, Et, y) * soft(0, E, H - 1 - y);
+        const y = j, fy = soft(St, Math.max(Et, 1e-3), y) * soft(0, E, H - 1 - y);
         for (let i = 0; i < wh; i++) {
           const x = i; let m = soft(0, E, Math.min(x, W - 1 - x)) * fy;
           const sr2 = cx[i] * cx[i] + cy[j] * cy[j];

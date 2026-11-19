@@ -2108,6 +2108,12 @@ const sunLook = async (page) => {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (x === 0 || y === 0 || x === W - 1 || y === H - 1) { const i = (y * W + x) * 4; if (d[i + 3] > 0 && d[i + 2] > d[i] + 30) n++; }
     return { violet: n, whole: __violet(d) };
   });
+  // no band along the top at summer noon: the sun on the top edge, the beams' violet in row 0 as in row 1 (the top's fade must not be one row)
+  out.top = await inPage(() => {
+    __day(354.36, 1241.24, 75.61, 798); Sky.setSunPosition(0, 75.61); Sky.advance(150);
+    const d = __grab(), W = __c.width, row = (y) => { let n = 0; for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (d[i + 3] > 0 && d[i + 2] > d[i] + 30) n++; } return n; };
+    return { rows: [0, 1, 2, 6].map(row) };
+  });
   // the dither's grid power at three moments of the day
   out.grid = [];
   for (const m of [372, 798, 1225]) {

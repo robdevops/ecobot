@@ -3137,6 +3137,9 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert abs(look["shaft"]["hue"] - 255) <= 10 and abs(look["top"]["hue"] - 255) <= 10, look
     # ... faded out short of the window's edge: no violet in its outer ring
     assert hot["edge"]["violet"] == 0 and hot["edge"]["whole"] > 100, hot["edge"]
+    # ... but the sun on the top edge (summer noon) has no bare top row under it: row 0 as full of violet as row 1 (no band of one art pixel)
+    r = hot["top"]["rows"]
+    assert r[1] > 30 and r[0] >= 0.85 * r[1] and r[1] >= 0.85 * r[3], r
     # no dot pattern in the dither (its grid power), no flash faster than 0.5 Hz (the brightness over 24 s: its dominant frequency, the heat
     # alone and with the UV), none drawn stronger than its strength (the sun is not scaled by the cap)
     assert all(g < 400 for g in hot["grid"]), hot["grid"]
