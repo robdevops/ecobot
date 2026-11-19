@@ -20,7 +20,9 @@ WIND = ("#E8E8E8", "#C8CDD2", "#A2ABB4", "#7C8790", "#56626C")
 SUN = ("#FBE79A", "#F5D45A", "#F2A53C", "#D27A2A", "#A9501F")
 # The UV dial, 0-12 in twelve equal slices of 1 UV (the page draws one arc slice for each colour), cut to the WHO's categories: Low 0-2
 # green (3 slices), Moderate 3-5 yellow (3), High 6-7 orange (2), Very high 8-10 red (3), Extreme 11+ violet (1; the dial stops at 12)
-_UV_GREEN, _UV_YELLOW, _UV_ORANGE, _UV_RED, _UV_VIOLET = "#A9E34B", "#F7E04A", "#F4A93B", "#E8562A", "#7A2CF0"
+# in the official swatches (US EPA / AirNow UV index scale): Low #299501, Moderate #F7E401, High #F95901, Very High #D90011, Extreme #6C49C9
+_UV_GREEN, _UV_YELLOW, _UV_ORANGE, _UV_RED, _UV_VIOLET = "#299501", "#F7E401", "#F95901", "#D90011", "#6C49C9"
+UV_SCALE = (("Low", 0, _UV_GREEN), ("Moderate", 3, _UV_YELLOW), ("High", 6, _UV_ORANGE), ("Very high", 8, _UV_RED), ("Extreme", 11, _UV_VIOLET))
 UV = (_UV_GREEN,) * 3 + (_UV_YELLOW,) * 3 + (_UV_ORANGE,) * 2 + (_UV_RED,) * 3 + (_UV_VIOLET,)
 DEGREES = (40, 30, 20, 10, 0)          # a thermometer's scale as it starts (THERMOMETER), before it widens to take in the reading
 GUST = ("wind", "wind_gust")            # the live gust: the Wind gauge's Gust column's, and its red hand's (today's highest gust)

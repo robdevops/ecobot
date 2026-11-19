@@ -1732,3 +1732,16 @@ def test_the_uv_dial_is_twelve_one_uv_slices_cut_to_the_who_categories():
     low, moderate, high, very_high, extreme = UV[0], UV[3], UV[6], UV[8], UV[11]
     assert UV == (low,) * 3 + (moderate,) * 3 + (high,) * 2 + (very_high,) * 3 + (extreme,)   # 0-2, 3-5, 6-7, 8-10, 11+
     assert len({low, moderate, high, very_high, extreme}) == 5
+
+
+def test_the_uv_dial_uses_the_official_scale_in_the_page_and_the_gauge_sheet():
+    from lib.ecowitt.dashboard import GAUGES, UV, UV_SCALE
+    official = (("Low", 0, "#299501"), ("Moderate", 3, "#F7E401"), ("High", 6, "#F95901"), ("Very high", 8, "#D90011"), ("Extreme", 11, "#6C49C9"))
+    assert UV_SCALE == official
+    for _name, edge, colour in official:                 # each band's slices, from its edge to the next, are its one colour
+        nxt = min((e for _n, e, _c in official if e > edge), default=12)
+        assert UV[edge:nxt] == (colour,) * (nxt - edge)
+    gauge = next(g for g in GAUGES if g.title == "UV index")
+    assert gauge.colours == UV and gauge.ticks == (0, 3, 6, 8, 11)
+    from lib import gauge_sheet
+    assert gauge_sheet.GAUGES is GAUGES                  # the sheet draws the very same gauge
