@@ -1068,11 +1068,11 @@ const Sky = (() => {
   // inside, and each rising out of the ball (in from 0.6 R to 1.7 R from the sun; with the heat off they rise from the sun's centre, no ring between the ball and the beams). All twelve are alike (the same reach and strength, a small length jitter each), whatever the sun's real direction. Near the sun they overlap and brighten, and within 30 px of the sun each root is hot (pink-white: 0.9 exp(-(r - R) / 4) of the beams' level read on the ball's ramp). Where beams cross they add (soft: 1 - exp(-1.6 v)) and the sum is held to the violet's cap (BEAM_KNEE 0.45, BEAM_CAP 0.62 of the ramp: about rgb(118, 74, 229)), so overlaps stay violet and never climb to lavender or white; a beam's strength at its root is BEAM_I, 0.17 (the design mock's 0.161, its 0.23 at the beam intensity 0.7); the shaft's colour steps are dithered with the page's blue noise at BEAM_GRAIN (0.6) of its swing, so the shafts' edges and the dark valleys between them stay clean; they fade out near the window's edges over BEAM_EDGE (14 art px, 42 CSS px at the usual 3, or 0.15 of the narrower side if less); and where the ember
   // flare is lit the violet is held back (by up to 55 %), so the heat stays orange.
   // The UV amount, from the UV index (the effect's level is (UV - 6) / 5, 0 below UV 6 and 1 from UV 11, and 0 until the violet shows, about UV 6.24: Sky.uvLevel): no beams under UV 6; the
-  // violet rises with uvn = clamp((UV - 6) / 5, 0, 1) as (0.3 + 0.7 uvn) smoothstep(6, 7.5, UV); the fade length 0.6 + 0.4 uvn of its full one, so UV 7 fades over 0.68 of UV 11's distance; the window's top fades them over the sun's own height, its sides over BEAM_EDGE (the bottom edge none: the beams run to it); a faint level (the dim tail) is dithered with the whole of the blue noise, so its share of the pixels lit follows its strength down to a speckle.
+  // violet rises with uvn = clamp((UV - 6) / 5, 0, 1) as (0.3 + 0.7 uvn) smoothstep(6, 7.5, UV); the fade length 0.6 + 0.4 uvn of its full one, so UV 7 fades over 0.68 of UV 11's distance; the window's top fades them over the sun's own height, its sides over BEAM_EDGE (the bottom edge none: the beams run to it); the faint end (the tail, under 0.182 of the toned strength) is a smooth tint, every pixel lit, its colour a straight line from the page's own, dithered by one byte (TAIL_V).
   // The cost. Everything the window's size and the sun's place alone decide is made once (bakeSun, again when the size changes or the
   // sun has moved a quarter art pixel: each glow pixel's distance, angle and steady part, in shells of a pixel (a render stops at its own reach), the bloom's, the beams' mask of
   // the window's edges and the sun's root, a dither threshold at every pixel; the profile itself is a table of 4 steps to a pixel made at each render), the beams are worked out at every art pixel
-  // (their own field, through tables of their profile: the fade by distance, the width, the cross-section of each beam, each beam two wedges each row's span of which is solved, a pixel under a hundredth of a beam's strength not made, the violet's tone read between table steps, a faint pixel skipped on its noise alone), and all of it is made again only
+  // (their own field, through tables of their profile: the fade by distance, the width, the cross-section of each beam, each beam two wedges each row's span of which is solved, a pixel under a hundredth of a beam's strength not made, the violet's tone read between table steps, the tail's colour a multiple of one constant), and all of it is made again only
   // every SUN_EVERY (0.09 s: every third frame at 30 a second; the beams' angles change by well under a degree between), the in-between frames drawing the last.
   const SUN_X = 0.42, SUN_NOON_EL = 50, SUN_NOON_MAX = 75.6, SUN_HORIZON = -1;
   const SUN_NOON_SIN = Math.sin(SUN_NOON_MAX * Math.PI / 180);   // (the sine of the highest noon elevation of the year: the summer solstice's, 75.6 degrees)
@@ -1155,8 +1155,16 @@ const Sky = (() => {
   for (let j = 0; j <= BEAM_STEPS; j++) BEAM_WIDE[j] = 1 / (1 + BEAM_WK * Math.pow(j / BEAM_STEPS, 0.8));
   for (let i = 0; i < 256; i++) BEAM_ACROSS[i] = 1 - soft(0.62, 1, i / 255);
   const TONE_STEPS = 64, TONE = new Float32Array(TONE_STEPS * 8 + 1);   // (crossing beams add softly: 1 - exp(-1.6 v), to the top at 1.1, then held to the violet's cap)
+  const toneAt = (v) => {   // (the toned level of a summed level v, read between the table's steps)
+    const ti = v * TONE_STEPS, tj = ti | 0;
+    return tj >= TONE.length - 1 ? TONE[TONE.length - 1] : TONE[tj] + (TONE[tj + 1] - TONE[tj]) * (ti - tj);
+  };
   const violetCap = (v) => v > BEAM_KNEE ? BEAM_KNEE + (BEAM_CAP - BEAM_KNEE) * (1 - Math.exp(-(v - BEAM_KNEE) / (BEAM_CAP - BEAM_KNEE) * 1.5)) : v;   // (above the knee the level eases toward the cap: overlapping beams stay violet)
   for (let i = 0; i < TONE.length; i++) TONE[i] = violetCap((1 - Math.exp(-1.6 * i / TONE_STEPS)) / (1 - Math.exp(-1.6 * 1.1)));
+  // The faint end (the tail): under TAIL_V of the toned level (2 of the violet's 10 shades, at 1.1 shades to the level: the ramp's first knot, 0.2) a pixel is not one of the few shades but a
+  // colour on the straight line from the page's own up to that knot, TAIL_C times v / TAIL_V, in whole bytes (the blue's 100 at the top: 100 steps), and the blue noise swings it by one byte
+  // either way of the line (floor(c + th)), so neighbours differ by a byte at most and the beams' ends fade out as a smooth tint, never a speckle; the shade steps carry on from the knot, as before
+  const TAIL_V = 2 / (SUN_LEVELS.violet * 1.1), TAIL_K = 1 / TAIL_V, TAIL_C = VIOLET_RAMP[1].slice(1);
   // The UV's amount from the effect's level: uvn and the violet's strength
   const uvIndexOf = (level) => UV_FROM + (UV_TO - UV_FROM) * clamp(level, 0, 1);
   const uvAmount = (level) => { const uvn = clamp(level, 0, 1); return {uvn, amp: (0.3 + 0.7 * uvn) * soft(UV_FROM, UV_SOFT, uvIndexOf(uvn))}; };
@@ -1397,13 +1405,16 @@ const Sky = (() => {
         const NL = SUN_LEVELS.ball, NR = SUN_LEVELS.flare, NV = SUN_LEVELS.violet, thr = bk.thr, L1 = BALL_SHADES, L3 = flareShades, L2 = VIOLET_SHADES;
         const [dx0, dy0, dx1, dy1] = kF > 0.002 ? k.bloomBox : [gx0, gy0, gx1, gy1];
         const bxa = Math.min(gx0, dx0), bxb = Math.max(gx1, dx1), bya = Math.min(gy0, dy0), byb = Math.max(gy1, dy1);
-        const TL = TONE.length - 1, BW = 1 - BEAM_GRAIN;
-        // (a faint level, under 0.02, lights its pixel only where the noise th is 1 - 23.4 v or more: the toned level is under 1.95 v, and 12.1 of it, th itself, must reach 1)
-        const violet = (v, th, o) => {   // (the violet's shade (its place in L2, times 3) of the beams' summed level v at a pixel with dither th, o the flare's share there)
-          const ti = v * TONE_STEPS, tj = ti | 0;
-          v = (tj >= TL ? TONE[TL] : TONE[tj] + (TONE[tj + 1] - TONE[tj]) * (ti - tj)) * (o > 0 ? 1 - 0.55 * Math.min(1, o * 1.2) : 1);
-          const lo = v < 0.07 ? 1 - v / 0.07 : 0, gr = BEAM_GRAIN + BW * lo * lo * (3 - 2 * lo);   // (a faint level is dithered with the whole noise: its share of the pixels lit, the tail a speckle, not a gap)
-          return Math.min(NV, Math.floor(v * NV * 1.1 + 0.5 + (th - 0.5) * gr)) * 3;
+        let vr = 0, vg = 0, vb = 0;   // (the violet's colour at the pixel last given to violet(): its added r, g, b bytes)
+        const violet = (v, th, o) => {   // (the violet's colour of the beams' summed level v at a pixel with dither th, o the flare's share there)
+          v = toneAt(v) * (o > 0 ? 1 - 0.55 * Math.min(1, o * 1.2) : 1);
+          if (v < TAIL_V) {   // (the tail: every pixel lit, its colour on the straight line from the page's own up to the ramp's first knot, in whole bytes with the noise's swing of one byte: two nearly equal shades, no speck)
+            const s = v * TAIL_K;
+            vr = (TAIL_C[0] * s + th) | 0; vg = (TAIL_C[1] * s + th) | 0; vb = (TAIL_C[2] * s + th) | 0;
+            return;
+          }
+          const q = Math.min(NV, Math.floor(v * NV * 1.1 + 0.5 + (th - 0.5) * BEAM_GRAIN)) * 3;
+          vr = L2[q]; vg = L2[q + 1]; vb = L2[q + 2];
         };
         const lit = (idx, r, gg, bl) => { r += 20; gg += 25; bl += 29; c32[idx] = (255 << 24) | ((bl > 255 ? 255 : bl) << 16) | ((gg > 255 ? 255 : gg) << 8) | (r > 255 ? 255 : r); };   // (added to the page's own colour, #14191D: light on dark)
         for (let y = 0; y < H; y++) {
@@ -1421,7 +1432,7 @@ const Sky = (() => {
           if (fb < fa) { fa = xb + 1; fb = xb; }
           for (let x = xa; x < fa; x++) {   // (violet alone)
             const idx = row + x, v = fBh[idx];
-            if (v > 0.001 && (v >= 0.02 || thr[idx] >= 1 - 23.4 * v)) { const q = violet(v, thr[idx], 0); if (q) lit(idx, L2[q], L2[q + 1], L2[q + 2]); }
+            if (v > 0.001) { violet(v, thr[idx], 0); if (vr | vg | vb) lit(idx, vr, vg, vb); }
           }
           for (let x = fa; x <= fb; x++) {
             const idx = row + x, th = thr[idx];
@@ -1431,13 +1442,13 @@ const Sky = (() => {
             if (o > 0) { const q = Math.min(NR, Math.floor(o * NR + th)) * 3; r += L3[q]; gg += L3[q + 1]; bl += L3[q + 2]; }
             if (beamsOn) {
               v = fBh[idx];
-              if (v > 0.001) { const q = violet(v, th, o); r += L2[q]; gg += L2[q + 1]; bl += L2[q + 2]; }
+              if (v > 0.001) { violet(v, th, o); r += vr; gg += vg; bl += vb; }
             }
             if (r | gg | bl) lit(idx, r, gg, bl);
           }
           for (let x = fb + 1; x <= xb; x++) {   // (violet alone)
             const idx = row + x, v = fBh[idx];
-            if (v > 0.001 && (v >= 0.02 || thr[idx] >= 1 - 23.4 * v)) { const q = violet(v, thr[idx], 0); if (q) lit(idx, L2[q], L2[q + 1], L2[q + 2]); }
+            if (v > 0.001) { violet(v, thr[idx], 0); if (vr | vg | vb) lit(idx, vr, vg, vb); }
           }
         }
       }
@@ -1475,7 +1486,7 @@ const Sky = (() => {
       resize() { bk = null; dirty = true; },
       forget() { at = -Infinity; dirty = true; if (c32) { c32.fill(0); g2.putImageData(img, 0, 0); } },
       // (for the tests: what was made last, and how often and how long it took)
-      probe: () => ({renders, bakes, ms, lastMs, every: SUN_EVERY, last, fields: () => ({S: fS, R: fR}), shades: {ball: BALL_SHADES, violet: VIOLET_SHADES, flare: flareShades}, key: bk && bk.key}),
+      probe: () => ({renders, bakes, ms, lastMs, every: SUN_EVERY, last, fields: () => ({S: fS, R: fR, B: fBh}), tone: toneAt, shades: {ball: BALL_SHADES, violet: VIOLET_SHADES, flare: flareShades}, key: bk && bk.key}),
     };
   })();
 
@@ -1489,7 +1500,7 @@ const Sky = (() => {
     // its reach Rh and the boxes it was drawn in, its field and the flare's (fields()), the ramp's shades, and the picture's renders and cost)
     probe: () => {
       const p = art.probe(), s = sunNow();
-      return {level: e.level, h: e.level > 0 ? e.level : null, size: [W, H], sun: s, ball: p.last && {h: p.last.h, Rh: p.last.Rh, box: p.last.box, bloomBox: p.last.bloomBox, pulse: p.last.pulse, white: p.last.white, haloScale: p.last.haloScale, haloGain: p.last.haloGain}, fields: p.fields, shades: p.shades.ball, flare: p.shades.flare,
+      return {level: e.level, h: e.level > 0 ? e.level : null, size: [W, H], sun: s, ball: p.last && {h: p.last.h, Rh: p.last.Rh, box: p.last.box, bloomBox: p.last.bloomBox, pulse: p.last.pulse, white: p.last.white, haloScale: p.last.haloScale, haloGain: p.last.haloGain}, fields: p.fields, tone: p.tone, shades: p.shades.ball, flare: p.shades.flare,
               renders: p.renders, bakes: p.bakes, ms: p.ms, lastMs: p.lastMs, every: p.every};
     },
     resize() { art.resize(); },

@@ -2135,7 +2135,7 @@ const sunLook = async (page) => {
         const sy = Math.max(0, Math.min(H, Math.round(f.surface[x])));
         for (let y = 0; y < H; y++) {
           const i = (y * W + x) * 4;
-          if (!(d[i + 3] > 0 && d[i + 2] > d[i] + 20 && d[i + 2] > d[i + 1] + 20)) continue;
+          if (!(d[i + 3] > 0 && d[i + 2] - 29 >= 1 && d[i] - 20 >= d[i + 1] - 25 && d[i + 2] - 29 >= 2 * (d[i] - 20))) continue;
           if (y >= sy) below++; else if (y >= sy - 12) above++; else over++;
         }
         columns++;
@@ -2226,7 +2226,7 @@ const sunLook = async (page) => {
               if (d[i + 3] > 0 && d[i] + d[i + 1] + d[i + 2] > 0) {
                 lit++; if (y > low) low = y;
                 if (y >= 0.9 * Hh) last++;
-                if (d[i + 2] > d[i] + 20 && d[i + 2] > d[i + 1] + 20) { if (x >= 0.05 * W && x < 0.15 * W) leftEnd++; if (x >= 0.85 * W && x < 0.95 * W) rightEnd++; }
+                if (d[i + 3] > 0 && d[i + 2] - 29 >= 1 && d[i] - 20 >= d[i + 1] - 25 && d[i + 2] - 29 >= 2 * (d[i] - 20)) { if (x >= 0.05 * W && x < 0.15 * W) leftEnd++; if (x >= 0.85 * W && x < 0.95 * W) rightEnd++; }
               }
             }
             Sky.advance(100);
@@ -2273,6 +2273,29 @@ const sunLook = async (page) => {
       return hashes;
     });
   }
+  // the tail's smoothness: where the beams' toned strength is between 0.5 % and 7 % (the field and its tone, st.heat.fields().B and st.heat.tone), at UV 11 at
+  // summer noon and in mid-morning, 1024 x 768: the share of the tail's pixels whose blue (the picture's, over the page's own 29 where nothing is lit)
+  // differs from the mean of their 8 neighbours by more than 2 bytes, the share lit, and the tail's mean blue by distance from the sun (bins of 0.05 H)
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.waitForTimeout(700);
+  out.smooth = [];
+  for (const m of [798, 540]) {
+    out.smooth.push(await inPage((m) => {
+      __day(354.36, 1241.24, 75.61, m); Sky.setSunPosition(null, null); Sky.advance(150);
+      const st = Sky.state(), s = st.heat.sun, W = __c.width, H = __c.height, d = __grab(), B = st.heat.fields().B;
+      const blue = new Float32Array(W * H), tail = new Uint8Array(W * H);
+      for (let i = 0; i < W * H; i++) { blue[i] = d[i * 4 + 3] > 0 ? d[i * 4 + 2] : 29; const t = st.heat.tone(B[i]); tail[i] = t > 0.005 && t <= 0.07 ? 1 : 0; }
+      let n = 0, rough = 0, lit = 0; const nb = 20, sum = new Float64Array(nb), cnt = new Float64Array(nb);
+      for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x; if (!tail[i]) continue;
+        let a = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dx || dy) a += blue[i + dy * W + dx];
+        n++; if (Math.abs(blue[i] - a / 8) > 2) rough++; if (d[i * 4 + 3] > 0) lit++;
+        const k = Math.floor(Math.hypot(x - s.x, y - s.y) / (0.05 * H)); if (k < nb) { sum[k] += blue[i]; cnt[k]++; }
+      }
+      return { m, W, H, n, rough: rough / n, lit: lit / n, bins: Array.from(sum, (v, k) => cnt[k] > 200 ? v / cnt[k] : null) };
+    }, m));
+  }
+  await fx({ heat: 1, uv: 1 });
   await page.setViewportSize({ width: 640, height: 480 });
   await page.waitForTimeout(700);
   await inPage(() => { Sky.setSunPosition(null, null); Sky.setSun({ rise: 360, set: 1080, now: 720 }); Sky.setTime(720); Sky.advance(3); });   // (the page's own day again)

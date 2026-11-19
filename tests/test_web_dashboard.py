@@ -3029,9 +3029,10 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert len(hot["edges"]) == 14, hot["edges"]
     for look in hot["edges"]:
         assert look["ball"]["n"] == 0 and look["all"]["n"] == 0 and look["ball"]["sides"] >= 2 and look["all"]["sides"] >= 2, look
-    # the heat's pictures are as they were, whether the UV is on or off (a hash of the canvas at three places of the sun)
-    assert hot["pictures"] == {"heat": [1204463063, 4104546420, 3615693614], "heatUv": [3187059569, 466609053, 3077445898],
-                               "warmUv": [1428103147, 2313773295, 3473614922]}, hot["pictures"]
+    # the heat's picture alone is fixed (a hash of the canvas at three places of the sun), and with the UV on too only the beams' faint end differs from the
+    # beams' before (the tail's smooth tint: the strong part, over 0.2 of the toned strength, is the same pixel for pixel)
+    assert hot["pictures"] == {"heat": [1204463063, 4104546420, 3615693614], "heatUv": [1507486244, 238543151, 2784348441],
+                               "warmUv": [70392412, 2465235444, 3588155665]}, hot["pictures"]
     # the UV alone (the heat off) has no dark ring round the sun: the mean luminance by half a sun radius of distance never rises again
     # (by more than the dither's noise) from the centre out to 3 R, at summer noon and mid-morning, UV 5.5 and 11
     assert len(hot["uvOnly"]) == 4, hot["uvOnly"]
@@ -3147,6 +3148,14 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert mild["beams"][0]["fade"] == pytest.approx(0.68 * full["beams"][0]["fade"], rel=1e-6) and all(m["extent"] <= f["extent"] for m, f in zip(mild["beams"], full["beams"])), (mild["beams"][0], full["beams"][0])
     v = [x["v"] for x in full["violet"] if x["inside"]]
     assert len(v) == 4 and v[0] > v[1] > v[2] > 0 and v[2] < 0.45 * v[1] and v[3] <= v[2] * 1.3, full["violet"]
+    # the tail is a smooth tint, not a speckle: where the toned strength is 0.5 % to 7 % (UV 11, at summer noon and in mid-morning) every pixel is lit, the share of
+    # them whose blue differs from their 8 neighbours' mean by more than 2 bytes is under 6 % (the faint end's colour steps are single bytes and its noise swings one
+    # byte; the dithered tail it replaces had 80 % and more), the tail's mean blue never rises with the distance from the sun (bins of 0.05 H) and steps between
+    # adjacent bins by under 10 bytes: no contour
+    for look in hot["smooth"]:
+        assert look["n"] > 15000 and look["lit"] > 0.999 and look["rough"] < 0.06, look
+        bins = [b for b in look["bins"] if b is not None]
+        assert len(bins) >= 6 and all(b <= a + 0.15 for a, b in zip(bins, bins[1:])) and all(a - b < 10 for a, b in zip(bins, bins[1:])), look
     # the beams on with a flood (a high water level and a low one): none of them drawn at or below the water's surface in any column, and some in the rows just above it
     for look in hot["flood"]:
         assert look["depth"] > 0 and look["depth"] == pytest.approx(look["full"] * look["level"], rel=0.05), look
