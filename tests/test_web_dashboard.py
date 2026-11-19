@@ -4102,22 +4102,50 @@ def _hand_px(rows, right=True):
             and not (y < HEAD_H and HEAD_AT <= x < HEAD_AT + HEAD_W)}
 
 
-def test_the_frogs_hands_are_bigger_than_before_webbed_with_the_fingertips_beyond_the_web_but_smaller_than_the_feet():
-    OLD_HAND_PX = [71, 77, 82, 83, 86, 77, 73]   # (the old hands: three one-pixel fingers about 4-5 px out from the wrist; their pixels per frame)
+def _exposed(rows, hand):
+    """per finger or toe (a light tip): (its pixels beyond the thick limb, those of them with no web pixel and no other digit's pixel beside them)"""
+    base = {(x, y) for y in range(SPRITE_H) for x in range(CX + 1, SPRITE_W) if rows[y][x] in "gl" and not (y < HEAD_H and HEAD_AT <= x < HEAD_AT + HEAD_W)}
+    thick = {q for (x, y) in base if {(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)} <= base for q in ((x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1))}
+    limb = {(x, y) for x, y in _hand_px(rows)} if hand else {(x, y) for y in range(24, SPRITE_H) for x in range(CX + 1, SPRITE_W) if rows[y][x] in "glv"}
+    digit = {p for p in limb if rows[p[1]][p[0]] in "gl" and p not in thick}
+    tips = sorted(p for p in limb if rows[p[1]][p[0]] == "l")
+    owner, queue = {t: t for t in tips}, list(tips)
+    for p in queue:   # (each digit pixel belongs to the nearest tip along the digit)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                q = (p[0] + dx, p[1] + dy)
+                if q in digit and q not in owner:
+                    owner[q] = owner[p]
+                    queue.append(q)
+    beside = lambda p: [(p[0] + dx, p[1] + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0) and 0 <= p[0] + dx < SPRITE_W and 0 <= p[1] + dy < SPRITE_H]
+    out = []
+    for t in tips:
+        mine = [p for p, o in owner.items() if o == t]
+        free = [p for p in mine if not any(rows[q[1]][q[0]] == "v" or owner.get(q, t) != t for q in beside(p))]
+        out.append((len(mine), len(free)))
+    return out
+
+
+def test_the_frogs_fingers_show_as_much_of_their_length_as_the_toes_do_the_web_only_at_the_base():
+    foot = [_exposed(r, False) for r in FROG_FRAMES]
+    foot_share = sum(f for o in foot for _, f in o) / sum(n for o in foot for n, _ in o)   # (the share of a toe free of web and neighbours, over every frame)
     for n, rows in enumerate(FROG_FRAMES):
         tips = [(x, y) for x, y in _hand_px(rows) if rows[y][x] == "l" and y < 24 and not (y < HEAD_H and x < HEAD_AT + HEAD_W)]
         webs = [(x, y) for x, y in _hand_px(rows) if rows[y][x] == "v"]
-        assert len(tips) == 4 and len(webs) >= 5, (n, tips, len(webs))   # (four fingers, a web between them)
-        assert len(_hand_px(rows)) >= OLD_HAND_PX[n] + 10, (n, len(_hand_px(rows)))   # (bigger than the old three-finger hands)
+        assert len(tips) == 4 and len(webs) >= 2, (n, tips, len(webs))   # (four fingers, a little web between them)
         assert all(max(abs(a - c), abs(b - d)) >= 2 for i, (a, b) in enumerate(tips) for c, d in tips[i + 1:]), (n, tips)
-        # the web ends short of the fingertips: no web pixel touches a tip, and the free end (tip plus the finger pixel behind it) is out beyond the web
+        # the web ends well short of the fingertips: no web pixel touches a tip
         assert all(max(abs(x - a), abs(y - b)) >= 2 for x, y in tips for a, b in webs), (n, tips, webs)
         palm = (sum(x for x, _ in webs) / len(webs), sum(y for _, y in webs) / len(webs))
         assert max(math.dist(t, palm) for t in tips) >= 4, (n, tips, palm)
-        # smaller than the feet: the widest finger spread is below the foot's widest toe spread (kick)
+        # each finger shows about as much of itself as a toe does: 2+ free pixels, and the hand's free share within 10 % of the feet's
+        digits = _exposed(rows, True)
+        assert len(digits) == 4 and all(free >= 2 and free / total >= 0.3 for total, free in digits), (n, digits)
+        assert sum(f for _, f in digits) / sum(t for t, _ in digits) >= foot_share - 0.1, (n, digits, foot_share)
+        assert all(3 <= t <= 7 for t, _ in digits), (n, digits)   # (about 5 px a finger)
         spread = max(max(x for x, _ in tips) - min(x for x, _ in tips), max(y for _, y in tips) - min(y for _, y in tips))
         assert 5 <= spread <= 12, (n, spread)
-        # (the hand stays off the head: no hand pixel but the arm's own is within a pixel of the head's outline)
+        # (the hand stays off the head: no fingertip within a pixel of the head's outline)
         head = {(x, y) for y in range(HEAD_H) for x in range(HEAD_AT, HEAD_AT + HEAD_W) if rows[y][x] != "."}
         assert all(max(abs(x - a), abs(y - b)) >= 2 for x, y in tips for a, b in head), (n, tips)
     foot_tips = _toe_lengths(FROG_FRAMES[5], lambda x: x > CX)[0]
