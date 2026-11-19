@@ -78,9 +78,11 @@
   /* The weather behind everything (Sky, below): one canvas, the window's size, fixed, first in the page; its pixels scaled up crisply */
   /* (Past the window's top and bottom by --over: a phone's address bar sliding away shows more page than the layout viewport was when
      the weather was sized, for a moment or on some browsers for good. The first canvas is the window's own size, the other two the
-     margins above and below it (Sky mirrors the first's top and bottom rows into them), placed by Sky's resize().) */
+     margins above and below it (Sky mirrors the first's top and bottom rows into them), placed by Sky's resize(). The last two are the
+     sun's: a finer canvas (2 CSS px an art pixel) of the window's size, and its margin above, under the others (z-index -1).) */
   #sky { --over: 100px; position: fixed; left: 0; right: 0; top: calc(-1 * var(--over)); bottom: calc(-1 * var(--over)); z-index: 0; overflow: hidden; pointer-events: none; }
   #sky canvas { position: absolute; left: 0; top: var(--over); image-rendering: crisp-edges; image-rendering: pixelated; }
+  #sky canvas.sun { z-index: -1; }
   #status { position: fixed; right: 0; bottom: 0; height: var(--status, 18px); padding: 0 10px; font-size: 12px;
     line-height: var(--status, 18px); color: var(--soft); background: rgba(20, 25, 29, 0.85); border-top-left-radius: 6px; z-index: 1; }
   #status .link, #reset .link, #motion .link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
@@ -164,7 +166,7 @@
 </style>
 </head>
 <body>
-<div id="sky" aria-hidden="true"><canvas></canvas><canvas></canvas><canvas></canvas></div>
+<div id="sky" aria-hidden="true"><canvas></canvas><canvas></canvas><canvas></canvas><canvas class="sun"></canvas><canvas class="sun"></canvas></div>
 <main id="grid" aria-live="polite"></main>
 <div id="message"></div>
 <div id="remove" aria-hidden="true">× remove</div>
@@ -178,7 +180,7 @@
 // (reports the zoomed-out width) when a stale, too wide frame overflows after a rotation: the page then stays zoomed and off-centre)
 const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.documentElement.clientHeight});
 // ---------- the weather behind the tiles: pixel art on one canvas filling the window, behind everything ----------
-// Drawn at a low resolution (one art pixel: P CSS px, about a third of the window across) and scaled up crisply (image-rendering:
+// Drawn at a low resolution (one art pixel: P CSS px, about a third of the window across; the sun's own canvas finer, 2 CSS px: see SUN_PX) and scaled up crisply (image-rendering:
 // pixelated). Every sprite and texture is drawn once to a small offscreen canvas and blitted; one loop (at most 30 frames a second)
 // for every effect, each frame cleared once and drawn back to front (ORDER). The effects share a particle budget and a cap on their
 // strength together (the cap scales every effect but the sun's two layers, the heat and the UV, which stay at their own strength
@@ -199,7 +201,8 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   Sky.setSunPosition(az, el) (test-only): the place pinned (null: unpinned); Sky.setTime(minutes) (test-only): the time of day fixed there
 //   (null: by the clock again; window.__skyTest.time: at the start). Sky.state().beam: {lean: degrees from vertical now, negative
 //   down-left (morning), positive down-right, az, el (null on the curve), up, real, minutes, rise, set, noon, noonEl, t, day, fixed, and the UV's
-//   own: level, index, uvn, amp, count, diameter, beams [{angle, base, fan, length, width, bright}], at(i, f)}.
+//   own: level, index, uvn, amp, count, diameter, edge, scale, beams [{angle, base, fan, length, width, bright}], at(i, f)}; the sun's lengths there (diameter, edge, length, width) and
+//   Sky.state().heat's (size [SW, SH], sun {x, y, r, band ...}, ball, margin) are in the sun's canvas's art px, scale CSS px each (2, or more on a very large window), not the weather's; Sky.state().size stays the weather's [W, H, P].
 //   Sky.setWindSpeed(speed, gust): the live wind's speed and gust, km/h (the Wind tile's reading and the gust, from the page's data): the
 //   rain's slant follows them continuously (per layer, tan of its angle from vertical = speed / its drops' terminal speed, see Sky.setRainRate: 25 km/h at 5 mm/h about 66, 55 and 48 degrees far, mid, near; none at no wind: straight
 //   down; at most 70 degrees; the gust adding 0.3 of what it is over the speed; the speed eased, rising over about 2 s, falling over
@@ -293,7 +296,7 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 //   tints: how many tints, stem, side, barb: the mean alpha of each}} (null till first made); Sky.frost(true): only {extent,
 //   target, sparkles}, cheap.
 const Sky = (() => {
-  const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
+  const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas:not(.sun)"), ctx = canvas.getContext("2d");
   const FRAME_MS = 1000 / 30;          // the frame rate's cap: art moving a pixel at a time needs no more
   const FADE_S = 1.5;                  // an effect fades in, and out, over this long
   const ART_PX = 480;                  // the art's width (or height, if taller) about this many pixels: P = 3 on a laptop, 4 on 1920
@@ -305,9 +308,17 @@ const Sky = (() => {
   const SUN = new Set(["heat", "uv"]);        // (the sun's two layers: counted in the sum, but never scaled by the cap, so a gust or a wind never dims the sun)
   let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
   const OVER = 100;                    // CSS px: the weather's margin past the window's top and bottom (the page's --over, in #sky's rule)
-  const [above, below] = [...holder.querySelectorAll("canvas")].slice(1);   // the margins' canvases: the window's rows mirrored into them
+  const [above, below] = [...holder.querySelectorAll("canvas:not(.sun)")].slice(1);   // the margins' canvases: the window's rows mirrored into them
   const aboveG = above.getContext("2d"), belowG = below.getContext("2d");
   let M = 0;                           // a margin's height (art px): OVER or more in CSS px
+  // The sun's own canvas, under the others: finer than the weather's, SUN_PX CSS px an art pixel (2: SP, never above SUN_ART_MAX art pixels in all: a larger
+  // window gets the next half pixel up), SW x SH of them (the window's size), and its margin above, SM rows, the top rows mirrored (as the weather's)
+  const [sunCanvas, sunAbove] = [...holder.querySelectorAll("canvas.sun")];
+  const sunG = sunCanvas.getContext("2d"), sunAboveG = sunAbove.getContext("2d");
+  const SUN_PX = 2, SUN_ART_MAX = 920000, SUN_REF = 3;   // (CSS px: the sun's art pixel; its most art pixels; the weather's usual pixel, in which the sun's lengths are given: see SU)
+  let SW = 0, SH = 0, SP = SUN_PX, SM = 0, SU = SUN_REF / SUN_PX;   // (its size, art px, one of them in CSS px, its margin's rows; SU: a length given in the usual 3 CSS px pixels, in the sun's own)
+  let sunInk = false, sunClears = 0, sunPainted = false;   // (whether the sun's canvas holds anything; how often it has been emptied from outside the picture's own drawing; whether the frame changed it: its margin follows)
+  function sunClear() { if (sunInk) { sunG.clearRect(0, 0, SW, SH); sunInk = false; sunClears++; sunPainted = true; } }
 
   // ---------- tools: seeded randomness, colours, dithering, noise, little canvases ----------
   const seeded = (seed) => () => {     // (mulberry32: the same art every time)
@@ -1064,10 +1075,12 @@ const Sky = (() => {
   // beams' length, not the little sun's size) and widening along its length (to 1.9 times at its end, 0.6 of that length), blunt-ended: no
   // taper, its brightness falling smoothly to zero over the last 35 % of its length (BEAM_FADE, a cosine to the 1.35th power, whose
   // first and last slopes are zero: no end edge shows), a flat core with a soft dithered edge, a brighter edge line and a few streaks
-  // inside, and each rising out of the ball (in from 0.6 R to 1.7 R from the sun). All twelve are alike (the same reach and strength, a small length jitter each), whatever the sun's real direction. Near the sun they overlap and brighten, and within 30 px of the sun each root is hot (pink-white: 0.9 exp(-(r - R) / 4) of the beams' level read on the ball's ramp). Where beams cross they add (soft: 1 - exp(-1.6 v)) and the sum is held to the violet's cap (BEAM_KNEE 0.45, BEAM_CAP 0.62 of the ramp: about rgb(118, 74, 229)), so overlaps stay violet and never climb to lavender or white; a beam's strength at its root is BEAM_I, 0.17 (the design mock's 0.161, its 0.23 at the beam intensity 0.7); the shaft's colour steps are dithered with the page's blue noise at BEAM_GRAIN (0.6) of its swing, so the shafts' edges and the dark valleys between them stay clean; they fade out near the window's edges over BEAM_EDGE (14 art px, 42 CSS px at the usual 3, or 0.15 of the narrower side if less); and where the ember
+  // inside, and each rising out of the ball (in from 0.6 R to 1.7 R from the sun). All twelve are alike (the same reach and strength, a small length jitter each), whatever the sun's real direction. Near the sun they overlap and brighten, and within 30 usual art px (90 CSS px) of the sun each root is hot (pink-white: 0.9 exp(-(r - R) / 4) of the beams' level read on the ball's ramp). Where beams cross they add (soft: 1 - exp(-1.6 v)) and the sum is held to the violet's cap (BEAM_KNEE 0.45, BEAM_CAP 0.62 of the ramp: about rgb(118, 74, 229)), so overlaps stay violet and never climb to lavender or white; a beam's strength at its root is BEAM_I, 0.17 (the design mock's 0.161, its 0.23 at the beam intensity 0.7); the shaft's colour steps are dithered with the page's blue noise at BEAM_GRAIN (0.45) of its swing, so the shafts' edges and the dark valleys between them stay clean and no pixel inside a shaft stands a step darker than its neighbours (an ordered 4 x 4 threshold would be smoother still but shows as a grid: its power in the picture is far over the page's limit of 400 at this grid too); they fade out near the window's edges over BEAM_EDGE (14 usual art px: 42 CSS px, or 0.15 of the narrower side if less); and where the ember
   // flare is lit the violet is held back (by up to 55 %), so the heat stays orange.
   // The UV amount, from the UV index (the effect's level is (UV - 6) / 5, 0 below UV 6 and 1 from UV 11, and 0 until the violet shows, about UV 6.24: Sky.uvLevel): no beams under UV 6; the
   // violet rises with uvn = clamp((UV - 6) / 5, 0, 1) as (0.3 + 0.7 uvn) smoothstep(6, 7.5, UV); the reach 0.6 + 0.4 uvn of its full reach, BEAM_REACH (0.95) of the way down to 0.34 H (SUN_CAP, TUNED) at the most: the longest beam's tip fades to 0 there (no other fade down the window: a beam's strength is the same over the tiles as above them); the window's top fades them over the sun's own height.
+  // The grid. The sun, its halo and ember and the beams live on a canvas of their own under the weather's, drawn at SUN_PX (2) CSS px an art pixel, finer than the weather's 3 or more (a window of more than SUN_ART_MAX (920 000) art pixels at that gets the next half CSS px up: 2.5 from 3.7 Mpx of window (2560 x 1440 is just over), 3 from 5.8 Mpx, so the buffers stay near 920 000 pixels),
+  // and every length of the sun written in usual art px (the weather's 3 CSS px: R, the strip, the edge fade, the roots' reach) is scaled by SU = 3 / SP, so a length is the same in CSS px at any grid. The canvas is the window's size (SW x SH), with a margin above it (SM rows) that mirrors its top rows, as the weather's; the flood's water clips it as it clips the weather's.
   // The cost. Everything the window's size and the sun's place alone decide is made once (bakeSun, again when the size changes or the
   // sun has moved a quarter art pixel: each glow pixel's distance, angle and steady part, in shells of a pixel (a render stops at its own reach), the bloom's, the beams' mask of
   // the window's edges and the sun's root, a dither threshold at every pixel; the profile itself is a table of 4 steps to a pixel made at each render), the beams are worked out at every art pixel
@@ -1084,7 +1097,7 @@ const Sky = (() => {
   const SUN_STRENGTH = 1;
   const BEAM_SWEEP = 12, BEAM_SWEEP_T = 80, BEAM_SWAY = 2.4, BEAM_SWAY_F0 = 0.05, BEAM_SWAY_F1 = 0.1;   // (degrees, s: the fan's sweep amplitude (under half the 30 degree spacing) and period; each beam's own sway: degrees and 0.05 to 0.1 Hz)
   const BEAM_I = 0.17, BEAM_KNEE = 0.45, BEAM_CAP = 0.62;   // (a beam's strength at its root; the violet's soft cap: the summed level's knee and its ceiling, of the ramp)
-  const BEAM_GRAIN = 0.6, BEAM_REACH = 0.95;   // (the blue noise's swing the violet's steps are dithered with: 0 none, 1 whole; the longest beam's share of the way to the cap)
+  const BEAM_GRAIN = 0.45, BEAM_REACH = 0.95;   // (the blue noise's swing the violet's steps are dithered with: 0 none, 1 whole; the longest beam's share of the way to the cap)
   const BEAMS_N = 12, BEAM_BL = 0.13, BEAM_WK = 0.9, BEAM_EDGE = 14, BEAM_FADE = 0.65;
   const UV_FROM = 6, UV_TO = 11, UV_SOFT = 7.5, UV_SEEN = 0.02;   // (the UV index: none below, full from, and the violet's first rise; the least amount that shows: the mark)
   const SUN_BALL0 = 3.4, SUN_BALL1 = 2.6, SUN_HALO = 1.4, SUN_HALO_GAIN = 1.35, SUN_PROF = 4, SUN_EMBER = 4, SUN_BLOOM = 1;   // (the ball's reach Rh = 1.4 R (3.4 + 2.6 heat), the halo's width SUN_HALO; the profile's steps to a pixel; the ember's gain near the ball and the bloom's)
@@ -1168,9 +1181,9 @@ const Sky = (() => {
     return c ? Math.max(0, c.getBoundingClientRect().top + (window.scrollY || 0)) : 0;
   };
   const bandOf = (w, h) => {   // the sun's band in art px: {top (the first tile's top), S, R, Rmax (the glow's reach), yHi, yLo (the ball's lowest centre and the horizon's height), cap}
-    const top = tileTop() / P, S = Math.min(Math.max(top - 1, SUN_STRIP0 * h), SUN_STRIP1 * h);
-    const R = Math.min(Math.max(S * SUN_RS, SUN_RMIN), SUN_RW0 * w, SUN_RW1 * w), Rmax = sunReach(R);
-    const yHi = R + 2, yLo = Math.max(yHi, S - 3 * R - 1);
+    const top = tileTop() / SP, S = Math.min(Math.max(top - SU, SUN_STRIP0 * h), SUN_STRIP1 * h);
+    const R = Math.min(Math.max(S * SUN_RS, SUN_RMIN * SU), SUN_RW0 * w, SUN_RW1 * w), Rmax = sunReach(R);
+    const yHi = R + 2 * SU, yLo = Math.max(yHi, S - 3 * R - SU);
     return {top, S, R, Rmax, yHi, yLo, cap: SUN_CAP * h};
   };
   // The sun's place on its arc at the day fraction t, in art px: a clean ellipse across the strip, from its low point at sunrise and sunset to
@@ -1180,65 +1193,65 @@ const Sky = (() => {
     return {x: w / 2 + SUN_X * w * Math.cos(Math.PI * t), y: b.yLo - rise * Math.sin(Math.PI * t), band: b};
   };
   const sunNow = () => {   // the sun on the window now: {day, t, x, y, r, noonEl, el, band}
-    const b = beamState(), p = arcOf(b.t, b.noonEl, W, H);
+    const b = beamState(), p = arcOf(b.t, b.noonEl, SW, SH);
     return {day: b.day, t: b.t, x: p.x, y: p.y, r: p.band.R, noonEl: b.noonEl, el: b.el, band: p.band};
   };
 
   const art = (() => {
-    let bk = null, cv = null, g2 = null, img = null, c32 = null, at = -Infinity, dirty = true;
+    let bk = null, cv = null, g2 = null, img = null, c32 = null, at = -Infinity, dirty = true, shownA = -1, shownClears = -1;
     let fS = null, fR = null, fBh = null, fHh = null, rowLo = null, rowHi = null, last = null;
     let prof = new Float32Array(1024), shadeKey = -1, flareShades = null, renders = 0, bakes = 0, ms = 0, lastMs = 0, lastH = 0.3, lastLevel = 1;
     const ALS = new Float32Array(2048), HWS = new Float32Array(2048);   // (a beam's profile at each step along it, grown to what the window needs)
     let als = ALS, hws = HWS;
     const bake = (sx, sy, R, p) => {
-      const key = `${W}x${H}@${sx},${sy},${R},${p.band.cap}`;
+      const key = `${SW}x${SH}@${sx},${sy},${R},${p.band.cap}`;
       if (bk && bk.key === key) return bk;
-      const wh = W, hh = H, N = W * H, NA = 64, NA2 = 96, TAU = 2 * Math.PI;
-      if (!bk || bk.size !== `${W}x${H}`) {   // (the size's: the threshold at every pixel, the buffers)
-        cv = canvasOf(W, H); g2 = cv.getContext("2d"); img = g2.createImageData(cv.width, cv.height); c32 = new Uint32Array(img.data.buffer);
+      const wh = SW, hh = SH, N = SW * SH, NA = 64, NA2 = 96, TAU = 2 * Math.PI;
+      if (!bk || bk.size !== `${SW}x${SH}`) {   // (the size's: the threshold at every pixel, the buffers)
+        cv = canvasOf(SW, SH); g2 = cv.getContext("2d"); img = g2.createImageData(cv.width, cv.height); c32 = new Uint32Array(img.data.buffer);
         fS = new Float32Array(N); fR = new Float32Array(N); fBh = new Float32Array(N); fHh = new Float32Array(N); rowLo = new Int32Array(hh); rowHi = new Int32Array(hh);
         const thr = new Float32Array(N);
-        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) thr[y * W + x] = dither(x, y);
-        bk = {size: `${W}x${H}`, thr};
+        for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) thr[y * SW + x] = dither(x, y);
+        bk = {size: `${SW}x${SH}`, thr};
       }
-      const Rb = SUN_RB * R, RY = 0.8, E = Math.min(BEAM_EDGE, 0.15 * Math.min(W, H));
+      const Rb = SUN_RB * R, RY = 0.8, E = Math.min(BEAM_EDGE * SU, 0.15 * Math.min(SW, SH));
       // the ball's glow: every pixel of the biggest box it can have (the hottest: Rh + 3), by its distance (whole-pixel shells, so a
       // render stops at its own reach), its angle step and its steady part of the ember
-      const HM = sunReach(R) + 3, x0 = Math.max(0, Math.floor(sx - HM)), x1 = Math.min(W - 1, Math.ceil(sx + HM)), y0 = Math.max(0, Math.floor(sy - HM)), y1 = Math.min(H - 1, Math.ceil(sy + HM));
+      const HM = sunReach(R) + 3 * SU, x0 = Math.max(0, Math.floor(sx - HM)), x1 = Math.min(SW - 1, Math.ceil(sx + HM)), y0 = Math.max(0, Math.floor(sy - HM)), y1 = Math.min(SH - 1, Math.ceil(sy + HM));
       const ns = Math.ceil(HM) + 2, shell = new Int32Array(ns + 1), tI = new Int32Array((x1 - x0 + 1) * (y1 - y0 + 1)), tR = new Float32Array(tI.length);
       let tn = 0;
       for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
         const ddx = x - sx, ddy = y - sy, r = Math.sqrt(ddx * ddx + ddy * ddy);
         if (r >= HM) continue;
-        tI[tn] = y * W + x; tR[tn++] = r; shell[(r | 0) + 1]++;
+        tI[tn] = y * SW + x; tR[tn++] = r; shell[(r | 0) + 1]++;
       }
       for (let i = 0; i < ns; i++) shell[i + 1] += shell[i];
       const at2 = shell.slice(), gI = new Int32Array(tn), gR = new Float32Array(tn), gA = new Uint8Array(tn), gE = new Float32Array(tn), gM = new Float32Array(tn);
       for (let i = 0; i < tn; i++) {
-        const o = at2[tR[i] | 0]++, idx = tI[i], x = idx % W, y = (idx - x) / W, r = tR[i];
+        const o = at2[tR[i] | 0]++, idx = tI[i], x = idx % SW, y = (idx - x) / SW, r = tR[i];
         gI[o] = idx; gR[o] = r; gA[o] = Math.min(NA - 1, ((Math.atan2(y - sy, x - sx) + Math.PI) * NA / TAU) | 0);
-        gE[o] = Math.exp(-r / (R * 2.2)) * soft(1.2 * R, 3.2 * R, r); gM[o] = soft(0, E, Math.min(x, W - 1 - x));
+        gE[o] = Math.exp(-r / (R * 2.2)) * soft(1.2 * R, 3.2 * R, r); gM[o] = soft(0, E, Math.min(x, SW - 1 - x));
       }
       // the bloom (an ellipse about the sun, 0.8 as high as wide): pixel, angle, distance in its own scale, and its fade in from 1.2 R to 3.2 R
       const BK = 1.3 * (1 + SUN_GROWB) * (1 + SUN_PE * SUN_PR[1]);   // (the bloom's box: its widest wobble, growth and breath)
-      const bX0 = Math.max(0, Math.floor(sx - Rb * BK)), bX1 = Math.min(W - 1, Math.ceil(sx + Rb * BK)), bY0 = Math.max(0, Math.floor(sy - Rb * RY * BK)), bY1 = Math.min(H - 1, Math.ceil(sy + Rb * RY * BK));
+      const bX0 = Math.max(0, Math.floor(sx - Rb * BK)), bX1 = Math.min(SW - 1, Math.ceil(sx + Rb * BK)), bY0 = Math.max(0, Math.floor(sy - Rb * RY * BK)), bY1 = Math.min(SH - 1, Math.ceil(sy + Rb * RY * BK));
       const bI = [], bA = [], bR = [], bF = [], bM = [];
       for (let y = bY0; y <= bY1; y++) for (let x = bX0; x <= bX1; x++) {
         const ddx = x - sx, ey = (y - sy) / RY, rr = Math.sqrt(ddx * ddx + ey * ey), fin = soft(1.2 * R, 3.2 * R, rr);
         if (rr >= Rb * BK - 0.03 * Rb || fin <= 0) continue;
-        bI.push(y * W + x); bA.push(Math.min(NA2 - 1, ((Math.atan2(ey, ddx) + Math.PI) * NA2 / TAU) | 0)); bR.push(rr); bF.push(fin); bM.push(soft(0, E, Math.min(x, W - 1 - x)));
+        bI.push(y * SW + x); bA.push(Math.min(NA2 - 1, ((Math.atan2(ey, ddx) + Math.PI) * NA2 / TAU) | 0)); bR.push(rr); bF.push(fin); bM.push(soft(0, E, Math.min(x, SW - 1 - x)));
       }
       // the beams' mask: the window's edges' fade and the sun's root (in from 0.6 R to 1.7 R)
       const Et = Math.min(E, Math.max(sy, 1));   // (the top's fade ends at the sun's height)
-      const mask = new Float32Array(wh * hh), hot = new Float32Array(wh * hh), cx = new Float32Array(wh), cy = new Float32Array(hh), m0 = (R + 14) * (R + 14);   // (the root: in from 0.6 R to 1.7 R; hot, pink-white, within 30 px of the sun)
+      const mask = new Float32Array(wh * hh), hot = new Float32Array(wh * hh), cx = new Float32Array(wh), cy = new Float32Array(hh), m0 = (R + 14 * SU) * (R + 14 * SU), hotR = 30 * SU;   // (the root: in from 0.6 R to 1.7 R; hot, pink-white, within 30 usual art px (90 CSS px) of the sun)
       for (let i = 0; i < wh; i++) cx[i] = i - sx;
       for (let j = 0; j < hh; j++) cy[j] = j - sy;
       for (let j = 0; j < hh; j++) {
-        const y = j, fy = soft(0, Et, y) * soft(0, E, H - 1 - y);
+        const y = j, fy = soft(0, Et, y) * soft(0, E, SH - 1 - y);
         for (let i = 0; i < wh; i++) {
-          const x = i; let m = soft(0, E, Math.min(x, W - 1 - x)) * fy;
+          const x = i; let m = soft(0, E, Math.min(x, SW - 1 - x)) * fy;
           const sr2 = cx[i] * cx[i] + cy[j] * cy[j];
-          if (sr2 < m0) { const sr = Math.sqrt(sr2); m *= soft(0.6 * R, 1.7 * R, sr); if (sr2 < 900) hot[j * wh + i] = 0.9 * Math.exp(-Math.max(0, sr - R) / 4); }
+          if (sr2 < m0) { const sr = Math.sqrt(sr2); m *= soft(0.6 * R, 1.7 * R, sr); if (sr2 < hotR * hotR) hot[j * wh + i] = 0.9 * Math.exp(-Math.max(0, sr - R) / (4 * SU)); }
           mask[j * wh + i] = m;
         }
       }
@@ -1252,12 +1265,13 @@ const Sky = (() => {
       const p = sunNow(), sx = Math.round(p.x / SUN_STEP) * SUN_STEP, sy = Math.round(p.y / SUN_STEP) * SUN_STEP, R = p.r, k = bake(sx, sy, R, p);
       const a = SUN_W * t, cyc = 0.5 + 0.5 * Math.cos(SUN_W * (t - 4)), TAU = 2 * Math.PI;
       const {uvn, amp} = uvAmount(level), uamp = amp * kU, beamsOn = uamp > 0.002;
-      fS.fill(0); fR.fill(0); c32.fill(0);
+      const live = SW * Math.min(SH, Math.ceil(p.band.cap + 6 * SU));   // (nothing of the sun's is lit below its cap: the buffers' rows under it are never written)
+      fS.fill(0, 0, live); fR.fill(0, 0, live); c32.fill(0, 0, live);
       // ---- the ball: one radial profile, white at the centre through pale yellow-white to the pink-magenta halo, exactly 0 at Rh
       const hq = clamp((h - 0.3) / 0.7, 0, 1), pu = sunPulse(clk), ar = SUN_PR[0] + (SUN_PR[1] - SUN_PR[0]) * hq, ab = SUN_PB[0] + (SUN_PB[1] - SUN_PB[0]) * hq;
       const gR = 1 + ar * pu, gB = 1 + ab * pu, gG = 1 + SUN_GROW * hq, eB = 1 + SUN_PE * ab * pu, bR = (1 + SUN_GROWB * hq) * (1 + SUN_PE * ar * pu);   // (the halo's radius and brightness, the baseline growth, the ember's brightness, the bloom's radius)
-      const kS = 0.72 + 0.28 * h, pk = 0.5 + 1.5 * h * h, kH = gG * gR, Rh = R * (SUN_BALL0 + SUN_BALL1 * h) * SUN_HALO * kH, HR = Rh + 3, iRh = 1 / Rh;
-      const gx0 = Math.max(0, Math.floor(sx - HR)), gy0 = Math.max(0, Math.floor(sy - HR)), gx1 = Math.min(W - 1, Math.ceil(sx + HR)), gy1 = Math.min(H - 1, Math.ceil(sy + HR));
+      const kS = 0.72 + 0.28 * h, pk = 0.5 + 1.5 * h * h, kH = gG * gR, Rh = R * (SUN_BALL0 + SUN_BALL1 * h) * SUN_HALO * kH, HR = Rh + 3 * SU, iRh = 1 / Rh;
+      const gx0 = Math.max(0, Math.floor(sx - HR)), gy0 = Math.max(0, Math.floor(sy - HR)), gx1 = Math.min(SW - 1, Math.ceil(sx + HR)), gy1 = Math.min(SH - 1, Math.ceil(sy + HR));
       {
         const sh = 0.6 + 0.4 * h, NA = k.NA, ibA = new Float32Array(NA), oA = new Float32Array(NA);
         for (let i = 0; i < NA; i++) {
@@ -1307,23 +1321,23 @@ const Sky = (() => {
       // ---- the beams, at every art pixel
       const sunNowBeams = [];
       if (beamsOn) {
-        const Lbase = BEAM_REACH * Math.max(0, p.band.cap - SUN_CAP_GAP - sy - R) / SUN_JIT * (0.6 + 0.4 * uvn), Lw = BEAM_BL * Lbase * SUN_JIT;   // (the beams' width from their length: the longest tip's)
-        const {wh, hh, cx, cy, mask, hot} = k;
-        fBh.fill(0); fHh.fill(0); rowLo.fill(wh); rowHi.fill(-1);
+        const Lbase = BEAM_REACH * Math.max(0, p.band.cap - SUN_CAP_GAP * SU - sy - R) / SUN_JIT * (0.6 + 0.4 * uvn), Lw = BEAM_BL * Lbase * SUN_JIT;   // (the beams' width from their length: the longest tip's)
+        const {wh, hh, cx, cy, mask, hot} = k, BOFF = Math.ceil(2 * SU);   // (a beam's table starts BOFF px behind its root)
+        fBh.fill(0, 0, live); fHh.fill(0, 0, live); rowLo.fill(wh); rowHi.fill(-1);
         for (const b of BEAMS) {
           const fan = BEAM_SWEEP * Math.sin(2 * Math.PI * clk / BEAM_SWEEP_T) * Math.PI / 180, sway = BEAM_SWAY * Math.sin(b.swf * clk + b.swp) * Math.PI / 180;
           const an = b.off + fan + sway, bx = Math.sin(an), by = Math.cos(an), qx = by, qy = -bx;
-          const len = Lbase * b.lj + R, hw0 = Math.max(0.5, Lw * b.wj), ext = hw0 * (1 + BEAM_WK) * 1.05;
+          const len = Lbase * b.lj + R, hw0 = Math.max(0.5 * SU, Lw * b.wj), ext = hw0 * (1 + BEAM_WK) * 1.05;
           const I = BEAM_I * b.aj * uamp * (0.6 + 0.4 * h);
           sunNowBeams.push({angle: an * 180 / Math.PI, base: b.off * 180 / Math.PI, fan: fan * 180 / Math.PI, length: len, width: 2 * hw0, bright: I});
-          const nl = Math.ceil(len) + 3;
+          const nl = Math.ceil(len) + BOFF + 1;
           if (nl > als.length) { als = new Float32Array(nl * 2); hws = new Float32Array(nl * 2); }
           const ripple = b.ph;
           for (let i = 0; i < nl; i++) {
-            const s = i - 2, tt = (s > 0 ? s : 0) / len;
+            const s = i - BOFF, tt = (s > 0 ? s : 0) / len;
             if (tt >= 1) break;
             const j = (tt * BEAM_STEPS) | 0;
-            als[i] = I * BEAM_ALONG[j] * (0.9 + 0.1 * Math.sin(s * 0.06 + ripple));
+            als[i] = I * BEAM_ALONG[j] * (0.9 + 0.1 * Math.sin(s * 0.06 / SU + ripple));
             hws[i] = BEAM_WIDE[j] / hw0;
           }
           const sk0 = b.sk[0] + 0.09 * Math.sin(b.sp[0]), sk1 = b.sk[1] + 0.09 * Math.sin(b.sp[1]), sk2 = b.sk[2] + 0.09 * Math.sin(b.sp[2]);
@@ -1344,8 +1358,8 @@ const Sky = (() => {
             const row = j * wh;
             for (let i = xa; i <= xb; i++) {
               const rx = cx[i], s = rx * bx + ry * by;
-              if (s < -2 || s >= len) continue;
-              const si = (s + 2) | 0, u = (rx * qx + ry * qy) * hws[si], au = u < 0 ? -u : u;
+              if (s < -BOFF || s >= len) continue;
+              const si = (s + BOFF) | 0, u = (rx * qx + ry * qy) * hws[si], au = u < 0 ? -u : u;
               if (au >= 1) continue;
               const m = mask[row + i];
               if (m <= 0) continue;
@@ -1374,14 +1388,15 @@ const Sky = (() => {
         const NL = SUN_LEVELS.ball, NR = SUN_LEVELS.flare, NV = SUN_LEVELS.violet, thr = bk.thr, L1 = BALL_SHADES, L3 = flareShades, L2 = VIOLET_SHADES;
         const [dx0, dy0, dx1, dy1] = kF > 0.002 ? k.bloomBox : [gx0, gy0, gx1, gy1];
         const bxa = Math.min(gx0, dx0), bxb = Math.max(gx1, dx1), bya = Math.min(gy0, dy0), byb = Math.max(gy1, dy1);
-        for (let y = 0; y < H; y++) {
-          let xa = W, xb = -1;
+        const near = 32 * SU;   // (the hot roots' reach, 30 usual art px, and 2 more)
+        for (let y = 0; y < SH; y++) {
+          let xa = SW, xb = -1;
           if (y >= bya && y <= byb) { xa = bxa; xb = bxb; }
           if (beamsOn && rowHi[y] >= rowLo[y]) { xa = Math.min(xa, rowLo[y]); xb = Math.max(xb, rowHi[y]); }
           if (xb < xa) continue;
           if (xa < 0) xa = 0;
-          if (xb > W - 1) xb = W - 1;
-          const row = y * W, nearSun = beamsOn && Math.abs(y - sy) < 32, hxa = Math.max(xa, Math.floor(sx - 32)), hxb = Math.min(xb, Math.ceil(sx + 32));
+          if (xb > SW - 1) xb = SW - 1;
+          const row = y * SW, nearSun = beamsOn && Math.abs(y - sy) < near, hxa = Math.max(xa, Math.floor(sx - near)), hxb = Math.min(xb, Math.ceil(sx + near));
           for (let x = xa; x <= xb; x++) {
             const idx = row + x, th = thr[idx];
             let r = 0, gg = 0, bl = 0, v = fS[idx] + (nearSun && x >= hxa && x <= hxb ? fHh[idx] : 0);
@@ -1408,27 +1423,33 @@ const Sky = (() => {
       // drawn from the heat's or the UV's draw(), whichever is the first of them on
       draw(g, t) {
         const heat = effects.heat, uv = effects.uv, p = sunNow();
-        if (!p.day) return;   // (nothing outside daylight)
+        if (!p.day) return sunClear();   // (nothing outside daylight)
         // (the picture's strength: the cap's share of the one of them that is on, its beams and flare each as much as their own effect is there)
         const hAm = heat.amount, uAm = uv.amount, top = Math.max(hAm, uAm);
-        if (top <= 0) return;
+        if (top <= 0) return sunClear();
         const cap = hAm > 0 ? drawn.heat / hAm : drawn.uv / uAm, A = cap * top;
-        if (!(A > 0)) return;
+        if (!(A > 0)) return sunClear();
         if (heat.level > 0) lastH = heat.level;
         if (uv.level > 0) lastLevel = uv.level;
         const heatA = hAm / top, uvA = uAm / top;
         const ts = ((t % SUN_CYCLE) + SUN_CYCLE) % SUN_CYCLE;
+        let made = false;
         if (dirty || t - at >= SUN_EVERY || t < at) {
-          at = t; dirty = false;
+          at = t; dirty = false; made = true;
           render(ts, hAm > 0 ? lastH : 0.3, heatA, uAm > 0 ? lastLevel : 0, uvA, t);
         }
+        // (the frames between two pictures leave the canvas as it is: the same picture at the same strength, nothing moving over it)
+        if (!made && sunInk && A === shownA && shownClears === sunClears && !(flood.lift() > 0)) return;
+        g.globalAlpha = 1;
+        g.clearRect(0, 0, SW, SH);
         flood.above(g, () => {
           g.save();
           g.imageSmoothingEnabled = false;
           g.globalAlpha = A;
           g.drawImage(cv, 0, 0);
           g.restore();
-        });
+        }, SW, SP / P);
+        shownA = A; shownClears = sunClears; sunInk = true; sunPainted = true;
       },
       resize() { bk = null; dirty = true; },
       forget() { at = -Infinity; dirty = true; if (c32) { c32.fill(0); g2.putImageData(img, 0, 0); } },
@@ -1447,7 +1468,7 @@ const Sky = (() => {
     // its reach Rh and the boxes it was drawn in, its field and the flare's (fields()), the ramp's shades, and the picture's renders and cost)
     probe: () => {
       const p = art.probe(), s = sunNow();
-      return {level: e.level, h: e.level > 0 ? e.level : null, size: [W, H], sun: s, ball: p.last && {h: p.last.h, Rh: p.last.Rh, box: p.last.box, bloomBox: p.last.bloomBox, pulse: p.last.pulse, white: p.last.white, haloScale: p.last.haloScale, haloGain: p.last.haloGain}, fields: p.fields, shades: p.shades.ball, flare: p.shades.flare,
+      return {level: e.level, h: e.level > 0 ? e.level : null, size: [SW, SH], scale: SP, margin: SM, sun: s, ball: p.last && {h: p.last.h, Rh: p.last.Rh, box: p.last.box, bloomBox: p.last.bloomBox, pulse: p.last.pulse, white: p.last.white, haloScale: p.last.haloScale, haloGain: p.last.haloGain}, fields: p.fields, shades: p.shades.ball, flare: p.shades.flare,
               renders: p.renders, bakes: p.bakes, ms: p.ms, lastMs: p.lastMs, every: p.every};
     },
     resize() { art.resize(); },
@@ -1463,7 +1484,7 @@ const Sky = (() => {
     // at(i, f): the brightness along beam i at the fraction f of its length, steady (what the dither is given))
     probe: () => {
       const p = art.probe(), s = sunNow(), a = uvAmount(e.level), l = p.last || {};
-      return {level: e.level, index: e.level > 0 ? uvIndexOf(e.level) : null, uvn: a.uvn, amp: e.level > 0 ? a.amp : 0, count: BEAMS_N, diameter: 2 * s.r, edge: BEAM_EDGE,
+      return {level: e.level, index: e.level > 0 ? uvIndexOf(e.level) : null, uvn: a.uvn, amp: e.level > 0 ? a.amp : 0, count: BEAMS_N, diameter: 2 * s.r, edge: BEAM_EDGE * SU, scale: SP,
               beams: l.uamp > 0.002 ? l.beams : [], fadeFrom: BEAM_FADE, at: (i, f) => { const b = l.beams && l.beams[i]; return b ? b.bright * BEAM_ALONG[Math.round(clamp(f, 0, 1) * BEAM_STEPS)] : 0; }};
     },
     resize() { art.resize(); },
@@ -3350,13 +3371,14 @@ const Sky = (() => {
         }
       },
       // Whatever `paint` draws on g kept above the surface (clipped to it, a column at a time: crisp)
-      above(g, paint) {
+      // (on a canvas of another pixel: its width w in its pixels and k, one of them in the weather's)
+      above(g, paint, w = W, k = 1) {
         if (depth <= 0) return paint();
         g.save();
         g.beginPath();
         g.moveTo(0, 0);
-        g.lineTo(W, 0);
-        for (let x = W - 1; x >= 0; x--) { const y = Math.round(surfaceAt(x)); g.lineTo(x + 1, y); g.lineTo(x, y); }
+        g.lineTo(w, 0);
+        for (let x = w - 1; x >= 0; x--) { const y = Math.round(surfaceAt(Math.min(W - 1, Math.floor((x + 0.5) * k))) / k); g.lineTo(x + 1, y); g.lineTo(x, y); }
         g.closePath();
         g.clip();
         paint();
@@ -4205,8 +4227,8 @@ const Sky = (() => {
 
   function resize() {   // (the art made again for the window's size: only if that has changed)
     const {w, h} = screenRoom();
-    const p = Math.max(3, Math.round(Math.max(w, h) / ART_PX));
-    if (W && p === P && W === Math.ceil(w / p) && H === Math.ceil(h / p)) return;
+    const p = Math.max(3, Math.round(Math.max(w, h) / ART_PX)), sp = Math.max(SUN_PX, Math.ceil(2 * Math.sqrt(w * h / SUN_ART_MAX)) / 2);
+    if (W && p === P && W === Math.ceil(w / p) && H === Math.ceil(h / p) && sp === SP && SW === Math.ceil(w / sp) && SH === Math.ceil(h / sp)) return;
     P = p;
     W = Math.ceil(w / P);
     H = Math.ceil(h / P);
@@ -4218,6 +4240,14 @@ const Sky = (() => {
     // (the window's top is OVER px down in #sky, which starts that far above the window: the margins end where the window's does)
     Object.assign(above.style, {width: `${W * P}px`, height: `${M * P}px`, top: `${OVER - M * P}px`});
     Object.assign(below.style, {width: `${W * P}px`, height: `${M * P}px`, top: `${OVER + H * P}px`});
+    SP = sp; SU = SUN_REF / SP;
+    SW = Math.ceil(w / SP); SH = Math.ceil(h / SP); SM = Math.ceil(OVER / SP);
+    sunCanvas.width = sunAbove.width = SW;
+    sunCanvas.height = SH;
+    sunAbove.height = SM;
+    Object.assign(sunCanvas.style, {width: `${SW * SP}px`, height: `${SH * SP}px`});
+    Object.assign(sunAbove.style, {width: `${SW * SP}px`, height: `${SM * SP}px`, top: `${OVER - SM * SP}px`});
+    sunInk = false; sunClears++;
     for (const k of ORDER) effects[k].sized = false;   // (each made to the new size when it's next on: none made for nothing)
   }
 
@@ -4275,7 +4305,7 @@ const Sky = (() => {
     for (const k of ORDER) if (effects[k].alive()) effects[k].step(dt, clock, OWN_BUDGET.has(k) ? 1 : share);
     for (const k of ORDER) if (effects[k].settle && effects[k].alive()) effects[k].settle();   // (after them all: see humidity's)
   }
-  function wipe() { ctx.clearRect(0, 0, W, H); aboveG.clearRect(0, 0, W, M); belowG.clearRect(0, 0, W, M); }
+  function wipe() { ctx.clearRect(0, 0, W, H); aboveG.clearRect(0, 0, W, M); belowG.clearRect(0, 0, W, M); sunG.clearRect(0, 0, SW, SH); sunAboveG.clearRect(0, 0, SW, SM); sunInk = false; sunClears++; sunPainted = false; }
   // The weather carried on past the window's top and bottom: its first and last rows mirrored into the margins (the fog, the haze,
   // the frost's edge and the flood's water all go on; whatever is drawn at the edge only mirrors, never moves or acts there)
   function margins() {
@@ -4289,19 +4319,31 @@ const Sky = (() => {
     aboveG.setTransform(1, 0, 0, 1, 0, 0);
     belowG.setTransform(1, 0, 0, 1, 0, 0);
   }
+  // The sun's top rows mirrored into its margin above (see `margins`), or the margin cleared; made when the sun's canvas has changed
+  function sunMargin() {
+    const n = Math.min(SM, SH);
+    sunAboveG.setTransform(1, 0, 0, 1, 0, 0);
+    sunAboveG.clearRect(0, 0, SW, SM);
+    if (!sunInk) return;
+    sunAboveG.setTransform(1, 0, 0, -1, 0, SM);
+    sunAboveG.drawImage(sunCanvas, 0, 0, SW, n, 0, 0, SW, n);
+    sunAboveG.setTransform(1, 0, 0, 1, 0, 0);
+  }
   function draw() {
     ctx.globalAlpha = 1;
     ctx.clearRect(0, 0, W, H);
+    if (!(effects.heat.amount > 0 || effects.uv.amount > 0)) sunClear();
     let sum = 0;
     for (const k of ORDER) if (!OWN_STRENGTH.has(k)) sum += effects[k].strength() * effects[k].amount;
     const cap = Math.min(1, CAP / Math.max(sum, 1e-6));
     for (const k of ORDER) {
       const fx = effects[k], a = fx.strength() * fx.amount * (OWN_STRENGTH.has(k) || SUN.has(k) ? 1 : cap);
       drawn[k] = fx.amount > 0 ? a : 0;
-      if (fx.amount > 0) fx.draw(ctx, a, clock);
+      if (fx.amount > 0) fx.draw(SUN.has(k) ? sunG : ctx, a, clock);
     }
     ctx.globalAlpha = 1;
     margins();
+    if (sunPainted) { sunPainted = false; sunMargin(); }
   }
 
   function step(dt) {   // one frame, dt s of the weather's time on
