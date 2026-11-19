@@ -1965,6 +1965,51 @@ const sunLook = async (page) => {
     }
     return { prof, R, lean: b.lean, longest: Math.max(...b.beams.map((x) => x.length)), y: s.y, r: s.r, h: __c.height };
   });
+  // the look of the shafts at summer noon (to be held to the design mock's, deep violet shafts with dark valleys between): the violet round the
+  // sun (the picture less the page's own colour added) by angle (half-degree steps over the lower half, 80 degrees either side of straight
+  // down, smoothed over 3 degrees) at 0.35, 0.5 and 0.65 of the longest beam's reach: its 10th and 90th percentiles (the valleys and the
+  // peaks), and the colour of the shaft pixels between 0.4 and 0.75 of the reach (the brighter half, and the brightest 5 %): mean saturation
+  // and hue (HSV, degrees; the hue's circular mean)
+  out.look = await inPage(() => {
+    __day(354.36, 1241.24, 75.61, 798); Sky.setSunPosition(0, 75); Sky.advance(150);
+    const st = Sky.state(), s = st.heat.sun, W = __c.width, H = __c.height, d = __grab(), L = Math.max(...st.beam.beams.map((x) => x.length));
+    const BASE = [20, 25, 29], rgbAt = (x, y) => {
+      if (x < 0 || y < 0 || x >= W || y >= H) return null;
+      const i = (y * W + x) * 4;
+      return d[i + 3] > 0 ? [0, 1, 2].map((k) => Math.max(0, d[i + k] - BASE[k])) : [0, 0, 0];
+    };
+    const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const ratios = {};
+    for (const f of [0.35, 0.5, 0.65]) {
+      const raw = [];
+      for (let a = -80; a <= 80; a += 0.5) {
+        const c = rgbAt(Math.round(s.x + Math.sin(a * Math.PI / 180) * f * L), Math.round(s.y + Math.cos(a * Math.PI / 180) * f * L));
+        raw.push(c ? lum(c) : 0);
+      }
+      const sm = raw.map((_, i) => { let t = 0, n = 0; for (let k = -3; k <= 3; k++) if (raw[i + k] !== undefined) { t += raw[i + k]; n++; } return t / n; }).sort((a, b) => a - b);
+      const p10 = sm[Math.floor(0.1 * sm.length)], p90 = sm[Math.floor(0.9 * sm.length)];
+      ratios[f] = { p10, p90, ratio: p10 / Math.max(p90, 1e-9) };
+    }
+    const px = [];
+    for (let y = Math.ceil(s.y) + 2; y < H; y++) for (let x = 0; x < W; x++) {
+      const r = Math.hypot(x - s.x, y - s.y);
+      if (r < 0.4 * L || r > 0.75 * L) continue;
+      const c = rgbAt(x, y);
+      if (c && (c[0] || c[1] || c[2])) px.push(c);
+    }
+    px.sort((a, b) => lum(b) - lum(a));
+    const colour = (list) => {
+      let sat = 0, cs = 0, sn = 0;
+      for (const [r, g, b] of list) {
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b), dd = mx - mn;
+        sat += mx > 0 ? dd / mx : 0;
+        let h = dd === 0 ? 0 : mx === r ? ((g - b) / dd) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4;
+        h *= 60 * Math.PI / 180; cs += Math.cos(h); sn += Math.sin(h);
+      }
+      return { n: list.length, sat: sat / list.length, hue: ((Math.atan2(sn, cs) * 180 / Math.PI) + 360) % 360 };
+    };
+    return { L, ratios, shaft: colour(px.slice(0, Math.floor(px.length / 2))), top: colour(px.slice(0, Math.max(1, Math.floor(px.length * 0.05)))) };
+  });
   // the violet's cap: with the UV alone at its fullest and the sun at noon, no pixel beyond the glow's reach (Rh + 4 from the sun) is
   // above the cap's colour (the brightest blue and red drawn there, less the page's own colour added), and the beams' strengths
   await fx({ heat: 0, uv: 1 });
@@ -1982,7 +2027,7 @@ const sunLook = async (page) => {
   await fx({ heat: 1, uv: 1 });
   await page.setViewportSize({ width: 640, height: 480 });
   await page.waitForTimeout(700);
-  // the window's outer ring (one pixel): no violet there (the beams fade out over 34 px short of the edge)
+  // the window's outer ring (one pixel): no violet there (the beams fade out over 14 px short of the edge)
   out.edge = await inPage(() => {
     __day(354.36, 1241.24, 75.61, 450); Sky.setSunPosition(90, 5); Sky.advance(150);
     const d = __grab(), W = __c.width, H = __c.height; let n = 0;
@@ -2149,10 +2194,10 @@ const placeSeen = (page, days) => page.evaluate((days) => {
   Sky.setTime(720);
   return { points, through, run, curve };
 }, days);
-// uv's beams alone over 120 s of the page's time (on a page whose clock runs on fast: `pace`, below; each frame 0.1 s on, Sky's longest
+// uv's beams alone over 240 s of the page's time (three sweeps of the fan's 80 s) (on a page whose clock runs on fast: `pace`, below; each frame 0.1 s on, Sky's longest
 // step), the sun at a fixed place: every frame the beams' angle (degrees from straight down), base place, fan sweep, length, strength and
 // width. `still`: the largest change in any beam's length, strength or width; `fan`: the fan's sweep (its largest and smallest, and
-// the fastest it moved, in cycles a second, and how often it reversed); `sway`: the largest beam's own sway about base + fan and the
+// the fastest it moved, in cycles a second, how often it reversed, and its period: the mean time between upward crossings of its rest place); `sway`: the largest beam's own sway about base + fan and the
 // fastest any moved (cycles a second); `spacing`: the widest change of any neighbour pair's gap from the static one (degrees);
 // `gap`: the widest angular gap in the beams' coverage at half the longest beam's reach, at its worst over the run, and the static fan's;
 // `paused`: the angles' largest change over 50 frames with the weather's time stopped (timeScale 0); `later`: the canvas outside the
@@ -2177,12 +2222,14 @@ const uvSeen = (page) => page.evaluate(() => {
   };
   const stat = first.beams.map((b) => b.base).sort((p, q) => p - q), order = first.beams.map((b, i) => i).sort((p, q) => first.beams[p].base - first.beams[q].base);
   const staticHole = hole(stat, order.map((i) => first.beams[i]));
+  const ups = [];
   let prev = first, still = 0, frames = 0, hi = -1e9, lo = 1e9, fanFast = 0, swayFast = 0, swayMax = 0, spacing = 0, worstHole = 0, flips = 0, lastDir = 0;
   const startGap = order.map((k, j) => wrap(first.beams[order[(j + 1) % n]].base - first.beams[k].base));
-  for (let k = 0; k < 1200; k++) {
+  for (let k = 0; k < 2400; k++) {
     Sky.advance(1);
     const now = lite(), dt = now.t - prev.t, f = now.beams[0].fan;
     hi = Math.max(hi, f); lo = Math.min(lo, f);
+    if (prev.beams[0].fan < 0 && f >= 0) ups.push(now.t);   // (a crossing upward through the fan's rest place)
     if (dt > 0) {
       fanFast = Math.max(fanFast, Math.abs(f - prev.beams[0].fan) / dt / 360);
       const d = Math.sign(f - prev.beams[0].fan); if (d && lastDir && d !== lastDir) flips++; if (d) lastDir = d;
@@ -2210,7 +2257,7 @@ const uvSeen = (page) => page.evaluate(() => {
     if (Math.abs(one.px[i] - two.px[i]) + Math.abs(one.px[i + 1] - two.px[i + 1]) + Math.abs(one.px[i + 2] - two.px[i + 2]) > 6) differ++;
   }
   const later = { span: two.t - one.t, differ, lit, ball: Math.hypot(one.ball.x - two.ball.x, one.ball.y - two.ball.y), bright: Math.max(...one.beams.map((b, i) => Math.abs(b.bright - two.beams[i].bright))) };
-  return { frames: Sky.clock().frames, still, span, fan: { hi, lo, fast: fanFast, flips }, sway: { max: swayMax, fast: swayFast }, spacing, gap: { worst: worstHole, still: staticHole }, paused, later };
+  return { frames: Sky.clock().frames, still, span, fan: { hi, lo, fast: fanFast, flips, period: ups.length > 1 ? (ups[ups.length - 1] - ups[0]) / (ups.length - 1) : null }, sway: { max: swayMax, fast: swayFast }, spacing, gap: { worst: worstHole, still: staticHole }, paused, later };
 });
 // humidity's beads condensing on the glass and running down it, every frame over `frames` of Sky's (each 0.1 s of the page's time,
 // its clock run on fast: `pace`; times Sky.timeScale's, if set): how many ran (moved 10 px or more); any that went up (between two

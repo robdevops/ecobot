@@ -2350,16 +2350,17 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert got["particles"]["uv"] == {"uv": 0, "budget": got["particles"]["uv"]["budget"]}, got["particles"]
     wind = got["particles"]["wind"]
     assert 0 < wind["wind"] <= wind["budget"], wind
-    # uv's beams over 120 s at a fixed sun position: their strength, length and width constant (no pulsing); the whole fan sweeping
+    # uv's beams over 240 s (three sweeps of 80 s) at a fixed sun position: their strength, length and width constant (no pulsing); the whole fan sweeping
     # rigidly back and forth within +-12 degrees at no more than 0.1 Hz, reaching both signs and reversing; each beam's own sway within
     # +-2.5 degrees at no more than 0.1 Hz; no neighbour pair's gap off the static 30 degrees by over 5; the coverage at half the longest
     # reach with no hole wider than the static fan's; the weather paused, it stops; and ten seconds on the picture is different while
     # the ball's centre and the beams' strength are the same
     uv = got["uv"]
-    assert uv["errors"] == [] and uv["frames"] >= 1200, uv
+    assert uv["errors"] == [] and uv["frames"] >= 2400, uv
     assert uv["still"] == 0, uv
     fan = uv["fan"]
-    assert 11 <= fan["hi"] <= 12.01 and -12.01 <= fan["lo"] <= -11 and fan["flips"] >= 3, fan
+    assert 11 <= fan["hi"] <= 12.01 and -12.01 <= fan["lo"] <= -11 and fan["flips"] >= 5, fan
+    assert fan["period"] == pytest.approx(80, abs=1), fan   # (one sweep takes 80 s)
     assert fan["fast"] <= 0.1 and uv["sway"]["fast"] <= 0.1, uv
     assert 1 <= uv["sway"]["max"] <= 2.5, uv["sway"]
     assert uv["spacing"] <= 5, uv["spacing"]
@@ -3029,7 +3030,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert look["ball"]["n"] == 0 and look["all"]["n"] == 0 and look["ball"]["sides"] >= 2 and look["all"]["sides"] >= 2, look
     # the beams: twelve, as wide at the base as their length says (0.26 of the longest tip: BEAM_BL 0.13 each side, within 20 %), their lengths varying, blunt
     beams = hot["beams"]
-    assert beams["count"] == 12 and len(beams["widths"]) == 12 and "lobe" not in beams and beams["edge"] == 34, beams
+    assert beams["count"] == 12 and len(beams["widths"]) == 12 and "lobe" not in beams and beams["edge"] == 14, beams
     for width in beams["widths"]:
         assert width == pytest.approx(0.26 * max(beams["lengths"]), rel=0.2), (width, beams["lengths"])
     # ... spaced about 30 degrees all round (each one off its place by up to 3.5 degrees: a gap within 13 degrees of even)
@@ -3052,9 +3053,10 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert look == hot["alike"][0], (look, hot["alike"][0])
     lens = [b["length"] for b in hot["alike"][0]]
     assert max(lens) < 1.3 * min(lens) and max(b["bright"] for b in hot["alike"][0]) < 1.3 * min(b["bright"] for b in hot["alike"][0]), hot["alike"][0]
-    # the strength: a beam's at its root at most 0.3 (0.6 of the old 0.5) at its jitter's top, 0.3 times its 0.9 to 1.1 at the UV's full and the heat's
+    # the strength: a beam's at its root at most 0.17 at its jitter's top (the design mock's 0.23 at its beam intensity of 0.7: 0.161, over the
+    # 0.95 the mock's ripple keeps of it against the page's 0.9), 0.17 times its 0.9 to 1.1 (times 0.6 + 0.4 h) at the UV's full and the heat's
     capped = hot["capped"]
-    assert capped["n"] > 1000 and 0.2 < min(capped["bright"]) and max(capped["bright"]) <= 0.3 * 1.1 + 1e-9, capped["bright"]
+    assert capped["n"] > 1000 and 0.1 < min(capped["bright"]) and max(capped["bright"]) <= 0.17 * 1.1 + 1e-9, capped["bright"]
     # ... the violet capped: away from the glow nothing drawn is above the cap's colour (ramp level 0.7 of the violet ramp: about rgb(121, 77, 231),
     # the page's own colour #14191D added), so no overlap of beams climbs to lavender or white, and the beams do reach the cap's blue
     assert capped["r"] <= 121 + 20 + 1 and capped["g"] <= 78 + 25 + 1 and capped["b"] <= 232 + 29 + 1, capped
@@ -3080,6 +3082,17 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         assert min(prof[a_:b_ + 1]) < 0.98 * min(prof[a_], prof[b_]), (a_, b_, [round(v, 1) for v in prof])
     # the longest beam about twice the old reach (0.20 H): over 1.7 times the room the old cap left (0.20 H - 3 - y - R)
     assert sh["longest"] > 1.7 * (0.20 * sh["h"] - 3 - sh["y"] - sh["r"]) * 0.8, sh
+    # the look of the shafts at summer noon held to the design mock's (rendered in the same state: deep violet shafts, dark valleys, the beams
+    # alone its picture at UV 11 less the one at UV 0): at 0.35, 0.5 and 0.65 of the longest reach, the valleys (10th percentile of the
+    # luminance round the sun) at most the mock's share of the peaks (90th percentile: the mock's 0.44, 0.43, 0.55) plus 0.2, the peaks at
+    # mid reach no more than 1.25 times the mock's (49 of 255: shafts not lifted to a lavender mass), the shafts' mean saturation (HSV)
+    # at least 0.80 (the mock's 0.84; the brightest 5 % 0.75: the mock's 0.79) and their hue within 10 degrees of the mock's 255
+    look = hot["look"]
+    for frac, mock in (("0.35", 0.44), ("0.5", 0.43), ("0.65", 0.55)):
+        assert look["ratios"][frac]["ratio"] <= mock + 0.2, (frac, look["ratios"])
+    assert look["ratios"]["0.5"]["p90"] <= 1.25 * 49, look["ratios"]
+    assert look["shaft"]["n"] > 1000 and look["shaft"]["sat"] >= 0.80 and look["top"]["sat"] >= 0.75, look
+    assert abs(look["shaft"]["hue"] - 255) <= 10 and abs(look["top"]["hue"] - 255) <= 10, look
     # ... faded out short of the window's edge: no violet in its outer ring
     assert hot["edge"]["violet"] == 0 and hot["edge"]["whole"] > 100, hot["edge"]
     # no dot pattern in the dither (its grid power), no flash faster than 0.5 Hz (the brightness over 24 s: its dominant frequency, the heat
