@@ -4110,14 +4110,14 @@ def test_the_frogs_hands_are_small_webbed_with_the_fingertips_beyond_the_web_and
         webs = [(x, y) for x, y in hand if rows[y][x] == "v"]
         assert len(tips) == 4 and len(webs) >= 3, (n, tips, len(webs))   # (four distinct fingertips, a web between them)
         assert all(max(abs(a - c), abs(b - d)) >= 2 for i, (a, b) in enumerate(tips) for c, d in tips[i + 1:]), (n, tips)
-        # the fingers are short, about 4.5 px (4 or 5) from the palm; each tip is a free end at least a pixel beyond the web
+        # the fingers are short, about 3.5 px (3 or 4) from the palm; each tip is a free end at least a pixel beyond the web
         palm = (sum(x for x, _ in webs) / len(webs), sum(y for _, y in webs) / len(webs))
         reach = max(math.dist(t, palm) for t in tips)
-        assert 3.5 <= reach <= 5.5 and reach >= max(math.dist(w, palm) for w in webs) + 1, (n, tips, webs, palm)
-        assert len(hand) <= PRIOR_HAND_PX[n] - 4, (n, len(hand))   # (a few pixels fewer than the 5 px hands)
+        assert 2.5 <= reach <= 4.5 and reach >= max(math.dist(w, palm) for w in webs) + 1, (n, tips, webs, palm)
+        assert len(hand) <= PRIOR_HAND_PX[n] - 8, (n, len(hand))   # (a good few pixels fewer than the 5 px hands)
         # smaller than the feet: the widest finger spread is below the foot's widest toe spread (kick)
         spread = max(max(x for x, _ in tips) - min(x for x, _ in tips), max(y for _, y in tips) - min(y for _, y in tips))
-        assert 5 <= spread <= 9, (n, spread)
+        assert 4 <= spread <= 8, (n, spread)
         # (the hand stays off the head: no hand pixel but the arm's own is within a pixel of the head's outline)
         head = {(x, y) for y in range(HEAD_H) for x in range(HEAD_AT, HEAD_AT + HEAD_W) if rows[y][x] != "."}
         assert all(max(abs(x - a), abs(y - b)) >= 2 for x, y in tips for a, b in head), (n, tips)
