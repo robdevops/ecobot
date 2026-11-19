@@ -1562,8 +1562,8 @@ const canvasLight = (page) => page.evaluate(() => {   // how bright the canvas i
 // square from its top left if none), what one sees (each pixel's luminance by its alpha) less its 5x5 neighbourhood's mean (the fine
 // texture only: the dithering), windowed (Hann) and through a 2D FFT; of its frequencies of wavelengths 8 px or shorter, the
 // strongest's power over their median's ({ratio, at: [u, v]}). Irregular dithering: under a hundred or so; an ordered 4x4 one, thousands
-const gridPeak = (page, rect, sel = "#sky canvas") => page.evaluate(([rect, sel]) => {
-  const c = document.querySelector(sel), side = 1 << Math.floor(Math.log2(Math.min(c.width, c.height)));
+const gridPeak = (page, rect) => page.evaluate((rect) => {
+  const c = document.querySelector("#sky canvas"), side = 1 << Math.floor(Math.log2(Math.min(c.width, c.height)));
   const [X, Y, w, h] = rect || [0, 0, side, side];
   const d = c.getContext("2d").getImageData(X, Y, w, h).data, v = new Float64Array(w * h);
   for (let i = 0; i < w * h; i++) v[i] = (0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2]) * d[i * 4 + 3] / 255;
@@ -1606,7 +1606,7 @@ const gridPeak = (page, rect, sel = "#sky canvas") => page.evaluate(([rect, sel]
   }
   powers.sort((a, b) => a - b);
   return { ratio: most / Math.max(powers[powers.length >> 1], 1e-9), at };
-}, [rect || null, sel]);
+}, rect || null);
 // How regularly the canvas's commonest colour (RGBA) sits on a 4 px grid: the share of its pixels in their 4 commonest places of the
 // 16 (x mod 4, y mod 4), and how many there are (an ordered 4x4 dither's shade: near 1; irregular dithering: about 0.3)
 const gridShare = (page) => page.evaluate(() => {
@@ -1830,7 +1830,7 @@ const sunLook = async (page) => {
   const fx = (detail) => page.evaluate((detail) => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail })), detail);
   const inPage = (f, arg) => page.evaluate(f, arg);
   await page.evaluate(() => {
-    window.__c = document.querySelector("#sky canvas.sun"); window.__g = window.__c.getContext("2d");   // (the sun's own canvas: 2 CSS px an art pixel, under the weather's)
+    window.__c = document.querySelector("#sky canvas"); window.__g = window.__c.getContext("2d");
     window.__grab = () => window.__g.getImageData(0, 0, window.__c.width, window.__c.height).data;
     window.__day = (rise, set, noon, m) => { Sky.setSun({ rise, set, now: m, noon_el: noon }); Sky.setTime(m); };
     window.__violet = (d) => { let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0) n += Math.max(0, d[i + 2] - d[i] - 10); return n; };   // (the violet drawn: how much bluer than red, summed)
@@ -1982,7 +1982,7 @@ const sunLook = async (page) => {
   out.beams = await inPage(() => {
     __day(354.36, 1241.24, 75.61, 600); Sky.setSunPosition(80, 40); Sky.advance(150);
     const b = Sky.state().beam;
-    return { count: b.count, diameter: b.diameter, widths: b.beams.map((x) => x.width), lengths: b.beams.map((x) => x.length), edge: b.edge, scale: b.scale };
+    return { count: b.count, diameter: b.diameter, widths: b.beams.map((x) => x.width), lengths: b.beams.map((x) => x.length), edge: b.edge };
   });
   // the UV's amount from its index: the probe's amount and the violet drawn
   out.amounts = [];
@@ -2108,54 +2108,11 @@ const sunLook = async (page) => {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (x === 0 || y === 0 || x === W - 1 || y === H - 1) { const i = (y * W + x) * 4; if (d[i + 3] > 0 && d[i + 2] > d[i] + 30) n++; }
     return { violet: n, whole: __violet(d) };
   });
-  // the smoothness of the shafts (1024 x 768, the UV alone at 11, the sun at summer mid-morning): the art pixel 2 CSS px (the sun's own canvas), and in the
-  // shafts (beyond 80 CSS px of the sun, above 0.34 H, where the 5x5 neighbourhood's mean violet level is at least 1.5 of the ramp's 10 steps) the share of
-  // pixels a step or more darker, and one and a half or more, than the mean of their 8 neighbours (the isolated dark pixels of a dither's noise)
-  await page.setViewportSize({ width: 1024, height: 768 });
-  await page.waitForTimeout(700);
-  await fx({ heat: 0, uv: 1 });
-  out.smooth = await inPage(() => {
-    const ramp = [[0, 0, 0, 0], [.2, 34, 14, 100], [.45, 84, 44, 206], [.75, 128, 84, 236], [1, 160, 120, 250]];
-    const shades = Array.from({ length: 11 }, (_, i) => {
-      const v = i / 10; let k = 0; while (k < ramp.length - 2 && v > ramp[k + 1][0]) k++;
-      const a = ramp[k], b = ramp[k + 1], u = (v - a[0]) / (b[0] - a[0]); return [1, 2, 3].map((j) => a[j] + (b[j] - a[j]) * u);
-    });
-    __day(354.36, 1241.24, 75.61, 540); Sky.setSunPosition(80, 40); Sky.advance(150);
-    const st = Sky.state(), s = st.heat.sun, sc = st.heat.scale, W = __c.width, H = __c.height, d = __grab(), lv = new Float32Array(W * H);
-    for (let i = 0; i < W * H; i++) {
-      if (!d[i * 4 + 3]) continue;
-      const c = [d[i * 4] - 20, d[i * 4 + 1] - 25, d[i * 4 + 2] - 29]; let best = 0, bd = Infinity;
-      shades.forEach((q, k) => { const e = (q[0] - c[0]) ** 2 + (q[1] - c[1]) ** 2 + (q[2] - c[2]) ** 2; if (e < bd) { bd = e; best = k; } });
-      lv[i] = best;
-    }
-    let n = 0, dark1 = 0, dark15 = 0;
-    for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
-      if (Math.hypot((x + 0.5) * sc - s.x * sc, (y + 0.5) * sc - s.y * sc) <= 80 || (y + 0.5) * sc >= 0.34 * H * sc) continue;
-      let m5 = 0; for (let j = -2; j <= 2; j++) for (let i = -2; i <= 2; i++) m5 += lv[(y + j) * W + x + i];
-      if (m5 / 25 < 1.5) continue;
-      let m8 = 0; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (i || j) m8 += lv[(y + j) * W + x + i];
-      m8 /= 8; n++;
-      const dev = lv[y * W + x] - m8;
-      if (dev <= -1) dark1++;
-      if (dev <= -1.5) dark15++;
-    }
-    return { scale: sc, size: [W, H], css: [parseFloat(__c.style.width), parseFloat(__c.style.height)], n, dark1: dark1 / Math.max(n, 1), dark15: dark15 / Math.max(n, 1) };
-  });
-  // the layers: the sun's canvas (and its margin) under the weather's (z-index -1 in the sky's own stacking context), the sky under the tiles, clicks through
-  // it, the canvas the window's size at the weather's place, its margin above it
-  out.layers = await inPage(() => {
-    const sky = document.getElementById("sky"), [c] = sky.querySelectorAll("canvas:not(.sun)"), suns = [...sky.querySelectorAll("canvas.sun")], rect = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; };
-    const cs = suns.map((e) => getComputedStyle(e));
-    return { count: suns.length, z: cs.map((x) => x.zIndex), position: cs.map((x) => x.position), events: cs.map((x) => x.pointerEvents), pixelated: cs.map((x) => x.imageRendering),
-             canvas: rect(suns[0]), weather: rect(c), margin: rect(suns[1]), after: suns.every((e) => !!(c.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING)),
-             skyZ: getComputedStyle(sky).zIndex, tiles: !!(sky.compareDocumentPosition(document.getElementById("grid")) & Node.DOCUMENT_POSITION_FOLLOWING), innerHeight };
-  });
-  await fx({ heat: 1, uv: 1 });
   // the dither's grid power at three moments of the day
   out.grid = [];
   for (const m of [372, 798, 1225]) {
     await inPage((m) => { __day(354.36, 1241.24, 75.61, m); Sky.setSunPosition(m < 700 ? 90 : m > 1000 ? 270 : 0, 40); Sky.advance(120); }, m);
-    out.grid.push((await gridPeak(page, null, "#sky canvas.sun")).ratio);
+    out.grid.push((await gridPeak(page)).ratio);
   }
   // the brightness over 24 s: its dominant frequency, heat alone and with the UV
   out.flash = [];
@@ -2322,7 +2279,7 @@ const placeSeen = (page, days) => page.evaluate((days) => {
 const uvSeen = (page) => page.evaluate(() => {
   Sky.setSun({ rise: 354.36, set: 1241.24, now: 600, noon_el: 75.61 }); Sky.setTime(600); Sky.setSunPosition(80, 40);
   Sky.advance(60);
-  const c = document.querySelector("#sky canvas.sun"), g = c.getContext("2d"), grab = () => g.getImageData(0, 0, c.width, c.height).data;
+  const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), grab = () => g.getImageData(0, 0, c.width, c.height).data;
   const look = () => Sky.state().beam.beams;
   const lite = () => ({ t: Sky.clock().clock, beams: look().map((b) => ({ ...b })) });
   const at = () => ({ ...lite(), ball: Sky.state().heat.sun, px: grab(), box: Sky.state().heat.ball.box });
@@ -3265,7 +3222,7 @@ const WEATHER = {
   async sunkeep(browser, url, out) {
     const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=heat,uv", driven: true, context: { viewport: { width: 640, height: 480 } } });
     const fx = (detail) => page.evaluate((detail) => document.dispatchEvent(new CustomEvent("ecobot-fx", { detail })), detail);
-    await page.evaluate(() => { window.__c = document.querySelector("#sky canvas.sun"); window.__g = window.__c.getContext("2d");
+    await page.evaluate(() => { window.__c = document.querySelector("#sky canvas"); window.__g = window.__c.getContext("2d");
       Sky.setSun({ rise: 354.36, set: 1241.24, now: 720, noon_el: 75.61 }); Sky.setTime(720); Sky.setSunPosition(0, 70); });
     const look = (label) => page.evaluate((label) => {
       Sky.advance(60);
@@ -3625,7 +3582,7 @@ const WEATHER = {
     const swaying = (async () => {
       const uv = await weatherPage(browser, url, { query: "?fx=uv", pace: 10, driven: true, context: { viewport: { width: 640, height: 480 } } });   // (small: cheap)
       const seen = await uvSeen(uv.page);
-      seen.grid = (await gridPeak(uv.page, null, "#sky canvas.sun")).ratio;   // (its glow's dithering)
+      seen.grid = (await gridPeak(uv.page)).ratio;   // (its glow's dithering)
       const frost = await frostSeen(uv);
       seen.errors = frost.errors = uv.errors;
       await uv.context.close();

@@ -2003,7 +2003,7 @@ async def test_several_effects_share_one_canvas_behind_the_see_through_tiles_zoo
     got = await weather(server, "several")
     # several at once: one canvas, one loop, at most 30 frames drawn a second
     several = got["several"]
-    assert several["effects"] == ["uv", "haze", "rain", "wind", "humidity", "ice"] and several["canvases"] == 5, several   # (the weather's canvas and its two margins, the sun's and its margin: see test_the_weather_reaches_past...)
+    assert several["effects"] == ["uv", "haze", "rain", "wind", "humidity", "ice"] and several["canvases"] == 3, several   # (the weather's canvas and its two margins: see test_the_weather_reaches_past...)
     assert sorted(several["framed"]) == sorted({EFFECTS[k] for k in several["effects"]}) and several["ink"] > 0, several
     assert 20 <= several["drawn"] <= 32 and several["frames"] <= 64, several    # (a second's: one request a display frame, every other one drawn)
     # the canvas: filling the window, fixed, first, behind the tiles, never in the pointer's way, its pixels crisp
@@ -2034,7 +2034,7 @@ async def test_the_weather_reaches_past_the_windows_top_and_bottom_so_a_hiding_a
     for name in ("first", "grown", "relaid"):
         seen = got[name]
         h = seen["inner"][1]
-        assert seen["canvases"] == 5, (name, seen)
+        assert seen["canvases"] == 3, (name, seen)
         # the weather's canvas and its margins: at least OVER past the top and the bottom of the window, the whole width, even with the
         # viewport made taller before any relayout (the bar hidden); the margins end where the window's canvas begins
         # (made taller before any relayout, the margins still cover the whole window; only the margin's own reach is what is left)
@@ -2952,7 +2952,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             b = r["band"]
             assert r["x"] == pytest.approx(w / 2 + 0.42 * w * math.cos(math.pi * r["t"]), abs=1e-6), (day, r)
             assert r["y"] == pytest.approx(b["yLo"] - b["yLo"] * min(1, sin_el / math.sin(math.radians(75.6))) * math.sin(math.pi * r["t"]), abs=1e-6), (day, r)
-            assert r["r"] == pytest.approx(b["R"]) and b["R"] <= 0.04 * w + 1e-9 and b["R"] >= 2.6 * 1.5 - 1e-9, (day, r)
+            assert r["r"] == pytest.approx(b["R"]) and b["R"] <= 0.04 * w + 1e-9 and b["R"] >= 2.6 - 1e-9, (day, r)
             assert r["y"] >= -1e-9 and r["y"] <= b["yLo"] and r["y"] - r["r"] >= -r["r"] - 1e-9 and b["S"] <= 0.16 * h + 1e-9 and r["y"] + b["Rmax"] < 0.34 * h, (day, r)
             if day == "winter":   # (a winter noon well inside the window: the ball whole)
                 assert r["y"] - b["Rmax"] >= 0 or r["t"] < 0.1 or r["t"] > 0.9 or r["y"] - r["r"] > 1, (day, r)
@@ -3072,7 +3072,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
             assert [b[key] for b in l["beams"]] == pytest.approx([b[key] for b in pb[0]["beams"]], rel=1e-9), key
     # the beams: twelve, as wide at the base as their length says (0.26 of the longest tip: BEAM_BL 0.13 each side, within 20 %), their lengths varying, blunt
     beams = hot["beams"]
-    assert beams["count"] == 12 and len(beams["widths"]) == 12 and "lobe" not in beams and beams["edge"] == 21 and beams["scale"] == 2, beams   # (14 usual art px of 3 CSS px, in the sun's own of 2)
+    assert beams["count"] == 12 and len(beams["widths"]) == 12 and "lobe" not in beams and beams["edge"] == 14, beams
     for width in beams["widths"]:
         assert width == pytest.approx(0.26 * max(beams["lengths"]), rel=0.2), (width, beams["lengths"])
     # ... spaced about 30 degrees all round (each one off its place by up to 3.5 degrees: a gap within 13 degrees of even)
@@ -3137,20 +3137,6 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert abs(look["shaft"]["hue"] - 255) <= 10 and abs(look["top"]["hue"] - 255) <= 10, look
     # ... faded out short of the window's edge: no violet in its outer ring
     assert hot["edge"]["violet"] == 0 and hot["edge"]["whole"] > 100, hot["edge"]
-    # smooth: the sun's own canvas draws at 2 CSS px an art pixel (the weather's 3), and the shafts hold no more isolated darker pixels than the design mock's
-    # (measured the same way on its beams-only picture: 0.4 to 0.6 % a step and a half or more, 3.6 to 4 % a step or more darker than their neighbours' mean;
-    # the blue noise at 0.45 of its swing: about 0.5 %, none a step and a half)
-    smooth = hot["smooth"]
-    assert smooth["scale"] == 2 and smooth["size"] == [512, 384] and smooth["css"] == [1024, 768], smooth
-    assert smooth["n"] > 2000 and smooth["dark15"] <= 0.0055 + 0.005 and smooth["dark1"] <= 0.04, smooth
-    # layered: the sun's canvas and its margin under the weather's (after it in the page, z-index -1), the sky behind the tiles, nothing taking clicks, the
-    # sun's canvas at the weather's place and size, its margin above it
-    layers = hot["layers"]
-    assert layers["count"] == 2 and layers["z"] == ["-1", "-1"] and layers["position"] == ["absolute", "absolute"] and layers["events"] == ["none", "none"], layers
-    (cl, ct, cw, ch), (wl, wt, ww, wh), (ml, mt, mw, mh) = layers["canvas"], layers["weather"], layers["margin"]
-    assert (cl, ct) == (wl, wt) == (0, 0) and 1024 <= cw <= ww and 768 <= ch and abs(ch - wh) <= 3, layers   # (the same corner; each a whole number of its own pixels over the window)
-    assert (ml, mw) == (cl, cw) and abs(mt + mh - ct) < 0.01 and mh >= 100, layers
-    assert layers["after"] and layers["skyZ"] == "0" and layers["tiles"] and all(p == "pixelated" for p in layers["pixelated"]), layers
     # no dot pattern in the dither (its grid power), no flash faster than 0.5 Hz (the brightness over 24 s: its dominant frequency, the heat
     # alone and with the UV), none drawn stronger than its strength (the sun is not scaled by the cap)
     assert all(g < 400 for g in hot["grid"]), hot["grid"]
@@ -3163,7 +3149,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert bk["resized"]["baked"] == bk["beforeResize"] + 1 and bk["resized"]["size"] != bk["size"], bk
     # the cost on the real window (1024 x 768): the weather's frame cost, heat and UV together, at most 2.5 ms
     cost = hot["cost"]
-    assert cost["errors"] == [] and cost["size"][:2] == [512, 384] and cost["cost"] < 2.5 and cost["mean"] < 2.5, cost
+    assert cost["errors"] == [] and cost["size"][:2] == [342, 256] and cost["cost"] < 2.5 and cost["mean"] < 2.5, cost
     # the lean through the day: a smooth curve, 70 degrees at most, no jump (under a degree a minute), the sun's side east (right of the
     # screen): negative (down-left) in the morning, positive (down-right) in the afternoon, rising all day
     curve = hot["sun"]["curve"]
