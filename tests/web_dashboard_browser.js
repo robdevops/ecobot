@@ -3330,7 +3330,7 @@ const WEATHER = {
     const look = (label) => page.evaluate((label) => {
       Sky.advance(60);
       const s = Sky.state(), r = s.heat.sun, d = __g.getImageData(Math.round(r.x), Math.round(r.y), 1, 1).data;
-      return { label, effects: s.effects, heat: s.drawn.heat, uv: s.drawn.uv, centre: [...d], cap: s.cap, others: Object.entries(s.drawn).filter(([k]) => !["heat", "uv", "rain"].includes(k)).reduce((a, [, v]) => a + v, 0), drawn: s.drawn };
+      return { label, effects: s.effects, heat: s.drawn.heat, uv: s.drawn.uv, centre: [...d], cap: s.cap, others: Object.entries(s.drawn).filter(([k]) => !["heat", "uv", "rain", "gust"].includes(k)).reduce((a, [, v]) => a + v, 0), drawn: s.drawn };
     }, label);
     out.steps = [await look("alone")];
     await page.evaluate(() => Sky.setWindSpeed(60, 120, true));
@@ -3346,6 +3346,50 @@ const WEATHER = {
     out.steps.push(await look("off"));
     out.errors = errors;
     await context.close();
+  },
+  // The gust's objects are in front of the sun's beams: with the UV at 11 a cow crossing at a pinned place (the seeded frames, the same
+  // each run) is drawn twice, with the sun's two layers on and off, alone and then with the wind, rain, haze and humidity (the cap below 1
+  // with the sun, humidity and ice, the cap below 1 with the sun on): each pixel the cow covers outright, with nothing else over it, is the cow's own colour over the beams; the cow at
+  // its own strength (drawn 1); the canvas' state left plain after a frame
+  async layering(browser, url, out) {
+    const look = async (fx, wind, sun) => {
+      const { context, page, errors } = await weatherPage(browser, url, { query: "?fx=gust", driven: true, context: { viewport: { width: 640, height: 480 } } });
+      const got = await page.evaluate(([fx, wind, sun]) => {
+        document.dispatchEvent(new CustomEvent("ecobot-fx", { detail: { ...fx, ...(sun ? { uv: 1, heat: 1 } : {}) } }));
+        Sky.setSun({ rise: 354.36, set: 1241.24, now: 720, noon_el: 75.61 }); Sky.setTime(720); Sky.setSunPosition(0, 70);
+        if (wind) Sky.setWindSpeed(60, 120, true);
+        Sky.fling("cow");
+        Sky.advance(90);
+        const c = document.querySelector("#sky canvas"), g = c.getContext("2d"), s = Sky.state(), f = s.gust.flyers[0];
+        const x = Math.max(0, Math.round(f.x) - 24), y = Math.max(0, Math.round(f.y) - 24);
+        return { px: Array.from(g.getImageData(x, y, 48, 48).data), drawn: s.drawn, effects: s.effects, order: s.effects,
+                 plain: [g.globalAlpha, g.globalCompositeOperation], cow: [f.x, f.y] };
+      }, [fx, wind, sun]);
+      await context.close();
+      got.errors = errors;
+      return got;
+    };
+    // (the pixels the cow covers outright, with nothing else over it: the lone cow's solid ones that the bare page shows the same)
+    const compare = (bare, sunny, ref) => {
+      let solid = 0, differ = 0;
+      for (let i = 0; i < bare.px.length; i += 4) {
+        if (ref.px[i + 3] !== 255 || [0, 1, 2, 3].some((j) => bare.px[i + j] !== ref.px[i + j])) continue;
+        solid++;
+        if ([0, 1, 2, 3].some((j) => sunny.px[i + j] !== ref.px[i + j])) differ++;
+      }
+      return { solid, differ, same_place: ref.cow[0] === sunny.cow[0] && ref.cow[1] === sunny.cow[1] };
+    };
+    const lone = [await look({}, false, false), await look({}, false, true)];
+    const crowd = { humidity: 1, ice: 1 };
+    const busy = [await look(crowd, false, false), await look(crowd, false, true)];
+    out.alone = compare(lone[0], lone[1], lone[0]);
+    out.busy = compare(busy[0], busy[1], lone[0]);
+    out.alone_drawn = lone[1].drawn;
+    out.busy_drawn = busy[1].drawn;
+    out.busy_bare_drawn = busy[0].drawn;
+    out.sun_effects = lone[1].effects;
+    out.plain = [lone[0].plain, lone[1].plain, busy[0].plain, busy[1].plain];
+    out.errors = [...lone[0].errors, ...lone[1].errors, ...busy[0].errors, ...busy[1].errors];
   },
   // A flash flood: the station's rain rate over 30 mm/h (not at 30): the water rising steadily to a quarter of the window's height,
   // its surface choppy all across and higher at the sides, the rain ending at it in ripples and splashes; its waves alone (one

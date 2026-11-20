@@ -1957,7 +1957,7 @@ EFFECTS = {"rain": "Rain", "flood": "Rain", "haze": "AQI", "uv": "UV index", "hu
 # The weather's parts whose pages are driven (tests/web_dashboard_browser.js, weatherPage): what they see doesn't depend on the time
 # their frames take, so they run a little behind the rest (nice 5): the pages whose own timing is tested (a frame rate, the zoom's
 # moves) get a CPU first when the machine is busy; the rest of the suite (conftest: nice 10) after them
-DRIVEN = {"push", "trails", "frost", "budget", "flood", "bucket", "pm25", "opened", "gust", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies", "gives", "sunkeep"}
+DRIVEN = {"push", "trails", "frost", "budget", "flood", "bucket", "pm25", "opened", "gust", "layering", "over", "direction", "uturn", "slant", "pace", "hysteresis", "drops", "eddies", "gives", "sunkeep"}
 
 
 async def weather(server, part: str) -> dict:
@@ -2297,10 +2297,27 @@ async def test_the_sun_is_never_dimmed_by_a_gust_wind_rain_or_a_flung_cow_while_
         assert step["centre"] == alone["centre"], (step["label"], step["centre"], alone["centre"])   # (and its centre pixel, as bright)
         assert step["others"] <= step["cap"] + 1e-9, step                                   # (the others' strengths together under the cap)
     assert steps[1]["effects"] == ["heat", "wind"] or "wind" in steps[1]["effects"], steps[1]
-    assert "gust" in steps[2]["effects"] and steps[2]["drawn"]["gust"] > 0, steps[2]       # (the cow's gust on while it crosses)
+    assert "gust" in steps[2]["effects"] and steps[2]["drawn"]["gust"] == 1, steps[2]      # (the cow's gust on while it crosses, at its own strength)
     assert all(0 < steps[i]["drawn"]["wind"] for i in (1, 2, 3)) and steps[3]["drawn"]["rain"] > 0, steps
     # the others are still scaled down: with the sun in the sum, the wind and the gust and the rain together drawn under their own strengths
-    assert steps[3]["drawn"]["wind"] < 0.8 and steps[3]["drawn"]["gust"] < 0.45, steps[3]
+    assert steps[3]["drawn"]["wind"] < 0.8, steps[3]
+
+
+@needs_browser
+async def test_a_flung_cow_is_in_front_of_the_sun_s_beams_at_its_own_strength_with_the_cap_at_1_and_below(server, station):
+    """The gust's objects are drawn over the sun's two layers (the bottom of the order) at their own strength, outside the cap: every
+    pixel the cow covers outright reads the same over the UV's beams as over a plain sky, the cap at 1 and below 1, and the canvas's alpha
+    and composite mode are left plain after a frame."""
+    got = await weather(server, "layering")
+    assert not got["errors"], got["errors"]
+    assert got["sun_effects"][:2] == ["heat", "uv"] and "gust" in got["sun_effects"], got["sun_effects"]   # (the sun's layers first)
+    for key in ("alone", "busy"):
+        assert got[key]["same_place"] and got[key]["solid"] > 100, got[key]
+        assert got[key]["differ"] == 0, got[key]                                          # (the violet never shows through the cow)
+    assert got["alone_drawn"]["gust"] == 1 and got["busy_drawn"]["gust"] == 1 and got["busy_bare_drawn"]["gust"] == 1, got
+    # ... the cap really was below 1 for the others with the sun on (humidity drawn under its own strength)
+    assert got["busy_drawn"]["humidity"] < 0.8, got
+    assert all(p == [1, "source-over"] for p in got["plain"]), got["plain"]
 
 
 @needs_browser
@@ -3376,8 +3393,8 @@ async def test_a_gust_over_99_kmh_blows_a_cow_a_barn_or_a_chicken_across_far_beh
     assert got["live"] == [0, 1, 1, 2, 2] and got["liveEffects"] == ["gust"], got["live"]
     assert set(got["liveKinds"]) <= {"cow", "barn", "chicken"}, got["liveKinds"]
     # a cow, a barn and a chicken at once: each right to left all the way across (in at the right, out at the left), every frame
-    # further left, in the window's upper part; large (a sixth of the window across or so) and faint (most pixels under half
-    # opaque), on the back layer, alone here; crossing in some 6-14 s of the weather's time
+    # further left, in the window's upper part; large (a sixth of the window across or so) and solid (the sprites' own alphas, drawn
+    # at the full strength: the median pixel opaque), on the back layer, alone here; crossing in some 6-14 s of the weather's time
     crossing = got["crossing"]
     width, height, _ = crossing["size"]
     assert crossing["kinds"] == ["cow", "barn", "chicken"] and crossing["effects"] == ["gust"], crossing
@@ -3398,7 +3415,7 @@ async def test_a_gust_over_99_kmh_blows_a_cow_a_barn_or_a_chicken_across_far_beh
     chicken = crossing["tracks"]["chicken"]
     assert all(abs(p[2]) <= 0.2 for p in chicken) and max(p[2] for p in chicken) - min(p[2] for p in chicken) > 0.1, chicken
     assert {p[3] for p in chicken} == {-1, 0, 1} and {p[4] for p in chicken} == {0, 1, 2, 3}, chicken
-    assert crossing["inked"] > 1500 and 60 <= crossing["median"] <= 130, crossing
+    assert crossing["inked"] > 1500 and crossing["median"] == 255, crossing
     assert crossing["cost"] < 8, crossing["cost"]
     # once they're gone: nothing left, nothing drawn, the loop ended
     assert crossing["after"]["flyers"] == [] and crossing["after"]["bits"] == 0 and crossing["ink"] == 0 and not crossing["running"], crossing

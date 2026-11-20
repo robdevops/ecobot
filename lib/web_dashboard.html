@@ -183,8 +183,9 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 // for every effect, each frame cleared once and drawn back to front (ORDER). The effects share a particle budget and a cap on their
 // strength together (the cap scales every effect but the sun's two layers, the heat and the UV, which stay at their own strength
 // and count in the sum), so several at once are no busier or brighter than one strong one; but the humidity's beads stay out of the
-// budget (OWN_BUDGET: their own limits bound them, so heavy rain keeps every drop beside them), and the rain out of the cap
-// (OWN_STRENGTH: drawn at its own strength whatever else is on). Nothing runs while no effect is on or fading
+// budget (OWN_BUDGET: their own limits bound them, so heavy rain keeps every drop beside them), and the rain and the gust's flung
+// objects out of the cap (OWN_STRENGTH: drawn at their own strength whatever else is on: the gust's cow, barn and chicken solid, in
+// front of the sun's beams, never washed out by a cap that is there for the translucent washes). Nothing runs while no effect is on or fading
 // out; the tab hidden, it waits. Only with MCP_DASHBOARD_ANIMATIONS on and no reduced motion asked for: otherwise the page never
 // sets it going (animate false), and nothing is drawn, no loop, no frame.
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), haze: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
@@ -301,7 +302,7 @@ const Sky = (() => {
   const CAP = 1.5;                     // ... and their strengths together at most this (one strong effect: about 0.8)
   const ORDER = ["heat", "uv", "gust", "haze", "rain", "wind", "humidity", "flood", "ice"];   // back to front: the heat and the UV the bottom layer (below everything else), then the rest
   const OWN_BUDGET = new Set(["humidity"]);   // (its beads outside the shared budget: their own limits keep their cost bounded)
-  const OWN_STRENGTH = new Set(["rain"]);     // (drawn at its own strength whatever else is on: outside the cap, and outside the sum it scales)
+  const OWN_STRENGTH = new Set(["rain", "gust"]);   // (drawn at its own strength whatever else is on: outside the cap, and outside the sum it scales; the gust's objects are solid sprites, at full alpha over the sun's layers)
   const SUN = new Set(["heat", "uv"]);        // (the sun's two layers: counted in the sum, but never scaled by the cap, so a gust or a wind never dims the sun)
   let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
   const OVER = 100;                    // CSS px: the weather's margin past the window's top and bottom (the page's --over, in #sky's rule)
@@ -4177,7 +4178,7 @@ const Sky = (() => {
     let flyers = [], bits = [], bag = [], sent = [], shed = 0;
     const along = () => 1 + 0.35 * wind.amount;
     return {
-      strength: () => 0.45,
+      strength: () => 1,               // (solid: the sprites' own alphas, not a share of them)
       need: () => flyers.length ? BITS : 0,
       count: () => bits.length,
       want() {},                       // (no condition of its own: fling() sends one, and it's on while one is crossing)
