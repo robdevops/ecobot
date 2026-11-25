@@ -10,7 +10,8 @@ low-level SDK as ecobot-mcp's (lib/mcp_server.py), as Streamable HTTP behind the
     "refused" too: "paused" (water while a weather delay is on) or "arguments".
   - **Resources**: `irrigation://alerts` (and its template with `since` and `expired`): the alerts its daily check decides
     (irrigation_battery, irrigation_pause), in ecobot://alerts' shape, from an alert log of its own (lib/alert_log.py:
-    irrigation_alerts.sqlite, its own identity), published as ResourceUpdated on each new one to whoever listens.
+    irrigation_alerts.sqlite, its own identity), published as ResourceUpdated on each new one to whoever listens; and
+    `irrigation://feed`, the same alerts as a feed for signalbot (lib/feed.py).
   - **HTTP** (`http_app`): `streamable_http_app` at /mcp, its Host header checked against IRRIGATION_ALLOWED_HOSTS, each request's
     bearer token against AUTH_TOKENS (lib/mcp_http.TokenCheck), one line per request in the log (RequestLog).
 
@@ -28,6 +29,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, ResourceUpdated
 from mcp.shared.exceptions import MCPError
 
+from ..feed import feed_read
 from ..mcp_http import RequestLog, TokenCheck, alerts_read, host_settings
 from .common import DELAYS, MAX_MINUTES, IrrigationError, is_paused
 
@@ -39,6 +41,7 @@ JSON = "application/json"
 RESOURCE_NOT_FOUND = -32002           # MCP's error for a resource there is none of
 ALERTS_URI = "irrigation://alerts"
 ALERTS_TEMPLATE = "irrigation://alerts{?since,expired}"
+FEED_URI = "irrigation://feed"
 INSTRUCTIONS = ("The garden's irrigation controller (a Tuya smart irrigation timer). irrigation_status reads it; water opens the valve "
                 "for some minutes (refused while a weather delay pauses the timer: cancel the delay first), stop closes it, delay pauses "
                 "the timer's own schedule for 24, 48 or 72 hours (cancel ends a pause). A run always ends: the server closes the valve "
@@ -194,7 +197,10 @@ class IrrigationServer:
             uri=ALERTS_URI, name="alerts", title="Irrigation alerts", mime_type=JSON,
             description="The alerts the daily check has decided (irrigation_battery: the battery is low; irrigation_pause: paused for rain), "
                         "newest last, kept 30 days: {alerts: [{id, kind, time, expires, title, text, data}], last_id, identity}; only "
-                        "those not yet expired (the template: since an id, and expired=true for all). Pushed on each new alert.")])
+                        "those not yet expired (the template: since an id, and expired=true for all). Pushed on each new alert."),
+            types.Resource(uri=FEED_URI, name="feed", title="Irrigation alerts as a feed", mime_type=JSON,
+                           description="The alerts not yet expired, for signalbot's feeds (lib/feed.py): {identity, kinds: [{kind, label, "
+                                       "words}], items: [{id, kind, time, expires, text}]}. Pushed on each new alert.")])
 
     async def _list_templates(self, ctx, params) -> types.ListResourceTemplatesResult:
         if self.alert_log is None:
@@ -214,7 +220,9 @@ class IrrigationServer:
         parts = urlsplit(uri)
         if f"{parts.scheme}://{parts.netloc}{parts.path}" == ALERTS_URI and self.alert_log is not None:
             return alerts_read(self.alert_log, parse_qs(parts.query))
-        raise MCPError(RESOURCE_NOT_FOUND, f"No resource {uri!r}: there are {ALERTS_URI} and {ALERTS_TEMPLATE}.")
+        if uri == FEED_URI and self.alert_log is not None:
+            return feed_read(self.alert_log, list(ALERTS))
+        raise MCPError(RESOURCE_NOT_FOUND, f"No resource {uri!r}: there are {ALERTS_URI}, {ALERTS_TEMPLATE} and {FEED_URI}.")
 
     async def watch_alerts(self):
         """Publish the alerts' URI on each new alert, until cancelled."""
@@ -225,6 +233,7 @@ class IrrigationServer:
             await self.alert_log.wait(last)
             last = self.alert_log.last_id()
             await self.bus.publish(ResourceUpdated(ALERTS_URI))
+            await self.bus.publish(ResourceUpdated(FEED_URI))
 
     async def run(self):
         """The publishing, for as long as it runs."""

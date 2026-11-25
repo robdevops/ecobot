@@ -7,6 +7,9 @@ TYPES = {"rain": ("rain", "Ecowitt"), "gusts": ("gusts", "Ecowitt"), "uv": ("UV"
          "forecast": ("forecast changes", "Forecast"),
          "irrigation_battery": ("irrigation battery", "Irrigation"), "irrigation_pause": ("irrigation pause", "Irrigation")}
 LABELS = {kind: label for kind, (label, _) in TYPES.items()}
+# kind -> more words people use for it, after a chat's /alerts (signalbot's feeds, lib/feed.py)
+WORDS = {"gusts": ["wind"], "temps": ["temperature", "temp"], "pollen_and_asthma": ["pollen", "asthma"],
+         "irrigation_battery": ["battery"], "irrigation_pause": ["pause"]}
 RAIN_FROM_PCT = 50   # a day's rain is likely from this chance of at least 1 mm (the forecast alert's, and the irrigation check's)
 
 

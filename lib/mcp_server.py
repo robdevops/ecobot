@@ -56,7 +56,9 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from . import chart_images, theme
+from .alerts.kinds import available_kinds
 from .config import ROOT
+from .feed import feed_read
 from .mcp_http import CHART_PATH, RequestLog, TokenCheck, alerts_read, host_settings
 from .service import Service
 from .service.about import AboutTool, alerts as alert_kinds
@@ -82,7 +84,7 @@ JSON = "application/json"
 STATION_URI, WEATHER_URI, AIR_URI = "ecobot://station", "ecobot://now/weather", "ecobot://now/air"
 ALERTS_URI, FORECAST_URI, POLLEN_URI = "ecobot://alerts", "ecobot://forecast", "ecobot://pollen"
 HEALTH_URI, SCHEMA_URI = "ecobot://health", "ecobot://schema/chart"
-STATUS_URI = "ecobot://status"
+STATUS_URI, FEED_URI = "ecobot://status", "ecobot://feed"
 ALERTS_TEMPLATE = "ecobot://alerts{?since,expired}"
 RESOURCES = {   # uri: (name, title, description, the source it needs: None for always)
     STATION_URI: ("station", "The station", "Its name, time zone, location and when it was set up; the sensors with their readings (name, "
@@ -97,6 +99,9 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
     ALERTS_URI: ("alerts", "Alerts", "The alerts the service has decided, newest last, kept 30 days: {alerts: [{id, kind, time, expires, "
                  "title, text, data, [link], [chart]}], last_id, identity}; only those not yet expired (the template: since an id, and "
                  "expired=true for all). Pushed on each new alert.", None),
+    FEED_URI: ("feed", "Alerts as a feed", "The alerts not yet expired, for signalbot's feeds (lib/feed.py): {identity, kinds: [{kind, "
+               "label, words}] (those the sources here send), items: [{id, kind, time, expires, text, [link], [chart: {tool, arguments, "
+               "[arg, values]}]}]}. Pushed on each new alert.", None),
     FORECAST_URI: ("forecast", "The forecast", "The forecast days, structured: {place, fetched_at, days: [{date, min_c, max_c, "
                    "rain_chance_pct, rain_1mm_pct, summary, text}]}. Pushed on each new forecast.", "forecast"),
     POLLEN_URI: ("pollen", "Pollen and thunderstorm asthma", "Grass pollen and thunderstorm asthma levels: {in_season, fetched_at, "
@@ -172,7 +177,9 @@ def tool_result(text: str, images: list[bytes] | None = None, dark: bool | None 
     chart): the charts in the text as {title, period} and chart_note IMAGE_NOTE, an ImageContent per chart after it, and result _meta
     {CHARTS_META: the full charts, DARK_META: dark}. With `links` (a picture's URL per chart) instead: the charts in the text as
     {title, period, url, markdown} and chart_note LINK_NOTE, a ResourceLink per chart after it, the same result _meta, and a complete
-    answer's reply with the markdown images after its words. `note`: why images asked for aren't there (`chart_image_note`)."""
+    answer's reply with the markdown images after its words. With either, an answer that isn't complete has its `caption` (or `text`) as a
+    last block for the person (audience user), for a client that sends results to a chat without a model (signalbot's direct commands).
+    `note`: why images asked for aren't there (`chart_image_note`)."""
     data = _loads(text)
     content: list = []
     meta = {}
@@ -197,6 +204,9 @@ def tool_result(text: str, images: list[bytes] | None = None, dark: bool | None 
     if isinstance(data, dict) and data.get("complete") is True and isinstance(data.get("reply"), str) and "error" not in data:
         content.append(types.TextContent(text=reply, annotations=types.Annotations(audience=["user"])))
         meta[COMPLETE] = True
+    elif meta and isinstance(data, dict) and isinstance(words := data.get("caption") or data.get("text"), str) and words.strip():
+        # Pictures or links made, for a chat: the caption for the person, as a client that sends results without a model shows it
+        content.append(types.TextContent(text=words, annotations=types.Annotations(audience=["user"])))
     return types.CallToolResult(content=content, is_error=isinstance(data, dict) and "error" in data, _meta=meta or None)
 
 
@@ -317,7 +327,7 @@ class EcobotServer:
     async def _list_resources(self, ctx, params) -> types.ListResourcesResult:
         return types.ListResourcesResult(resources=[
             types.Resource(uri=uri, name=name, title=title, description=what, mime_type=chart_images.PNG if uri == STATUS_URI else JSON)
-            for uri, (name, title, what, need) in RESOURCES.items() if self._there(need) and (uri != ALERTS_URI or self.alert_log)])
+            for uri, (name, title, what, need) in RESOURCES.items() if self._there(need) and (uri not in (ALERTS_URI, FEED_URI) or self.alert_log)])
 
     async def _list_templates(self, ctx, params) -> types.ListResourceTemplatesResult:
         if self.alert_log is None:
@@ -334,6 +344,8 @@ class EcobotServer:
             contents = [types.TextResourceContents(uri=uri, mime_type=JSON, text=_json(data))]
             if png is not None:
                 contents.append(types.BlobResourceContents(uri=uri, mime_type=chart_images.PNG, blob=base64.b64encode(png).decode("ascii")))
+            if isinstance(data.get("report"), str) and data["report"].strip():   # (the words alone, for a client that shows text as it is)
+                contents.append(types.TextResourceContents(uri=uri, mime_type="text/plain", text=data["report"]))
             return types.ReadResourceResult(contents=contents)
         return types.ReadResourceResult(contents=[types.TextResourceContents(uri=uri, mime_type=JSON, text=_json(await self.read(uri)))])
 
@@ -344,8 +356,10 @@ class EcobotServer:
         query = parse_qs(parts.query)
         if key == ALERTS_URI and self.alert_log is not None:
             return self.alerts(query)
+        if key == FEED_URI and self.alert_log is not None and not parts.query:
+            return feed_read(self.alert_log, available_kinds(AboutTool(self.ctx).sources))
         entry = RESOURCES.get(key)
-        if entry is None or parts.query or key == ALERTS_URI or not self._there(entry[3]):
+        if entry is None or parts.query or key in (ALERTS_URI, FEED_URI) or not self._there(entry[3]):
             raise MCPError(RESOURCE_NOT_FOUND, f"No resource {uri!r}: there are "
                                                f"{', '.join(u for u, e in RESOURCES.items() if self._there(e[3]))}, and {ALERTS_TEMPLATE}.")
         if key == STATUS_URI:
@@ -476,6 +490,7 @@ class EcobotServer:
             await self.alert_log.wait(last)
             last = self.alert_log.last_id()
             await self.bus.publish(ResourceUpdated(ALERTS_URI))
+            await self.bus.publish(ResourceUpdated(FEED_URI))
 
     async def run(self, publish_every: float = PUBLISH_SECONDS, catalogue_every: float = CATALOGUE_SECONDS):
         """The publishing, until cancelled: the alerts as they come, the live resources every `publish_every` s, the catalogue every
