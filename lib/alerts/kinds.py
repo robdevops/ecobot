@@ -1,5 +1,4 @@
-"""The alert types: their names and which source sends each. Shared by the service (its alert rules, `about`) and the bot (its alert
-menus, lib/alerts/menu.py), with nothing of Telegram in it, so the service doesn't load the Telegram library."""
+"""The alert types: their names and which source sends each. Shared by the service (its alert rules, `about`, the feed)."""
 
 # kind -> (the name on its button, the source that sends it: a source's name, or Irrigation for the controller), in the order listed
 TYPES = {"rain": ("rain", "Ecowitt"), "gusts": ("gusts", "Ecowitt"), "uv": ("UV", "Ecowitt"), "temps": ("temperature crossing", "Ecowitt"),
@@ -19,6 +18,6 @@ def kinds_of(source: str) -> tuple[str, ...]:
 
 
 def available_kinds(sources, irrigation: bool = False) -> list[str]:
-    """The alert types the bot sends: those of its sources (by name), and the irrigation ones with a controller configured."""
+    """The alert types sent: those of its sources (by name), and the irrigation ones with a controller configured."""
     names = {*sources, *(["Irrigation"] if irrigation else [])}
     return [kind for kind, (_, source) in TYPES.items() if source in names]

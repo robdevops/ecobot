@@ -176,7 +176,7 @@ async def serve_irrigation_mcp():
 
 @pytest.fixture(scope="session")
 def archived_cache(tmp_path_factory):
-    """The bot's file (ecobot.sqlite) holding the fake station's whole archive, built once an hour and shared by every worker and run
+    """ecobot-mcp's file (ecobot.sqlite) holding the fake station's whole archive, built once an hour and shared by every worker and run
     (under pytest's own temp folder, named for the hour and the code that shapes it). Tests copy it (archived_station)."""
     from datetime import datetime
     moved = "-moved" if CLOCK else ""   # (built at a clock ECOBOT_CLOCK moved: never shared with a run at the real one)

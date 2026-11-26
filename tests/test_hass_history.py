@@ -55,7 +55,7 @@ def test_home_assistants_own_units_become_the_bots():
     assert round(convert(10, "speed", "mph"), 2) == 16.09 and convert(10, "speed", "m/s") == 36.0
     assert round(convert(0.5, "length", "in"), 1) == 12.7 and convert(5.0, "rate", "mm/h") == 5.0
     assert convert(850.0, "pressure", "hPa", 0.1) == 85.0 or round(convert(8.5, "pressure", "hPa", 0.1), 2) == 0.85       # the vapour pressure deficit: hPa to kPa
-    assert convert(5.0, "", "odd") == 5.0 and convert(5.0, "speed", "furlongs per fortnight") == 5.0                      # a unit it does not know: taken as the bot's
+    assert convert(5.0, "", "odd") == 5.0 and convert(5.0, "speed", "furlongs per fortnight") == 5.0                      # a unit it does not know: taken as ecobot-mcp's
     assert [round(v, 1) for _, v in converted([(0, 68.0)], ENTITIES["outdoor.temperature"], "°F")] == [20.0]
 
 

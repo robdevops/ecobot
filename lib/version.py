@@ -1,4 +1,4 @@
-"""The running code: the checked-out commit, so the log shows which code is running (the bot's and ecobot-mcp's)."""
+"""The running code: the checked-out commit, so the log shows which code is running (ecobot-mcp's and irrigation-mcp's)."""
 
 from .config import ROOT
 

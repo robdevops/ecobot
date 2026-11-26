@@ -1,4 +1,4 @@
-"""The tools the bot's model is offered (lib/service's ten, wrapped by lib/model_tools.py), and the Turn the engines take."""
+"""The tools (lib/service's ten) as the engines run them, and the Turn the engines take."""
 
 import json
 import logging
@@ -20,7 +20,7 @@ def json_result(out) -> str:
 @dataclass
 class Turn:
     """What one call carries: the options an engine is driven with (set by the service from its own arguments: lib/service/summary.py,
-    days.py, relate.py, scan.py) and what it gives back (its charts, its timings); for the bot's model, the request's metadata and the
+    days.py, relate.py, scan.py) and what it gives back (its charts, its timings); for a model client, the request's metadata and the
     results it keeps. Nothing is shared between questions."""
     charts: list = field(default_factory=list)   # chart specs the engines add
     chart_asked: bool = False                    # draw a chart (the call's `chart`)
@@ -35,7 +35,7 @@ class Turn:
     times: dict = field(default_factory=dict)    # seconds spent by step ("data", "draw", "png"), for the reply's timing line in the log
     meta: dict = field(default_factory=dict)     # the request's metadata, all a service tool reads (lib/service/common.py: chart_points,
                                                  # fetch, priority); over MCP, the request's _meta
-    results: list = field(default_factory=list)  # the bot's model: (tool, arguments, its whole result as data) of each call it made
+    results: list = field(default_factory=list)  # a model client: (tool, arguments, its whole result as data) of each call it made
     pictures: dict = field(default_factory=dict)  # ... and the charts the service drew for it, by its place in `results`
                                                   # (lib/weather.ChartImage each: the PNG, the chart's JSON, the theme)
     result_chars: int = 0                        # the size of every result the model was sent so far this question
@@ -68,7 +68,7 @@ class Tools:
             return f"Error: tool arguments were not valid JSON ({e})"
         log.debug("Tool call %s %s", name, raw_args, extra=QUOTES)
         turn = turn if turn is not None else Turn()
-        try:   # no time limit of its own: the question's (bot.TURN_SECONDS) runs from before the call
+        try:   # no time limit of its own: the question's runs from before the call
             out = await tool.handler(args, turn)
         except Exception as e:
             log.error("Tool %s failed: %s: %s", name, type(e).__name__, e, exc_info=isinstance(e, BUGS))

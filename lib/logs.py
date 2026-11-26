@@ -1,4 +1,4 @@
-"""How the bot's log lines look: the message alone, marked WARN, ERROR or DEBUG when it is not an ordinary (INFO) line. Only a chat
+"""How the log lines look: the message alone, marked WARN, ERROR or DEBUG when it is not an ordinary (INFO) line. Only a chat
 message (a request quoted last on a line) is shortened: put on one line and cut to the log width (BOT_LOG_WIDTH) with an ellipsis (…)
 marking the cut. Every other line, and a traceback, is logged whole.
 
@@ -61,7 +61,7 @@ class LogFormat(logging.Formatter):
 
 def on_journal(*streams) -> bool:
     """Is one of these streams (stderr and stdout by default) systemd's journal? systemd names the stream it connected in JOURNAL_STREAM
-    (its device and inode); a stream the bot's output was sent elsewhere by (a pipe, a terminal) does not match."""
+    (its device and inode); a stream the output was sent elsewhere by (a pipe, a terminal) does not match."""
     name = os.environ.get("JOURNAL_STREAM", "")
     for stream in streams or (sys.stderr, sys.stdout):
         try:

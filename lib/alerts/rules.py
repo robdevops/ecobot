@@ -2,7 +2,7 @@
 for a run of readings (confirmation); either keeps its memory in the monitor's saved dict, so it carries across checks and restarts.
 
 Back-off, for the alerts that announce a change between two states (rain: raining / dry; temperatures: outdoor warmer / cooler than
-indoor). Each such alert keeps `alerted_state` (what the chat was last told) and `alerted_time` (when). At every check the caller works out
+indoor). Each such alert keeps `alerted_state` (what was last told) and `alerted_time` (when). At every check the caller works out
 the state *now* from the latest readings, and an alert is due only if it differs from `alerted_state` and at least the cooldown has passed
 since `alerted_time`. A change that comes inside the cooldown is not lost: it is announced when the cooldown ends, if the state is still
 different. If it flipped back and forth meanwhile and is back on `alerted_state`, there is nothing to say.
@@ -23,7 +23,7 @@ def due(saved: dict, state: str, now: int, cooldown: int) -> bool:
 
 
 def remember(saved: dict, state: str, now: int, alerted: bool = True):
-    """Record `state` as the one the chat knows. `alerted=False` for a quiet update (no alert went out): the time of the last real
+    """Record `state` as the one told. `alerted=False` for a quiet update (no alert went out): the time of the last real
     alert stays."""
     saved["alerted_state"] = state
     if alerted:

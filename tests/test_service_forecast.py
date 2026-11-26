@@ -1,6 +1,6 @@
 """The `forecast` tool (lib/service/forecast.py): the days ahead in words, read here; the forecast source's lines, each day's figures,
 its text, what is held when the request says not to fetch, and refusals that teach. (Until step 6c also held to weather_forecast's
-answers and the bot's old words, tests/old_tools.py and tests/report_words.py, deleted with them.)"""
+answers and the old report's words, tests/old_tools.py and tests/report_words.py, deleted with them.)"""
 
 import json
 from datetime import date, datetime, time as dtime, timedelta

@@ -14,12 +14,12 @@ def to_local(ts: int, tz: tzinfo) -> datetime:
 
 
 def day_text(day: date | datetime, year: bool = True) -> str:
-    """"Sat 3 Oct 2026", or "Sat 3 Oct" without the year: how the bot writes a day, everywhere."""
+    """"Sat 3 Oct 2026", or "Sat 3 Oct" without the year: how ecobot-mcp writes a day, everywhere."""
     return f"{day:%a} {day.day} {day:%b}" + (f" {day:%Y}" if year else "")
 
 
 def clock_text(t: datetime, whole_hours: bool = False) -> str:
-    """"3:45pm", "12:05am": how the bot writes a time of day; whole_hours writes one on the hour as "10am"."""
+    """"3:45pm", "12:05am": how ecobot-mcp writes a time of day; whole_hours writes one on the hour as "10am"."""
     hour, half = t.hour % 12 or 12, "am" if t.hour < 12 else "pm"
     return f"{hour}{half}" if whole_hours and not t.minute else f"{hour}:{t:%M}{half}"
 

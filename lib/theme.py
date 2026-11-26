@@ -1,4 +1,4 @@
-"""DARKMODE: whether charts are drawn dark now. Held here, apart from the renderer (lib/charts.py, Pillow), so the bot, which draws
+"""DARKMODE: whether charts are drawn dark now. Held here, apart from the renderer (lib/charts.py, Pillow), so a reader of the theme, which draws
 nothing, can ask for its own theme (request `_meta` `chart_dark`) and keep its picture cache's theme without importing the renderer;
 lib/charts.py reads it when it draws, and ecobot-mcp's images (lib/chart_images.py) when the call doesn't say."""
 

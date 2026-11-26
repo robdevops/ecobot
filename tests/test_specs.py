@@ -253,7 +253,7 @@ def test_darkmode_is_off_by_default_on_always_and_a_time_range_dark_between_its_
     assert charts.dark_now(at(12))
     charts.configure((21 * 60, 7 * 60), zone)                                      # 9pm-7am: past midnight
     assert [charts.dark_now(at(h, m)) for h, m in ((20, 59), (21, 0), (2, 0), (6, 59), (7, 0), (12, 0))] == [False, True, True, True, False, False]
-    utc = datetime(2026, 11, 1, 11, 0, tzinfo=ZoneInfo("UTC"))                  # 10pm in Melbourne (daylight saving): the bot's clock counts
+    utc = datetime(2026, 11, 1, 11, 0, tzinfo=ZoneInfo("UTC"))                  # 10pm in Melbourne (daylight saving): ecobot-mcp's clock counts
     assert charts.dark_now(utc)
     charts.configure((13 * 60 + 30, 17 * 60), zone)                                # 1:30pm-5pm: within a day
     assert [charts.dark_now(at(h, m)) for h, m in ((13, 29), (13, 30), (16, 59), (17, 0), (2, 0))] == [False, True, True, False, False]

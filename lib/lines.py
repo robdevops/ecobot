@@ -22,7 +22,7 @@ from .timeutil import SLOT, at_hour, day_bounds, local_date
 
 DAY = 86400
 SMOOTH_POINTS = 3                # a smoothed 5-minute line: each point is the mean of this many readings (15 minutes)
-RANGE_KEEP_DAYS = 31   # how long the ranges the bot recorded itself (ecowitt.live, airgradient.store) are kept: the 1M chart's 30 days and a day over
+RANGE_KEEP_DAYS = 31   # how long the ranges ecobot-mcp recorded itself (ecowitt.live, airgradient.store) are kept: the 1M chart's 30 days and a day over
 POINT_BUDGET = 500                                  # about as many points as a chart can show legibly
 WIDTHS = (60, 300, SLOT, 3600, 7200, 14400, DAY)        # bucket sizes a chart line can be drawn at: 5 min ... a day
 WIDTH_NAMES = {60: "1-minute", 300: "5-minute", 1800: "30-minute", 3600: "hourly", 7200: "2-hour", 14400: "4-hour", 86400: "daily"}

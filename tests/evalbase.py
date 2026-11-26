@@ -1,6 +1,6 @@
 """What the service's tests share with the evals' frozen world (tests/evalworld.py): NOW (Tue 29 Sep 2026 14:05, Melbourne), the
 service's ten tools over stand-in sources (service_tools), and the saved expectations (tests/evals/service_cases.json) with the
-example calls they describe (example_calls: the tool descriptions' examples are checked against them). Imports nothing of the bot."""
+example calls they describe (example_calls: the tool descriptions' examples are checked against them). Imports no model client."""
 
 import json
 from datetime import datetime

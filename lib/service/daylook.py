@@ -5,7 +5,7 @@ The rule takes the first that holds:
   1. stormy ⛈️      heavy rain and strong gusts together: rain >= STORMY_RAIN_MM and a gust >= STORMY_GUST_KMH (the station has no
                     lightning sensor, so a storm is told by what it does);
   2. wet 🌧️        rain >= WET_MM;
-  3. showery 🌦️    rain >= RAINY_DAY_MM, the rainy day of the days tool and the bot's prompt (rain >= 1): every day counted as rainy
+  3. showery 🌦️    rain >= RAINY_DAY_MM, the rainy day of the days tool (rain >= 1): every day counted as rainy
                     looks rainy, and a trace (under 1 mm, often dew or drizzle) doesn't;
   4. windy 💨       a gust >= WINDY_GUST_KMH;
   5. very hot 🥵    the high >= VERY_HOT_C;

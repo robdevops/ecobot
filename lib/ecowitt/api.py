@@ -1,4 +1,4 @@
-"""Ecowitt cloud API v3 (https://doc.ecowitt.net), the calls the bot needs.
+"""Ecowitt cloud API v3 (https://doc.ecowitt.net), the calls ecobot-mcp needs.
 
   devices:  GET /device/list
   realtime: GET /device/real_time
@@ -57,7 +57,7 @@ def kept_from(cycle: str, today: date) -> date:
     return today - timedelta(days=CYCLES[cycle].kept - 2)
 
 
-# What the bot keeps cached and warm (the extras feed the rain alerts and predictions). One list, so the
+# What ecobot-mcp keeps cached and warm (the extras feed the rain alerts and predictions). One list, so the
 # warm-up and the archive fetch the same thing and can reuse each other's data.
 GROUPS = ["outdoor", "indoor", "pressure", "wind", "rainfall", "rainfall_piezo", "solar_and_uvi"]
 
@@ -66,7 +66,7 @@ UNIT_IDS = {"temp_unitid": 1, "pressure_unitid": 3, "wind_speed_unitid": 7, "rai
 
 
 def unit_text(text: str | None) -> str | None:
-    """A reading or a unit as Ecowitt writes it, written the bot's way: "12.3 ℃" -> "12.3 °C", "131 º" -> "131°", "1.8 mm/hr" ->
+    """A reading or a unit as Ecowitt writes it, written ecobot-mcp's way: "12.3 ℃" -> "12.3 °C", "131 º" -> "131°", "1.8 mm/hr" ->
     "1.8 mm/h". None for nothing."""
     return text.replace("℃", "°C").replace(" º", "°").replace("º", "°").replace("mm/hr", "mm/h").strip() if text else None
 

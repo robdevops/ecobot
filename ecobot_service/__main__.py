@@ -1,12 +1,12 @@
 """python -m ecobot_service: the old name of ecobot-mcp (python -m ecobot_mcp), kept so that an ecobot-mcp.service copied into
 /etc/systemd/system before the rename keeps starting until the new unit is copied in (README, Upgrading > systemd). That old unit
-drops the bot's secrets only by their old names (UnsetEnvironment=), so this drops them by their new ones too before ecobot-mcp
+drops the old Telegram bot's secrets only by their old names (UnsetEnvironment=), so this drops them by their new ones too before ecobot-mcp
 starts, and logs a warning saying what to do."""
 
 import logging
 import os
 
-# The bot's secrets by their new names, which the old unit's UnsetEnvironment= doesn't list (the new unit lists them itself)
+# The old Telegram bot's secrets by their new names, which the old unit's UnsetEnvironment= doesn't list (the new unit lists them itself)
 BOT_SECRETS = ("BOT_TELEGRAM_TOKEN", "BOT_OPENROUTER_API_KEY", "BOT_TUYA_CLIENT_ID", "BOT_TUYA_CLIENT_SECRET")
 
 

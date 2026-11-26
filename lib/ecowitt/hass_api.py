@@ -1,6 +1,6 @@
-"""Home Assistant as an Ecowitt API: the three calls the bot makes of Ecowitt's cloud (devices, realtime, history), answered from Home Assistant.
+"""Home Assistant as an Ecowitt API: the three calls ecobot-mcp makes of Ecowitt's cloud (devices, realtime, history), answered from Home Assistant.
 
-The rest of the bot never knows the difference: the cache, the archive, the charts and the alerts all take what `EcowittAPI` gives, in the
+The rest of ecobot-mcp never knows the difference: the cache, the archive, the charts and the alerts all take what `EcowittAPI` gives, in the
 shapes it gives them (api.py; hass_history.py tells how the history is cut). What differs: its live reading is a request to a machine
 on the network, so it is asked for every 30 seconds, not once a minute (source.watch_live); it has a "1min" history cycle (Ecowitt has
 none); and empty_is_final is False, since Home Assistant only has what it recorded, so an answer with nothing in it does not prove there

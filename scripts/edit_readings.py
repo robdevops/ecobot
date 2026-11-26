@@ -1,4 +1,4 @@
-"""Find a spike in the bot's file (ecobot.sqlite) and change it. A dry run unless --apply: it shows what it would change.
+"""Find a spike in ecobot-mcp's file (ecobot.sqlite) and change it. A dry run unless --apply: it shows what it would change.
 
     python scripts/edit_readings.py --list                                 # the readings' names, by sensor
     python scripts/edit_readings.py co2                                    # the 10 highest CO2 readings, to find the spike
@@ -22,7 +22,7 @@ and long charts follow.
 
 The file is ecobot.sqlite in DATA_DIR when that is set, else the systemd service's, /var/lib/private/ecobot/ecobot.sqlite (readable by
 root alone: run it with sudo; SQLite makes its side files, -wal and -shm, as the file's owner and mode, and removes them on closing),
-or --file. Times are local (TZ, else the system's), or carry their own offset (2026-10-27T13:25+11:00). The bot may keep running: it reads the file
+or --file. Times are local (TZ, else the system's), or carry their own offset (2026-10-27T13:25+11:00). ecobot-mcp may keep running: it reads the file
 in WAL mode. A chart it drew before the change can be reused for a few minutes.
 """
 
@@ -207,7 +207,7 @@ if __name__ == "__main__":
     ap.add_argument("--context", type=int, default=CONTEXT, help=f"readings shown either side of each match (default {CONTEXT})")
     ap.add_argument("--apply", action="store_true", help="make the change (without it: a dry run)")
     ap.add_argument("--file", type=Path, default=default_file(),
-                    help=f"the bot's file (default: ecobot.sqlite in DATA_DIR if it is set, else {SERVICE_FILE})")
+                    help=f"ecobot-mcp's file (default: ecobot.sqlite in DATA_DIR if it is set, else {SERVICE_FILE})")
     args = ap.parse_args()
     if args.list:
         storage = Storage(args.file, local_tz()) if args.file.exists() else None

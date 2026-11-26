@@ -265,7 +265,7 @@ COLUMNS = {"line": 2, "band": 4, "bars": 2, "rating": 4}   # a point of each kin
 def to_json(chart: Chart, tz: tzinfo, max_points: int | None = None) -> dict:
     """The chart as JSON, with everything the renderer reads, so from_json gives the same chart back. Times are local to `tz`.
     max_points: each line in at most that many buckets of time (for a model to read), each the mean with the bucket's lowest
-    and highest as its band, so the true extremes stay; None keeps the points as drawn (the bot's own charts, already within
+    and highest as its band, so the true extremes stay; None keeps the points as drawn (ecobot-mcp's own charts, already within
     lines.POINT_BUDGET)."""
     if max_points is not None and max_points < 2:
         raise ValueError("max_points: a line needs at least two points")

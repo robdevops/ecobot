@@ -22,7 +22,7 @@ from .parse import DISTRICTS, LEVEL_EMOJI, parse_melbourne_pollen
 log = logging.getLogger(__name__)
 
 URL = "https://www.melbournepollen.com.au/"
-HEADERS = {"User-Agent": "ecobot/1.0 (personal weather bot; a few requests a day)"}
+HEADERS = {"User-Agent": "ecobot/1.0 (personal weather service; a few requests a day)"}
 POLLEN_REFRESH_SECONDS = 30 * 60
 SEASON_MONTHS = (10, 11, 12)   # grass pollen and the thunderstorm asthma forecast run October to December: nothing else is fetched, shown or alerted
 OFF_SEASON = "Pollen and thunderstorm asthma forecasts only run from October to December."

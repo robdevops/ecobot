@@ -205,7 +205,7 @@ async def test_the_air_sensors_own_temperature_goes_over_the_stations_on_one_axi
 async def test_a_composed_air_series_takes_its_range_from_the_readings_the_bot_recorded(tmp_path, archived_cache):
     comp, eco = await composer(tmp_path, archived_cache)
     air = StubAir(days=2)
-    for r in air.readings[-12:]:                                      # the last hour was recorded by the bot, with a spread
+    for r in air.readings[-12:]:                                      # the last hour was recorded by ecobot-mcp, with a spread
         r["_range"] = {"pm2_5": (r["pm2_5"] - 2.0, r["pm2_5"] + 3.0)}
     comp.air = air
     first = datetime.now(TZ).date() - timedelta(days=2)

@@ -2,7 +2,7 @@
 days a write touches (worked out in the same transaction, so they are never behind the readings).
 
 A reading replaces the one held for the same sensor, resolution and time when it is as final as that one (a provisional reading, newer than
-its cycle's settle horizon, never replaces a final one) and from a source ranked as high (the bot's own over Home Assistant's over the
+its cycle's settle horizon, never replaces a final one) and from a source ranked as high (ecobot-mcp's own over Home Assistant's over the
 cloud's); otherwise it only fills in what the row lacks. Either way the row is final once a final reading of it has arrived (a reading
 Home Assistant gave while it was settling is kept over the cloud's, and the row is settled by the cloud's). A band is only ever widened:
 the lowest and highest of what was held and what is written, with the value always inside it.
@@ -235,7 +235,7 @@ class Writer:
         return len(rows)
 
     def widen(self, sensor: Sensor, res: str, bands: dict[str, dict[int, tuple[float, float]]]) -> int:
-        """Widen these readings' bands ({column: {ts: (lowest, highest)}}: what the bot's live readings and Home Assistant's give for each 5
+        """Widen these readings' bands ({column: {ts: (lowest, highest)}}: what ecobot-mcp's live readings and Home Assistant's give for each 5
         minutes). Returns how many."""
         times = []
         for column, found in bands.items():
@@ -370,7 +370,7 @@ class Writer:
 
     def put_ranges(self, mac: str, found: dict[str, dict[int, tuple[int, float, float]]]) -> int:
         """The lowest and highest of each 5 minutes of the station's readings ({"group.field": {5-minute mark: (readings, lowest,
-        highest)}}: the bot's live readings, Home Assistant's): a mark with fewer than MIN_READINGS has none. Returns how many."""
+        highest)}}: ecobot-mcp's live readings, Home Assistant's): a mark with fewer than MIN_READINGS has none. Returns how many."""
         widened = 0
         for series, marks in found.items():
             group, field = series.split(".", 1)

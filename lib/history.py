@@ -1,4 +1,4 @@
-"""One reading's stored values at a fixed interval, each with its time, read straight from the bot's file (lib/storage): the engine of the
+"""One reading's stored values at a fixed interval, each with its time, read straight from ecobot-mcp's file (lib/storage): the engine of the
 service's `readings` tool (lib/service/readings.py), and the readings the service knows (Metric, station_metrics, air_metrics).
 
 It answers "humidity each hour for the last 5 hours", "PM2.5 every 30 minutes this morning" and other requests for a table of values.
@@ -78,7 +78,7 @@ def _default_unit(column: str) -> str:
 
 
 def station_metrics(sent: dict[str, dict[str, str]] | None = None) -> list[Metric]:
-    """The weather station's readings: for each group the bot fetches (api.GROUPS), the catalogue's columns its sensor has sent
+    """The weather station's readings: for each group ecobot-mcp fetches (api.GROUPS), the catalogue's columns its sensor has sent
     (`sent`: {group: {field: unit}}, as the file's `fields` table has them). A group with nothing recorded yet offers every column of its
     kind. The rain counters are running totals, so they are offered as one reading, "rain": the mm that fell in each interval."""
     out = []

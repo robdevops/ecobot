@@ -1,5 +1,5 @@
 """Charts as data (specs.to_json and from_json, schemas/chart.json): a chart written as JSON comes back the same and is drawn the
-same, the schema holds every chart the bot draws, and a line for a model to read is bucketed to its budget with its true lowest and
+same, the schema holds every chart ecobot-mcp draws, and a line for a model to read is bucketed to its budget with its true lowest and
 highest kept. (Every chart any test builds also goes through JSON and back: conftest.charts_come_back_from_json.)
 
 jsonschema isn't one of the requirements, so the schema is checked here by a small checker of the keywords it uses (`errors`);

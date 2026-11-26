@@ -1,14 +1,13 @@
 # Developing
 
-How to test the bot and what the GitHub checks do. (Running it is in `README.md`.)
+How to test the servers and what the GitHub checks do. (Running it is in `README.md`.)
 
 ## Tests
 ```
-pip install -r requirements-dev.txt     # requirements.txt (requirements-mcp.txt and requirements-bot.txt), requirements-charts.txt (Pillow) and pytest
+pip install -r requirements-dev.txt     # requirements.txt (requirements-mcp.txt and requirements-irrigation.txt), requirements-charts.txt (Pillow) and pytest
 python -m pytest                       # runs in parallel (pytest.ini); `-n0` for one process; the slow tests left out
 python -m pytest -m ""                 # every test, the slow ones too (as CI runs them): before pushing
 python -m pytest -m slow               # the slow ones alone
-python scripts/eval_prompts.py         # the saved questions: the reasoning effort (made in code) and the tools' expectations, no key needed
 ```
 Plain `pytest` takes about 19 s on four cores; everything (`-m ""`) about 51 s, and must stay under a minute: the browser tests are split
 into parts that run side by side, and wait on the page (`calm` in `tests/web_dashboard_browser.js`) rather than for fixed times.
@@ -35,19 +34,18 @@ A test whose answer depends on the time of day or the date pins its own clock in
 it and kept (`ecobot-archive-pinned-*.sqlite`); a tool's answer to words alone can take `Context(clock=...)` (`clocks.yesterday_at`).
 
 The engines the service's tools wrap are tested directly where that is simpler: `tests/engines.py` drives the station's
-`HistoryQuery`, `link()` and the air sensor's history and reading now. The old tools' handlers and the bot's old words, the oracle the
-service was ported against, are gone (step 6c): `tests/test_history.py` and `tests/test_days.py` hold the service's `readings` and `days`
+`HistoryQuery`, `link()` and the air sensor's history and reading now. The old tools' handlers, the oracle the
+service was ported against, are gone: `tests/test_history.py` and `tests/test_days.py` hold the service's `readings` and `days`
 tools to the stored rows and the fake station's own figures, and current's words are pinned in `tests/current_words.json`.
 
 The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build the same Python into `.venv` with uv (`.claude/hooks/session-start.sh`).
 
 ## ecobot-mcp
-ecobot-mcp, the MCP server on its own (`python -m ecobot_mcp`, the package `ecobot_mcp/`; [docs/ecobot-mcp.md](docs/ecobot-mcp.md) 3.8,
-step 5): the sources and their syncers, the alert rules writing the alert log, and the MCP server (`lib/mcp_server.py`) at
+ecobot-mcp, the MCP server (`python -m ecobot_mcp`, the package `ecobot_mcp/`; [docs/ecobot-mcp.md](docs/ecobot-mcp.md) 3.8): the
+sources and their syncers, the alert rules writing the alert log, and the MCP server (`lib/mcp_server.py`) at
 `http://MCP_BIND/mcp` (Streamable HTTP, protocol 2026-07-28 and the older one). It reads the `MCP_` settings and the shared ones
-([docs/configuration.md](docs/configuration.md)), the bot's (`BOT_`) not at all; its packages are `requirements-mcp.txt` (no Telegram,
-no model client) and Pillow (`requirements-charts.txt`); the bot's are `requirements-bot.txt`; `requirements.txt` is both, for a
-systemd install's one venv:
+([docs/configuration.md](docs/configuration.md)); its packages are `requirements-mcp.txt` and Pillow (`requirements-charts.txt`);
+`requirements.txt` adds irrigation-mcp's (`requirements-irrigation.txt`), for a systemd install's one venv:
 ```
 set -a; . <(sudo cat /etc/ecobot.env); set +a          # the settings
 DATA_DIR=/tmp/ecobot python -m ecobot_mcp              # http://127.0.0.1:8765/mcp
@@ -62,105 +60,57 @@ A client that shows pictures can have the charts as images: `http://127.0.0.1:87
 ecobot-mcp answers with the charts' JSON and a `chart_image_note`, and warns once.
 To look at it by hand: `npx @modelcontextprotocol/inspector` against the URL with the header `Authorization: Bearer <token>`.
 
-Its tests: `tests/test_mcp_server.py` (the SDK's in-memory transport: every tool listed and answering as the ServiceTool does, each resource,
-the alerts' template, the prompts, the publishing, the tokens; the chart images asked per call and, under uvicorn, by the URL's
-`?charts=png`, without Pillow, and that importing the server imports no Pillow), `tests/test_mcp_listen.py` (the real app under uvicorn
-on a free localhost port: a client that listens loses its listen when ecobot-mcp stops and reads what it missed when it is back; the
-token and Host checks over HTTP; `python -m ecobot_mcp` with the fake sources, a tool call through a proxy's Host name),
-`tests/test_settings.py` (each setting's owner prefix, the old names, the generated token, the bot reading only its own) and
-`tests/test_packaging.py` (the two images, compose, the systemd units).
-
-### The bot as ecobot-mcp's client
-The bot is only ever ecobot-mcp's client ([docs/ecobot-mcp.md](docs/ecobot-mcp.md) step 6b): `BOT_MCP_URL` is required (it stops at
-start without it, saying to run ecobot-mcp and set it). It runs no sources, syncers or alert rules of its own, never opens the readings
-file, reads none of the `MCP_` settings, and reaches ecobot-mcp over MCP
-(`lib/weather.RemoteWeather`, [docs/ecobot-mcp.md](docs/ecobot-mcp.md) 3.8), sending the first of `AUTH_TOKENS`, or, with that unset,
-the token ecobot-mcp generated in the data folder they share (read again for each connection, so the bot may start first;
-`ecobot.mcp_token`): one client pinned to protocol 2026-07-28, kept by one supervisor task (`lib/upstream.Upstream`), which discovers by
-hand for the instructions and listens to `ecobot://alerts` and `ecobot://station`; when the connection fails or the
-listen is lost it builds a new client after a backoff, listens again and reads the alerts after the last id it handled. Everything the
-bot asks for goes through `lib/weather.py`: the model's tools and instructions, the prompts it offers as commands, the keyboard's
-charts (each a fixed call, `lib/templates.py` `CALLS`), the Status picture, the period buttons and the charts' other periods fetched in
-the background, Help and `/usage` and the alerts (lib/alerts/notify.AlertDelivery). The bot answers no typed question in code (step 6c): everything typed goes to the model, and only
-its reasoning effort is read from the words (`lib/intent.py`).
-The bot draws nothing ([docs/ecobot-mcp.md](docs/ecobot-mcp.md) step 6a): every chart it sends comes drawn by ecobot-mcp
-(`call_images`, `chart_image`: the remote one sends its PNGs, `chart_image: "png"` in the request's `_meta`, in the bot's own theme,
-`chart_dark` from `DARKMODE`, `lib/theme.py`), the model's answers' charts too (the model is sent the text alone), and the Status
-picture of three gauges is ecobot-mcp's `ecobot://status` (`lib/status.py`, drawn by `lib/gauges.py`), with the report it writes. Importing the bot, and building
-it with both alert deliveries, imports neither Pillow nor `lib/charts.py`, `lib/draw.py` or `lib/gauges.py`, nor any source module
-(`lib/ecowitt`, `lib/airgradient`, `lib/forecast`, `lib/pollen`, `lib/storage`), nor irrigation-mcp's controller (`lib/irrigation/tuya`,
-`watchdog`, `check`, `server`; `tests/test_bot.py`); its packages are `requirements-bot.txt` alone (python-telegram-bot, openai, mcp,
-httpx), and its Docker image has nothing else.
-
-With `BOT_IRRIGATION_MCP_URL` the bot is irrigation-mcp's client too (below; `lib/irrigation_remote.RemoteIrrigation`, its own
-`Upstream`, the same token): the Irrigation button, the menu (`lib/irrigation_menu.py`, the bot's UI) and the `ir:` buttons call its
-tools through `status`/`water`/`delay`/`set_switch`, any failure an `IrrigationError` ("Couldn't reach the irrigation controller"), and a
-second `AlertDelivery` reads `irrigation://alerts` (`lib/weather.RemoteAlerts` given its URI), its last id a `ReadMark` of its own in
-`bot_state.json`. Without it the bot has no irrigation at all.
+Its clients are other programs: signalbot reads `ecobot://feed` (the alerts, `lib/feed.py`), a model client calls the tools. In Docker
+(compose.yaml) each server runs from its own image (the Dockerfile's targets `ecobot-mcp` and `irrigation-mcp`): `ecobot-mcp` always,
+irrigation-mcp under the `irrigation` profile. Both mount the data folder, so a client on the host reads the token there. ecobot-mcp
+answers its own hostname, so a client on the compose network needs no `MCP_ALLOWED_HOSTS`. Under systemd, `irrigation-mcp.service`
+starts after `ecobot-mcp.service` when it is installed.
 ```
 set -a; . <(sudo cat /etc/ecobot.env); set +a
 export DATA_DIR=/tmp/ecobot
 python -m ecobot_mcp &                                   # ecobot-mcp, with the sources' settings (it writes the token)
 python -m irrigation_mcp &                               # irrigation-mcp, with the IRRIGATION_TUYA_ settings (optional)
-BOT_MCP_URL=http://127.0.0.1:8765/mcp BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp python ecobot.py   # the bot, their client
 ```
-In Docker (compose.yaml) this is how they run, each from its own image (the Dockerfile's targets `ecobot-mcp`, `ecobot` and
-`irrigation-mcp`):
-`ecobot-mcp` always, and the bot (the `bot` profile) as its client, its `BOT_MCP_URL` from docker/bot.env (the container's name,
-`ecobot-mcp`; 127.0.0.1 with compose.host-network.yaml), the token from the data folder both mount. ecobot-mcp answers its own
-hostname, so no `MCP_ALLOWED_HOSTS` is needed for the bot. irrigation-mcp is the `irrigation` profile (its own image, `irrigation-mcp`), and the bot
-reaches it only with `BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp` in /etc/ecobot.env (docker/bot.env leaves it empty). Under
-systemd, `ecobot.service` wants `ecobot-mcp.service` and starts after it, and `irrigation-mcp.service` the same way when it is installed
-(Wants= of a unit that isn't there changes nothing).
 
-Its tests run the bot against ecobot-mcp in memory: the `serve` fixture (`tests/served.py`) starts the real server
-(`lib/mcp_server.EcobotServer`) over a test's Context (the fake sources, or none) or a test's stand-in tools (`tests.fakes.StandInService`,
-with `sources=` naming the sources ecobot://station lists), and connects the bot's own client (`RemoteWeather`) to it through the SDK's
-in-memory transport: `bot = Bot(cfg, agent, state, service=await serve(...))`. A test of the Telegram side alone, which asks ecobot-mcp
-nothing, builds the bot over `tests.served.unreached()`. A keyboard button is `bot.press(update, context, sentence)`; a chart over
-any period as a button answers it, `bot.respond(update, context, text, call=(tool, args))`. `tests/test_bot_remote.py` is the bot
-against the real server (in memory: a question answered with the remote tools and the instructions from discover, ecobot-mcp's prompts
-as Telegram commands, Status as one message (the gauges with the report as their caption), a chart from a remote result with its buttons, ecobot-mcp's
-PNG of a chart byte for byte as its renderer draws it, an alert through the listen, irrigation-mcp's check's inputs; under uvicorn: a
-dropped connection rebuilt and the alerts after the last id read once, ecobot-mcp down, `ecobot.main()`); `tests/test_startup.py` runs
-both programs' main(): ecobot-mcp's over the fake sources, the bot's against ecobot-mcp (and irrigation-mcp) under uvicorn. The bot's
-irrigation tests (`tests/test_irrigation.py`, `tests/test_admin_only.py`) run it against irrigation-mcp in memory the same way: the
-`serve_irrigation` fixture starts its real server over the fake controller and connects the bot's `RemoteIrrigation`
-(`irrigation.server.device` is the controller, `irrigation.server.watchdog` its watchdog).
+Its tests: `tests/test_mcp_server.py` (the SDK's in-memory transport: every tool listed and answering as the ServiceTool does, each resource,
+the feed, the prompts, the publishing, the tokens; the chart images asked per call and, under uvicorn, by the URL's
+`?charts=png`, without Pillow, and that importing the server imports no Pillow), `tests/test_mcp_listen.py` (the real app under uvicorn
+on a free localhost port: a client that listens loses its listen when ecobot-mcp stops and reads what it missed when it is back; the
+token and Host checks over HTTP; `python -m ecobot_mcp` with the fake sources, a tool call through a proxy's Host name),
+`tests/test_settings.py` (each setting's owner prefix, the old names, the generated token) and
+`tests/test_packaging.py` (the two images, compose, the systemd units). The servers' tests talk to them with the SDK's client
+(`tests/mcp_client.py`: `McpClient`, the `serve_mcp` and `serve_irrigation_mcp` fixtures in `tests/conftest.py`, in memory or over HTTP),
+and `tests/test_server_imports.py` checks that neither server's import graph reaches a module it must not (no chat or model client).
 
 ## irrigation-mcp
 `python -m irrigation_mcp` (`irrigation_mcp/__main__.py`) is the irrigation controller's MCP server (docs/ecobot-mcp.md 3.9, step 8):
-`lib/irrigation/server.py` (its four tools and `irrigation://alerts`, the low-level SDK as `lib/mcp_server.py`), `watchdog.py` and
-`check.py` (the watchdog and the daily check it runs), `ecobot.py` (its client of ecobot-mcp, `lib/upstream.Upstream`), `state.py`
-(`irrigation_state.json`), `tuya.py`, and `common.py` (what the bot's menu shares with it, without httpx: `lib/irrigation` loads nothing
-until asked, so the bot importing `common` never loads Tuya). Under systemd it is `irrigation-mcp.service`, in Docker the
+`lib/irrigation/server.py` (its four tools and `irrigation://feed`, the low-level SDK as `lib/mcp_server.py`), `watchdog.py` and
+`check.py` (the watchdog and the daily check it runs), `ecobot` (its client of ecobot-mcp, `lib/upstream.Upstream`), `state.py`
+(`irrigation_state.json`), `tuya.py`, and `common.py` (what the server and its tests share, without httpx: `lib/irrigation` loads nothing
+until asked). Under systemd it is `irrigation-mcp.service`, in Docker the
 `irrigation-mcp` container. What it shares with ecobot-mcp over HTTP (the token and Host checks, the request log, uvicorn, the
-generated token, the data folder's lock) is `lib/mcp_http.py`. It imports nothing of the bot's and none of ecobot-mcp's sources or tools
+generated token, the data folder's lock) is `lib/mcp_http.py`. It imports none of ecobot-mcp's sources or tools
 (`tests/test_irrigation_mcp.py` checks it in a subprocess, as the Docker build does). Its tests run its server over the SDK's in-memory
 transport with a fake controller (`tests.fakes.FakeController`, or the fake Tuya cloud `FakeTuya`), and its daily check against
-ecobot-mcp in memory (`tests/served.py`); the controller's own code (Tuya, the check, the watchdog) is tested without Telegram in
+ecobot-mcp in memory (`tests/mcp_client.py`); the controller's own code (Tuya, the check, the watchdog) is tested in
 `tests/test_irrigation_controller.py`.
 
 ### Settings
-Each is a field of `lib/config.Config`, named for the program that reads it (`MCP_`, `IRRIGATION_`, `BOT_`, or none when all do;
+Each is a field of `lib/config.Config`, named for the program that reads it (`MCP_`, `IRRIGATION_`, or none when both do;
 docs/configuration.md), with its old name or names, newest first (`_setting(..., old=...)`, `old=("NEWER", "OLDER")`), still read when
 the new one is unset and named in one warning at start. Scripts that read one directly use `lib.config.env(name)`, which knows the old names too. The test suite unsets every setting's
-variable, new and old, before each test (`tests/conftest.py`). `scripts/eval_prompts.py --live` has its own names, `OPENROUTER_API_KEY`,
-`OPENROUTER_BASE_URL` and `OPENROUTER_MODEL` (the CI secrets'), not the bot's `BOT_OPENROUTER_*`.
+variable, new and old, before each test (`tests/conftest.py`).
 
 ## GitHub Actions (`.github/workflows/ci.yml`, and `docker.yml` for `image`)
 | Job | When | What |
 |---|---|---|
-| `test` | every push to `main` and every pull request | the exact versions in `requirements.txt` and `requirements-charts.txt`: pytest (chart pictures included) and the offline evals. The gate. |
+| `test` | every push to `main` and every pull request | the exact versions in `requirements.txt` and `requirements-charts.txt`: pytest, every test, chart pictures included. The gate. |
 | `newest` | Sundays 21:17 UTC, or the Run workflow button | the tests with the newest Pillow. Advisory. |
-| `live-evals` | Sundays 21:17 UTC, or the Run workflow button | asks the real model the seven questions in `tests/evals/weekly.txt` as the bot asks it (`python scripts/eval_prompts.py --live`: its prompt and the ten tools) and checks which tool it calls against `tests/evals/service_cases.json`; a failure is asked once more before it is reported. Advisory. The button's "all cases" box asks all 95. Skipped until the secrets below exist. |
-| `image` | pushes that change `Dockerfile`, `.dockerignore`, `requirements.txt`, `requirements-bot.txt`, `requirements-mcp.txt`, `requirements-irrigation.txt` or `requirements-charts.txt` (any branch), or the Run workflow button | builds the three Docker images (`ecobot-mcp`, `irrigation-mcp` and `ecobot`; each build imports its program, ecobot-mcp's with no Telegram or model client in it, irrigation-mcp's with neither and no Pillow or source, the bot's with no Pillow and no source module), checks each program starts in its image and names the commit, draws the sample charts in ecobot-mcp's (they must be in Inter and match `tests/charts`); the images' sizes go in the run's summary. |
+| `image` | pushes that change `Dockerfile`, `.dockerignore`, `requirements.txt`, `requirements-mcp.txt`, `requirements-irrigation.txt` or `requirements-charts.txt` (any branch), or the Run workflow button | builds the two Docker images (`ecobot-mcp` and `irrigation-mcp`; each build imports its program, irrigation-mcp's with no Pillow or source module in it), checks each program starts in its image and names the commit, draws the sample charts in ecobot-mcp's (they must be in Inter and match `tests/charts`); the images' sizes go in the run's summary. |
 
-Repository secrets (Settings, Secrets and variables, Actions, New repository secret):
-- `OPENROUTER_API_KEY`: for `live-evals`. `OPENROUTER_MODEL` is optional (default `deepseek/deepseek-v4.1-flash-1017`): add it only if production runs another model.
-- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`: optional (CI's own: the workflow passes them on as `NOTIFY_TELEGRAM_TOKEN` and `NOTIFY_TELEGRAM_CHAT`, not the bot's settings); failures of `newest` and `live-evals`, and of `test` on `main`, are then sent to Telegram.
+The workflows need no repository secrets. (Failure notices to Telegram, with their `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets, and the `live-evals` job, with `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`, went with the Telegram bot: those secrets can be deleted in the repository's settings.)
 
 Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the Python packages and the actions. `Pillow` comes in a group of its own, because the chart pictures depend on it.
 
 ## Chart pictures
-Ten fixed sample charts and the Status picture (`tests/chart_samples.py`, made-up data, no clock) are drawn and compared with reference images in `tests/charts/` (`tests/test_chart_images.py`, marker `golden`). They are drawn with Pillow's own font (so they match on any machine; it lacks a few characters, such as ₂ and µ, shown as boxes there only), shrunk to 40% and cut to 64 colours, so each is 7 to 46 KB (about 220 KB in all). A chart passes when under 0.1% of its pixels differ noticeably; a failure leaves the new picture and a red-on-grey picture of the difference in `chart-diffs/` (CI uploads it as the `chart-diffs` artifact). After an intended change to how charts look, run `python scripts/update_charts.py` (or name charts: `... wind air`) and commit the changed images: GitHub shows old and new side by side in the pull request. `Pillow` is pinned in `requirements-charts.txt` because the pictures depend on it (charts and the Status picture are drawn with it, `lib/draw.py`; ecobot-mcp needs it only for its pictures, the bot not at all, so it is a file of its own); a Dependabot update whose chart test fails is the cue to redo the images.
+Ten fixed sample charts and the Status picture (`tests/chart_samples.py`, made-up data, no clock) are drawn and compared with reference images in `tests/charts/` (`tests/test_chart_images.py`, marker `golden`). They are drawn with Pillow's own font (so they match on any machine; it lacks a few characters, such as ₂ and µ, shown as boxes there only), shrunk to 40% and cut to 64 colours, so each is 7 to 46 KB (about 220 KB in all). A chart passes when under 0.1% of its pixels differ noticeably; a failure leaves the new picture and a red-on-grey picture of the difference in `chart-diffs/` (CI uploads it as the `chart-diffs` artifact). After an intended change to how charts look, run `python scripts/update_charts.py` (or name charts: `... wind air`) and commit the changed images: GitHub shows old and new side by side in the pull request. `Pillow` is pinned in `requirements-charts.txt` because the pictures depend on it (charts and the Status picture are drawn with it, `lib/draw.py`; ecobot-mcp needs it only for its pictures, irrigation-mcp not at all, so it is a file of its own); a Dependabot update whose chart test fails is the cue to redo the images.

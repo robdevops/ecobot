@@ -2,7 +2,7 @@
 
 Home Assistant's Ecowitt integration is sent every reading the gateway makes (every 16 to 60 seconds, as the gateway is set), and keeps
 every change of each sensor for a while (10 days unless its recorder is set otherwise). That is finer than anything Ecowitt's cloud gives
-(one reading a minute live, one value per 5 minutes in its history), and it covers the time the bot was not running. So the bot reads
+(one reading a minute live, one value per 5 minutes in its history), and it covers the time ecobot-mcp was not running. So ecobot-mcp reads
 those changes back through Home Assistant's REST API and folds them into the same 5-minute ranges its own live readings go to.
 
 Home Assistant records a state only when it changes, so the value a sensor held at the start of a stretch (its last state before it)

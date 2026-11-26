@@ -1,6 +1,6 @@
 """What a data source is to ecobot-mcp: a name, a local clock and a Warmer that keeps it fresh; started once, closed at the end. Its
 startup (ecobot_mcp/core.py) uses nothing else of the four sources: the weather station (lib/ecowitt), the air sensor (lib/airgradient),
-the pollen page (lib/pollen) and the forecast (lib/forecast). The bot has none (docs/ecobot-mcp.md step 6b)."""
+the pollen page (lib/pollen) and the forecast (lib/forecast). No client holds any."""
 
 from abc import ABC, abstractmethod
 from datetime import datetime, tzinfo
@@ -23,7 +23,7 @@ class Source(ABC):
 
     @abstractmethod
     async def start(self, wait: bool = True):
-        """Get ready: find the device, read the first page. A failure that leaves the source of no use raises (the bot then runs
+        """Get ready: find the device, read the first page. A failure that leaves the source of no use raises (ecobot-mcp then runs
         without it); one that only means "not yet" is logged, and the next refresh tries again. wait False (ecobot-mcp's start, so the
         port opens at once): nothing is asked of the network, the source starts from what the data folder kept of it, and what it would
         have asked for is the warm-up's (ecobot_mcp/core.py Core.warm_up)."""

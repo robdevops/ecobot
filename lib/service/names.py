@@ -30,7 +30,7 @@ STATION, AIR_DEVICE = "station", "air"   # the two devices: the Ecowitt weather 
 
 # ---------- "all" ----------
 # The settings "all" follows: the panels of "weather all week", top to bottom, as lib/series.py names the readings. intent.chart_fields
-# reads them here too. ecobot.py sets the two flags from the config (MCP_CHART_ALL_FEELS_LIKE, MCP_CHART_ALL_VPD) at startup.
+# reads them here too. ecobot_mcp/core.py sets the two flags from the config (MCP_CHART_ALL_FEELS_LIKE, MCP_CHART_ALL_VPD) at startup.
 ALL_ORDER = ("temperature", "humidity", "solar", "pressure", "rain", "dew_point", "feels_like", "vpd", "uv", "wind")
 LEFT_OUT_OF_ALL = ("uv",)   # the UV index has the same shape as solar radiation
 FEELS_LIKE_IN_ALL = False   # the feels-like panel: off, as it nearly repeats temperature

@@ -10,7 +10,7 @@ token check.
     also carries its `reply` as a second text block for the person (`audience: ["user"]`) and result `_meta` {"ecobot/complete": true}.
   - **Chart images** (3.7, lib/chart_images.py), for a connection whose MCP URL asks (`/mcp?charts=png`) or a call whose `_meta` does
     (`chart_image`: "png", or "none" against the connection's): the text block's charts are each {title, period} with a `chart_note` that
-    fits an attached image, followed by one ImageContent (image/png) per chart in order, drawn as the bot draws them (lib/charts,
+    fits an attached image, followed by one ImageContent (image/png) per chart in order, drawn by the service's own renderer (lib/charts,
     off the event loop) from every point (`chart_points` "drawn" unless the call says); the full chart JSON, with drawn_by, is in
     result `_meta` "ecobot/charts" and the theme in "ecobot/chart_dark" (DARKMODE, or the call's `chart_dark`). Pillow is imported at
     the first image: without it the answer is the JSON as without images, with `chart_image_note` saying so.
@@ -118,7 +118,7 @@ PUSHED = (WEATHER_URI, AIR_URI, FORECAST_URI, POLLEN_URI)   # compared every PUB
 PERIOD = types.PromptArgument(name="period", description="The period in your own words (\"this week\", \"last 3 months\", \"yesterday\")",
                               required=False)
 PROMPTS = {   # name: (description, arguments, the question: a format string over the arguments, with their defaults). A name is also a
-              # chat command (Telegram's: lowercase, digits and _, at most 32), so none takes a bot command's name (lib/templates.COMMANDS)
+              # chat command (lowercase, digits and _, at most 32)
     "now": ("The weather and the air now.", [], "How is it outside now?"),
     "report": ("A report: the readings now, 3 days' forecast and the pollen.", [],
                "Give me a report: the readings now, 3 days' forecast and the pollen."),
@@ -268,7 +268,7 @@ class EcobotServer:
         render = chart_images.renderer()   # (Pillow imported now, at the first image asked for)
         if render is None:
             return tool_result(await tool.call(params.arguments or {}, meta), note=chart_images.UNAVAILABLE_NOTE)
-        text = await tool.call(params.arguments or {}, {"chart_points": AS_DRAWN, **meta})   # (the picture from every point, as the bot's)
+        text = await tool.call(params.arguments or {}, {"chart_points": AS_DRAWN, **meta})   # (the picture from every point)
         if not (charts := charts_of(_loads(text))):
             return tool_result(text)
         dark = chart_images.asked_dark(meta)

@@ -1,7 +1,7 @@
 """Which metrics does the Ecowitt station report? Asks the cloud API about every data group its documentation lists,
 one group at a time (one unknown group fails a whole request), and prints the fields each group answers with, their
-current values and units, and whether the bot fetches the group already. Needs the API keys in the environment, as the
-bot does (load your env file into the shell first; this script never reads it):
+current values and units, and whether ecobot-mcp fetches the group already. Needs the API keys in the environment, as the
+ecobot-mcp does (load your env file into the shell first; this script never reads it):
 
     set -a; . /path/to/envfile; set +a
     python scripts/ecowitt_metrics.py                 # every documented group (about 2-3 minutes: requests are paced)
@@ -86,7 +86,7 @@ async def main():
                 if status != "no data" and status != "invalid":
                     print(f"{group:24} {status}")
                 continue
-            print(f"{group:24} yes  {'(fetched by the bot)' if group in GROUPS else '(NOT fetched by the bot)'}")
+            print(f"{group:24} yes  {'(fetched by ecobot-mcp)' if group in GROUPS else '(NOT fetched by ecobot-mcp)'}")
             for name, unit, value in found:
                 print(f"    {name:32} {str(value):>10} {unit}")
             if fields:

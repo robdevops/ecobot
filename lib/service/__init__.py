@@ -1,4 +1,4 @@
-"""The service's tools (docs/ecobot-mcp.md 3.2 and 3.3): the ten that will replace the bot's twelve, each in a module of its own, on
+"""The service's tools (docs/ecobot-mcp.md 3.2 and 3.3): the ten, each in a module of its own, on
 what every one of them shares:
 
   - common.py: how a tool is made, what it is sent (its arguments and the request's metadata, nothing else), and the shape of what it
@@ -8,8 +8,7 @@ what every one of them shares:
   - instructions.py: the server's instructions, a short summary for a client to pass to its model.
 
 `build(ctx)` makes the ten, in 3.3's order, each module's `tools(ctx)` (a tool whose source isn't there is left out), and `Service`
-holds them by name. The bot offers them to its model (lib/model_tools.py) and its own code paths call them; nothing here knows of
-Telegram, of the bot's buttons or of who draws a chart.
+holds them by name. A client offers them to its model; nothing here knows of any client's buttons or of who draws a chart.
 """
 
 from .common import ServiceTool

@@ -27,7 +27,7 @@ HEAVY_MM = 30                     # a day of at least this (rounded) is called h
 SPREAD = (0.1, 0.9)               # the range given is these quantiles of the ensemble members' day totals
 FLOOR_LADDER = (2, 3, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100)   # a high-confidence floor is stated as one of these mm, rounded down
 MIN_HOURS = 20                    # a member's day counts only with this many hours of data
-HEADERS = {"User-Agent": "ecobot/1.0 (personal weather bot)"}
+HEADERS = {"User-Agent": "ecobot/1.0 (personal weather service)"}
 FORECAST_REFRESH_SECONDS = 15 * 60
 FRESH_SECONDS = 10 * 60       # a question reuses a forecast this young
 

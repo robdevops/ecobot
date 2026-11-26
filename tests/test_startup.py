@@ -74,7 +74,7 @@ async def test_ecobot_mcp_starts_warms_archives_and_shuts_down_cleanly(tmp_path,
     assert "Startup fetch:" not in log and " requests to fetch" in log and "Backfill AirGradient:" in log
     final = next(line for line in log.splitlines() if "Backfill Ecowitt: " in line and " fetched/failed, " in line)
     assert "/0 fetched/failed, " in final and "d held (5m/30m/4h/1d)" in final
-    assert "Alerts NOT running" not in log and "Telegram" not in log
+    assert "Alerts NOT running" not in log
 
 
 async def test_the_stations_live_reading_is_asked_for_first_after_start_ahead_of_the_history(tmp_path, monkeypatch, caplog):
@@ -274,8 +274,6 @@ def test_the_rain_quiet_hours_are_configurable():
 
 def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
     from lib.config import Config
-    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "t")
-    monkeypatch.setenv("BOT_OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
     monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("MCP_CHART_ALL_FEELS_LIKE", raising=False)
@@ -286,8 +284,7 @@ def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_
 
 def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
     from lib.config import Config
-    for k, v in (("BOT_TELEGRAM_TOKEN", "t"), ("BOT_OPENROUTER_API_KEY", "k"), ("BOT_MCP_URL", "http://127.0.0.1:8765/mcp"),
-                 ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
+    for k, v in (("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("MCP_CHART_ALL_VPD", raising=False)
     assert Config.from_env().chart_all_vpd is False
@@ -298,7 +295,7 @@ def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monk
 def test_only_the_lines_that_are_not_ordinary_are_marked_with_their_level():
     from lib.logs import LogFormat
     fmt = LogFormat("%(levelname)s %(message)s")
-    line = lambda level: fmt.format(logging.LogRecord("lib.bot", level, __file__, 1, "hello", None, None))
+    line = lambda level: fmt.format(logging.LogRecord("lib.mcp_server", level, __file__, 1, "hello", None, None))
     assert [line(l) for l in (logging.INFO, logging.WARNING, logging.ERROR, logging.DEBUG)] == ["hello", "WARN hello", "ERROR hello", "DEBUG hello"]
 
 
@@ -306,7 +303,7 @@ def test_log_lines_do_not_name_their_module():
     from lib.logs import LogFormat
     fmt = LogFormat("%(levelname)s %(message)s")
     record = lambda name: logging.LogRecord(name, logging.INFO, __file__, 1, "hello", None, None)
-    assert fmt.format(record("ecobot")) == "hello" and fmt.format(record("lib.bot")) == "hello"        # and no "INFO" before an ordinary line
+    assert fmt.format(record("ecobot")) == "hello" and fmt.format(record("lib.mcp_server")) == "hello"        # and no "INFO" before an ordinary line
 
 
 def test_only_a_chat_message_is_cut_to_the_log_width_and_it_is_put_on_one_line():
@@ -314,7 +311,7 @@ def test_only_a_chat_message_is_cut_to_the_log_width_and_it_is_put_on_one_line()
     fmt = LogFormat("%(levelname)s %(message)s", width=20)
 
     def line(msg, *args, quotes=True):
-        record = logging.LogRecord("lib.bot", logging.INFO, __file__, 1, msg, args, None)
+        record = logging.LogRecord("lib.mcp_server", logging.INFO, __file__, 1, msg, args, None)
         if quotes:
             record.__dict__.update(QUOTES)
         return fmt.format(record)
@@ -325,7 +322,7 @@ def test_only_a_chat_message_is_cut_to_the_log_width_and_it_is_put_on_one_line()
     assert line(timings, quotes=False) == timings                                  # a line that quotes nothing is never cut
     assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 50
     for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # nor is a warning or an error
-        record = logging.LogRecord("lib.bot", level, __file__, 1, timings, None, None)
+        record = logging.LogRecord("lib.mcp_server", level, __file__, 1, timings, None, None)
         assert fmt.format(record) == f"{name} " + timings and record.levelname == logging.getLevelName(level)
     fmt.width = 0
     assert line("[@rob] %s", asked) == "[@rob] " + asked                           # 0 keeps the whole message
@@ -339,7 +336,7 @@ def test_a_traceback_is_logged_whole_after_its_message():
     try:
         {}["a key whose name is far longer than the forty characters of the log width"]
     except KeyError:
-        record = logging.LogRecord("lib.bot", logging.ERROR, __file__, 1, "Failed to deliver reply to chat 12345678 in the group", None,
+        record = logging.LogRecord("lib.mcp_server", logging.ERROR, __file__, 1, "Failed to deliver reply to chat 12345678 in the group", None,
                                    sys.exc_info())
     lines = fmt.format(record).split("\n")
     assert lines[0] == "ERROR Failed to deliver reply to chat 12345678 in the group" and lines[1] == "Traceback (most recent call last):"

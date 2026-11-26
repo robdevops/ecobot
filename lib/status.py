@@ -3,7 +3,7 @@ pollen, written here from the tools' own answers, as the report always was: no m
 row (gauge_sheet.STATUS), drawn as a PNG by lib/gauges.py, with their readings as JSON beside it: each gauge's reading now and its
 highs and lows (rain: its wettest day and total) of today, the month and the year, which the picture leaves out (the web page's
 dashboard, lib/web_dashboard.py, has them as tables). Laid out from the service's `current` with context, read as a call to it is (the
-live reading fetched when none is held fresh: unlike the other resources, this one is read when someone asks for Status). A chat client sends the picture with the report as its caption (the Telegram bot's Status button and /status).
+live reading fetched when none is held fresh: unlike the other resources, this one is read when someone asks for Status). A chat client sends the picture with the report as its caption.
 
 Pillow is imported at the first picture (lib/gauges.py): without it the readings come alone, with `image_note` saying so, and one
 warning."""

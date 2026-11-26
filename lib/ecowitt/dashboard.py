@@ -2,10 +2,10 @@
 reading as it is now with its highest and lowest today, this month and this year (figures()).
 
 Now is the live reading. The extremes are the day rows' (days.day_values_on: exact days from the 5- or 30-minute readings where they hold
-the day, else the daily buckets; today from what there is so far), which take in the bands the bot and Home Assistant saw between the
+the day, else the daily buckets; today from what there is so far), which take in the bands ecobot-mcp and Home Assistant saw between the
 5-minute readings, with the live reading counted in, so the day's figures are never behind the gauge.
 
-The service's `current` with `context` gives these figures (lib/service/current.py context_of); the bot lays its sheet of gauges out
+The service's `current` with `context` gives these figures (lib/service/current.py context_of); ecobot-mcp lays its sheet of gauges out
 from that result (lib/gauge_sheet.py), with GAUGES' scales and colours.
 """
 
@@ -70,7 +70,7 @@ GAUGES = (
     Gauge("Temperature", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "temperature"), "temp_max", "temp_min"),
     Gauge("Humidity", "%", "dial", 0, 100, WATER, (0, 20, 40, 60, 80, 100), ("outdoor", "humidity"), "humidity_max", "humidity_min", 0),
     Gauge("Atmospheric pressure", "hPa", "dial", 950, 1050, PRESSURE, (950, 970, 990, 1010, 1030, 1050), ("pressure", "relative"),
-          "pressure_max", "pressure_min", 0),   # (whole hPa on the dashboard: "1026"; the bot's and the tools' figures keep the catalogue's)
+          "pressure_max", "pressure_min", 0),   # (whole hPa on the dashboard: "1026"; ecobot-mcp's and the tools' figures keep the catalogue's)
     Gauge("Dew point", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "dew_point"), "dew_point_max", "dew_point_min"),
     Gauge("Feels like", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "feels_like"), "feels_like_max", "feels_like_min"),
     Gauge("Wind", "km/h", "dial", 0, 100, WIND, (0, 20, 40, 60, 80, 100), ("wind", "wind_speed"), "wind_speed_max", None, 0,

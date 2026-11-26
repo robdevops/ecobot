@@ -5,7 +5,7 @@ readings ready, backfill() caches the monitor's whole history, current() feeds t
 Its readings come from each of its sources that is set (MCP_AIRGRADIENT_SOURCE; docs/storage-plan.md 3.12), each filling only what the ones
 before it lack: the monitor's own server (local.py: read every minute, each 5 minutes' readings averaged into a row with their lowest and
 highest as its band, and each reading kept as a minute), Home Assistant (homeassistant.py: its states of the monitor sampled the same way
-while the monitor does not answer the bot, and its history read back for the times the bot did not read it at all), and AirGradient's
+while the monitor does not answer ecobot-mcp, and its history read back for the times ecobot-mcp did not read it at all), and AirGradient's
 cloud (the history before Home Assistant's, the times both were down, and the monitor's name). A metric of a lower source is checked
 against what the higher ones hold before it fills a gap: a metric that differs (the raw PM2.5 against the corrected one) fills none, and
 is said once with the fix.
@@ -14,7 +14,7 @@ AirGradient's documented API:
   current: GET /public/api/v1/locations/{id}/measures/current?token=...
   history: GET /public/api/v1/locations/{id}/measures/past?from=...&to=...&token=...
 
-Finished days are kept in the bot's file (readings.py, lib/storage), so questions are answered without asking
+Finished days are kept in ecobot-mcp's file (readings.py, lib/storage), so questions are answered without asking
 AirGradient unless a day is missing. Reports AirGradient's corrected (calibrated) values
 where available, plus a US EPA AQI and band for PM2.5 and for PM10 (the US AQI is the higher).
 """
@@ -97,7 +97,7 @@ class AirGradient(Source):
     def __init__(self, cfg: Config, transport=None, ha: HomeAssistant | None = None, storage: Storage | None = None,
                  owned: bool | None = None):
         """ha: the weather station's Home Assistant client, shared (so a failing Home Assistant is said once); else one of its own when
-        Home Assistant is set. storage: the bot's file (lib/storage), the station's, shared; without one the source opens it itself.
+        Home Assistant is set. storage: ecobot-mcp's file (lib/storage), the station's, shared; without one the source opens it itself.
         owned: the file is this source's to close (so when it opened it, or no station has it)."""
         self.loc, self.tz = cfg.airgradient_location or "local", cfg.tz   # (the stored readings are kept under this)
         self.token = cfg.airgradient_token
@@ -158,8 +158,8 @@ class AirGradient(Source):
     async def settle(self):
         """Its start, in the warm-up (after the port opens): its reading now, Home Assistant's entities of the monitor (so its line says
         whether Home Assistant has it), the cloud asked once (it names the sensor, and its token and location are checked) or, with
-        nothing to check its readings against, the monitor's own correction; today's gaps asked of the cloud (its check against what the
-        bot holds); then its line (startup_lines)."""
+        nothing to check its readings against, the monitor's own correction; today's gaps asked of the cloud (its check against what
+        ecobot-mcp holds); then its line (startup_lines)."""
         try:
             row = await self._current_row(refresh=True)
             if self.ha is not None:
@@ -171,7 +171,7 @@ class AirGradient(Source):
                 await self._keep(now=True)   # (with the sensor's name)
             elif self.local and not self.cloud and not self._ha_ids:   # nothing to check its readings against: say how it corrects them
                 self._correction = self._correction_of(await self.local.config())
-            if self.cloud and self._sampled:   # today's gaps asked of the cloud now (warm would in a moment): its check against what the bot holds, for the line
+            if self.cloud and self._sampled:   # today's gaps asked of the cloud now (warm would in a moment): its check against what ecobot-mcp holds, for the line
                 await self._day_rows(self.now().date())
             self.summary = f"AirGradient: {self._summary(row)}"
         except Exception as e:  # keep going: the sensor may just be briefly unreachable
@@ -208,7 +208,7 @@ class AirGradient(Source):
             via.append("cloud")
         name = row.get("locationName") or (local and local.serial) or "sensor"
         line = f"'{name}'{f' ({self.loc})' if self.cloud else ''}: {'/'.join(via)} ({self.warmer.interval:g}s)"
-        notes = [f"{LABELS.get(name) or EXTRA_LABELS.get(name, name)} differs between {SOURCE_NAMES[src]} and what the bot keeps ({FIX.get(name, 'check the correction each applies')})"
+        notes = [f"{LABELS.get(name) or EXTRA_LABELS.get(name, name)} differs between {SOURCE_NAMES[src]} and what ecobot-mcp keeps ({FIX.get(name, 'check the correction each applies')})"
                  for src, found in self._verdict.items() for name, v in found.items() if not same_reading(v)]
         if self._correction:
             notes.append(f"PM2.5: {self._correction}")
@@ -221,7 +221,7 @@ class AirGradient(Source):
 
     async def _ha_entities(self, states: list[dict] | None = None) -> dict[str, str] | None:
         """Home Assistant's entities of the monitor (entity id -> metric), found once by their names (homeassistant.find_prefix: the one
-        whose reading is nearest the bot's when it has several); None when it has none (said once). Raises when it does not answer."""
+        whose reading is nearest ecobot-mcp's when it has several); None when it has none (said once). Raises when it does not answer."""
         if self._ha_ids is not None:
             return self._ha_ids
         states = await self.ha.states() if states is None else states
@@ -242,13 +242,13 @@ class AirGradient(Source):
         return self._ha_ids
 
     async def import_history(self):
-        """Fold what Home Assistant kept of the monitor (homeassistant.py) into the store: the readings of the five minutes the bot has
+        """Fold what Home Assistant kept of the monitor (homeassistant.py) into the store: the readings of the five minutes ecobot-mcp has
         none of its own for (each five minutes' mean, with its lowest and highest as the band; in place of the cloud's), the bands of
         those it has, and the minutes of the last KEEP_HOURS; the last RANGE_KEEP_DAYS days the first time (as far back as it has them),
-        then the last few hours. A metric whose five-minute means disagree with the readings the bot took from the monitor itself (the
+        then the last few hours. A metric whose five-minute means disagree with the readings ecobot-mcp took from the monitor itself (the
         raw PM2.5 against the corrected one) fills nothing and gives no bands (said once); with none of those, its values are taken as they
         are. Nothing when no Home Assistant is set or it has no AirGradient monitor (said once). A failure is logged once, with its
-        recovery (Home Assistant's own account of it); what the bot has stays."""
+        recovery (Home Assistant's own account of it); what ecobot-mcp has stays."""
         if self.ha is None:
             return
         first, started, now = self._ha_ok is None, time.monotonic(), time.time()
@@ -269,21 +269,21 @@ class AirGradient(Source):
                     found.setdefault(name, {}).update(got)
                 if until > minutes_from:
                     minutes += ha_minutes(history, ids, self.ha.units, max(chunk, minutes_from), until - 1, now)
-            own = await self.store.load(start, int(now), srcs=(BOT,))   # what the bot read from the monitor itself: the check, and the rest is filled
+            own = await self.store.load(start, int(now), srcs=(BOT,))   # what ecobot-mcp read from the monitor itself: the check, and the rest is filled
             keep, fill, verdict = checked(found, own)
             self._verdict[HOME_ASSISTANT].update({n: v for n, v in verdict.items() if v[0] >= MIN_COMPARED})
             added = await self.store.add_spreads(keep)
             filled = await self.store.merge(fill, True, HOME_ASSISTANT)
             kept = await self.store.add_minutes([self._allowed(m, HOME_ASSISTANT) for m in minutes], HOME_ASSISTANT, now)
         except Exception as e:
-            self.ha.trouble.failed("history of the air monitor", f"{type(e).__name__}: {e}", "the air's readings come from the bot's own and the cloud's")
+            self.ha.trouble.failed("history of the air monitor", f"{type(e).__name__}: {e}", "the air's readings come from ecobot-mcp's own and the cloud's")
             self._ha_ok = False
             return
         self.ha.trouble.ok()
         for name, (compared, agreed) in verdict.items():
             if name not in keep and name not in self._ha_said:
                 self._ha_said.add(name)
-                log.warning("Home Assistant's %s isn't the reading the bot keeps (it agreed in %d of %d five minutes: perhaps the monitor's raw "
+                log.warning("Home Assistant's %s isn't the reading ecobot-mcp keeps (it agreed in %d of %d five minutes: perhaps the monitor's raw "
                             "value), so it fills no gaps and its ranges aren't used: %s", LABELS.get(name) or EXTRA_LABELS.get(name, name),
                             agreed, compared, FIX.get(name, "check the correction each applies"))
         if first or not self._ha_ok:
@@ -292,12 +292,12 @@ class AirGradient(Source):
         self._ha_ok = True
 
     def _allowed(self, row: dict, src: int) -> dict:
-        """This reading of a source's without the metrics the verdicts say differ from what the bot keeps (they fill no gaps)."""
+        """This reading of a source's without the metrics the verdicts say differ from what ecobot-mcp keeps (they fill no gaps)."""
         verdict = self._verdict[src]
         return {k: v for k, v in row.items() if k not in STORED or same_reading(verdict.get(k, (0, 0)))}
 
     def _judge(self, src: int, rows: list[dict], others: list[dict]) -> list[dict]:
-        """These readings of a source's (buckets' values, [{"ts", metric...}]) against the readings the bot holds from the sources ranked
+        """These readings of a source's (buckets' values, [{"ts", metric...}]) against the readings ecobot-mcp holds from the sources ranked
         above it, over the five minutes both hold: each metric's verdict is kept where enough were compared (homeassistant.verdicts), and
         a metric found to differ, or to agree again, is said. Returns the readings with the differing metrics taken out."""
         found = {name: {r["ts"] // BUCKET * BUCKET: r[name] for r in rows if name in r} for name in STORED}
@@ -310,10 +310,10 @@ class AirGradient(Source):
                 continue
             label = LABELS.get(name) or EXTRA_LABELS.get(name, name)
             if same_reading(v):
-                log.info("AirGradient: %s's %s agrees with the bot's readings again (%d of %d five minutes), so it fills gaps again",
+                log.info("AirGradient: %s's %s agrees with ecobot-mcp's readings again (%d of %d five minutes), so it fills gaps again",
                          SOURCE_NAMES[src], label, v[1], v[0])
             else:
-                log.warning("AirGradient: %s's %s isn't the reading the bot keeps (it agreed in %d of %d five minutes), so it fills no gaps: %s",
+                log.warning("AirGradient: %s's %s isn't the reading ecobot-mcp keeps (it agreed in %d of %d five minutes), so it fills no gaps: %s",
                             SOURCE_NAMES[src], label, v[1], v[0], FIX.get(name, "check the correction each applies"))
         return [row for r in rows if len(row := self._allowed(r, src)) > 1]
 
@@ -405,7 +405,7 @@ class AirGradient(Source):
         """Fetch finished days and store them, in as few requests as the API allows (it takes up to 10 days at a time; we use 9).
         Returns what each day has stored."""
         days, stored = sorted(days), {}
-        for d in [d for d in days if await self.store.has_own(d)]:   # the bot's own readings, or Home Assistant's: only the gaps are fetched
+        for d in [d for d in days if await self.store.has_own(d)]:   # ecobot-mcp's own readings, or Home Assistant's: only the gaps are fetched
             stored[d] = await self._complete_day(d)
             days.remove(d)
         while days and self.cloud:
@@ -429,7 +429,7 @@ class AirGradient(Source):
                 if (await self._held([day]))[1]:
                     await self._fetch_days([day])
                 return await self.store.load_day(day)
-            if self._sampled or (not self.cloud and (self.local or self._ha_ids)):   # the bot's own readings are the day's
+            if self._sampled or (not self.cloud and (self.local or self._ha_ids)):   # ecobot-mcp's own readings are the day's
                 return await self._recorded_day_rows(day)
             cached = self._recent.get(day)
             if cached and not refresh and time.time() - cached[1] <= FRESH_SECONDS:
@@ -438,11 +438,11 @@ class AirGradient(Source):
             self._recent[day] = (rows, time.time())
             return rows
 
-    # ---------- the monitor's own readings, kept by the bot ----------
+    # ---------- the monitor's own readings, kept by ecobot-mcp ----------
     async def _record(self) -> bool:
         """Read the monitor itself, else Home Assistant's states of it; True if either answered. The readings are averaged into 5-minute
         buckets, and a bucket with enough of them is stored (as the cloud would give it, with whose readings they are) when the next one
-        starts; each reading is also kept as a minute. Of Home Assistant's, only the metrics that agree with what the bot keeps."""
+        starts; each reading is also kept as a minute. Of Home Assistant's, only the metrics that agree with what ecobot-mcp keeps."""
         row, src = await self._sample()
         if row is None:
             return False
@@ -487,7 +487,7 @@ class AirGradient(Source):
         return [t for t in range(lo // BUCKET * BUCKET, min(hi, int(until) // BUCKET * BUCKET), BUCKET) if t not in whole]
 
     async def _fill(self, day: date, start: int, end: int):
-        """Ask the cloud for this span of the day (epochs), check its readings against the bot's own and Home Assistant's over the five
+        """Ask the cloud for this span of the day (epochs), check its readings against ecobot-mcp's own and Home Assistant's over the five
         minutes both hold (_judge), and keep what it has of the agreeing metrics where they lack it (the storage keeps theirs)."""
         lo, hi = day_bounds(day, self.tz)
         got = [r for r in await self._past(start, end) if lo <= r["ts"] < hi]
@@ -496,7 +496,7 @@ class AirGradient(Source):
 
     async def _held_day_rows(self, day: date) -> list[dict]:
         """A day's readings as far as they are kept, whatever their age, nothing fetched: the stored ones (with the bucket being
-        averaged) when the bot keeps the readings itself or the day is finished, else the cloud's last fetch of it ([] when none)."""
+        averaged) when ecobot-mcp keeps the readings itself or the day is finished, else the cloud's last fetch of it ([] when none)."""
         if self._final(day) or self._sampled or (not self.cloud and (self.local or self._ha_ids)):
             return self._with_bucket(day, await self.store.load_day(day))
         cached = self._recent.get(day)
@@ -511,7 +511,7 @@ class AirGradient(Source):
     async def _recorded_day_rows(self, day: date) -> list[dict]:
         """An unfinished day (today, or one that has just ended) while the monitor or Home Assistant answers: the stored readings, the
         bucket being averaged as the last one, and the cloud asked, at most every GAP_RETRY_SECONDS, for the span of the buckets that are
-        missing (what it has of them fills only what the bot lacks)."""
+        missing (what it has of them fills only what ecobot-mcp lacks)."""
         rows = await self.store.load_day(day)
         if self.cloud and time.time() - self._gap_tried.get(day, 0) > GAP_RETRY_SECONDS and (missing := self._missing(day, rows, time.time() - GAP_GRACE)):
             self._gap_tried[day] = time.time()
@@ -523,8 +523,8 @@ class AirGradient(Source):
         return self._with_bucket(day, rows)
 
     async def _complete_day(self, day: date) -> Held:
-        """A finished day the bot holds readings of from the monitor or Home Assistant: the cloud is asked for the whole day once (one
-        request: the day's check of each metric against the bot's, and its readings fill only what the bot lacks), and the day is noted
+        """A finished day ecobot-mcp holds readings of from the monitor or Home Assistant: the cloud is asked for the whole day once (one
+        request: the day's check of each metric against ecobot-mcp's, and its readings fill only what ecobot-mcp lacks), and the day is noted
         as done. Without the cloud, a day with gaps is left open, in case an account is added later."""
         lo, hi = day_bounds(day, self.tz)
         rows = await self.store.load_day(day)
@@ -670,7 +670,7 @@ class AirGradient(Source):
 
     async def _with_spreads(self, rows: list[dict], day: date) -> list[dict]:
         """These readings of a day with the ranges the store holds for them (Home Assistant's, for a day the cloud gave): a reading's own
-        range, the bot's, wins."""
+        range, ecobot-mcp's, wins."""
         ranges = await self.store.spreads(*day_bounds(day, self.tz))
         return [{**r, "_range": {**ranges[r["ts"]], **r.get("_range", {})}} if r["ts"] in ranges else r for r in rows]
 
@@ -709,7 +709,7 @@ class AirGradient(Source):
                                       "5-minute readings for recent months), so their highs and lows are hourly averages and "
                                       "short spikes are smoothed. Say so briefly if it matters to the answer.")
         if skipped:
-            out["note_missing"] = (f"{len(skipped)} older day(s) aren't in the bot's cache yet and were left out; it is still "
+            out["note_missing"] = (f"{len(skipped)} older day(s) aren't in ecobot-mcp's cache yet and were left out; it is still "
                                    "downloading the sensor's history. Say so briefly.")
         if not rows:
             out["note"] = "No readings for this period."
@@ -745,7 +745,7 @@ class AirGradient(Source):
         if len(pts) < 2:
             return None
         gap = max(60, round(statistics.median(b[0] - a[0] for a, b in pairwise(pts))))
-        spread = {r["ts"]: r["_range"][name] for r in rows if name in r and name in r.get("_range", {})}   # what the bot saw in a bucket it recorded
+        spread = {r["ts"]: r["_range"][name] for r in rows if name in r and name in r.get("_range", {})}   # what ecobot-mcp saw in a bucket it recorded
         plotted = build_line([Sample(t, v, *(((min(spread[t][0], v), max(spread[t][1], v)) if t in spread else (None, None))), gap)
                               for t, v in pts], self.tz, pts[-1][0] - pts[0][0], force_daily=daily,
                              until=self.now().date() if daily else None)

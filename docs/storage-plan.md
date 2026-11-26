@@ -1,12 +1,12 @@
 # Storage redesign plan
 
-The plan for replacing the bot's five SQLite files with one, laid out so that a chart, a report or a day count reads what it needs in one
+The plan for replacing ecobot-mcp's five SQLite files with one, laid out so that a chart, a report or a day count reads what it needs in one
 or two queries, and does not then sort it out row by row in Python. It turns the requirements in [TODO.md](../TODO.md) into a design, a
 migration and a sequence of steps, each shipped on its own.
 
 ## 1. Where the time goes now
 
-What typical requests cost on the bot's own caches in October 2026 (`ecowitt_cache.sqlite` 27.6 MB, 1.71 million readings, 116, 391, 755
+What typical requests cost on ecobot-mcp's own caches in October 2026 (`ecowitt_cache.sqlite` 27.6 MB, 1.71 million readings, 116, 391, 755
 and 1457 days held at 5 minutes, 30 minutes, 4 hours and a day; `airgradient_cache.sqlite` 3.9 MB, 53,000 readings; the live ranges
 0.3 MB; the minutes 0.5 MB), measured by `scripts/bench_storage.py` in the container: each request run three times on a copy, the median
 shown, nothing asked of the network. A time is the data and the answer, or the chart's spec; drawing and sending come after it (the DEBUG
@@ -32,8 +32,8 @@ shown, nothing asked of the network. A time is the data and the answer, or the c
 | Air chart (PM2.5), 1M | 4 | 3 | 200 ms |
 | `air_days`: days PM2.5 over 25, 4 years | 3 | 1 | 662 ms |
 
-Each chart also asked once for its newest hour, which is still settling and which the running bot holds in memory. The minutes play no
-part here: the bot keeps only the last 9 hours of them, and only a chart of up to 8 hours reads them (the benchmark has had a 3-hour chart
+Each chart also asked once for its newest hour, which is still settling and which the running ecobot-mcp holds in memory. The minutes play no
+part here: ecobot-mcp keeps only the last 9 hours of them, and only a chart of up to 8 hours reads them (the benchmark has had a 3-hour chart
 since, which reads them in two statements).
 
 Between the owner's runs, a step is measured on `tests/bench_cache.py`: a data folder shaped like this one, built from the fake station
@@ -56,7 +56,7 @@ In all of them SQLite itself, running the queries and handing back their rows, t
 the rows one at a time: the text of each value turned into a float, a dict entry per value, a local date per reading.
 
 What makes the query count high is that a chart's parts live apart:
-- **Three files.** The values are in `ecowitt_cache.sqlite`, the bot's own ranges in `ecowitt_live.sqlite`, the minutes in
+- **Three files.** The values are in `ecowitt_cache.sqlite`, ecobot-mcp's own ranges in `ecowitt_live.sqlite`, the minutes in
   `ecowitt_minutes.sqlite`. The newest readings are only in memory (`HotStore`), because the file holds only settled readings.
 - **A reading per row.** Each field is a series of its own, and its low and high are two more (`temperature_low`, `temperature_high`).
   A group is read with two queries (units, then values), so a group of 6 fields with ranges is 18 series.
@@ -95,7 +95,7 @@ damages the file, and a commit no longer waits for the disk). Its tables:
 | `extra` | anything a source sends that the catalogue does not know yet (3.3) |
 | `snapshots`, `snapshot_meta` | the pollen page and the forecast, as now (`lib/snapshots.py`), moved in unchanged |
 
-`bot_state.json` stays as it is: it is the chats' settings, not readings.
+`bot_state.json` stays as it is (it holds no readings; the servers keep their own small state files beside it).
 
 ### 3.2 Sensors
 
@@ -126,7 +126,7 @@ pages in time order, and a new reading goes on the end of its run:
 ```sql
 CREATE TABLE climate (
     sensor INTEGER NOT NULL, res TEXT NOT NULL, ts INTEGER NOT NULL,
-    src  INTEGER NOT NULL,   -- where the values came from: the cloud, Home Assistant, the bot's own readings (which win)
+    src  INTEGER NOT NULL,   -- where the values came from: the cloud, Home Assistant, ecobot-mcp's own readings (which win)
     final INTEGER NOT NULL,  -- 0 while the readings may still change (newer than the cycle's settle horizon)
     "temperature" REAL, "temperature_lo" REAL, "temperature_hi" REAL,
     "humidity"    REAL, "humidity_lo"    REAL, "humidity_hi"    REAL,
@@ -147,10 +147,10 @@ CREATE TABLE climate (
   numbers), so an answer shows "12.3" as it does now. No text to parse on reading. The migration counts the values whose text would come
   back otherwise, per field, so the catalogue's decimals are checked against the real cache before anything uses them.
 - **A reading's low and high are in its row** (`_lo`, `_hi`), not series of their own: Ecowitt's 30-minute and coarser lows and highs, and
-  the bands the bot and Home Assistant add (3.6). A null costs a byte, so a row without a range costs almost nothing.
+  the bands ecobot-mcp and Home Assistant add (3.6). A null costs a byte, so a row without a range costs almost nothing.
 - **`res`** is the resolution: `1min`, `5min`, `30min`, `4hour`, `1day` (Ecowitt's UTC days) and `1hour` (AirGradient's older history).
-- **`src`** says which source a row is from, so the bot's own AirGradient readings are never replaced by the cloud's (today's `recorded`
-  table), and a cloud reading fills only what the bot lacks.
+- **`src`** says which source a row is from, so ecobot-mcp's own AirGradient readings are never replaced by the cloud's (today's `recorded`
+  table), and a cloud reading fills only what ecobot-mcp lacks.
 - **`extra`** (`sensor, res, ts, field, value`) keeps a field Ecowitt sends that the catalogue has no column for, so nothing is lost
   before the catalogue learns it (today's cache keeps any field it is sent).
 
@@ -158,8 +158,8 @@ CREATE TABLE climate (
 
 | `res` | From | Kept |
 |---|---|---|
-| `1min` | Home Assistant's states (the station, the AirGradient), the bot's own minute reads of the AirGradient | 10 days (6.1) |
-| `5min` | Ecowitt's cloud, Home Assistant, the bot's own AirGradient averages; bands from the live readings and Home Assistant | for ever (the archive) |
+| `1min` | Home Assistant's states (the station, the AirGradient), ecobot-mcp's own minute reads of the AirGradient | 10 days (6.1) |
+| `5min` | Ecowitt's cloud, Home Assistant, ecobot-mcp's own AirGradient averages; bands from the live readings and Home Assistant | for ever (the archive) |
 | `30min`, `4hour`, `1day` | Ecowitt's cloud (lows and highs included), Home Assistant | for ever |
 | `1hour` | AirGradient's cloud, for the days it no longer has at 5 minutes | for ever |
 
@@ -213,12 +213,12 @@ CREATE TABLE climate_day (
 
 Every band is in the rows, so a chart's band comes with its line:
 - **Ecowitt's own lows and highs** (30 minutes and coarser) go in `_lo` and `_hi` when the readings are written.
-- **The bot's live readings** (every 30 seconds from Home Assistant, once a minute from the cloud) are gathered per 5 minutes in
+- **ecobot-mcp's live readings** (every 30 seconds from Home Assistant, once a minute from the cloud) are gathered per 5 minutes in
   memory, as the AirGradient's are now (`AirGradient._average`), and each 5 minutes with two or more readings widens that 5-minute
   row's range when the bucket closes. This replaces `LiveRanges.add` and its `ranges` table.
 - **Home Assistant's ranges**, the station's and the AirGradient's, widen the same 5-minute rows.
 - **The 30-minute rows' ranges** are widened whenever 5-minute or 30-minute rows are written (`Writer.roll_up`, one `UPDATE ... FROM`):
-  by the ranges of the 5-minute rows inside them (the bot's and Home Assistant's), which replaces the `slots` table, and by the 5-minute
+  by the ranges of the 5-minute rows inside them (ecobot-mcp's and Home Assistant's), which replaces the `slots` table, and by the 5-minute
   values themselves where a half hour has two or more, which replaces `HistoryCache.slot_ranges` (worked out at read time now). For a
   reading Ecowitt gives its own 30-minute range for, the 5-minute values lie inside it, so that changes nothing; a compass point and the
   rain counters take no band.
@@ -226,14 +226,14 @@ Every band is in the rows, so a chart's band comes with its line:
   narrowed, and doing it twice changes nothing, as now. A band that comes before its reading (the latest 5 minutes, not fetched yet) is a
   row with only the band, provisional, which no read counts as a reading; the reading fills it in when it comes.
 
-Retention: the bot's ranges are kept for 31 days now (`RANGE_KEEP_DAYS`). In the rows they cost a null when absent and two numbers when
+Retention: ecobot-mcp's ranges are kept for 31 days now (`RANGE_KEEP_DAYS`). In the rows they cost a null when absent and two numbers when
 present, so they are kept for good, with no table to prune (6.1).
 
 Which charts they show on: a line drawn reading by reading at 5 minutes (a chart of up to about a day and a half, the 1D button) has a
 band only from them, because Ecowitt's 5-minute readings have no range. From the 7D button on, the line is drawn from 30-minute readings
-or wider buckets, whose band is Ecowitt's own lows and highs (kept for ever), which the bot's only widen a little. A 3M or 1Y chart is
+or wider buckets, whose band is Ecowitt's own lows and highs (kept for ever), which ecobot-mcp's only widen a little. A 3M or 1Y chart is
 drawn a point a day, so each band is that day's whole swing from its lowest to its highest: that is why the band looks so much bigger
-from 3M on, and it never depended on the bot's 31 days. Keeping the bot's ranges for good gives a 1D chart of any past day its band too.
+from 3M on, and it never depended on ecobot-mcp's 31 days. Keeping ecobot-mcp's ranges for good gives a 1D chart of any past day its band too.
 
 ### 3.7 Coverage in memory
 
@@ -251,10 +251,10 @@ of each station, cycle and group and when it was made (`fetch.Recent`): for 5 mi
 the file instead of asking again, and one fetch at a time per station and cycle (its lock, as `HotStore.lock` was).
 
 What replaces what, a write's rules (`Writer.put`): a reading replaces the one held for the same sensor, resolution and time when it is as
-final (a provisional one never replaces a final one) and from a source ranked as high (the bot's own over Home Assistant's over the
+final (a provisional one never replaces a final one) and from a source ranked as high (ecobot-mcp's own over Home Assistant's over the
 cloud's); otherwise it only fills in what the row lacks. Either way the row is final once a final reading of it has arrived: a reading
 Home Assistant gave while it was settling is kept over the cloud's, and the row is settled by the cloud's. A merge of an old file into
-one the bot has been writing (section 5) follows the same rule, so a row that held only a band takes the old reading and settles.
+one ecobot-mcp has been writing (section 5) follows the same rule, so a row that held only a band takes the old reading and settles.
 `Writer.put_ecowitt` stores a response by `HistoryCache.store`'s rules (what
 counts as fetched, an old empty stretch, a group the station lacks, a field Ecowitt adds later); the tests are `test_store.py`'s, on the
 new storage.
@@ -271,7 +271,7 @@ What uses them: by the charts' rule (`lines.bucket_width`: the finest readings t
 drawn only for a stretch of up to about 8 hours, so no period button ever draws them (1D is 288 five-minute readings). They are drawn for
 a question about a short stretch ("the last 3 hours", "yesterday from 2 to 6"), and they give a day's records their time to the minute.
 The bands do not need them kept: each 5 minutes' range is written into its 5-minute row as the minutes come in. Ten days is as long as
-Home Assistant keeps its own (so after the bot was down the gap could be read back from it: the bot reads back `KEEP_HOURS`, 9 hours,
+Home Assistant keeps its own (so after ecobot-mcp was down the gap could be read back from it: ecobot-mcp reads back `KEEP_HOURS`, 9 hours,
 at start, as before; a longer gap stays, and a chart of it draws the 5-minute readings), and covers nearly every question about a few
 hours.
 
@@ -318,13 +318,13 @@ Left to Python on purpose:
 set, in this order: the monitor's own server (`MCP_AIRGRADIENT_LOCAL_URL`), Home Assistant (when it has the monitor, found by its entities'
 names as its ranges are now: `airgradient.homeassistant.find_prefix`), and AirGradient's cloud (its token and location). `local`,
 `homeassistant` or `cloud` is that one alone. Each source fills only what the ones before it lack, which the write rules already do (3.8):
-the bot's own readings rank above Home Assistant's, Home Assistant's above the cloud's, and a lower one only fills a cell a higher one left
-empty, so a row can take its PM2.5 from the bot and a reading the bot lacked from Home Assistant.
-- **The monitor itself.** As now, the bot reads its `/measures/current` every minute while it runs (`SAMPLE_SECONDS`), and each 5 minutes'
-  readings are a row with `src` the bot: their mean, and their lowest and highest as its band. New: each reading is also kept as a minute
+ecobot-mcp's own readings rank above Home Assistant's, Home Assistant's above the cloud's, and a lower one only fills a cell a higher one left
+empty, so a row can take its PM2.5 from ecobot-mcp and a reading ecobot-mcp lacked from Home Assistant.
+- **The monitor itself.** As now, ecobot-mcp reads its `/measures/current` every minute while it runs (`SAMPLE_SECONDS`), and each 5 minutes'
+  readings are a row with `src` ecobot-mcp: their mean, and their lowest and highest as its band. New: each reading is also kept as a minute
   (`res = '1min'`, 10 days), so a chart of a few hours is drawn a reading a minute, as the station's are. Its latest reading is the live one.
-- **Home Assistant: what the bot did not read.** Its AirGradient integration reads the same server every minute and keeps each change (10
-  days unless its recorder is set otherwise), so it holds the times the bot was down, or the monitor did not answer the bot (a `.local`
+- **Home Assistant: what ecobot-mcp did not read.** Its AirGradient integration reads the same server every minute and keeps each change (10
+  days unless its recorder is set otherwise), so it holds the times ecobot-mcp was down, or the monitor did not answer ecobot-mcp (a `.local`
   name Docker cannot look up, say). At start, and every few minutes while the monitor does not answer, the gaps of those 10 days are read
   back as the station's are (`hass_history.rollup`: each 5 minutes' mean, with its lowest and highest as the band), with `src` Home
   Assistant, and its states at the end of each minute are the minutes. While the monitor does not answer, its current states are the live
@@ -338,17 +338,17 @@ The PM2.5, and the other readings the monitor corrects:
   from there, else its own (`PUT /config`, `corrections`: `none` by default, `epa_2021`, or one of AirGradient's calibrations of its
   PMS5003 sensors). Home Assistant's `sensor.<device>_pm2_5` is that same corrected one (the raw one is `sensor.<device>_raw_pm2_5`, off by
   default). Temperature and humidity are likewise the corrected ones where the monitor sends them; PM1 and PM10 are as measured. The
-  cloud gives `pm02_corrected`, corrected as the dashboard says, which the bot keeps now (`metrics.METRICS` takes it first). So the
+  cloud gives `pm02_corrected`, corrected as the dashboard says, which ecobot-mcp keeps now (`metrics.METRICS` takes it first). So the
   three agree when the monitor takes the dashboard's correction; when the monitor is set to none, it and Home Assistant give the raw PM2.5
   and the cloud the corrected one.
-- **The bot checks, it does not guess.** As it does for Home Assistant's ranges now (`airgradient.homeassistant.checked`), each metric's
+- **ecobot-mcp checks, it does not guess.** As it does for Home Assistant's ranges now (`airgradient.homeassistant.checked`), each metric's
   five-minute values from a source are compared with those of the source ranked above it, over the time both hold: within 2 µg/m³ or 15%,
-  in four in five of them, is the same reading. While the bot reads the monitor it has little from the cloud to compare, so the cloud is
-  asked once a day for the newest finished day (one request; its rows fill only what the bot lacked).
+  in four in five of them, is the same reading. While ecobot-mcp reads the monitor it has little from the cloud to compare, so the cloud is
+  asked once a day for the newest finished day (one request; its rows fill only what ecobot-mcp lacked).
 - **A metric that disagrees fills no gaps.** It keeps coming from the source ranked first, as the order says, and a lower source does not
-  fill its gaps (they are drawn as gaps), so no line joins two variants over the time the bot reads the monitor. The start-up line says once
+  fill its gaps (they are drawn as gaps), so no line joins two variants over the time ecobot-mcp reads the monitor. The start-up line says once
   which metric differs, with the fix: set the monitor's PM2.5 correction to the dashboard's, or have it take its configuration from the
-  dashboard. The history from before stays as it came from the cloud, so a chart across the bot's first days can show the step until the
+  dashboard. The history from before stays as it came from the cloud, so a chart across ecobot-mcp's first days can show the step until the
   fix. The check runs again each day on the newest day, so a correction changed on the monitor or the dashboard is followed.
 - **With nothing to check against** (one source alone), its values are taken as they are, and the start-up line says which correction the
   monitor applies, from its `/config` when `MCP_AIRGRADIENT_LOCAL_URL` is set ("PM2.5: the monitor's EPA 2021 correction", "PM2.5: as
@@ -416,10 +416,10 @@ one read. The 1Y chart's line is 365 day rows, the 3M chart's 90, the 1M chart's
 *Retired after it had run on the owner's data (29 October 2026): `lib/storage/migrate.py`, `scripts/migrate_storage.py` and their
 tests are in the history up to commit 56a998c. The section stays as a record of what was moved and how it was checked.*
 
-- **Automatic, at start** (from step 2). When the old files hold what `ecobot.sqlite` does not yet, the bot moves it across before the
+- **Automatic, at start** (from step 2). When the old files hold what `ecobot.sqlite` does not yet, ecobot-mcp moves it across before the
   station starts, logging "Moving the history to ecobot.sqlite (once)". Nothing is fetched: Ecowitt's cloud keeps only 90 days of
-  5-minute readings, so the history is the bot's to keep. `scripts/migrate_storage.py` does the same by hand on a copy of the files, with
-  the bot running, and times the new storage's reads (section 4). `lib/storage/migrate.py` does it (`open_storage` at start).
+  5-minute readings, so the history is ecobot-mcp's to keep. `scripts/migrate_storage.py` does the same by hand on a copy of the files, with
+  ecobot-mcp running, and times the new storage's reads (section 4). `lib/storage/migrate.py` does it (`open_storage` at start).
 - **In parts.** Each part moves when its code does, and the file notes it (`migrated.<part>` in `meta`): the station's three files in
   step 2, the AirGradient's in step 3, the snapshots in step 5. A part moved into a file that is there already is merged into it: its
   sensors found or added, the file's own readings kept and the old ones filling in what they lack, each band the wider of the two, the
@@ -432,14 +432,14 @@ tests are in the history up to commit 56a998c. The section stays as a record of 
   - Ecowitt `coverage` becomes `coverage` for that sensor and resolution.
   - `ecowitt_live.sqlite`: the `ranges` with two or more readings widen the 5-minute rows; `slots` widen the 30-minute rows.
   - `ecowitt_minutes.sqlite` becomes `1min` rows.
-  - `airgradient_cache.sqlite`: `readings` become air rows (`src` the bot's where `recorded` says so) at `5min`, or `1hour` on a
+  - `airgradient_cache.sqlite`: `readings` become air rows (`src` ecobot-mcp's where `recorded` says so) at `5min`, or `1hour` on a
     finished day of 30 readings or fewer (as the AirGradient code tells them), `spreads` their lows and highs, and `days` the coverage.
   - `conditions_cache.sqlite`: `snapshots` and `meta`, as they are.
   - Then the 30-minute bands are widened from the 5-minute readings, and every day row is worked out once.
 - **Checked before it counts.** It is built as `ecobot.sqlite.part`, in one transaction; for every sensor, resolution and cell (a value,
   a low, a high) the number of values and their sum are compared with the old files' before the bands are widened, and so are the
   coverage, that every range is inside its row's band, the minutes, the AirGradient's readings and its own, and the snapshots. Any
-  difference and the built file is deleted and the log says why; the bot starts with what its sources still have (a new `ecobot.sqlite`,
+  difference and the built file is deleted and the log says why; ecobot-mcp starts with what its sources still have (a new `ecobot.sqlite`,
   filled by the archive from what Ecowitt's cloud still keeps), and the move is tried again at the next start, into that file (at every
   start, while it fails: a difference that is in the old files themselves would be logged at each). Only a
   move that adds up is renamed `ecobot.sqlite` (or merged into it). It needs twice the old files' size free on the disk, and says so if
@@ -472,7 +472,7 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    Nothing uses it yet. On the way: the statement count of step 0 used SQLite's trace hook, for which Python writes out every row of an
    `executemany` with its values, six times the cost of the insert; it was then counted at the connection's own calls.
 2. **The station on it.** `Fetcher`, `HistoryQuery`, `days`, `link`, `dashboard`, `compose`, the alerts, the archive, the live readings, the
-   minutes and Home Assistant's ranges read and write the new tables; `HotStore`, `LiveRanges`, `MinuteStore` and the refining go. The bot
+   minutes and Home Assistant's ranges read and write the new tables; `HotStore`, `LiveRanges`, `MinuteStore` and the refining go. ecobot-mcp
    migrates at start. While this is built, a temporary test runs the same questions on the same fixture through the old code and the new
    and compares the answers, so any difference is seen and judged (`tests/test_old_against_new.py`: the old code is taken from git;
    what it found is in 7.1).
@@ -491,17 +491,17 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    need are written with SQL of their own (`tests/fakes.py`). On the stand-in (section 1's requests): the 1Y temperature chart 27 ms
    (was 910 ms before this step, 1,205 at the start), 3M 10 ms (212), 1M 30 ms (91), 7D 12 ms (32). Next (2f): the old stores' tests
    on the new tables, the benchmark's stand-in built by the new storage, the docs, and the comparison test removed.
-3. **The AirGradient on it (done).** Its readings, the bot's own, its days, its spreads and Home Assistant's ranges in the `air`
+3. **The AirGradient on it (done).** Its readings, ecobot-mcp's own, its days, its spreads and Home Assistant's ranges in the `air`
    tables (`airgradient/readings.py`: what the source keeps and reads, through the storage, the old `AirStore`'s surface; the file is
-   the station's, opened once by the bot for both, or the sensor's own without a station); the old file moved in at start (part
+   the station's, opened once by ecobot-mcp for both, or the sensor's own without a station); the old file moved in at start (part
    `airgradient`); `AirStore` gone, and `air_days` on the day rows. A day the cloud gives as hourly averages is held at `1hour` (told
-   by its readings' spacing, where the old store counted them: 30 or fewer); a finished day of the bot's own readings with gaps the
+   by its readings' spacing, where the old store counted them: 30 or fewer); a finished day of ecobot-mcp's own readings with gaps the
    cloud fills is `5min`. The day rows are checked against `metrics.without_spikes` over the stand-in's readings
    (`test_every_air_day_row_is_what_the_glitch_rule_in_python_gives`). On the stand-in: `air_days` over 4 years 15 ms (was 584 ms,
    662 at the start), one statement; the air charts still load every reading of their period and filter it in Python (1M: 314 ms),
    the lines bucketed by the database, as the station's are, being step 4's, with its rewrite of what the source reads.
 4. **The AirGradient from the monitor, Home Assistant and the cloud** (3.12). `MCP_AIRGRADIENT_SOURCE`; its readings, minutes and live
-   reading from the monitor itself, Home Assistant filling what the bot did not read and the cloud what neither has, each metric checked
+   reading from the monitor itself, Home Assistant filling what ecobot-mcp did not read and the cloud what neither has, each metric checked
    against the source ranked above it before it fills a gap; the settings table and the start-up line. After step 3, since it writes the
    `air` table's rows, minutes and bands by the same rules as the station's, and its readings back to Home Assistant's first state need the
    archive's code the station uses.
@@ -509,29 +509,29 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    reading, the monitor's own server first, else Home Assistant's states of it (`homeassistant.live`), and `_record` keeps each sample as
    a minute (`AirReadings.add_minutes`, `src` the sampler's) and in the bucket being averaged (its row's `src` likewise), so Home
    Assistant stands in for the monitor minute by minute, with the same bands. `import_history` (was `import_ranges`) reads Home
-   Assistant's history back and writes the five minutes the bot has none of its own for (`homeassistant.gaps`: the mean with its lowest and
-   highest, `src` Home Assistant, in place of the cloud's by the write rule), widens the bot's own buckets' bands as before, and takes
+   Assistant's history back and writes the five minutes ecobot-mcp has none of its own for (`homeassistant.gaps`: the mean with its lowest and
+   highest, `src` Home Assistant, in place of the cloud's by the write rule), widens ecobot-mcp's own buckets' bands as before, and takes
    the last 9 hours' minutes (`homeassistant.minutes`: the state at the end of each). The checks: `homeassistant.verdicts` compares a
-   source's five-minute values with the readings held from the sources ranked above it (Home Assistant's with the bot's own, the cloud's
+   source's five-minute values with the readings held from the sources ranked above it (Home Assistant's with ecobot-mcp's own, the cloud's
    with both), and a verdict is kept per source and metric once 12 five minutes were compared; `_allowed` strips a differing metric from
    what the source fills (its live samples, its gap rows, its minutes) and `_judge` says once when a metric starts, or stops, differing,
-   with the fix. The cloud is asked for the whole of a finished day the bot holds its own readings of (`_complete_day`, one request as
-   before): the day's check, and its rows fill only the cells the bot lacked (the upsert keeps a higher source's cell; `_missing` is now
+   with the fix. The cloud is asked for the whole of a finished day ecobot-mcp holds its own readings of (`_complete_day`, one request as
+   before): the day's check, and its rows fill only the cells ecobot-mcp lacked (the upsert keeps a higher source's cell; `_missing` is now
    per metric, so a bucket Home Assistant gave two metrics of is still asked of the cloud for the rest). A chart of up to 8 hours is
    drawn from the minutes where they reach back to its start (`AirReadings.load_minutes`, `rows()`), the 5-minute rows filling the
    buckets that have none. With the monitor alone the start-up line says its PM2.5 correction, from its `/config`. Not done: the
    air charts' lines are still loaded whole and the glitches filtered in Python (3.11), and Home Assistant's history is not read more
    often while the monitor does not answer, since its states are sampled every minute meanwhile.
 5. **Tidying.** The snapshots move; the old store code goes; the scripts that read the files (`cache_status`, `check_rain`,
-   `show_request`, `dump_specs`, `refill_airgradient`) read the new one; `migrate_cache.py` retires; the docs say how the storage works.
+   `dump_specs`, `refill_airgradient`) read the new one; `migrate_cache.py` retires; the docs say how the storage works.
    And a look for dead code left from when the period buttons' charts stopped being drawn ahead on a timer (`92d71df`): what only that
-   timer used, in the image cache, the bot and the tests.
+   timer used, in the image cache, ecobot-mcp and the tests.
    *Done.* The pollen and forecast sources keep their snapshots in `ecobot.sqlite` (`snapshots`, `snapshot_meta`; `lib/snapshots.py`
    opens its own connection beside the storage's, and makes the file with those two tables when there is none), and
    `conditions_cache.sqlite` is moved in at start when either source is on. `lib/ecowitt/store.py` is `tests/old_cache.py` (the
-   migration's reference; nothing in the bot reads it), the archive takes its horizon from `storage.write`, and `test_store.py`,
+   migration's reference; nothing in ecobot-mcp reads it), the archive takes its horizon from `storage.write`, and `test_store.py`,
    `test_migrate_cache.py`, `scripts/migrate_cache.py` and `tests/data/make_fixture.py` are gone. `cache_status`, `check_rain`,
-   `show_request` and `dump_specs` read `ecobot.sqlite` (`dump_specs` moves a copy of the old files into one when that is all there is).
+   `dump_specs` read `ecobot.sqlite` (`dump_specs` moves a copy of the old files into one when that is all there is).
    Of `92d71df` nothing was left but comments: the image cache's FRESH and `ready` serve a chart made in code for someone's question, and
    `_draw_ahead` the preload chat. The pyflakes warnings in the tests are fixed.
 6. **Several sensors in use (later, when there is a second sensor).** Settings for more than one AirGradient, the station's extra
@@ -541,13 +541,13 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
 ### 6.1 Decisions
 
 - **The minutes are kept 10 days.** Only charts of up to about 8 hours draw them (3.9), so more than that holds readings that are
-  almost never drawn; 10 days is what Home Assistant keeps, so the bot can always read a gap back. A constant, if that changes.
-- **The bot's own bands are kept for good.** They are two numbers in a row that is kept anyway, and a 1D chart of any past day keeps
+  almost never drawn; 10 days is what Home Assistant keeps, so ecobot-mcp can always read a gap back. A constant, if that changes.
+- **ecobot-mcp's own bands are kept for good.** They are two numbers in a row that is kept anyway, and a 1D chart of any past day keeps
   its band (3.6).
 - **Several sensors: the schema now, step 6 later**, when there is a second sensor.
-- **A day's highest and lowest include the bands** (step 1, judged in step 2's comparison: 7.1). The 5-minute rows carry the bot's and Home
-  Assistant's ranges, so a day's figures from them are the extremes the bot saw, as the dashboard already counts them; `weather_days` and a
-  history answer's records took the 5-minute values alone. Where the bot has no ranges (before it ran, or a day from 30-minute readings) the
+- **A day's highest and lowest include the bands** (step 1, judged in step 2's comparison: 7.1). The 5-minute rows carry ecobot-mcp's and Home
+  Assistant's ranges, so a day's figures from them are the extremes ecobot-mcp saw, as the dashboard already counts them; `weather_days` and a
+  history answer's records took the 5-minute values alone. Where ecobot-mcp has no ranges (before it ran, or a day from 30-minute readings) the
   figures are the old ones, as the test against `day_values` shows.
 - **The AirGradient's day extremes are its readings' values**, not their bands (step 3): the glitch rule sees 5-minute readings, not the
   samples inside a bucket, so a one-sample peak in a band would become a day's highest. The chart still shades the band.
@@ -577,8 +577,8 @@ made was judged as it should be:
 
 - **A 5-minute reading's band** takes in both of Home Assistant's ranges of it (its own bucket's and those around its 5-minute mark) and
   what it read while the bucket was still filling: up to a step wider (0.1 °C, 1 %), all of them readings Home Assistant had.
-- **The dashboard's Daily row** is today's day row (its readings so far, with the bands the bot and Home Assistant saw), where the old
-  took today from the live reading and the bot's own ranges only.
+- **The dashboard's Daily row** is today's day row (its readings so far, with the bands ecobot-mcp and Home Assistant saw), where the old
+  took today from the live reading and ecobot-mcp's own ranges only.
 - **A chart of minutes** has its lines in the groups' order, as every other chart has (the old minute store gave them alphabetically).
 - **Records** are timed from their day's row, as finely as that day's readings allow, where refining narrowed only the first four
   (the temperatures') and left the rest at the half hour; a tie between days goes to the first of them (the old took the newest week's,

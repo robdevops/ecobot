@@ -1,5 +1,5 @@
 """The token ecobot-mcp generates when AUTH_TOKENS is unset: made at its first start, kept in the data folder (auth_token, readable by
-its own user only) and used again at every start after. The bot, with AUTH_TOKENS unset too, reads it from the same folder and sends it.
+its own user only) and used again at every start after. A client on the same host, with AUTH_TOKENS unset too, reads it from the same folder and sends it.
 Its value is never logged: only where it is."""
 
 import contextlib

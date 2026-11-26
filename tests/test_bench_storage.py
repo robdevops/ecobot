@@ -1,4 +1,4 @@
-"""scripts/bench_storage.py: the benchmark of typical requests on a copy of the bot's file."""
+"""scripts/bench_storage.py: the benchmark of typical requests on a copy of ecobot-mcp's file."""
 import shutil
 import sys
 from datetime import datetime
@@ -27,14 +27,14 @@ async def test_the_benchmark_reads_a_copy_of_the_file_and_asks_nothing_of_the_ne
     copy = tmp_path / "copy"
     copy.mkdir()
     bench_storage.copy(data / "ecobot.sqlite", copy / "ecobot.sqlite")
-    for name in ("BOT_TELEGRAM_TOKEN", "MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY"):   # (the benchmark sets them where they are missing)
+    for name in ("MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY"):   # (the benchmark sets them where they are missing)
         monkeypatch.setenv(name, "t")
     monkeypatch.setenv("DATA_DIR", str(copy))
     rows = await bench_storage.bench(copy, 1, TZ)
     labels = [r[0] for r in rows]
     assert "Temperature chart, 1Y" in labels and "/dashboard" in labels and len(rows) >= 12
     assert all(r[2] <= 1 for r in rows)
-    assert (data / "ecobot.sqlite").read_bytes() == before                       # the bot's own file is never written
+    assert (data / "ecobot.sqlite").read_bytes() == before                       # ecobot-mcp's own file is never written
 
 
 async def test_the_benchmark_s_own_cache_is_as_old_as_asked_and_its_short_chart_is_drawn_from_the_minutes(tmp_path, monkeypatch):
@@ -49,7 +49,7 @@ async def test_the_benchmark_s_own_cache_is_as_old_as_asked_and_its_short_chart_
     held = {cycle: min(storage.coverage.days(s.id, cycle) for s in sensors) for cycle in days}
     storage.close()
     assert all(n - 2 <= held[cycle] <= n for cycle, n in days.items()), held   # (the newest hours are still settling)
-    for name in ("BOT_TELEGRAM_TOKEN", "MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY"):
+    for name in ("MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY"):
         monkeypatch.setenv(name, "t")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     rows = {r[0]: r for r in await bench_storage.bench(tmp_path, 1, TZ)}

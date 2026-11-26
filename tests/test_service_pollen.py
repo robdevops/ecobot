@@ -1,5 +1,5 @@
 """The `pollen` tool (lib/service/pollen.py): the pollen source's lines, each level with its emoji and its day, its text, what is held
-when the request says not to fetch, and the off-season answer. (Until step 6c also held to pollen_asthma's answers and the bot's old
+when the request says not to fetch, and the off-season answer. (Until step 6c also held to pollen_asthma's answers and the old report's
 words, tests/old_tools.py and tests/report_words.py, deleted with them.)"""
 
 import json

@@ -1,7 +1,6 @@
 """The `about` tool (docs/ecobot-mcp.md 3.3): what the service measures and what it doesn't, how far back each kind of history goes,
-the alerts there are with their thresholds, and that alerts can't be added or changed by asking. It replaces what the bot's prompt told
-its model outside the tools (lib/prompt.py: NEVER_AVAILABLE, the capabilities, ALERT_WORDS), whose lists are copied here (the prompt
-goes with the bot), and the bot's Help list (lib/templates.py MEASURES: `lines`, the same words).
+the alerts there are with their thresholds, and that alerts can't be added or changed by asking. It holds what a client's model
+is told outside the tools: what is never available, the capabilities and the alert words (ALERT_WORDS), and a short list of what is measured (`lines`).
 
   - measures: each device and service there is (the sources in the Context), in words and, for the sensors, the readings the catalogue
     holds, each with its name, label and unit;
@@ -41,7 +40,7 @@ NAME = "about"
 RAIN_QUIET_HOURS: tuple[int, int] | None = (0, 6)   # local hours with no rain alerts, a summary after; None: none
 ALERT_COOLDOWN_MINUTES = 60                         # dry this long before "the rain has stopped"; the temperature crossing's least gap
 
-# ---------- what the bot's prompt said (lib/prompt.py), copied: the prompt goes with the bot ----------
+# ---------- what a client's model is told outside the tools ----------
 NEVER_AVAILABLE = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
 WITHOUT = {"Pollen": "pollen and thunderstorm asthma", "Forecast": "forecasts (only a short read of the pressure trend)"}   # a source that is off
 ALERT_WORDS = {"rain": "rain starting or stopping", "gusts": f"wind gusts over {GUST_ALERT_KMH} km/h",
@@ -53,7 +52,7 @@ ALERT_WORDS = {"rain": "rain starting or stopping", "gusts": f"wind gusts over {
 TYPES = {"rain": ("rain", "Ecowitt"), "gusts": ("gusts", "Ecowitt"), "uv": ("UV", "Ecowitt"), "temps": ("temperature crossing", "Ecowitt"),
          "particulates": ("particulates", "AirGradient"), "pollen_and_asthma": ("pollen & asthma", "Pollen"),
          "forecast": ("forecast changes", "Forecast")}
-# What each source measures, as the bot's Help lists it (lib/templates.py MEASURES)
+# What each source measures, in words
 MEASURES = {"Ecowitt": ["Temperature, humidity (indoor, outdoor)", "Dew point, vapour pressure deficit, pressure, wind speed",
                         "Rain, solar radiation, UV index"],
             "AirGradient": ["PM1, PM2.5, PM10, CO₂, VOC, NOx"],
@@ -201,7 +200,7 @@ class AboutTool:
 
     @property
     def sources(self) -> list[str]:
-        """The sources there are, by the names the bot's lists use."""
+        """The sources there are, by the names the alert lists use."""
         c = self.ctx
         return [name for name, there in (("Ecowitt", c.eco), ("AirGradient", c.air), ("Pollen", c.pollen), ("Forecast", c.forecast)) if there]
 
@@ -264,7 +263,7 @@ def alerts(sources: list[str]) -> list[dict]:
 
 
 def measure_lines(sources: list[str]) -> list[str]:
-    """What is measured, as the bot's Help lists it (lib/templates.py capabilities_text): a short bullet each."""
+    """What is measured: a short bullet each."""
     return [f"• {line}" for line in [*(line for name, measured in MEASURES.items() if name in sources for line in measured),
                                            "History charts"]]
 

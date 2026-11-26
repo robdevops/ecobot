@@ -1,24 +1,33 @@
-# What the bot does
+# What the servers provide
 
-## Ask it anything about your weather or air
+ecobot-mcp and irrigation-mcp are MCP servers: a client (Claude, LibreChat, signalbot, a script) connects, lists what they offer and uses it. Nothing here is a chat bot; the person asks the client, and the client's model calls the tools.
 
-Type a question in any chat the bot is in ("how hot is it?", "will it rain?", "rain by month for 2 years", "air quality 30d"). Everything typed goes to the AI model, which answers with ecobot-mcp's tools (and asks it for any chart); the buttons and their commands are answered at once without it. With no model set up (`BOT_OPENROUTER_API_KEY` unset), a typed question gets one line saying so, and the buttons and alerts still work.
+## Tools a model calls
 
-- **Charts:** any reading or several on one time axis, rain behind the lines, one colour per reading. Under a single chart are period buttons (1D, 7D, 1M, 3M, 1Y); pressing one redraws it in place (its other periods are fetched in the background as soon as the chart is sent, so a press is answered at once). Ask for "plot uv and solar on two axes" (or "dual axis", "second axis", "inverted axis", "two scales", "one chart", "overlay ... on another axis") to put readings on one chart, each unit with its own scale: the left axis for the first reading's unit, the right for the other. Up to four readings share the two axes, so "overlay ecowitt outdoor temperature with airgradient temperature, and on another, inverted axis outdoor humidity from each" is one panel of four lines (temperature of both sensors against the left axis, humidity of both against the right axis, which an "inverted axis" turns upside down); the axes carry their units and their lines' colours, and each line keeps its range shading and its latest value. The colour key sits under the title, left-aligned above the plot, in one row when it fits and else in two or more (the plot gives up the room), and the latest values are spread apart so that none overlaps another, equal ones included (a thin leader joins a moved one to its dot). Without such words, several readings are a panel each. The AirGradient sensor's own temperature and humidity can be charted too, against the weather station's: "plot airgradient humidity over ecowitt humidity" draws both on one axis. They're offered to the AI model only when you name the AirGradient with temperature or humidity. "weather all week" draws every reading, a panel each.
-- **Status and the report:** the Status button (or `/status`) sends one message: a picture of three gauges, the temperature, humidity and rain now, with the report under it (the readings now, 3 days' forecast and the pollen, written by ecobot-mcp in code, no AI model: `ecobot://status`), and a 🔄 that reads both again into the same message. `/report` asks the AI model for a report instead (ecobot-mcp's `report` prompt).
-- **Dashboard:** every gauge, with its highest and lowest today, this month and this year (the UV index, the AQI (the US AQI, titled "AQI" on the page), PM2.5, PM10 and PM1: their highest alone), is ecobot-mcp's live web page (`/dashboard` beside `/mcp`, README), the wind's, rain rate's, sun's and UV's dials with a thin red hand at today's highest (the wind's: its gust); the chat has no dashboard picture any more (typing "dashboard" asks the AI model).
-- **Dark charts:** `DARKMODE=on` draws every chart on a dark background, or only between set times, e.g. `DARKMODE=8pm-8am` (docs/configuration.md).
-- **Readings at an interval:** "humidity each hour for the last 5 hours", "PM2.5 every 30 minutes this morning", "rain each hour today". Any reading, every minute to every day, each with its time, from the history the bot has stored. Rain is the millimetres that fell in each interval. A gap, such as a sensor that was off, is said, never filled in. Up to 300 rows a question: a longer period gets a coarser interval.
-- **Days and totals:** count or rank days by any reading ("how many days was UV 9 or more", "hottest day each year"), or total rain per month or year as bars.
-- **Analysis:** whether rain follows a reading, or how air quality relates to everything else, over the stored history.
-- **Commands:** each button also works as a command, in private chats and groups: `/status`, `/rain`, `/weather`, `/temperature`, `/humidity`, `/air_quality`, `/particulates`, `/wind` (the chart buttons are the last day; the period buttons under the chart change that).
-- **ecobot-mcp's prompts as commands:** each of ecobot-mcp's prompts is a command too, with its description in the menu: `/report`, `/now`, `/will_it_rain`, `/weather_chart`, `/chart`, `/rainfall`, `/air`. The words after the command fill the prompt in, in order, the last taking the rest: `/chart rain 7d` charts rain over 7 days, `/rainfall last week` is last week's rain, and with no words the prompt's own defaults are used. The question is then answered by the AI model, as if typed. When ecobot-mcp's prompts change, the menu follows; a prompt whose name Telegram won't take as a command, or that has the name of one of the bot's own, is left out (the log says which).
-- The commands appear in Telegram's `/` menu beside the message box.
-- **Private chats** also get a button keyboard (Help & Alerts, Status, Rain, Weather, Temperature, Humidity, Air Quality, Particulates, Wind) and show Telegram's "Thinking…" while the answer is written.
+ecobot-mcp's tools answer in words and figures, with charts where a chart helps (the tool descriptions, which the client's model reads, are the exact reference; [ecobot-mcp.md](ecobot-mcp.md) 3.3 has the design):
+
+- **Now:** `current` gives the live readings (the weather station's outdoor and indoor sensors, the air sensor's particulates, CO₂ and indices), each with its unit and a rating. `about` says what the station has and what each reading is called.
+- **Over a period:** `summary` gives a reading's lowest, highest and average over a period ("rain since 6am", "the temperature this week"), and a chart of it; several readings are a panel each, or share a chart with a scale each. `readings` gives any reading at an interval (every minute to every day): "humidity each hour for the last 5 hours", "PM2.5 every 30 minutes this morning". A gap, such as a sensor that was off, is said, never filled in. Rain is the millimetres that fell in each interval.
+- **Days and totals:** `days` counts or ranks days by any reading ("how many days was UV 9 or more", "hottest day each year"), or totals rain per month or year as bars.
+- **Analysis:** `relate` says whether rain follows a reading; `scan` relates air quality to everything else, over the stored history.
+- **Ahead:** `forecast` (the days, with the day's rain in mm, its likely range and how sure it is, from Open-Meteo), `outlook` (will it rain in the next few hours, by the station's own pressure, humidity and wind trends) and `pollen` (grass pollen and thunderstorm asthma for Melbourne, October to December).
+
+Periods are given in words ("past week", "since 6am"): the tools read them in the station's time zone.
+
+**Charts:** any reading or several on one time axis, rain behind the lines, one colour per reading. `DARKMODE=on` draws every picture on a dark background, or only between set times, e.g. `DARKMODE=8pm-8am` ([configuration.md](configuration.md)). A chart comes as data the client can draw, as a PNG (`?charts=png`) or as a link to a PNG (`?charts=link`, for chat apps that only show markdown images); [ecobot-mcp.md](ecobot-mcp.md) 3.7.
+
+## Resources and prompts
+
+- **Resources** a client reads, and listens to for changes: `ecobot://station` (what the station has), `ecobot://now/weather` and `ecobot://now/air` (the live readings), `ecobot://forecast`, `ecobot://pollen`, `ecobot://status` (a picture of the temperature, humidity and rain gauges, with the report under it, written in code), `ecobot://health` and `ecobot://feed` (the alerts, below). irrigation-mcp has `irrigation://feed`.
+- **Prompts** a client offers as commands or buttons: `report`, `now`, `will_it_rain`, `weather_chart`, `chart`, `rainfall` and `air`. The words after the command fill the prompt in, in order, the last taking the rest, and the client's model answers it with the tools.
+
+## Web dashboard
+
+Every gauge, with its highest and lowest today, this month and this year, is ecobot-mcp's live web page (`/dashboard` beside `/mcp`, [README](../README.md#web-dashboard)): the wind's, rain rate's, sun's and UV's dials with a thin red hand at today's highest (the wind's: its gust).
 
 ## Alerts
 
-Alerts go to every chat the bot is in, silently unless you turn sound on:
+ecobot-mcp's alert rules write each alert to its alert log, and `ecobot://feed` serves the unexpired ones in signalbot's feed format, so signalbot posts them to the chats that asked (`/alerts`). A client that listens is told when the feed changes.
 
 - rain starting and stopping (with quiet hours, default midnight to 6 am, summed up when they end)
 - gusts over 40 km/h, with the last day's wind chart
@@ -26,19 +35,13 @@ Alerts go to every chat the bot is in, silently unless you turn sound on:
 - indoor and outdoor temperatures crossing by more than 1 °C, with the temperature chart
 - unhealthy air (two readings in a row), and when it is safe again, with the particulates chart
 - grass pollen or thunderstorm asthma risk reaching High (optional)
-- a forecast day you were told about changing substantially (optional)
-- irrigation battery low, and irrigation-mcp pausing watering for rain (optional)
+- a forecast day changing substantially (optional)
+- irrigation battery low, and irrigation-mcp pausing watering for rain (optional; `irrigation://feed`)
 
-Every alert carries a 🔔 button that opens its toggles: **Alert** (on or off in this chat) and, in a private chat while that is on, **Sound**. An alert with a chart also has **🔄**, which puts the chart with the latest readings in the same message, the alert's text as it was (anyone in the chat can press it). Every toggle in the bot is a blue button while on and a plain one with its name struck through while off.
-
-`/alerts` opens a menu with 🔔 Alerts and (in a private chat) 🔊 Sound. Each lists the alert types as toggles; while one is open only its own button shows (press it to close the list). `/alerts on` or `/alerts off` switches every type. A chat that blocks or removes the bot keeps its settings, which apply again when it comes back. In a group anyone can open `/alerts`, but only admins can change anything.
-
-## Who can use it
-
-By default the bot answers everyone who messages it. `BOT_ADMIN_ONLY=on` answers only the admins of the groups it is in, plus any ids in `BOT_ADMIN_CHAT_IDS`; everyone else is told it is for group admins. A refused sender is logged once, with their id, so the owner can add them to `BOT_ADMIN_CHAT_IDS`. See [configuration.md](configuration.md).
+Every alert carries its text, a link where one belongs (the AirGradient dashboard, the pollen site), and its chart's call, so a client can redraw the chart with the latest readings or for another period. An alert goes stale (rain and gusts after about an hour, a forecast the day it is about): a client back after a gap is sent what is still true, never the morning's rain as news.
 
 ## Optional extras
 
 - **Pollen and thunderstorm asthma** for Melbourne (October to December), from melbournepollen.com.au: `MCP_POLLEN=on`.
 - **Daily forecast** from Open-Meteo, with the day's rain in mm and how sure it is: `• Friday: 🌦️ Showers. 19–23°C, heavy: ~40 mm (15–60 likely; ≥15 at 90%)`. The figure is Open-Meteo's own day total (to 0.5 mm under 5 mm, 1 mm under 20, 5 mm from 20; "under 1 mm" for a drizzle, nothing on a dry day; "heavy" from 30 mm). The range is the 10th to 90th percentile of the 51 ensemble runs' day totals, shown when wider than the rounding. The last item reads: on a wet day the 10th percentile rounded down to a step (2, 3, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100 mm), so `≥15 at 90%` means 90% of the runs give at least 15 mm; on a showery day it is the chance of at least 1 mm (`~3 mm (1–3.5 likely; ≥1 at 80%)`): `MCP_FORECAST=on`.
-- **Irrigation controller** (a Tuya smart timer): an Irrigation button with its status and buttons to water for 5 to 30 minutes, switch off, pause for 24 to 72 hours, and its own alert toggles. A daily check at 18:00 delays watering 24 hours when rain fell or is likely. The controller is its own MCP server, irrigation-mcp (README: Irrigation): set the `IRRIGATION_TUYA_*` variables for it, run it, and set `BOT_IRRIGATION_MCP_URL` for the bot. While irrigation-mcp can't be reached the button says it couldn't reach the controller; the rest of the bot carries on.
+- **Irrigation controller** (a Tuya smart timer): its own MCP server, irrigation-mcp (README: Irrigation), with tools to read its status, water for 5 to 30 minutes, switch off and pause for 24 to 72 hours. It closes the valve after every run, and a daily check at 18:00 delays watering 24 hours when rain fell or is likely, and raises a battery alert. Set the `IRRIGATION_TUYA_*` variables and run it; ecobot-mcp does not need it.

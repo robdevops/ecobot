@@ -14,7 +14,7 @@ counts the days every named sensor has, and the days whose station figures come 
 the air sensor's midnight to midnight) are left out and counted.
 
 The result is today's day-tool result in 3.2's shape (period, as_of, then its fields), each listed day with its `day_look`, and `answer`:
-the line the bot wrote for a days lookup (the old lib/report.py `_days`, ported here with the same words), which is also the finished
+the line written for a days lookup (the old lib/report.py `_days`, ported here with the same words), which is also the finished
 reply when `chart_answers_it` is set and a chart drawn (unless a note needs the model's words). `group_by` draws the bar chart, which
 carries the call that drew it (`drawn_by`, 3.7).
 
@@ -460,7 +460,7 @@ class DaysTool:
             CHART_SOURCE.reset(sourced)
         out = got.out
         engine_period = out.pop("period")
-        out.pop("chart", None)   # (the bot's hint: chart_note says what to do with a chart)
+        out.pop("chart", None)   # (chart_note says what to do with a chart)
         out.update(self._notes(call, asked, held, got, checked, days, daily_out, devices, merged, first_held))
         if (call.stat or call.count_only) and not call.group_by and (last - first).days >= 31:   # one figure over months: was a breakdown meant?
             out["note_group_by"] = GROUP_BY_NOTE
@@ -582,7 +582,7 @@ def period_words(text: str) -> str:
 
 def answer_line(out: dict, period: str, stretch: Stretch | None = None) -> str:
     """"137 of 1,454 days with UV index ≥ 10 (period).", or a total, average, highest or lowest over the period ("Total rain: 49.8 mm
-    over 30 days (period).") as the bot writes a days lookup today; `period` is the days' "first - last". Over part of each day the line
+    over 30 days (period).") as a days lookup is written; `period` is the days' "first - last". Over part of each day the line
     says which part first ("Each night (22:00–06:00): ...", "Each day at 15:00: ...")."""
     when = period_words(period)
     if out.get("stat") and out.get("value") is not None:

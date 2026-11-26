@@ -1,11 +1,11 @@
 """The Status picture (ecobot://status, lib/status.py): the weather station's temperature, humidity and rain gauges on a dark card, its
-readings now, for a chat client to send with its Status (the Telegram bot). The highs and lows are not drawn: they are in the
+readings now, for a chat client to send with its Status (signalbot, say). The highs and lows are not drawn: they are in the
 resource's text, and in the web page's tables (lib/web_dashboard.py, which draws every gauge in the browser).
 
 A thermometer, a dial, a rain beaker or a compass (the wind's direction: never among the Status's three, drawn all the same) per tile (specs.Tile), `per_row` to a row, drawn on one canvas laid out in pixels (the top left
 is 0, 0), in lib/gauge_look.py's colours and sizes (the web page draws with them too), each tile CELL_W by TILE_H. A tile with no
 reading is dimmed, its gauge at its floor (lib/gauge_look.py floor: the mercury at the scale's low end, the needle at its start, the
-beaker empty) reading the floor's number. Only ecobot-mcp draws it (the bot draws nothing). Safe to call from several threads, as
+beaker empty) reading the floor's number. Only ecobot-mcp draws it. Safe to call from several threads, as
 charts.render is (they share its drawing lock).
 """
 

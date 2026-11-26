@@ -68,7 +68,7 @@
         }
       ]
     },
-    "note": "both readings drawn, a panel each (the bot once drew only temperature); no period: a chart's default, the last 24 hours"
+    "note": "both readings drawn, a panel each (an early client once drew only temperature); no period: a chart's default, the last 24 hours"
   },
   "humidity-chart": {
     "tools": [
@@ -86,7 +86,7 @@
         }
       }
     },
-    "note": "the lowest and highest of a period are summary's; only humidity (the bot once charted temperature)"
+    "note": "the lowest and highest of a period are summary's; only humidity (an early client once charted temperature)"
   },
   "pressure-rain-correlation": {
     "tools": [
@@ -290,7 +290,7 @@
         }
       }
     },
-    "note": "4 months, passed as said (the bot once read it as 7 days)"
+    "note": "4 months, passed as said (an early client once read it as 7 days)"
   },
   "chart-indoors": {
     "tools": [
@@ -380,7 +380,7 @@
         }
       }
     },
-    "note": "3m is 3 months (the bot once read it as 3 days)"
+    "note": "3m is 3 months (an early client once read it as 3 days)"
   },
   "hottest-weekends": {
     "tools": [
@@ -528,7 +528,7 @@
       "relate",
       "scan"
     ],
-    "note": "\"metrics\" alone is what is measured (about; the bot answered it from its prompt) or the metrics now (current): a plain client with only the tool list may read it either way, and both answer it (the first live run called current {}); never a period's history"
+    "note": "\"metrics\" alone is what is measured (about; an early client answered it from its prompt) or the metrics now (current): a plain client with only the tool list may read it either way, and both answer it (the first live run called current {}); never a period's history"
   },
   "most-rain-days-jja": {
     "tools": [
@@ -806,7 +806,7 @@
         }
       }
     },
-    "note": "asked on a Tuesday: last Tuesday's figures, or today's report (current, forecast \"today\", pollen: the report as the tool descriptions give it, so pollen is no longer refused). The bot's case kept its own fast path (wants_report) from taking it as the bare report; a plain client has no fast path, and Tuesday is today"
+    "note": "asked on a Tuesday: last Tuesday's figures, or today's report (current, forecast \"today\", pollen: the report as the tool descriptions give it, so pollen is no longer refused). An early client's fast path took it as the bare report; a plain client has no fast path, and Tuesday is today"
   },
   "air-quality-vs-rain": {
     "tools": [
@@ -1087,7 +1087,7 @@
         }
       }
     },
-    "note": "the bot's Rain chart button, asked in words"
+    "note": "the old Rain chart button, asked in words"
   },
   "button-humidity-chart": {
     "tools": [
@@ -1111,7 +1111,7 @@
         }
       }
     },
-    "note": "the bot's Humidity chart button, asked in words"
+    "note": "the old Humidity chart button, asked in words"
   },
   "button-aq-all-week": {
     "tools": [
@@ -1135,7 +1135,7 @@
         }
       }
     },
-    "note": "the bot's AQ all week button: the air sensor's set over the week"
+    "note": "the old AQ all week button: the air sensor's set over the week"
   },
   "weather-now-everything": {
     "tools": [
@@ -1233,7 +1233,7 @@
       "forecast",
       "pollen"
     ],
-    "note": "a chat reply, not a request (the bot once answered it with the temperatures)"
+    "note": "a chat reply, not a request (an early client once answered it with the temperatures)"
   },
   "how-cold-is-it": {
     "tools": [
@@ -2236,7 +2236,7 @@
         }
       ]
     },
-    "note": "a value per hour is readings (the bot once said it only had extremes)"
+    "note": "a value per hour is readings (an early client once said it only had extremes)"
   },
   "temperature-every-30-minutes": {
     "tools": [

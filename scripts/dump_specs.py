@@ -1,5 +1,5 @@
-"""Draw the charts the bot would draw, from the bot's file (ecobot.sqlite), and save each chart (the service's JSON, as drawn) and
-picture (PNG). The charts are the service's tools' (lib/service: summary, relate, scan), each asked as the model or the bot asks it.
+"""Draw the charts ecobot-mcp would draw, from ecobot-mcp's file (ecobot.sqlite), and save each chart (the service's JSON, as drawn) and
+picture (PNG). The charts are the service's tools' (lib/service: summary, relate, scan), each asked as the model or ecobot-mcp asks it.
 Strictly offline: no API keys, no network (any request raises), and your file is never touched (it is copied to a temporary folder
 first). A question the file cannot answer is reported as "not cached" and skipped.
 

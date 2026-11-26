@@ -47,7 +47,7 @@ at once. A browser asking for reduced motion gets off's, whatever the setting.
 
 MCP_DASHBOARD_INDOOR off (privacy: the page needs no token): no indoor reading leaves the server through it. Its tiles (Indoor temperature,
 Indoor humidity: any gauge of the indoor sensor's group, gauge_sheet.INDOOR) are left out of /dashboard/data's sheet, as if the station had
-no indoor sensor, and /dashboard/events counts none of them in, so an indoor change alone sends no event (nor tells one happened). The bot,
+no indoor sensor, and /dashboard/events counts none of them in, so an indoor change alone sends no event (nor tells one happened). ecobot-mcp,
 the MCP tools, the Status picture and the alerts are as ever.
 
 No token is asked for (it is the weather and air readings only) and the Host isn't checked: a browser opens it by the machine's name. The MCP

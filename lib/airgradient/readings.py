@@ -1,6 +1,6 @@
-"""The AirGradient's readings in the bot's file (lib/storage), as the air source keeps and reads them: the cloud's 5-minute averages (hourly
-for the days it keeps only those), the bot's own 5-minute averages of what it read from the sensor itself (ranked above the cloud's, so
-the cloud only fills what they lack), each bucket's lowest and highest as the row's band (the bot's own, and Home Assistant's), and the
+"""The AirGradient's readings in ecobot-mcp's file (lib/storage), as the air source keeps and reads them: the cloud's 5-minute averages (hourly
+for the days it keeps only those), ecobot-mcp's own 5-minute averages of what it read from the sensor itself (ranked above the cloud's, so
+the cloud only fills what they lack), each bucket's lowest and highest as the row's band (ecobot-mcp's own, and Home Assistant's), and the
 finished days fetched as the coverage. A reading is {"ts", metric..., "_range": {metric: (lowest, highest)}}, as the source has always
 had it. The days' figures (air_days) are the day rows, worked out as the readings are written (storage.days: the glitches taken out).
 """
@@ -119,7 +119,7 @@ class AirReadings:
         return {d: h.n for d, h in (await self.held(days)).items()}
 
     async def has_own(self, day: date) -> bool:
-        """Does the bot hold any of this day's readings from the monitor itself or Home Assistant? (Such a day is completed by the cloud
+        """Does ecobot-mcp hold any of this day's readings from the monitor itself or Home Assistant? (Such a day is completed by the cloud
         filling what they lack, never replaced.)"""
         lo, hi = day_bounds(day, self.tz)
         return await self.storage.read(lambda r: self.sensor is not None and r.db.execute(
@@ -137,7 +137,7 @@ class AirReadings:
 
     # ---------- writing ----------
     async def save_day(self, day: date, rows: list[dict]) -> int:
-        """Keep one finished day's readings from the cloud, in place of those it had from there (the bot's own stay, and the bands only
+        """Keep one finished day's readings from the cloud, in place of those it had from there (ecobot-mcp's own stay, and the bands only
         widen), at the resolution they are at; the day is held. Returns what it holds (Held)."""
         lo, hi = day_bounds(day, self.tz)
         rows = sorted((r for r in rows if lo <= r["ts"] < hi), key=lambda r: r["ts"])
@@ -157,7 +157,7 @@ class AirReadings:
         return held
 
     async def add_recorded(self, row: dict, src: int = BOT) -> None:
-        """Keep a reading the bot took itself (a 5-minute average of the monitor's readings, or of Home Assistant's states of it: `src`;
+        """Keep a reading ecobot-mcp took itself (a 5-minute average of the monitor's readings, or of Home Assistant's states of it: `src`;
         with the lowest and highest of the readings averaged as its band: what a chart shades), in place of the cloud's for that bucket."""
         await self.storage.write(lambda w: w.put(w.air_sensor(self.loc), "5min", storage_rows([row], True), src))
 
@@ -166,7 +166,7 @@ class AirReadings:
         return await self.storage.write(lambda w: w.widen(w.air_sensor(self.loc), "5min", found))
 
     async def merge(self, rows: list[dict], final: bool, src: int = CLOUD) -> int:
-        """Keep these readings of a source's (the cloud's, else `src`) where the sources ranked above it lack them (a bucket the bot
+        """Keep these readings of a source's (the cloud's, else `src`) where the sources ranked above it lack them (a bucket ecobot-mcp
         recorded keeps its own); `final`: of a finished day, else they are replaced by the next fetch. Returns how many were written."""
         if not rows:
             return 0
@@ -203,7 +203,7 @@ class AirReadings:
         await self.storage.write(write)
 
     async def mark_day(self, day: date) -> None:
-        """Note that this finished day of the bot's own readings is complete."""
+        """Note that this finished day of ecobot-mcp's own readings is complete."""
         lo, hi = day_bounds(day, self.tz)
         await self.storage.write(lambda w: w.cover(w.air_sensor(self.loc), "5min", lo, hi - 1))
 

@@ -1,4 +1,4 @@
-"""What the bot's file holds, and what it lacks. Reads ecobot.sqlite (no network, no API keys) and reports, per sensor and resolution,
+"""What ecobot-mcp's file holds, and what it lacks. Reads ecobot.sqlite (no network, no API keys) and reports, per sensor and resolution,
 what is stored and any gaps. Run it on the server, from the repo directory:
 
     python scripts/cache_status.py [--file /var/lib/ecobot/ecobot.sqlite]
@@ -82,7 +82,7 @@ def airgradient(storage: Storage, sensor, tz):
 
 if __name__ == "__main__":
     ap = parser(__doc__)
-    ap.add_argument("--file", type=Path, default=data_dir() / FILE, help="the bot's file (default: ecobot.sqlite in DATA_DIR)")
+    ap.add_argument("--file", type=Path, default=data_dir() / FILE, help="ecobot-mcp's file (default: ecobot.sqlite in DATA_DIR)")
     args = ap.parse_args()
     if not args.file.exists():
         raise SystemExit(f"{args.file}: not found")

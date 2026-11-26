@@ -523,7 +523,7 @@ async def test_a_note_left_from_a_night_the_bot_missed_gives_way_to_the_next_nig
     m, state, sent = monitor(tmp_path, None)
     m.quiet = (22, 6)
     m.station.data = night_rain(int(datetime(2026, 9, 29, 23, 0, tzinfo=TZ).timestamp()), 0, 1)
-    await m.check()                                                # rain noted at 11:05pm, then the bot is down until the next night
+    await m.check()                                                # rain noted at 11:05pm, then ecobot-mcp is down until the next night
     night = night_rain(int(datetime(2026, 9, 30, 22, 30, tzinfo=TZ).timestamp()), 0, 1, *[0] * 89)   # to 6am
     m.station.data = night[:2]
     await m.check()

@@ -1,5 +1,5 @@
-"""ecobot-mcp's startup (docs/ecobot-mcp.md step 5: "ecobot.py's warm_up() is split"), run by ecobot-mcp (python -m ecobot_mcp): the
-bot is only ever its client (step 6b):
+"""ecobot-mcp's startup (docs/ecobot-mcp.md step 5), run by ecobot-mcp (python -m ecobot_mcp): the
+clients reach it over MCP:
 
   1. `configure(cfg)`: the settings the engines read as module values (the anti-spike rule, what "all" draws, what `about` says);
   2. `start_sources(cfg)`: every configured source that starts, the weather station first (its time zone wins), none of them asking the
@@ -44,10 +44,10 @@ from lib.service.alerts import AlertRules
 from lib.service.context import Context
 from lib.sources import Source
 from lib.storage import Storage
-from lib.version import commit_in, version   # noqa: F401 (the running commit: ecobot-mcp's and the bot's)
+from lib.version import commit_in, version   # noqa: F401 (the running commit)
 from lib.warm import Tasks, every, safely
 
-log = logging.getLogger("ecobot.mcp")   # (under the bot's own logger: LOG_LEVEL reaches it)
+log = logging.getLogger("ecobot.mcp")   # (under the ecobot logger: LOG_LEVEL reaches it)
 
 
 def configure(cfg: Config):
@@ -251,7 +251,7 @@ class Core:
             archive = Archive(eco, eco.archive_pace)
             archive.run_once = self._archived(archive, archive.run_once)
             tasks.start(archive.loop())
-            if eco.ranges_from_ha:   # the cloud's readings get their 5-minute bands from what Home Assistant kept, the days the bot was not watching too
+            if eco.ranges_from_ha:   # the cloud's readings get their 5-minute bands from what Home Assistant kept, the days ecobot-mcp was not watching too
                 tasks.start(every(HA_IMPORT_SECONDS, health.track("Ecowitt Home Assistant import", eco.import_ranges)))
 
         async def air_part():

@@ -211,7 +211,7 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
     assert answered["current"]["sensors"]["outdoor"]["temperature"]["unit"]
     assert answered["stranger"] == 421 and answered["own name"] != 421
     assert "Ecowitt refresh" in answered["health"]["loops"] and answered["health"]["file"]["bytes"] > 0
-    assert "Alerts NOT running" not in log and "Telegram" not in log
+    assert "Alerts NOT running" not in log
 
 
 async def test_a_clients_warning_says_why_ecobot_mcp_refused_it(service, monkeypatch, caplog):

@@ -27,7 +27,7 @@ DRIVERS = {"pressure": 1.0, "humidity": 5.0, "wind": 5.0}   # a reading (series)
 
 def reading_slots(r: Reader, mac: str, name: str, start: int, end: int) -> tuple[dict, dict, dict]:
     """(values, lows, highs) per 30-minute slot of a reading (series), as every chart of it shades them: the band is the row's (Ecowitt's
-    own lows and highs, widened by its 5-minute readings and the live readings the bot and Home Assistant saw). A reading shaded up to
+    own lows and highs, widened by its 5-minute readings and the live readings ecobot-mcp and Home Assistant saw). A reading shaded up to
     another field (wind) has its band reach that field's highest (the gusts)."""
     reading = WEATHER[name]
     group, field = reading.group, reading.field

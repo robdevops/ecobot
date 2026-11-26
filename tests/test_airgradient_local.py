@@ -34,7 +34,7 @@ def test_a_reading_is_given_in_the_clouds_field_names_with_the_correction_first(
     row = cloud_shaped(DEVICE, local.datetime(2026, 10, 27, 1, 2, 3, tzinfo=local.UTC))
     assert row == {"pm01": 1.5, "pm02": 4.0, "pm02_corrected": 2.5, "pm10": 6.0, "rco2": 419, "tvocIndex": 74.5, "noxIndex": 3,
                    "atmp": 19.45, "atmp_corrected": 17.86, "timestamp": "2026-10-27T01:02:03+00:00".replace("+00:00", "Z")}
-    assert cloud_shaped({"model": "x"}, local.datetime.now(local.UTC)) is None          # nothing the bot uses
+    assert cloud_shaped({"model": "x"}, local.datetime.now(local.UTC)) is None          # nothing ecobot-mcp uses
     assert "pm02_corrected" not in cloud_shaped({"pm02": 4.0}, local.datetime.now(local.UTC))   # an older firmware: the plain value stands
 
 
@@ -115,7 +115,7 @@ async def test_the_keep_warm_refresh_reads_the_device_and_asks_the_cloud_only_fo
     await air.close()
 
 
-# ---------- the bot keeps what the sensor says ----------
+# ---------- ecobot-mcp keeps what the sensor says ----------
 from datetime import date, datetime, timedelta, timezone  # noqa: E402
 from types import SimpleNamespace as NS  # noqa: E402
 
@@ -136,7 +136,7 @@ class Now:
 
 
 async def recorded(air, rows: list[dict]):
-    """The bot's own readings (add_recorded), written in one transaction rather than one each: a day of them in a moment."""
+    """ecobot-mcp's own readings (add_recorded), written in one transaction rather than one each: a day of them in a moment."""
     from lib.airgradient.readings import storage_rows
     from lib.storage.catalogue import BOT
     await air.store.storage.write(lambda w: w.put(w.air_sensor(air.store.loc), "5min", storage_rows(rows, True), BOT))
@@ -217,8 +217,8 @@ async def test_a_finished_day_the_bot_recorded_is_completed_with_only_what_it_la
     assert await air._day_rows(DAY) and calls.count("past") == 1                  # the whole day, in one request
     rows = await air.store.load_day(DAY)
     assert len(rows) == 288 and {r["ts"] for r in rows if r["pm2_5"] == clouds(r["ts"])} == gone   # the cloud's PM2.5 only where there was none
-    assert all(r["co2"] == 450 for r in rows)                                                   # ... and what the bot's readings lacked
-    assert (await air.store.counts([DAY])) == {DAY: 288} and "isn't the reading the bot keeps" not in caplog.text
+    assert all(r["co2"] == 450 for r in rows)                                                   # ... and what ecobot-mcp's readings lacked
+    assert (await air.store.counts([DAY])) == {DAY: 288} and "isn't the reading ecobot-mcp keeps" not in caplog.text
     await air._day_rows(DAY)
     assert calls.count("past") == 1                                                     # a finished day is never asked about again
     await air.close()
@@ -234,12 +234,12 @@ async def test_a_metric_the_cloud_gives_differently_fills_no_gaps_and_is_said_on
     rows = {r["ts"]: r for r in await air._day_rows(DAY)}
     assert len(rows) == 288 and all("pm2_5" not in rows[t] for t in gone)             # the cloud's PM2.5 (5 to 16) is another reading: a gap stays
     assert all(rows[t]["pm10"] == 8.0 and rows[t]["co2"] == 450 for t in gone)         # the rest of its readings fill it
-    assert caplog.text.count("the cloud's PM2.5 isn't the reading the bot keeps") == 1 and "set the monitor's PM2.5 correction" in caplog.text
-    assert "PM2.5 differs between the cloud and what the bot keeps" in air._summary({})
+    assert caplog.text.count("the cloud's PM2.5 isn't the reading ecobot-mcp keeps") == 1 and "set the monitor's PM2.5 correction" in caplog.text
+    assert "PM2.5 differs between the cloud and what ecobot-mcp keeps" in air._summary({})
     day2 = DAY - timedelta(days=1)
     await recorded(air, [{"ts": t, "pm2_5": 1.0} for t in range(*day_bounds(day2, TZ), 300)])
     await air._day_rows(day2)
-    assert caplog.text.count("isn't the reading the bot keeps") == 1                   # (said once)
+    assert caplog.text.count("isn't the reading ecobot-mcp keeps") == 1                   # (said once)
     await air.close()
 
 

@@ -2,10 +2,10 @@
 (irrigation_mcp, lib/irrigation/server.py). What it tells goes to `notify(text, kind=...)`: irrigation-mcp's alert log
 (irrigation://feed), which signalbot delivers.
 
-  - a battery below 5% is told to the chats subscribed to "irrigation battery" (kind irrigation_battery) (at most once a day, until it is charged);
+  - a battery below 5% is raised as an alert (kind irrigation_battery) (at most once a day, until it is charged);
   - if more than 1 mm of rain fell in the last 24 hours, or Open-Meteo gives today or tomorrow a 50% or better chance of at least
     1 mm of rain (in a forecast fetched within the last day: an older one doesn't count), the controller is put on a 24 hour weather
-    delay (it skips its own schedule) and the chats subscribed to "irrigation pause" are told why. A delay someone set is left alone
+    delay (it skips its own schedule) and an alert (kind irrigation_pause) says why. A delay someone set is left alone
     (nothing changes, so nothing is sent); its own from yesterday, seconds from lapsing at the check, is started again.
 
 There is no scheduler, so `run` sleeps until the next check time. If the controller can't be reached it tries again every 30 minutes

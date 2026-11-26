@@ -1,12 +1,12 @@
 """Fetch every day of the AirGradient history from the cloud again, so the local store holds all of it (including the columns added
-since a day was first cached, such as the sensor's own temperature and humidity). Run it with the bot stopped, with the bot's settings:
+since a day was first cached, such as the sensor's own temperature and humidity). Run it with ecobot-mcp stopped, with ecobot-mcp's settings:
 
     set -a; . /etc/ecobot.env; set +a
     python scripts/refill_airgradient.py [--days 1460] [--pace 1.0]
 
-It forgets which days were fetched, then runs the same backfill the bot runs at start: newest first, up to 9 days per request, stopping when
-the sensor's history starts. A day the bot recorded itself is only completed, never replaced. It is safe to stop and run again (or to start
-the bot, which carries on with the days not yet fetched). At the end it says how many stored readings still lack each value.
+It forgets which days were fetched, then runs the same backfill ecobot-mcp runs at start: newest first, up to 9 days per request, stopping when
+the sensor's history starts. A day ecobot-mcp recorded itself is only completed, never replaced. It is safe to stop and run again (or to start
+ecobot-mcp, which carries on with the days not yet fetched). At the end it says how many stored readings still lack each value.
 """
 
 import asyncio
@@ -36,7 +36,7 @@ async def main(days: int, pace: float):
             if column != "all":
                 print(f"  {column:16} {n:,} without a value (was {before[column]:,})")
         if failed:
-            print("Some days failed: run it again, or start the bot, to carry on.")
+            print("Some days failed: run it again, or start ecobot-mcp, to carry on.")
     finally:
         await air.close()
 

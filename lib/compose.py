@@ -3,7 +3,7 @@ engines of lib/service's summary, relate and scan).
 
 A call names what to plot (`plot_chart`: up to four panels, each a series and a style); this module loads the data
 from the caches, puts it on one time axis and hands the chart to the renderer. The model never supplies numbers or
-drawing code, so a chart the bot has never drawn before is still made from checked data. Only the cached readings are
+drawing code, so a chart ecobot-mcp has never drawn before is still made from checked data. Only the cached readings are
 used for the weather station (nothing is fetched); AirGradient fills any missing days first, as its own tool does."""
 
 import asyncio
@@ -85,7 +85,7 @@ class Composer:
         out = {}
         for metric in metrics:
             slots: dict[int, list[float]] = {}
-            extremes: dict[int, list[float]] = {}   # the readings, and the lowest and highest the bot saw within a bucket it recorded
+            extremes: dict[int, list[float]] = {}   # the readings, and the lowest and highest ecobot-mcp saw within a bucket it recorded
             for r in rows:
                 if metric in r:
                     slot = r["ts"] // SLOT * SLOT
@@ -95,7 +95,7 @@ class Composer:
                            {t: max(v) for t, v in extremes.items()})
         notes = {}
         if skipped:
-            notes["missing"] = f"{len(skipped)} older day(s) aren't in the bot's cache yet and were left out"
+            notes["missing"] = f"{len(skipped)} older day(s) aren't in ecobot-mcp's cache yet and were left out"
         if hourly:
             notes["resolution"] = f"{hourly} day(s) only exist as hourly averages"
         return out, notes

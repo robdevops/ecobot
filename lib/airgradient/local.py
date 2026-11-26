@@ -66,7 +66,7 @@ async def address_of(host: str) -> str | None:
 
 
 def cloud_shaped(data: dict, now: datetime) -> dict | None:
-    """The device's reply as a cloud reading, stamped with the time it was read; None when it holds none of what the bot uses."""
+    """The device's reply as a cloud reading, stamped with the time it was read; None when it holds none of what ecobot-mcp uses."""
     row = {cloud: data[local] for local, cloud in FIELDS.items() if isinstance(data.get(local), int | float)}
     if not row:
         return None

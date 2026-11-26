@@ -1,5 +1,5 @@
 """The `current` tool (lib/service/current.py): the readings now from both sensors, every one or those named, with the gauges' highs and
-lows beside them on request, and the bot's own words for them (its report, "weather now" and plain lookups), unchanged."""
+lows beside them on request, and the old report's words for them (its report, "weather now" and plain lookups), unchanged."""
 
 import json
 from pathlib import Path
@@ -183,8 +183,8 @@ async def test_the_readings_listed_are_those_the_file_holds(tmp_path, archived_c
     await close(tool)
 
 
-# ---------- the words: the bot's, unchanged ----------
-# Each case's lines, as the bot's old words wrote them for the same readings (checked against them, tests/report_words.py, until step
+# ---------- the words: the old report's, unchanged ----------
+# Each case's lines, as the old report's words wrote them for the same readings (checked against them, tests/report_words.py, until step
 # 6c deleted that oracle): pinned in tests/current_words.json. "{pm2.5}" stands for the air sensor's PM2.5 line, whose rating and AQI
 # follow the fake's clock: it is written here from the sensor's own reading.
 WORDS = json.loads((Path(__file__).parent / "current_words.json").read_text())
@@ -207,7 +207,7 @@ async def test_the_lines_are_the_reports_and_weather_nows_words(tmp_path, archiv
     await close(tool)
 
 
-# (the bot's plain lookup: the readings the words name, and the sides) -> what a model sends for the same question
+# (the old plain lookup: the readings the words name, and the sides) -> what a model sends for the same question
 LOOKUPS = [(["temperature"], ["outdoor", "indoor"], ["temperature"]),            # "how hot is it"
            (["temperature"], ["indoor"], ["indoor temperature"]),                 # "indoor temperature"
            (["humidity"], ["outdoor"], ["outdoor humidity"]),

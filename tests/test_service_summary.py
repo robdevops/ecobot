@@ -1,5 +1,5 @@
 """The `summary` tool (lib/service/summary.py): its arguments and defaults, the shape of what it answers, the refusals that teach, the
-periods it reads, its charts with drawn_by (replayed, and over every period it lists), and the caption the bot wrote for the same
+periods it reads, its charts with drawn_by (replayed, and over every period it lists), and the caption the old report wrote for the same
 chart (the old lib/report.py), word for word: held to that oracle until step 6c deleted it (tests/report_words.py), pinned since in
 tests/summary_words.json."""
 
@@ -401,7 +401,7 @@ async def test_the_caption_is_the_period_then_a_line_per_reading_drawn(tmp_path,
     await close(ctx)
 
 
-# The words themselves: each case's caption (a chart drawn) and text (no chart), as the bot's old words wrote them for the same figures,
+# The words themselves: each case's caption (a chart drawn) and text (no chart), as the old report's words wrote them for the same figures,
 # recorded with the clock pinned (conftest's daytime_archive, 2:05pm Tue 10 Nov 2026) from the tree where they were still checked
 # against that oracle (tests/report_words.py, before step 6c deleted it): tests/summary_words.json.
 WORDS = json.loads((Path(__file__).parent / "summary_words.json").read_text())

@@ -1,4 +1,4 @@
-"""The bot's one file of readings (docs/storage-plan.md): `ecobot.sqlite` in the data folder.
+"""ecobot-mcp's one file of readings (docs/storage-plan.md): `ecobot.sqlite` in the data folder.
 
 Storage opens it, makes or upgrades its tables (schema.py, from the catalogue), and keeps two connections, each on a thread of its own:
 the writer's (the archive, the refreshes, the live readings) and the reader's (the questions, the reports, the alerts). In

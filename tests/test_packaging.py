@@ -163,7 +163,7 @@ def test_the_packaging_names_no_bot_program():
 
 def test_no_workflow_has_a_plain_value_yaml_would_read_as_a_mapping():
     # A plain (unquoted) value with ": " in it, or ending in ":", is a YAML error, and GitHub then fails the workflow at once with no
-    # job (docker.yml's "Charts drawn … (the bot's draws none: it has no Pillow)" did). PyYAML isn't a dependency, so this reads the
+    # job (docker.yml's "Charts drawn … (irrigation-mcp's draws none: it has no Pillow)" did). PyYAML isn't a dependency, so this reads the
     # one-line `key: value` forms the workflows use, leaving block scalars (`run: |`) and quoted or flow values alone.
     bad = []
     for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):

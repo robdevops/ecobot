@@ -52,7 +52,7 @@ def rollup(states: list[tuple[float, float]], mode: str, start: float, end: floa
 @dataclass(frozen=True)
 class Series:
     entity: Entity
-    states: list[tuple[float, float]]   # in the bot's units
+    states: list[tuple[float, float]]   # in ecobot-mcp's units
 
 
 def history(series: list[Series], cycle: str, start: float, end: float, until: float) -> dict:
@@ -76,7 +76,7 @@ def history(series: list[Series], cycle: str, start: float, end: float, until: f
 
 
 def converted(states: list[tuple[float, float]], entity: Entity, unit: str | None) -> list[tuple[float, float]]:
-    """Home Assistant's numbers for this entity in the bot's units."""
+    """Home Assistant's numbers for this entity in ecobot-mcp's units."""
     return [(t, convert(v, entity.kind, unit, entity.scale)) for t, v in states]
 
 

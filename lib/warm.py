@@ -41,7 +41,7 @@ async def every(delay: float | Callable[[], float], fn: Callable[[], Awaitable])
 
 
 class Tasks:
-    """The tasks run in the background (the bot's, the service's): one that stops with an error is logged as it does, and close()
+    """The tasks run in the background (ecobot-mcp's, the service's): one that stops with an error is logged as it does, and close()
     cancels them."""
 
     def __init__(self):

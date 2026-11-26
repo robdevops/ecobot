@@ -595,7 +595,7 @@ async def test_a_chart_and_its_figures_take_out_the_same_spikes(tmp_path):
 
 def test_the_antispike_setting_is_a_number_of_readings_default_2_and_off_is_1(monkeypatch):
     from lib.config import Config
-    for k, v in (("BOT_TELEGRAM_TOKEN", "t"), ("BOT_OPENROUTER_API_KEY", "k"), ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
+    for k, v in (("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("MCP_ANTISPIKE_REQUIRE_CONSECUTIVE", raising=False)
     assert Config.from_env().antispike_require_consecutive == 2   # (ecobot-mcp's setting)

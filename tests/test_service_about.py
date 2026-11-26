@@ -1,5 +1,5 @@
 """The `about` tool (lib/service/about.py): what the service measures and doesn't, how far back each kind of history goes, the alerts
-there are with their thresholds; the lists the bot's prompt and Help had, the same."""
+there are with their thresholds; the lists a client's prompt and Help once had, the same."""
 
 import json
 import time

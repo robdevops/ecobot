@@ -1,6 +1,6 @@
 """The `days` tool (lib/service/days.py): its arguments and defaults, its result, its refusals, its periods, its charts and their
 `drawn_by`, the merged rule over both sensors, part of each day (`hours`), and its answer line, on the fake station's archive with an air
-sensor added. (Until step 6c these were also held to weather_days' and air_days' engines and the bot's old words, tests/old_tools.py and
+sensor added. (Until step 6c these were also held to weather_days' and air_days' engines and the old report's words, tests/old_tools.py and
 tests/report_words.py, deleted with them: their answers for the same cases are pinned since in tests/days_words.json, and
 tests/test_days.py holds the tool's station answers to the fake station's own figures.)"""
 
@@ -218,7 +218,7 @@ async def test_an_air_question_shows_and_ranks_by_pm2_5_and_its_days_carry_the_w
 
 # ---------- the answers, word for word ----------
 # Each STATION_CASES and AIR_CASES result (all but its period and as_of), and the answer line of each kind of result, as weather_days
-# and air_days answered and the bot worded them: recorded with the clock pinned (pinned_world) from the tree where every one was still
+# and air_days answered and the old report worded them: recorded with the clock pinned (pinned_world) from the tree where every one was still
 # checked against those engines and words (tests/old_tools.py, tests/report_words.py, before step 6c deleted them): days_words.json.
 WORDS = json.loads((Path(__file__).parent / "days_words.json").read_text())
 

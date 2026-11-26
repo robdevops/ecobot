@@ -105,7 +105,7 @@ async def test_the_reports_gauges_read_the_years_day_rows_in_one_go_and_only_wha
 
 
 async def test_the_bands_the_bot_saw_widen_the_gauges_figures_and_the_year_takes_in_the_month(tmp_path):
-    """Between its 5-minute readings the bot (and Home Assistant) saw lower and higher: the day rows take those bands in, so the gauges'
+    """Between its 5-minute readings ecobot-mcp (and Home Assistant) saw lower and higher: the day rows take those bands in, so the gauges'
     Daily and Monthly highs and lows do, and the year's."""
     from lib.ecowitt.days import day_values_on
     from lib.storage import Storage

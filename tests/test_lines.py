@@ -65,7 +65,7 @@ def test_too_little_gives_no_line():
 
 
 def test_a_band_is_drawn_wherever_there_is_a_range_even_for_a_short_part_of_the_period():
-    # the bot has only kept the readings' ranges since it began recording: the last 44 of a day's 5-minute readings
+    # ecobot-mcp has only kept the readings' ranges since it began recording: the last 44 of a day's 5-minute readings
     rs = [(T0 + i * 300, float(i % 7), (i % 7) - 2.0 if i >= 100 else None, (i % 7) + 3.0 if i >= 100 else None, 300) for i in range(144)]
     line = build_line(rs, TZ, 143 * 300)
     assert line.raw and line.low is not None

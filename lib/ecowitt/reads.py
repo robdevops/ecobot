@@ -5,7 +5,7 @@ the wind's readings for counting its direction and the rain counter for its bars
 and the composed charts: a reading per 30-minute slot, with its band.
 
 A reading is a lines.Sample (its value, its band where it has one, the seconds it covers), written as the station writes it (the
-catalogue's decimals: a 5-minute mean of the bot's live readings is drawn as the station would have sent it).
+catalogue's decimals: a 5-minute mean of ecobot-mcp's live readings is drawn as the station would have sent it).
 """
 
 import bisect
@@ -166,7 +166,7 @@ def counts_on(r: Reader, mac: str, groups: list[str], start: int, end: int) -> d
 
 def slot_values_on(r: Reader, mac: str, group: str, field: str, res: str, start: int, end: int) -> tuple[dict, dict, dict]:
     """({epoch: value}, {epoch: lowest}, {epoch: highest}) of a reading's settled rows at this resolution (the band where the row has
-    one: Ecowitt's own lows and highs, or those its finer readings and the bot's and Home Assistant's live readings gave it)."""
+    one: Ecowitt's own lows and highs, or those its finer readings and ecobot-mcp's and Home Assistant's live readings gave it)."""
     sensor, place = r.sensor(mac, group), column_of(group, field)
     if sensor is None or sensor.kind not in KINDS or place is None:
         return {}, {}, {}

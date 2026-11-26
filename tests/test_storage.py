@@ -152,7 +152,7 @@ def test_the_half_hours_bands_come_from_the_five_minute_readings_inside_them(sto
         "SELECT ts, dew_point_lo, dew_point_hi FROM climate WHERE res = '30min' ORDER BY ts"))
     assert rows[base] == (10.0, 15.0) and rows[base + 1800] == (16.0, 21.0)
     assert rows[base + 3600] == (None, None)       # a single 5-minute reading is no range
-    assert rows[base + 5400] == (2.0, 7.5)         # the bot's bands of its 5 minutes
+    assert rows[base + 5400] == (2.0, 7.5)         # ecobot-mcp's bands of its 5 minutes
 
 
 def test_minutes_are_kept_ten_days_and_dropped_after(storage):

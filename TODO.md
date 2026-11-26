@@ -4,8 +4,8 @@ Things to check or finish that need something this repo can't do on its own.
 
 ## Check when PM2.5 is high
 
-Does the sensor's `pm02Compensated` equal the cloud's `pm02_corrected`? Both read 0 on the day it was tried, so it is not known. The bot records
-`pm02Compensated` (preferring it to the plain `pm02`) as its PM2.5. If the two differ, a chart would show a step wherever the bot's own readings
+Does the sensor's `pm02Compensated` equal the cloud's `pm02_corrected`? Both read 0 on the day it was tried, so it is not known. ecobot-mcp records
+`pm02Compensated` (preferring it to the plain `pm02`) as its PM2.5. If the two differ, a chart would show a step wherever ecobot-mcp's own readings
 meet the cloud's.
 
 When the air has real particles in it (smoke, incense, a dusty day), run these within a minute of each other, with `TOKEN` set to the
@@ -21,11 +21,11 @@ the interval) before deciding which to trust.
 
 ## Try on the real machines
 
-- The sensor's own server: `MCP_AIRGRADIENT_LOCAL_URL` on a bot on the sensor's network. Check the log says "live readings from the sensor itself", that "air now" is
-  fresh, and that a chart of today has no step where the bot's readings begin.
-- Without a cloud account (no `MCP_AIRGRADIENT_API_TOKEN`): nothing should be asked of the cloud, and the first charts only reach back to when the bot began recording.
-- `ecobot.service` as a real unit (`MemoryDenyWriteExecute`, `AF_NETLINK` for finding the sensor by name, `StateDirectory`, `CacheDirectory`): start it, then ask for a chart, an
-  analysis question and something that reads the caches.
+- The sensor's own server: `MCP_AIRGRADIENT_LOCAL_URL` on an ecobot-mcp on the sensor's network. Check the log says "live readings from the sensor itself", that "air now" is
+  fresh, and that a chart of today has no step where ecobot-mcp's readings begin.
+- Without a cloud account (no `MCP_AIRGRADIENT_API_TOKEN`): nothing should be asked of the cloud, and the first charts only reach back to when ecobot-mcp began recording.
+- `ecobot-mcp.service` as a real unit (`MemoryDenyWriteExecute`, `AF_NETLINK` for finding the sensor by name, `StateDirectory`, `CacheDirectory`): start it, then ask a client for a chart, a `relate` question
+  and something that reads the caches.
 - The Docker image with `zeroconf` in it: the `image` check on a pull request builds it.
 - `MCP_ALERT_COOLDOWN_MINUTES` in the production env file: the default is now 60; a line setting it to 30 keeps 30.
 

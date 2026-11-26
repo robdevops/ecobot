@@ -1,4 +1,4 @@
-"""The bands of the station's 5-minute readings from the live readings the bot sees (source.LiveMarks, Writer.put_ranges), and the charts
+"""The bands of the station's 5-minute readings from the live readings ecobot-mcp sees (source.LiveMarks, Writer.put_ranges), and the charts
 shaded between them."""
 
 from datetime import datetime, timedelta
@@ -40,7 +40,7 @@ async def test_a_chart_of_5_minute_readings_is_shaded_between_the_lows_and_highs
     assert bare.low is None                                                       # nothing was recorded: a clean line, as before
     now = int(datetime.now(eco.tz).timestamp())
     found = {"outdoor.temperature": {mark: (4, 10.0, 11.0) for mark in range((now - 2 * 86400) // BUCKET * BUCKET, now, BUCKET)}}
-    await eco.storage.write(lambda w: w.put_ranges(eco.mac, found))   # the bot has watched the whole time
+    await eco.storage.write(lambda w: w.put_ranges(eco.mac, found))   # ecobot-mcp has watched the whole time
     shaded = await chart_of_the_last_day(eco)
     assert shaded.low and len(shaded.low) == len(shaded.x) == len(shaded.high)
     assert all(lo <= y <= hi for lo, y, hi in zip(shaded.low, shaded.y, shaded.high))

@@ -13,7 +13,7 @@ worker threads, and it can be looked at or removed on its own. Events older than
 A new file starts its ids at 1 again, so each file has a random `identity` (kept in its meta table) beside the ids: a reader that kept
 the last id it handled keeps the identity with it, and starts afresh when the file is another (lib/alerts/notify.AlertDelivery).
 
-A reader in the same process waits for new events with `wait(after)` (an asyncio notification on each append): the bot's delivery today,
+A reader in the same process waits for new events with `wait(after)` (an asyncio notification on each append): a delivery in the same process,
 the MCP listen of step 5."""
 
 import asyncio

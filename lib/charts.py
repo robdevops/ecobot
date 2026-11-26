@@ -1,11 +1,11 @@
 """Charts sent alongside history answers, for both Ecowitt and AirGradient.
 
-A history tool adds a specs.Chart to turn.charts (the question's Turn, made by the bot) when a chart was asked for; the
-bot renders them after the answer is written and sends them with it, drawing each from its JSON (specs.to_json, then
+A history tool adds a specs.Chart to turn.charts (the question's Turn) when a chart was asked for; the
+service renders them after the answer is written, drawing each from its JSON (specs.to_json, then
 render_data here), as any client draws the charts a tool hands over. Every chart is one or more panels on a shared time
 axis (see specs.py):
   - one panel of lines is drawn large, with the records marked as pills, an end dot and (for wind) the compass beside it,
-    at exactly 1280x720, the size Telegram displays photos at, so nothing is rescaled;
+    at exactly 1280x720;
   - several panels are stacked, the figure growing a little taller with each one past two (four panels: 1280x1160).
 Rain (bars) sits behind the lines of the panel it belongs to, on a scale of its own read on the right.
 
@@ -84,7 +84,7 @@ def _use(theme: Theme):
     RAIN, RAIN_TEXT, WIND_STEPS, _LINES = theme.rain, theme.rain_text, theme.wind_steps, theme.lines
 
 
-# DARKMODE (lib/theme.py: held apart from the renderer, so the bot reads its theme without Pillow)
+# DARKMODE (lib/theme.py: held apart from the renderer, so the theme is read without Pillow)
 configure, dark_now = theme.configure, theme.dark_now
 
 
@@ -959,7 +959,7 @@ def render(chart: Chart, tz: tzinfo, times: dict | None = None, dark: bool | Non
 
 
 def render_data(data: dict, tz: tzinfo, times: dict | None = None, dark: bool | None = None) -> bytes:
-    """PNG bytes for a chart given as its JSON (specs.to_json, schemas/chart.json): how the bot draws every chart, as a client
+    """PNG bytes for a chart given as its JSON (specs.to_json, schemas/chart.json): how every chart is drawn, as a client
     draws the charts a tool hands over. Raises ValueError for JSON that isn't a chart; otherwise as render."""
     return render(from_json(data), tz, times, dark)
 

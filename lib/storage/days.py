@@ -6,7 +6,7 @@ where the day is covered at 5 minutes, else the 30-minute ones, else Ecowitt's d
 labelled with the local date its start falls on: approximate). A day none of those hold (today, the edge of what was fetched) is worked
 out from what there is (the newest readings, still settling, too), marked incomplete. Each reading's figures:
   - its mean: of each half hour's mean, so a stretch with readings missing counts for its time, not its readings (as lines._summarise);
-  - its lowest and highest: of each reading's own range where it has one (Ecowitt's lows and highs, the bands of the bot's and Home
+  - its lowest and highest: of each reading's own range where it has one (Ecowitt's lows and highs, the bands of ecobot-mcp's and Home
     Assistant's readings), else of its value; and when they first happened. A day of 5-minute readings takes in its 30-minute readings'
     bands too (Ecowitt's lows and highs from its finer readings, which its 5-minute ones miss), timed by the 5-minute reading lowest or
     highest in that half hour; its mean stays the 5-minute readings'.

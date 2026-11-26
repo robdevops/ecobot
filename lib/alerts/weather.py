@@ -141,7 +141,7 @@ class WeatherMonitor:
                 self._emit("rain", "\U0001f327️ It's started raining" + (f" ({rate:g} mm/h)." if rate > 0 else "."), "Rain started",
                            {"rate_mm_h": rate, "since": self._iso(m["since"])}, RAIN_EXPIRES_SECONDS)
         elif m["alerted_state"] == "raining":
-            if last_wet is None:  # nothing in the last 3 hours (e.g. the bot was down): close it quietly
+            if last_wet is None:  # nothing in the last 3 hours (e.g. ecobot-mcp was down): close it quietly
                 log.info("Alerts: rain ended while not watching; no alert")
                 quiet = True
             elif quiet:
@@ -175,7 +175,7 @@ class WeatherMonitor:
             return
         self.state.monitor.pop("night")
         if not night.get("first") or latest - night.get("began", 0) >= 86400:
-            return   # a dry night, or an old note (the bot was down)
+            return   # a dry night, or an old note (ecobot-mcp was down)
         clock = lambda ts: clock_text(to_local(ts, self.tz))
         fell = await self._fell(rows, night["first"], night["last"])
         amount = f"{fell:.1f} mm" if fell else "a trace"

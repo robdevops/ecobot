@@ -15,8 +15,8 @@ high_band, average_aqi_us, average_band}, "wind.wind_direction": {most_common, t
 total, total_text, [wettest_day], [daily|monthly]}}, [rain_total_mm], [monthly_note], [note_no_readings], [note_chart], [notes],
 [missing, warning], [caption] or [text], [chart_note, charts], [reply, complete]}.
 
-Words for the person, as the bot wrote them from weather_history's and air_quality's results (the old lib/report.py, its wording ported
-here, as the bot's code goes): `caption` under a chart (report.chart_caption), and `text` when there is none (report.lookup's
+Words for the person, as written from weather_history's and air_quality's results (the old lib/report.py, its wording ported
+here): `caption` under a chart (report.chart_caption), and `text` when there is none (report.lookup's
 "extremes"). Each chart carries `drawn_by`, the call that draws it again, and the periods it is worth drawing over (3.7).
 """
 
@@ -58,7 +58,7 @@ OVER_TIME = ({"period": "1d", "label": "1D"}, {"period": "7d", "label": "7D"}, {
              {"period": "3m", "label": "3M"}, {"period": "1y", "label": "1Y"})
 DAILY_MEANS = OVER_TIME[1:]
 DAILY_ALL_DAYS = 7   # as HistoryQuery: a longer period lists only the days of its records, unless every_day
-# The notes a caption carries itself (lib/bot.py CAPTIONED_NOTES for weather_history and air_quality): any other needs the model's words
+# The notes a caption carries itself (for weather_history and air_quality): any other needs the model's words
 CAPTIONED = {"missing", "warning"}
 AIR_CAPTIONED = {"missing"}
 DATE = re.compile(r"\d{4}-\d\d-\d\d")
@@ -854,7 +854,7 @@ class Summary:
 
     def _text(self, call: Call, q: _Query | None, out: dict | None, air_out: dict | None) -> str | None:
         """The figures in words, ready to send, when no chart is drawn: the period, then each station reading's low and high (or its
-        average) with its day and time, as the bot writes a weather_history lookup today ("extremes"); rain as the least and most in a
+        average) with its day and time, as a weather_history lookup is written ("extremes"); rain as the least and most in a
         day (or hour, or 6 hours) and its total, as under a rain chart; each air-quality reading's peak, rating and average."""
         station = [r for r in call.readings if r.device == STATION]
         ranged = [r for r in station if r.combine != "rain" and r.reading != "wind_direction"]
@@ -876,7 +876,7 @@ class Summary:
 
     @staticmethod
     def _needs_words(fields: dict) -> bool:
-        """Does the result carry a note the caption leaves out (lib/bot.py _needs_words)? Then the model answers."""
+        """Does the result carry a note the caption leaves out (the notes the caption lacks)? Then the model answers."""
         top = {k for k in fields if k != "notes" and (k.startswith("note") or k.endswith("_note") or k in ("warning", "missing"))}
         notes = fields.get("notes") or {}
         air = set(notes.get("air") or {})

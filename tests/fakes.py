@@ -48,7 +48,7 @@ class StandInService:
 
 
 def gauges_result(live: dict, values: dict, today, air: dict | None = None, air_values: dict | None = None) -> dict:
-    """current's result with context, as the bot reads it for its gauges, for a live reading ({group: {field: {value, unit}}}) and the
+    """current's result with context, as ecobot-mcp reads it for its gauges, for a live reading ({group: {field: {value, unit}}}) and the
     days' figures (days.day_values_on's): each gauge's reading now and its figures (lib/service/current.py context_of), through JSON.
     With the air sensor's latest reading (`air`: {"pm2_5": {"value": 12.0, "unit": "µg/m³", ...}}, AirGradient.latest()'s, PM2.5 with
     its aqi_us and band worked out when not given) and its day figures ({"pm2_5_max": {day: value}}), its readings too (air_context_of)."""
@@ -359,7 +359,7 @@ def air_transport(rows_per_day: int = 24, oldest: datetime | None = None, hourly
     return transport, calls
 
 
-# ---------- the bot's file, holding what a test puts in it ----------
+# ---------- ecobot-mcp's file, holding what a test puts in it ----------
 def storage_with(tmp_path, *responses, mac: str = "M", now: float | None = None):
     """A new storage (lib/storage) holding these Ecowitt responses, written as a fetch writes them: (cycle, groups, data, start, end)
     each, data in the cloud's shape ({group: {field: {"unit", "list"}}})."""
@@ -409,7 +409,7 @@ def draws(monkeypatch, render):
     monkeypatch.setattr(chart_images, "render", lambda chart, tz, dark=None: (render(chart, tz), bool(dark)))
 
 
-# ---------- the irrigation controller (lib/irrigation: the bot's and irrigation-mcp's) ----------
+# ---------- the irrigation controller (lib/irrigation: ecobot-mcp's and irrigation-mcp's) ----------
 TUYA_SECRET = "s3cret"
 TUYA_STATUS = [{"code": "switch", "value": False}, {"code": "battery_percentage", "value": 100}, {"code": "weather_delay", "value": "cancel"},
                {"code": "countdown", "value": 0}, {"code": "work_state", "value": "idle"}, {"code": "use_time_one", "value": 40}]   # as the controller answered

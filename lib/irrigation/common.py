@@ -1,5 +1,4 @@
-"""What both sides of the irrigation controller know: irrigation-mcp (lib/irrigation/tuya.py, server.py, check.py) and the bot's menu
-(lib/irrigation_menu.py), which is its client. Nothing here loads the Tuya client (httpx) or anything else: the bot imports it alone.
+"""What the irrigation controller's server and its tests share (lib/irrigation/tuya.py, server.py, check.py). Nothing here loads the Tuya client (httpx) or anything else: it imports alone.
 
   - `DELAYS`: the device's weather_delay range ("cancel" is none); `MAX_MINUTES`: the longest run;
   - `is_paused(status)`: a weather delay pauses the timer;

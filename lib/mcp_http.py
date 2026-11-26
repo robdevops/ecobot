@@ -65,7 +65,7 @@ def generated_token(folder: Path, logger: logging.Logger = log, program: str = "
     except OSError as e:
         raise SystemExit(f"AUTH_TOKENS is not set and a token couldn't be kept in {auth_token.path(folder)} ({type(e).__name__}: {e}): "
                          "set AUTH_TOKENS (token,token,...), or make the data folder writable") from None
-    logger.info("AUTH_TOKENS is not set: %s accepts the token kept in %s (the bot reads it from there; give it to any other client)",
+    logger.info("AUTH_TOKENS is not set: %s accepts the token kept in %s (a client on this host reads it from there; give it to any other client)",
                 program, auth_token.path(folder))
     return token
 

@@ -1,4 +1,4 @@
-"""Where the bot runs, for the hints in its log. In a Docker container on one of Docker's own networks a .local name (mDNS) cannot be
+"""Where ecobot-mcp runs, for the hints in its log. In a Docker container on one of Docker's own networks a .local name (mDNS) cannot be
 found: the fix is the device's IP address in the setting, or the host's network for the container (README: Docker networking)."""
 
 import os

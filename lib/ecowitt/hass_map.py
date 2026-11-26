@@ -1,9 +1,9 @@
-"""Home Assistant's Ecowitt entities as the bot's series, and Home Assistant's numbers in the bot's units.
+"""Home Assistant's Ecowitt entities as ecobot-mcp's series, and Home Assistant's numbers in ecobot-mcp's units.
 
 The Ecowitt integration names its sensors sensor.<station>_<what>: sensor.ws2900_outdoor_temperature, sensor.ws2900_relative_pressure ...
-Each is one of the bot's series ("group.field", as Ecowitt's cloud names them), written in the unit the cloud writes it, so everything
+Each is one of ecobot-mcp's series ("group.field", as Ecowitt's cloud names them), written in the unit the cloud writes it, so everything
 downstream (the cache, the charts, the report) sees the same thing whichever one the readings came from. Home Assistant shows a sensor in
-the unit its owner chose (°F, mph, inHg ...); `convert` brings that to the bot's (°C, km/h, hPa, mm).
+the unit its owner chose (°F, mph, inHg ...); `convert` brings that to ecobot-mcp's (°C, km/h, hPa, mm).
 """
 
 from dataclasses import dataclass
@@ -61,7 +61,7 @@ ANCHOR = ENTITIES["outdoor.temperature"].suffix   # the entity the station's nam
 NO_RANGE = ("wind.wind_direction",)               # a compass point has no lowest or highest
 
 
-# Home Assistant's units -> the bot's, per kind: a factor, or for the temperature a pair of (offset, factor): (value + offset) * factor
+# Home Assistant's units -> ecobot-mcp's, per kind: a factor, or for the temperature a pair of (offset, factor): (value + offset) * factor
 FACTORS = {
     "pressure": {"hPa": 1.0, "mbar": 1.0, "mb": 1.0, "kPa": 10.0, "Pa": 0.01, "inHg": 33.8639, "mmHg": 1.33322, "psi": 68.9476},
     "speed": {"km/h": 1.0, "mph": 1.609344, "m/s": 3.6, "kn": 1.852, "ft/s": 1.09728},
@@ -72,8 +72,8 @@ TEMPERATURE = {"°C": (0.0, 1.0), "℃": (0.0, 1.0), "°F": (-32.0, 5 / 9), "K":
 
 
 def convert(value: float, kind: str, unit: str | None, scale: float = 1.0) -> float:
-    """`value` in Home Assistant's `unit` as the bot's unit for this kind of reading (then times `scale`). A unit it does not know, or
-    a reading with no kind, is taken to be the bot's already."""
+    """`value` in Home Assistant's `unit` as ecobot-mcp's unit for this kind of reading (then times `scale`). A unit it does not know, or
+    a reading with no kind, is taken to be ecobot-mcp's already."""
     if kind == "temperature" and unit in TEMPERATURE:
         offset, factor = TEMPERATURE[unit]
         value = (value + offset) * factor

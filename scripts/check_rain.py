@@ -1,4 +1,4 @@
-"""Can the rain totals the bot reports be trusted at each resolution? Compares, from the bot's file alone (no network, no keys), each
+"""Can the rain totals ecobot-mcp reports be trusted at each resolution? Compares, from ecobot-mcp's file alone (no network, no keys), each
 day's rain total worked out three ways for the days where the file holds 5-minute data (the reference: the counter's last reading of
 the day):
 
@@ -25,7 +25,7 @@ from lib.storage import FILE, Storage  # noqa: E402
 from lib.timeutil import day_bounds, local_date  # noqa: E402
 
 TOLERANCE = 0.05  # mm: equal within this
-RAINY = 1.0       # mm: the bot's line between a trace and a rainy day
+RAINY = 1.0       # mm: ecobot-mcp's line between a trace and a rainy day
 RESOLUTIONS = ("5min", "30min", "1day")
 
 
@@ -70,7 +70,7 @@ def compare_rain(storage: Storage, mac: str, tz, today, days_back: int = 88) -> 
             "lower": len(lower),
             "higher": sum(1 for r, o, _ in rainy if o > r + TOLERANCE),
             "no_data": sum(1 for d in days if d not in other),
-            "missed_rainy": sum(1 for r, o, _ in pairs if r >= RAINY > o),      # a rainy day the bot would not list
+            "missed_rainy": sum(1 for r, o, _ in pairs if r >= RAINY > o),      # a rainy day ecobot-mcp would not list
             "invented_rainy": sum(1 for r, o, _ in pairs if o >= RAINY > r),    # a dry-ish day it would call rainy
             "median_ratio": sorted(o / r for r, o, _ in rainy if r)[len(rainy) // 2] if rainy else None,
             "worst": sorted(lower, key=lambda p: p[1] - p[0])[:3],
@@ -89,7 +89,7 @@ def report(res: dict):
         ratio = f"{r['median_ratio']:.2f}" if r["median_ratio"] is not None else "n/a"
         print(f"  {label}: {r['rainy_days']} rainy day(s): {r['same']} the same, {r['lower']} lower, {r['higher']} higher, "
               f"{r['no_data']} without data; median ratio {ratio}")
-        print(f"      a day of 1 mm or more the bot would miss: {r['missed_rainy']};  "
+        print(f"      a day of 1 mm or more ecobot-mcp would miss: {r['missed_rainy']};  "
               f"one it would wrongly list: {r['invented_rainy']}")
         for ref, got, day in r["worst"]:
             print(f"      e.g. {day}: 5-minute {ref:.1f} mm, here {got:.1f} mm")
@@ -99,7 +99,7 @@ def report(res: dict):
         print("30-minute rain totals match the 5-minute ones: no correction needed there.")
     elif thirty["lower"]:
         print(f"30-minute totals are LOWER than the real total on {thirty['lower']} of {thirty['rainy_days']} rainy days "
-              "(they look like averages): the bot's 'exact' label is too generous for rain on those days.")
+              "(they look like averages): ecobot-mcp's 'exact' label is too generous for rain on those days.")
     if daily["rainy_days"] and daily["median_ratio"] is not None:
         print(f"Daily buckets read about {daily['median_ratio']:.0%} of the 5-minute total on a typical rainy day "
               "(they also cover a different 24 hours, so some difference is normal).")
@@ -108,7 +108,7 @@ def report(res: dict):
 def main():
     ap = parser(__doc__)
     ap.add_argument("--days", type=int, default=88)
-    ap.add_argument("--file", type=Path, default=data_dir() / FILE, help="the bot's file (default: ecobot.sqlite in DATA_DIR)")
+    ap.add_argument("--file", type=Path, default=data_dir() / FILE, help="ecobot-mcp's file (default: ecobot.sqlite in DATA_DIR)")
     args = ap.parse_args()
     if not args.file.exists():
         sys.exit(f"{args.file}: not found")

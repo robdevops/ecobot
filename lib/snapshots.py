@@ -1,4 +1,4 @@
-"""The pollen page and the forecast kept in the bot's file (ecobot.sqlite: the `snapshots` and `snapshot_meta` tables, lib/storage), so a
+"""The pollen page and the forecast kept in ecobot-mcp's file (ecobot.sqlite: the `snapshots` and `snapshot_meta` tables, lib/storage), so a
 restart (even at night, when nothing is fetched) starts with the last fetch, and what the sites said is kept as a history.
 
 One row per distinct result: a fetch that finds the same content only moves the row's last_seen forward, so a day of polling

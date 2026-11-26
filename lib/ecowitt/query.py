@@ -31,7 +31,7 @@ from .reads import Held, Store, counts_on, first_minute_on, history_on
 log = logging.getLogger(__name__)
 
 # A chart of up to MINUTE_HOURS is drawn a reading a minute (Home Assistant's "1min"; Ecowitt's cloud has no such cycle). Rather than ask
-# Home Assistant for them at every chart, the bot takes them as they come (at start for the last KEEP_HOURS, then at each new live reading:
+# Home Assistant for them at every chart, ecobot-mcp takes them as they come (at start for the last KEEP_HOURS, then at each new live reading:
 # source.pull_minutes) into the storage's 1min rows, where they are kept ten days (storage.write.MINUTES_KEPT).
 MINUTE_HOURS = 8                # a chart of up to this long is drawn from minutes
 KEEP_HOURS = MINUTE_HOURS + 1   # ... and may end an hour ago: what is older is no use
@@ -159,7 +159,7 @@ class HistoryQuery:
 
     async def _hold_period(self) -> list[tuple[str, datetime, datetime]]:
         """The readings the period is drawn from, at the fewest requests: (resolution, start, end) each, held (what the storage lacks of
-        them asked of Ecowitt first). A short stretch by the minute, where the bot keeps them from its start (Home Assistant's); up to a
+        them asked of Ecowitt first). A short stretch by the minute, where ecobot-mcp keeps them from its start (Home Assistant's); up to a
         day at 5 minutes; up to a month, a few days at 5 minutes where archived (free) and the rest at 30 (a request a week, kept after);
         longer, the 30-minute readings where the storage holds them all (exact local days, true lows and highs, no requests), else
         Ecowitt's daily records (each with its own low and high, a request or two) and the newest days at 30 minutes, so the line reaches
@@ -170,7 +170,7 @@ class HistoryQuery:
         if self.span <= timedelta(hours=MINUTE_HOURS) and f.has_minutes and (
                 first := await f.stored(first_minute_on, f.mac, f.groups, f.epoch(start), f.epoch(end))) is not None \
                 and first <= f.epoch(start) + SLACK_SECONDS:
-            return [(MINUTE, start, end)]   # (kept by the bot: nothing to ask for)
+            return [(MINUTE, start, end)]   # (kept by ecobot-mcp: nothing to ask for)
         if self.span <= timedelta(days=1) and (start.date() >= kept_from("5min", today) or (await f.covered_each(
                 "5min", [(f.epoch(start), f.epoch(end))]))[0]):
             plan = [("5min", start, end)]

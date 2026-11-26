@@ -1,16 +1,16 @@
-"""The air monitor's readings as Home Assistant saw them: the readings of the times the bot did not read the monitor itself, their
+"""The air monitor's readings as Home Assistant saw them: the readings of the times ecobot-mcp did not read the monitor itself, their
 lowest and highest of each 5 minutes (the bands), its states at the end of each minute (the minutes), and its states now (the live
 reading while the monitor does not answer).
 
 AirGradient's cloud keeps one average per 5 minutes and the monitor's own server only the reading of the moment. Home Assistant's
 AirGradient integration reads the monitor every minute and keeps each change (10 days unless its recorder is set otherwise), so it holds
-the time before the bot was reading the monitor, or while it was down, which is read back from it. Its entities are found by the names
+the time before ecobot-mcp was reading the monitor, or while it was down, which is read back from it. Its entities are found by the names
 the integration gives them: sensor.<device>_voc_index, sensor.<device>_pm2_5 ...
 
-A metric of Home Assistant's is taken only where its average over the five minutes agrees with the reading the bot holds for them (the
-source ranked above it): Home Assistant may show another variant of a reading (the monitor's raw PM2.5 where the bot keeps the corrected
+A metric of Home Assistant's is taken only where its average over the five minutes agrees with the reading ecobot-mcp holds for them (the
+source ranked above it): Home Assistant may show another variant of a reading (the monitor's raw PM2.5 where ecobot-mcp keeps the corrected
 one), whose range would not fit the line and whose readings would put a step in it. A metric that disagrees in most of the five minutes
-compared is that: none of its ranges are kept and it fills no gaps. The same rule judges the cloud's readings against the bot's (verdicts).
+compared is that: none of its ranges are kept and it fills no gaps. The same rule judges the cloud's readings against ecobot-mcp's (verdicts).
 """
 
 import math
@@ -22,12 +22,12 @@ from ..ecowitt.homeassistant import parse_time
 from ..ecowitt.live import BUCKET
 from .metrics import STORED
 
-# The bot's metric -> the end of its entity's name in Home Assistant (sensor.<device>_<suffix>) and what it measures, for its unit
+# ecobot-mcp's metric -> the end of its entity's name in Home Assistant (sensor.<device>_<suffix>) and what it measures, for its unit
 ENTITIES = {"pm1": ("pm1", ""), "pm2_5": ("pm2_5", ""), "pm10": ("pm10", ""), "co2": ("carbon_dioxide", ""),
             "voc_index": ("voc_index", ""), "nox_index": ("nox_index", ""),
             "air_temperature": ("temperature", "temperature"), "air_humidity": ("humidity", "")}
 ANCHORS = ("voc_index", "nox_index")   # the names that find the sensor (the other integrations' sensors are not called so)
-# How far Home Assistant's average over five minutes may be from the bot's reading for them and still be the same reading: this much,
+# How far Home Assistant's average over five minutes may be from ecobot-mcp's reading for them and still be the same reading: this much,
 # or REL of the reading, whichever is more
 ABS = {"pm1": 2.0, "pm2_5": 2.0, "pm10": 2.0, "co2": 20.0, "voc_index": 8.0, "nox_index": 1.0, "air_temperature": 0.5, "air_humidity": 3.0}
 REL = 0.15
@@ -37,7 +37,7 @@ MIN_COMPARED = 12    # ... once this many were compared (fewer: each five minute
 
 def find_prefix(states: list[dict], current: dict | None = None) -> tuple[str | None, int]:
     """(the start of the air sensor's entity names, "sensor.open_air_"; None when Home Assistant has none, how many sensors it has).
-    With several, the one whose VOC (or NOx) index is now nearest the bot's own reading."""
+    With several, the one whose VOC (or NOx) index is now nearest ecobot-mcp's own reading."""
     found: dict[str, dict] = {}
     for s in states:
         entity = str(s.get("entity_id", "")) if isinstance(s, dict) else ""
@@ -58,7 +58,7 @@ def find_prefix(states: list[dict], current: dict | None = None) -> tuple[str | 
 
 
 def entity_ids(prefix: str, states: list[dict]) -> dict[str, str]:
-    """{entity id: the bot's metric} for the metrics Home Assistant has an entity for."""
+    """{entity id: ecobot-mcp's metric} for the metrics Home Assistant has an entity for."""
     have = {s.get("entity_id") for s in states if isinstance(s, dict)}
     return {prefix + suffix: name for name, (suffix, _) in ENTITIES.items() if prefix + suffix in have}
 
@@ -115,7 +115,7 @@ def agrees(name: str, mean: float, value: float) -> bool:
 
 def verdicts(found: dict[str, dict[int, float]], rows: list[dict]) -> dict[str, tuple[int, int]]:
     """{metric: (five minutes compared, how many agreed)}: a source's five-minute values ({metric: {bucket start: value}}) against the
-    readings the bot holds for the same five minutes (`rows`), the buckets that hold both."""
+    readings ecobot-mcp holds for the same five minutes (`rows`), the buckets that hold both."""
     readings = {r["ts"]: r for r in rows}
     out = {}
     for name, buckets in found.items():
@@ -130,17 +130,17 @@ def verdicts(found: dict[str, dict[int, float]], rows: list[dict]) -> dict[str, 
 
 
 def same_reading(verdict: tuple[int, int]) -> bool:
-    """Does a metric's verdict say the source gives the reading the bot keeps? It does while too few five minutes were compared to say."""
+    """Does a metric's verdict say the source gives the reading ecobot-mcp keeps? It does while too few five minutes were compared to say."""
     compared, agreed = verdict
     return compared < MIN_COMPARED or agreed >= MATCH * compared
 
 
 def checked(found: dict[str, dict[int, tuple[float, float, float]]], rows: list[dict]) -> tuple[dict[str, dict[int, tuple[float, float]]],
                                                                                              list[dict], dict[str, tuple[int, int]]]:
-    """(the ranges to keep, the readings to fill the bot's gaps with, the verdicts), of the metrics that agree in most of the five minutes
-    compared (`rows`: the readings the bot holds): the ranges of the buckets that hold a reading of the metric (a bucket without one has
-    no line to shade) and whose mean agrees with it (a bucket the bot recorded itself has its own range already: it only counts in the
-    comparison), and where the bot holds no reading of the metric, each five minutes' mean with its lowest and highest as the band."""
+    """(the ranges to keep, the readings to fill ecobot-mcp's gaps with, the verdicts), of the metrics that agree in most of the five minutes
+    compared (`rows`: the readings ecobot-mcp holds): the ranges of the buckets that hold a reading of the metric (a bucket without one has
+    no line to shade) and whose mean agrees with it (a bucket ecobot-mcp recorded itself has its own range already: it only counts in the
+    comparison), and where ecobot-mcp holds no reading of the metric, each five minutes' mean with its lowest and highest as the band."""
     readings = {r["ts"]: r for r in rows}
     verdict = verdicts({name: {b: mean for b, (mean, _, _) in buckets.items()} for name, buckets in found.items()}, rows)
     keep: dict[str, dict[int, tuple[float, float]]] = {}

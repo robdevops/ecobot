@@ -1,4 +1,4 @@
-"""The service's `relate` tool (lib/service/relate.py): rain against one reading over whole days, with the findings of the bot's
+"""The service's `relate` tool (lib/service/relate.py): rain against one reading over whole days, with the findings of the old
 weather_link (pressure, humidity, wind) and air_link (PM2.5, PM10), and a chart that says how to draw it again."""
 
 import dataclasses
@@ -131,7 +131,7 @@ async def test_a_request_that_may_not_fetch_reads_the_air_from_the_file(tmp_path
     fetched = await ask(ctx, reading="pm2.5", chart=True)
     assert ctx.air.fetched == 1
     held = await ask(ctx, {"fetch": False}, reading="pm2.5", chart=True)
-    assert ctx.air.fetched == 1 and held["notes"] == {"missing": "20 older day(s) aren't in the bot's cache yet and were left out"}
+    assert ctx.air.fetched == 1 and held["notes"] == {"missing": "20 older day(s) aren't in ecobot-mcp's cache yet and were left out"}
     assert {k: v for k, v in held.items() if k != "notes"} == fetched   # (the 40 days it holds: those the stand-in has)
     await eco.close()
 

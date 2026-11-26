@@ -15,7 +15,7 @@ weather_now and air_quality without dates (and the gauges' figures), on their en
     air-quality readings (not its own temperature and humidity) have their highs and lows too, from its day rows (air_context_of: each
     with its day, but not its time of day), so a reading it lacks now is there with its figures alone, as the station's are.
 
-`lines` are each device's readings as bullets, worded as the bot's report, "weather now" and plain lookups word them today
+`lines` are each device's readings as bullets, worded as the report, "weather now" and plain lookups word them
 (the old lib/report.py weather_lines, air_lines, reading_lines, ported here with the same words): every reading (none named) in the report's
 layout, else a line for each reading named. `headings` are the report's section headings, with the time of each device's reading. So a
 client's report is current's headings and lines, then forecast's (today) and pollen's.
@@ -177,7 +177,7 @@ def air_lines(air: dict, only: list[str] | None = None) -> list[str]:
 
 
 def reading_lines(now: dict, names: list[str], sides: list[str]) -> list[str]:
-    """Just the readings asked about (lib/series.py's names: "how hot is it": the temperature, indoors and out), as the bot's plain
+    """Just the readings asked about (lib/series.py's names: "how hot is it": the temperature, indoors and out), as the plain
     lookup writes them."""
     get, tag = _getters(now)
     lines = []
@@ -635,7 +635,7 @@ COVERED = {"wind.wind_gust": "wind", "wind.wind_direction": "wind", "rainfall.ra
 
 
 def station_lines(now: dict, readings: list[Reading]) -> list[str]:
-    """The lines of the station's readings named: the bot's plain lookup's (reading_lines) for each reading it words, each on the sides
+    """The lines of the station's readings named: the plain lookup's (reading_lines) for each reading it words, each on the sides
     asked for it (outdoor, indoor; both when it has neither), then a line of its own for each other reading not in one of those."""
     names = list(dict.fromkeys(r.series for r in readings if r.series in WEATHER))
     out = []

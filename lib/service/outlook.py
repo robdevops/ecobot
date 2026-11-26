@@ -1,6 +1,6 @@
 """The `outlook` tool (docs/ecobot-mcp.md 3.3): will it rain in the next few hours. No arguments.
 
-The bot's prompt told the model how to read the station for this (lib/prompt.py, its "outlook" block) and fetched the reading now and
+A client's prompt used to tell its model how to read the station for this, and to fetch the reading now and
 the last 3 hours for it (intent.model_prefetch). Here the same rules are worked out in code, from the station's 5-minute readings of
 the last 3 hours (as Ecowitt.recent reads them) and its reading now, so any model gets the same read:
 

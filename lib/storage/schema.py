@@ -77,7 +77,7 @@ def days_table(kind: str) -> str:
 
 
 class NewerFile(RuntimeError):
-    """The file was written by a newer version of the bot: this one leaves it alone."""
+    """The file was written by a newer version of ecobot-mcp: this one leaves it alone."""
 
 
 def create(db: sqlite3.Connection) -> list[str]:
@@ -85,7 +85,7 @@ def create(db: sqlite3.Connection) -> list[str]:
     schema."""
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version > SCHEMA_VERSION:
-        raise NewerFile(f"its schema is version {version}; this bot knows {SCHEMA_VERSION}")
+        raise NewerFile(f"its schema is version {version}; this ecobot-mcp knows {SCHEMA_VERSION}")
     db.executescript(FIXED)
     db.executescript(SNAPSHOT_TABLES)
     for kind in KINDS:

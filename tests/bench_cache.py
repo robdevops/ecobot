@@ -1,4 +1,4 @@
-"""A data folder shaped like a real station's, for scripts/bench_storage.py where the bot's own files aren't at hand: the storage redesign
+"""A data folder shaped like a real station's, for scripts/bench_storage.py where ecobot-mcp's own files aren't at hand: the storage redesign
 (docs/storage-plan.md) is measured on it between the owner's runs of the benchmark on the real ones. Shaped like the owner's in October
 2026: about 116, 391, 755 and 1457 days held at 5 minutes, 30 minutes, 4 hours and a day, 22 readings with the lows and highs Ecowitt
 gives (2.4 million values), 184 days of AirGradient readings at 5 minutes and 4 days of the live readings' ranges, with ten days of
@@ -79,7 +79,7 @@ def requests(days: dict[str, int], now: float):
 
 
 def live_ranges(days: float, now: float) -> dict:
-    """The lowest and highest the bot saw in each 5 minutes (from Home Assistant's readings) of the outdoor readings and the pressure:
+    """The lowest and highest ecobot-mcp saw in each 5 minutes (from Home Assistant's readings) of the outdoor readings and the pressure:
     {series: {5-minute mark: (readings, lowest, highest)}}."""
     found: dict = {}
     for group in ("outdoor", "pressure"):

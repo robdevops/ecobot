@@ -1,6 +1,6 @@
-"""How long the bot's typical requests take on a copy of its file, ecobot.sqlite: the yardstick for the storage redesign
+"""How long ecobot-mcp's typical requests take on a copy of its file, ecobot.sqlite: the yardstick for the storage redesign
 (docs/storage-plan.md, step 0). Nothing is asked of Ecowitt or AirGradient (a request the copy cannot answer is counted instead), and the
-bot's own file is only read: the copy is made with SQLite's backup, so the bot can keep running. Run it where the bot runs, with its
+ecobot-mcp's own file is only read: the copy is made with SQLite's backup, so ecobot-mcp can keep running. Run it where ecobot-mcp runs, with its
 settings:
 
     sudo docker compose exec ecobot-mcp python scripts/bench_storage.py
@@ -54,7 +54,7 @@ class Offline:
 
 
 def copy(source: Path, target: Path):
-    """A consistent copy of a SQLite file, even while the bot writes to it."""
+    """A consistent copy of a SQLite file, even while ecobot-mcp writes to it."""
     src = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
     dst = sqlite3.connect(target)
     try:
@@ -65,13 +65,13 @@ def copy(source: Path, target: Path):
 
 
 def settings(folder: Path) -> Config:
-    """The bot's settings with its files in `folder`, and nothing that would reach the network (Home Assistant, the sensor itself)."""
+    """ecobot-mcp's settings with its files in `folder`, and nothing that would reach the network (Home Assistant, the sensor itself)."""
     os.environ["DATA_DIR"] = str(folder)
-    for name in ("BOT_TELEGRAM_TOKEN", "MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY"):   # (never used: nothing is asked of them)
+    for name in ("MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY"):   # (never used: nothing is asked of them)
         os.environ.setdefault(name, "bench")
     cfg = Config.from_env()   # (ecobot-mcp's settings: the sources)
     location = None
-    if cfg.storage_path.exists():   # the air sensor the bot's file holds
+    if cfg.storage_path.exists():   # the air sensor ecobot-mcp's file holds
         db = sqlite3.connect(f"file:{cfg.storage_path}?mode=ro", uri=True)
         found = db.execute("SELECT device FROM sensors WHERE kind = 'air' ORDER BY id LIMIT 1").fetchone()
         db.close()
@@ -111,14 +111,14 @@ def stations(storage) -> list[tuple[str, int, int]]:
 
 
 def service(**sources):
-    """The service's tools over these sources (lib/service), as the bot and the model call them."""
+    """The service's tools over these sources (lib/service), as ecobot-mcp and the model call them."""
     from lib.service import Service
     from lib.service.context import Context
     return Service.of(Context(**sources, tz=next(iter(sources.values())).tz))
 
 
 def asking(tools, name: str, args: dict):
-    """A request: the service's `name` called with `args`, as the bot asks for its charts (as drawn)."""
+    """A request: the service's `name` called with `args`, as ecobot-mcp asks for its charts (as drawn)."""
     return lambda: tools[name].call(args, {"chart_points": "drawn"})
 
 
@@ -138,7 +138,7 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, int]]:
         eco.api, eco.tz = Offline(), tz
         held = stations(eco.storage)
         eco.mac = held[0][0] if held else ""
-        eco.has_minutes = any(n for _, _, n in held)   # Home Assistant's minutes, which the bot draws a chart of a few hours from
+        eco.has_minutes = any(n for _, _, n in held)   # Home Assistant's minutes, which ecobot-mcp draws a chart of a few hours from
         print(f"Ecowitt {eco.mac}: {held[0][1] if held else 0:,} rows of readings, {held[0][2] if held else 0:,} minutes, {Archive(eco).held()} "
               f"(opened in {opened:.1f} s)")
         tools = service(eco=eco)
@@ -157,7 +157,7 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, int]]:
         from lib.gauge_sheet import call as gauges_call, sheet
         from lib.service.context import Context
         from lib.service.current import CurrentTool
-        current = CurrentTool(Context(eco=eco)).tool()   # (the bot's gauges: current with context, laid out bot-side)
+        current = CurrentTool(Context(eco=eco)).tool()   # (ecobot-mcp's gauges: current with context)
 
         async def dashboard():
             return sheet(json.loads(await current.call(gauges_call(), None)))
@@ -186,14 +186,14 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, int]]:
 
 def main():
     p = parser(__doc__)
-    p.add_argument("--data", type=Path, default=data_dir(), help="the bot's data folder (default: DATA_DIR, as the bot finds it)")
+    p.add_argument("--data", type=Path, default=data_dir(), help="ecobot-mcp's data folder (default: DATA_DIR, as ecobot-mcp finds it)")
     p.add_argument("--repeat", type=int, default=3, help="runs of each request; the time is their median (default 3)")
     p.add_argument("--tz", help="the station's time zone, e.g. Australia/Melbourne (default: TZ, else the computer's); it sets the days")
     args = p.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     found = [name for name in FILES if (args.data / name).exists()]
     if not found:
-        sys.exit(f"No history files in {args.data}: give the bot's data folder with --data")
+        sys.exit(f"No history files in {args.data}: give ecobot-mcp's data folder with --data")
     tz = ZoneInfo(args.tz) if args.tz else local_tz()
     with tempfile.TemporaryDirectory(prefix="ecobot-bench-") as tmp:
         folder = Path(tmp)
@@ -207,7 +207,7 @@ def main():
     for label, ms, asked in rows:
         print(f"| {label} | {asked} | {ms:,.0f} ms |")
     print("\nAsked of the network: what the copy could not answer. For a chart that is the newest hour or so, still settling, which the "
-          "running bot has fetched lately; here it is asked of nothing and answered at once. The 3-hour chart is drawn from the minutes where "
+          "running ecobot-mcp has fetched lately; here it is asked of nothing and answered at once. The 3-hour chart is drawn from the minutes where "
           "the file holds them (Home Assistant's), else from the 5-minute readings.")
 
 

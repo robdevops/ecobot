@@ -1,5 +1,5 @@
 """The service's `scan` tool (lib/service/scan.py): each air reading against every weather reading over whole days, with the findings of
-the bot's air_scan, at most 400 days, and a chart of the strongest pair that says how to draw it again."""
+the old air_scan, at most 400 days, and a chart of the strongest pair that says how to draw it again."""
 
 import json
 import time

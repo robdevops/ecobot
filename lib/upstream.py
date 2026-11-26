@@ -1,4 +1,4 @@
-"""A client's one connection to an MCP server here, kept by one supervisor task (Upstream): the bot's to ecobot-mcp (BOT_MCP_URL,
+"""A client's one connection to an MCP server here, kept by one supervisor task (Upstream): irrigation-mcp's to ecobot-mcp (IRRIGATION_ECOBOT_MCP_URL,
 docs/ecobot-mcp.md 3.8) and to irrigation-mcp (BOT_IRRIGATION_MCP_URL, 3.9), and irrigation-mcp's to ecobot-mcp. Each:
 the protocol revision is pinned (2026-07-28, so a proxy's 502 during a restart can't land it on the older revision, which can't listen)
 and discovered by hand for the instructions; when the connection fails or the listen is lost, the client is dropped and a new one built

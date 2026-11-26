@@ -1,5 +1,5 @@
-"""The two servers run without the bot: what ecobot-mcp and irrigation-mcp import, by any route (a module's imports anywhere in it,
-function-local ones and the dynamic ones named in DYNAMIC), never reaches the bot's modules, Telegram or the model client, and
+"""The two servers run without a chat or model client: what ecobot-mcp and irrigation-mcp import, by any route (a module's imports anywhere in it,
+function-local ones and the dynamic ones named in DYNAMIC), never reaches a chat or model client (or a module of the removed bot), and
 importing their entry points in a fresh interpreter loads none of them."""
 
 import ast

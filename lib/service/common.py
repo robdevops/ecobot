@@ -2,7 +2,7 @@
 the shape of what it answers.
 
 A tool is a ServiceTool: its handler is `handler(args, meta)`, the arguments as sent and the request's metadata (`request_meta`), and
-nothing else about the question. In the bot, `ServiceTool.tool()` makes it a lib.tools.Tool that reads only `Turn.meta` (and
+nothing else about the question. `ServiceTool.tool()` makes it a lib.tools.Tool that reads only `Turn.meta` (and
 `Turn.ahead`, the old name for a background request); over MCP, `meta` is the request's `_meta`.
 
 Every answer is compact JSON (`answer`), and starts the same way:
@@ -40,7 +40,7 @@ from ..tools import Tool, Turn, json_result
 # ---------- the request's metadata ----------
 CHART_POINTS = 150        # the most points a line of a chart is sent in, unless the request asks for more (3.7): enough for a model to redraw
 MAX_CHART_POINTS = 500    # the most a request may ask for: today's drawing budget (lines.POINT_BUDGET)
-AS_DRAWN = "drawn"        # chart_points asking for every point as the chart was drawn, unbucketed: what the bot asks for, so its pictures
+AS_DRAWN = "drawn"        # chart_points asking for every point as the chart was drawn, unbucketed: what the service's own pictures ask for, so they
                           # are as they were (a chart of each day's average over years has more points than the budget)
 NORMAL, BACKGROUND = "normal", "background"   # priority: someone is waiting, or the work is ahead of need (a chart drawn ahead)
 META = {"chart_points": CHART_POINTS, "fetch": True, "priority": NORMAL}   # each key a handler reads, with its default
@@ -50,7 +50,7 @@ def request_meta(raw: dict | None = None) -> dict:
     """The request's metadata as a handler reads it: every key in META, each checked, defaulted where missing or not understood; any
     other key passed on as it came.
       - chart_points: the most points a chart's line is sent in, a whole number from 2 to MAX_CHART_POINTS (default CHART_POINTS), or
-        AS_DRAWN ("drawn"): every point, as the chart was drawn (a client that draws for itself, as the bot does);
+        AS_DRAWN ("drawn"): every point, as the chart was drawn (a client that draws for itself);
       - fetch: False answers from what is held, fetching nothing that is missing (default True);
       - priority: "background" for work nobody is waiting on (a chart drawn ahead), whose requests wait their turn; else "normal"."""
     raw = dict(raw) if isinstance(raw, dict) else {}
@@ -67,7 +67,7 @@ def request_meta(raw: dict | None = None) -> dict:
 
 
 def turn_meta(turn: Turn | None) -> dict:
-    """The metadata of a question the bot asks: Turn.meta, a chart drawn ahead (Turn.ahead) being a background request."""
+    """The metadata of a question: Turn.meta, a chart drawn ahead (Turn.ahead) being a background request."""
     if turn is None:
         return request_meta()
     raw = dict(turn.meta)
@@ -138,7 +138,7 @@ class ServiceTool:
             return e.text
 
     def tool(self) -> Tool:
-        """The tool as the bot's Tools runs it: its handler reads only the Turn's metadata (turn_meta)."""
+        """The tool as lib.tools.Tools runs it: its handler reads only the Turn's metadata (turn_meta)."""
         async def handle(args: dict, turn: Turn | None = None) -> str:
             return await self.call(args, turn_meta(turn))
         return Tool(self.name, self.description, self.parameters, handle)
@@ -335,7 +335,7 @@ def with_charts(charts: list[specs.Chart], tz: tzinfo, meta: dict | None = None)
 
 def charts_as_titles(out: dict, note: str) -> dict:
     """An answer with its charts' data left out: `charts` as [{title, period}] and `chart_note` as `note` (the chart goes another way:
-    the bot sends it, or the service attaches its image), everything else as it is. An answer without charts as it is."""
+    the client sends it, or the service attaches its image), everything else as it is. An answer without charts as it is."""
     if not isinstance(out.get("charts"), list):
         return out
     told = {**out, "charts": [{"title": c.get("title"), "period": c.get("period")} for c in out["charts"] if isinstance(c, dict)]}

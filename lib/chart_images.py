@@ -1,5 +1,5 @@
-"""Chart images: a chart's JSON (schemas/chart.json) drawn as a PNG by the bot's renderer (lib/charts.render_data, Pillow), for the
-service's tools when a client asks for images (docs/ecobot-mcp.md 3.7) and for the bot's interface to the service (lib/weather.py).
+"""Chart images: a chart's JSON (schemas/chart.json) drawn as a PNG by the renderer (lib/charts.render_data, Pillow), for the
+service's tools when a client asks for images (docs/ecobot-mcp.md 3.7).
 
 Pillow is optional on the service (requirements-charts.txt): nothing here imports it, nor lib.charts or lib.draw, until the first image
 is asked for (`renderer`). Without it `renderer()` is None, said once as a warning, and the service answers with the charts' JSON as if
@@ -9,7 +9,7 @@ no image had been asked for, with UNAVAILABLE_NOTE.
     which lib.charts reads when it draws);
   - `wanted(meta, query)`: does a tool call want images, and how: the request's `_meta` `chart_image` ("png", "link" or "none"),
     else the connection's MCP URL's query (`?charts=png`, `?charts=link`), else not: "png", "link" or None;
-  - `render(chart, tz, dark)`: (PNG, dark), as the bot draws it; dark None: as DARKMODE says now (theme.dark_now);
+  - `render(chart, tz, dark)`: (PNG, dark), as the renderer draws it; dark None: as DARKMODE says now (theme.dark_now);
   - `Links`: the PNGs of link mode, kept in memory for their lifetime (MCP_CHART_LINK_HOURS) under a random id each, at most
     LINKS_MOST of them and LINKS_BYTES in all (the oldest dropped first), served at GET /charts/<id>.png (lib/mcp_server.py) and gone
     at a restart; `markdown(title, url)`: the image as the model puts it in its reply."""
@@ -75,7 +75,7 @@ def asked_dark(meta: dict | None) -> bool | None:
 
 
 def render(chart: dict, tz: tzinfo, dark: bool | None = None) -> tuple[bytes, bool]:
-    """(PNG, dark) of a chart given as its JSON, as the bot draws it (lib.charts.render_data). Raises ImportError without Pillow,
+    """(PNG, dark) of a chart given as its JSON, as the renderer draws it (lib.charts.render_data). Raises ImportError without Pillow,
     ValueError for JSON that isn't a chart."""
     charts = renderer()
     if charts is None:

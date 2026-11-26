@@ -91,7 +91,7 @@ class Ecowitt(Source):
     def __init__(self, cfg: Config, transport=None, ha_transport=None, storage: Storage | None = None):
         """transport: for Ecowitt's cloud, ha_transport: for Home Assistant (a test's stand-ins). Where the readings come from follows the
         settings (config.ecowitt_source): Home Assistant, Ecowitt's cloud, or Home Assistant with the cloud to make up what it lacks.
-        storage: the bot's file (lib/storage), opened at start; without one the station opens it itself. Either way the station closes it."""
+        storage: ecobot-mcp's file (lib/storage), opened at start; without one the station opens it itself. Either way the station closes it."""
         self.tz = cfg.tz
         self.storage = storage or Storage(cfg.storage_path, cfg.tz)
         self.fetches = Recent()   # the newest fetches, read from the storage while fresh
@@ -369,7 +369,7 @@ class Ecowitt(Source):
             marks = await self.storage.write(lambda w: w.put_ranges(self.mac, found))
         except Exception as e:
             self.ha.trouble.failed("history for the charts' ranges", f"{type(e).__name__}: {e}",
-                                   "the ranges come from the bot's own readings")
+                                   "the ranges come from ecobot-mcp's own readings")
             self._ha_ok = False
             return
         self.ha.trouble.ok()
@@ -415,7 +415,7 @@ class Ecowitt(Source):
                 await safely(callback)
 
     async def pull_minutes(self):
-        """Take Home Assistant's minute readings since the newest held (the last KEEP_HOURS at first, or after the bot was down) into the
+        """Take Home Assistant's minute readings since the newest held (the last KEEP_HOURS at first, or after ecobot-mcp was down) into the
         minute store, for the short charts. A failure is logged once; the charts then use the 5-minute readings."""
         now = time.time()
         since = max(await self.storage.read(newest_minute_on, self.mac) or 0, now - KEEP_HOURS * 3600)

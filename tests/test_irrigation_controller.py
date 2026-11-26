@@ -1,6 +1,6 @@
-"""irrigation-mcp's controller code, without Telegram (step 8b moved it out of the bot): the Tuya client (signed requests, the token,
+"""irrigation-mcp's controller code: the Tuya client (signed requests, the token,
 its errors), the daily check (rain measured or likely, the battery, its days) and the watchdog that closes the valve after a run.
-(The bot's menu and buttons, which call irrigation-mcp, are tests/test_irrigation.py; the server's tools tests/test_irrigation_mcp.py.)"""
+(The server's tools are tests/test_irrigation_mcp.py.)"""
 
 import asyncio
 import hashlib
@@ -207,7 +207,7 @@ async def test_the_bots_own_pause_from_yesterday_is_started_again_and_one_someon
     m.station = Station(0, 0)
     await m.check(NOW + timedelta(days=2))                                               # dry: it lapses
     m.station = Station(0, 3)
-    await m.check(NOW + timedelta(days=4))                                               # a 24h someone set (the bot's is days old)
+    await m.check(NOW + timedelta(days=4))                                               # a 24h someone set (the check's own is days old)
     assert len(device.commands) == 3 and len(sent) == 2
 
 

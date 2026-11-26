@@ -2,7 +2,7 @@
 transport with a fake controller (and once with the fake Tuya cloud, signed); the watchdog closing a run after a restart; the daily check
 asking ecobot-mcp (in memory) for the rain and the forecast, pausing on either and leaving a delay someone set, and going on the forecast
 last read when ecobot-mcp can't be reached; its alerts heard through a listen; the token and the
-Host checked over HTTP; `python -m irrigation_mcp` starting and stopping; and what it imports (no Telegram, no model client, no Pillow,
+Host checked over HTTP; `python -m irrigation_mcp` starting and stopping; and what it imports (no chat or model client, no Pillow,
 no source)."""
 
 import asyncio
@@ -386,7 +386,7 @@ async def test_python_m_irrigation_mcp_starts_answers_with_the_generated_token_a
     await asker
     assert answered["status"]["battery_percentage"] == 100 and answered["status"]["paused"] is False
     assert f"the token in {tmp_path / 'auth_token'}" in caplog.text and "ecobot-mcp at http://127.0.0.1:9/mcp isn't reachable yet" in caplog.text
-    assert "the daily check at 18:00" in caplog.text and "Telegram" not in caplog.text
+    assert "the daily check at 18:00" in caplog.text
     assert (tmp_path / "irrigation.lock").exists()
 
 
@@ -466,12 +466,12 @@ def test_it_sends_ecobot_mcp_the_first_of_auth_tokens_else_the_generated_one(tmp
 
 # ---------- what it imports ----------
 NOT_IRRIGATIONS = ("telegram", "openai", "PIL", "lib.ecowitt", "lib.airgradient", "lib.forecast", "lib.pollen", "lib.storage",
-                   "lib.service", "lib.mcp_server", "lib.bot", "lib.weather", "lib.charts", "lib.draw", "lib.gauges", "ecobot_mcp", "ecobot")
+                   "lib.service", "lib.mcp_server", "lib.charts", "lib.draw", "lib.gauges", "ecobot_mcp", "ecobot")
 
 
-def test_irrigation_mcp_imports_no_telegram_no_model_client_no_pillow_and_no_source(tmp_path):
+def test_irrigation_mcp_imports_no_chat_or_model_client_no_pillow_and_no_source(tmp_path):
     """irrigation-mcp runs beside the valve on its own packages: building everything it runs (the server, the watchdog, the check, its
-    state, its client of ecobot-mcp, the HTTP app) imports nothing of the bot's, nothing that draws, and none of ecobot-mcp's sources,
+    state, its client of ecobot-mcp, the HTTP app) imports no chat or model client, nothing that draws, and none of ecobot-mcp's sources,
     readings file or tools."""
     import subprocess
     import sys

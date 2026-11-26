@@ -384,14 +384,14 @@ async def test_a_call_asking_for_images_gets_each_chart_as_a_png_after_the_figur
         got = await client.call_tool("summary", CHARTED, meta={"chart_image": "png"})
         dark = await client.call_tool("summary", CHARTED, meta={"chart_image": "png", "chart_dark": True})
     told = json.loads(got.content[0].text)
-    whole = json.loads(await world.service["summary"].call(CHARTED, {"chart_points": AS_DRAWN}))   # (drawn from every point, as the bot's)
+    whole = json.loads(await world.service["summary"].call(CHARTED, {"chart_points": AS_DRAWN}))   # (drawn from every point, as ecobot-mcp's)
     assert told["charts"] == [{"title": c["title"], "period": c["period"]} for c in whole["charts"]]
     assert told["chart_note"] == chart_images.IMAGE_NOTE and told["caption"] == whole["caption"]
     assert {k: v for k, v in told.items() if k not in ("charts", "chart_note")} == {k: v for k, v in whole.items() if k not in ("charts", "chart_note")}
     assert got.meta[chart_images.CHARTS_META] == whole["charts"] and got.meta[chart_images.DARK_META] is False
     (png,) = images_of(got)
     assert got.content[1].mime_type == "image/png" and png.startswith(b"\x89PNG")
-    assert png == charts.render_data(whole["charts"][0], TZ, dark=False)   # the bot's renderer, byte for byte
+    assert png == charts.render_data(whole["charts"][0], TZ, dark=False)   # ecobot-mcp's renderer, byte for byte
     assert dark.meta[chart_images.DARK_META] is True and images_of(dark)[0] == charts.render_data(whole["charts"][0], TZ, dark=True)
     assert not got.is_error and COMPLETE not in got.meta
 
@@ -436,9 +436,9 @@ def test_images_are_wanted_per_call_else_per_connection():
     assert chart_images.asked_dark({"chart_dark": True}) is True and chart_images.asked_dark({"chart_dark": "yes"}) is None
 
 
-def test_the_service_imports_no_pillow_until_an_image_is_asked_for_and_no_telegram_ever(tmp_path):
+def test_the_service_imports_no_pillow_until_an_image_is_asked_for_and_no_chat_client_ever(tmp_path):
     """Importing the server and building its app (as python -m ecobot_mcp does) imports neither Pillow nor the renderer, nor the
-    Telegram library: the service knows nothing of Telegram."""
+    chat library: the service knows nothing of any chat client."""
     code = ("import sys, ecobot_mcp.__main__; from zoneinfo import ZoneInfo; from lib.mcp_server import EcobotServer, http_app; "
             "from lib.service.context import Context; http_app(EcobotServer(Context(tz=ZoneInfo('UTC'))), tokens=('t',)); "
             "print(sorted(m for m in sys.modules if m.split('.')[0] in ('PIL', 'telegram') or m in ('lib.charts', 'lib.draw', 'lib.gauges')))")

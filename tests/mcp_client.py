@@ -1,4 +1,4 @@
-"""The servers' tests talk to ecobot-mcp and irrigation-mcp through the SDK's MCP client, as any MCP client does (nothing of the bot):
+"""The servers' tests talk to ecobot-mcp and irrigation-mcp through the SDK's MCP client, as any MCP client does (nothing of any chat client):
 
     async with serve_ecobot(Context(eco=eco, tz=TZ), alert_log) as mcp:        # the real server in memory, over a test's Context
         out = await mcp.call("summary", {"readings": ["temperature"], "period": "1d"})     # a tool's answer as data

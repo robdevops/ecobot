@@ -3,7 +3,7 @@ sensors are which kind. The schema (schema.py) is generated from it; a reading a
 
 A reading's column is named as its source names it: Ecowitt's field ("temperature", "1_hour"), the AirGradient code's metric ("pm2_5"). So
 the code keeps naming a series "outdoor.temperature". A row holds each reading's value and its lowest and highest (`_lo`, `_hi`): Ecowitt's
-own lows and highs of its 30-minute and coarser readings, and the bands the bot and Home Assistant add. A day row holds each reading's mean,
+own lows and highs of its 30-minute and coarser readings, and the bands ecobot-mcp and Home Assistant add. A day row holds each reading's mean,
 lowest and highest, and when those happened.
 """
 

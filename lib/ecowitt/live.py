@@ -1,11 +1,11 @@
-"""The station's lowest and highest in each 5-minute stretch, from the live readings the bot takes itself.
+"""The station's lowest and highest in each 5-minute stretch, from the live readings ecobot-mcp takes itself.
 
 Ecowitt's own 5-minute history gives one number per reading and no range (its lows and highs come only with the 30-minute readings and
 longer). Home Assistant gets a shaded range on its recent charts by keeping every reading the station reports and, every 5 minutes, boiling
-them down to a mean, a lowest and a highest. The bot does the same: each live reading (about one a minute: Ecowitt's real_time, which
+them down to a mean, a lowest and a highest. ecobot-mcp does the same: each live reading (about one a minute: Ecowitt's real_time, which
 the keep-warm already fetches) is counted in the 5-minute stretch around the nearest mark (source.LiveMarks), and once a stretch has
 storage.write.MIN_READINGS or more its lowest and highest are written to that 5-minute reading's band (storage.write.Writer.put_ranges), which the
-chart of it is shaded between. Nothing here is ever asked of Ecowitt: it only has the readings the bot saw.
+chart of it is shaded between. Nothing here is ever asked of Ecowitt: it only has the readings ecobot-mcp saw.
 """
 
 from ..series import derives_range

@@ -1,5 +1,5 @@
 """The air sensor's ranges read back from Home Assistant: its entities found by name, its states told as 5-minute lows and highs, and only
-those kept whose average agrees with the bot's reading."""
+those kept whose average agrees with ecobot-mcp's reading."""
 import logging
 import time
 from datetime import datetime, timezone
@@ -40,7 +40,7 @@ def test_states_become_each_five_minutes_mean_lowest_and_highest_and_a_bucket_st
     mean, lo, hi = got["voc_index"][t0]
     assert (lo, hi) == (90.0, 120.0) and abs(mean - (100 * 60 + 120 * 180 + 90 * 60) / 300) < 1e-9
     assert t0 + 300 not in got["voc_index"]                                         # still going at now: left for the next time
-    assert got["air_temperature"][t0] == (20.0, 20.0, 20.0)                          # 68°F in the bot's °C; it never changed
+    assert got["air_temperature"][t0] == (20.0, 20.0, 20.0)                          # 68°F in ecobot-mcp's °C; it never changed
 
 
 def test_only_agreeing_buckets_of_agreeing_metrics_are_kept_and_the_bots_own_range_stays():
@@ -49,10 +49,10 @@ def test_only_agreeing_buckets_of_agreeing_metrics_are_kept_and_the_bots_own_ran
              "pm2_5": {t * 300: (11.0, 9.0, 13.0) for t in range(20)},                                 # raw PM2.5: twice the reading
              "co2": {t * 300: (450.0, 440.0, 460.0) for t in range(20)}}                              # no reading to compare: no line
     keep, fill, verdict = checked(found, rows)
-    assert set(keep["voc_index"]) == {t * 300 for t in range(20)} - {0, 1500}         # the bot's own and the one that is off are not
+    assert set(keep["voc_index"]) == {t * 300 for t in range(20)} - {0, 1500}         # ecobot-mcp's own and the one that is off are not
     assert "pm2_5" not in keep and verdict["pm2_5"] == (20, 0) and verdict["voc_index"] == (20, 19)
     assert keep["co2"] == {} and verdict["co2"] == (0, 0)
-    assert fill == [{"ts": t * 300, "co2": 450.0, "_range": {"co2": (440.0, 460.0)}} for t in range(20)]   # what the bot lacks of an agreeing metric
+    assert fill == [{"ts": t * 300, "co2": 450.0, "_range": {"co2": (440.0, 460.0)}} for t in range(20)]   # what ecobot-mcp lacks of an agreeing metric
 
 
 class FakeHA:
@@ -105,13 +105,13 @@ async def test_the_voc_index_gets_home_assistants_ranges_and_the_raw_pm25_none_s
     # gaps of it: said once, with the fix. Its other metrics (CO2 ...) fill the cells Home Assistant has nothing for
     raw = lambda ts: 2 * (5 + datetime.fromtimestamp(ts, timezone.utc).hour % 12)
     assert all(r["pm2_5"] == raw(r["ts"]) and r["co2"] == 450 for r in rows)
-    assert caplog.text.count("the cloud's PM2.5 isn't the reading the bot keeps") == 1 and "set the monitor's PM2.5 correction" in caplog.text
+    assert caplog.text.count("the cloud's PM2.5 isn't the reading ecobot-mcp keeps") == 1 and "set the monitor's PM2.5 correction" in caplog.text
     short, _, _ = await air.rows(*(naive_local(t, air.tz) for t in (now - 6 * 3600, now - 600)))   # a few hours: Home Assistant's minutes
     assert len(short) > 300 and {r["voc_index"] for r in short} == {80.0, 120.0} and not any("_range" in r for r in short)
     assert all(r["pm2_5"] == raw(r["ts"]) for r in short)
     await air.import_history()                                                         # the next time: the last hours, nothing said again
     await air.rows(*(naive_local(t, air.tz) for t in (now - 60 * 3600, now - 600)))   # (another day checked against the cloud)
-    assert caplog.text.count("isn't the reading the bot keeps") == 1 and caplog.text.count("Backfill HA (AirGradient)") == 1
+    assert caplog.text.count("isn't the reading ecobot-mcp keeps") == 1 and caplog.text.count("Backfill HA (AirGradient)") == 1
     await air.close()
 
 
