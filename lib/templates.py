@@ -8,6 +8,8 @@ import copy
 import hashlib
 from collections.abc import Collection
 
+from .alerts.pictures import day_chart
+
 CAPABILITIES = "\U0001f514 Help & Alerts"  # answered with what the bot can do, then the /alerts status
 IRRIGATION = "\U0001f331 Irrigation"     # answered with the irrigation controller's status and buttons (only with irrigation-mcp: BOT_IRRIGATION_MCP_URL)
 STATUS = "Status"                         # the Status button's sentence: the gauges, then the `report` prompt's answer (Bot.status)
@@ -21,16 +23,11 @@ ROWS = [[(CAPABILITIES, "What can you do?"), ("\U0001f4cb Status", STATUS), ("\U
 SENTENCES = dict(button for row in ROWS for button in row)
 
 
-def _day_chart(*readings: str) -> tuple[str, dict]:
-    """summary of these readings (the service's words) over the last day, as a chart."""
-    return "summary", {"readings": list(readings), "period": "1d", "chart": True}
-
-
 # Each chart button's sentence -> the fixed call to ecobot-mcp it is (the alerts' charts are some of the same: lib/alerts/pictures.py)
-CALLS = {"Rain chart 1d": _day_chart("rain"), "Weather chart 1d": _day_chart("weather"),
-         "Temperature chart 1d": _day_chart("temperature"), "Humidity chart 1d": _day_chart("humidity"),
-         "Air quality all metrics 1d": _day_chart("air"), "Particulates chart 1d": _day_chart("pm2.5", "pm10", "pm1"),
-         "Wind chart 1d": _day_chart("wind")}
+CALLS = {"Rain chart 1d": day_chart("rain"), "Weather chart 1d": day_chart("weather"),
+         "Temperature chart 1d": day_chart("temperature"), "Humidity chart 1d": day_chart("humidity"),
+         "Air quality all metrics 1d": day_chart("air"), "Particulates chart 1d": day_chart("pm2.5", "pm10", "pm1"),
+         "Wind chart 1d": day_chart("wind")}
 # The same buttons as commands, named as their buttons are ("📋 Status" is /status, "🏭 Air Quality" is /air_quality)
 COMMANDS = {label.split(" ", 1)[1].lower().replace(" ", "_"): question for label, question in SENTENCES.items() if label != CAPABILITIES}
 # The bot's own command menu (the "/" button beside the message box): command, description. ecobot-mcp's prompts join it, a command

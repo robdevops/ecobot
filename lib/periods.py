@@ -7,13 +7,12 @@ none when it lists none (but a 🔄, "pd:reload", that draws it again when its p
 (Bot.on_period_button); what drew each chart is remembered for that (Charted). A chart remembered by its question (sent before every
 chart carried its drawn_by) answers that it is out of date."""
 
-import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 
-
+from .alerts.pictures import call_key
 
 PREFIX = "pd:"
 REMEMBERED = 300   # charts whose call is kept, newest first to stay
@@ -25,11 +24,6 @@ RELOAD = "reload"   # the 🔄 under a chart with no periods to offer whose peri
 def period_in(data: str | None) -> str | None:
     """The period a button under a service's chart asks for ("pd:7d" -> "7d")."""
     return data.removeprefix(PREFIX) if data and data.startswith(PREFIX) and data != PREFIX else None
-
-
-def call_key(tool: str, arguments: dict) -> str:
-    """A call as the picture cache keys it: the tool and its arguments as canonical JSON (sorted keys)."""
-    return f"{tool} {json.dumps(arguments, sort_keys=True, ensure_ascii=False, separators=(',', ':'))}"
 
 
 def drawn_key(drawn_by: dict | None) -> str | None:

@@ -27,10 +27,10 @@ from lib.mcp_server import (ALERTS_TEMPLATE, ALERTS_URI, COMPLETE, PROMPTS, Ecob
 from lib.service.common import AS_DRAWN, CHART_POINTS
 from lib.service.context import Context
 from lib.service.names import Catalogue
-from tests import evalkit, evalworld
+from tests import evalbase, evalworld
 
 TZ = ZoneInfo("Australia/Melbourne")
-EXPECT = evalkit.load_service_cases()
+EXPECT = evalbase.load_service_cases()
 
 
 def at_eval_now(patch: pytest.MonkeyPatch):
@@ -58,7 +58,7 @@ async def world(tmp_path, eval_archive, monkeypatch):
 
 def first_call(tool: str) -> dict:
     """An argument set the evals expect of this tool (any accepted call will do)."""
-    return next((args for expect in EXPECT.values() for name, args in evalkit.example_calls(expect) if name == tool), {})
+    return next((args for expect in EXPECT.values() for name, args in evalbase.example_calls(expect) if name == tool), {})
 
 
 # ---------- tools ----------
@@ -656,20 +656,15 @@ def test_the_request_base_reads_the_proxy_s_headers_else_the_request_s_own():
     assert request_base(None) == ""
 
 
-async def test_the_bot_on_a_link_connection_still_gets_its_pictures_and_its_charts_json(world):
-    from lib.weather import RemoteWeather
+async def test_a_client_that_asks_for_pictures_or_the_json_on_a_link_connection_gets_each(world):
+    from lib.chart_images import CHARTS_META
+    from tests.mcp_client import McpClient, images_of
     from tests.test_mcp_listen import Serving, free_port
     port = free_port()
     async with Serving(mcp_server.http_app(world, tokens=("t",)), port):
-        remote = RemoteWeather(f"http://127.0.0.1:{port}/mcp?charts=link", "t")
-        task = asyncio.create_task(remote.run())
-        try:
-            await asyncio.wait_for(remote.listening.wait(), 20)
-            out, image = await remote.chart_image("summary", CHARTED, {"chart_dark": False})
-            plain = json.loads(await remote.call_text("summary", CHARTED))
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-            await remote.close()
-    assert image.png == charts.render_data(out["charts"][0], TZ, dark=False) and "url" not in out["charts"][0]
+        async with McpClient(f"http://127.0.0.1:{port}/mcp?charts=link", token="t") as mcp:
+            result = await mcp.result("summary", CHARTED, {"chart_image": "png", "chart_dark": False})
+            plain = await mcp.call("summary", CHARTED, {"chart_image": "none"})
+    (png,) = images_of(result)
+    assert png == charts.render_data(result.meta[CHARTS_META][0], TZ, dark=False) and "url" not in result.meta[CHARTS_META][0]
     assert "panels" in plain["charts"][0] and "url" not in plain["charts"][0] and len(world.chart_links) == 0

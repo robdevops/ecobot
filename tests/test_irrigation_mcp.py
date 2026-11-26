@@ -31,7 +31,7 @@ from lib.mcp_http import Uvicorn, server_config
 from lib.timeutil import now_local
 from lib.upstream import VERSION, Upstream, http_transport
 from tests.fakes import TUYA_SECRET, TUYA_STATUS, TZ, FakeController, FakeTuya, StandInService, tuya_config
-from tests.served import ecobot_mcp
+from tests.mcp_client import serve_ecobot
 
 TOKENS = ("irrigation-s3cret", "phone-s3cret")
 
@@ -230,9 +230,9 @@ class Ecobot:
 
 @contextlib.asynccontextmanager
 async def connected(ecobot: Ecobot):
-    async with ecobot_mcp(tools=ecobot.service, sources=["Ecowitt", "Forecast"]) as remote:
-        remote.server.forecast = ecobot.forecast
-        weather = EcobotWeather(remote.server.server, tz=None)
+    async with serve_ecobot(tools=ecobot.service, sources=["Ecowitt", "Forecast"]) as mcp:
+        mcp.server.forecast = ecobot.forecast
+        weather = EcobotWeather(mcp.server.server, tz=None)
         zones = []
         weather.on_zone = zones.append
         task = asyncio.create_task(weather.run())

@@ -24,64 +24,9 @@ from lib.mcp_server import EcobotServer
 from lib.service.context import Context
 from lib.weather import RemoteWeather
 from tests.fakes import TZ
+from tests.mcp_client import ServedTools, stand_in   # noqa: F401  (the servers' tests use them too)
 
 READY_SECONDS = 10   # how long the client is given to connect and listen
-
-
-class ServedTool:
-    """A test's stand-in tool as ecobot-mcp serves it: a name, a description, an input schema (anything goes), its `call`."""
-    read_only, open_world = True, False
-
-    def __init__(self, name: str, tool):
-        self.name, self.tool = name, tool
-        self.description = getattr(tool, "description", "") or f"The test's {name}."
-        self.parameters = getattr(tool, "parameters", None) or {"type": "object"}
-
-    async def call(self, args=None, meta=None) -> str:
-        return await self.tool.call(args or {}, meta)
-
-
-class ServedTools:
-    """A test's tools (a lib.service.Service, a list of tools, or a tests.fakes.StandInService) as ecobot-mcp's: by name, in order."""
-
-    def __init__(self, tools):
-        if hasattr(tools, "answers"):   # (a StandInService: its tools by the answers it holds)
-            named = [(name, tools.get(name)) for name in tools.answers]
-        else:
-            named = [(t.name, t) for t in tools]
-        self.tools = [ServedTool(name, tool) for name, tool in named]
-        self.by_name = {t.name: t for t in self.tools}
-
-    def __iter__(self):
-        return iter(self.tools)
-
-    def get(self, name: str):
-        return self.by_name.get(name)
-
-    def __getitem__(self, name: str):
-        return self.by_name[name]
-
-    def __contains__(self, name: str) -> bool:
-        return name in self.by_name
-
-
-SOURCE_OF = {"eco": "Ecowitt", "air": "AirGradient", "forecast": "Forecast", "pollen": "Pollen"}   # (a resource's need: its source)
-
-
-def stand_in(server: EcobotServer, sources: set[str]):
-    """The server as if it ran these sources (names) over stand-in tools: ecobot://station names them, with every reading of the devices
-    among them (as a station that has sent every field), and the resources that need one of them are there."""
-    from lib.service.names import AIR_DEVICE, STATION
-    station = server.station
-    devices = {STATION: "Ecowitt" in sources, AIR_DEVICE: "AirGradient" in sources}
-
-    async def named():
-        readings = server.ctx.readings()
-        sensors = {device: {"readings": [{"name": r.name, "label": r.label, "unit": r.unit} for r in readings if r.device == device]}
-                   for device, there in devices.items() if there}
-        return {**await station(), "sensors": sensors, "sources": {name: {} for name in sorted(sources)}}
-    server.station = named
-    server._there = lambda need: need is None or SOURCE_OF.get(need) in sources
 
 
 def unreached() -> RemoteWeather:

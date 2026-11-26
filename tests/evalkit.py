@@ -23,9 +23,10 @@ from lib import intent, prompt
 from lib.bot import complete_reply
 from lib.llm import Agent
 from lib.tools import Tool, Tools, Turn
+from tests.evalbase import (ABSENT, NOW, NOW_TZ, SERVICE_CASES, eval_context, example_calls, example_value, expected_tools, load_service_cases,  # noqa: F401
+                            service_modules, service_tool_names, service_tools)
 
 CASES = Path(__file__).resolve().parent / "evals" / "cases.json"
-NOW = datetime(2026, 9, 29, 14, 5)  # a Tuesday: dates in the cases are relative to this
 CANNED = json.dumps({"note": "(evaluation run: no data is available; say so in one short sentence)"})
 
 
@@ -250,37 +251,17 @@ async def run_live(case: Case, client, model: str, effort: str | None = None, se
 # The same questions asked of a model given only the service's tool list: no prompt of ours (a neutral line, the date, time and zone),
 # no hints, no fast path, nothing filled in from the words. tests/evals/service_cases.json says, for every case id in cases.json, which
 # of the ten tools answers it and with which arguments, as a client that has never seen this repository would call them.
-SERVICE_CASES = CASES.parent / "service_cases.json"
 SERVICE_SYSTEM = "You answer questions about a home weather station and air sensor using the tools."
 SERVICE_EFFORT = "low"   # one reasoning level for every case: there is no intent.effort to choose one
-NOW_TZ = "Australia/Melbourne"
 EXPECT_KEYS = {"tools", "any_tools", "not_tools", "first_tool", "args", "note"}
 
 
-def service_modules():
-    from lib.service import about, current, days, forecast, outlook, pollen, readings, relate, scan, summary
-    return (current, summary, readings, days, relate, scan, outlook, forecast, pollen, about)
 
 
-def service_tool_names() -> list[str]:
-    return ["current", "summary", "readings", "days", "relate", "scan", "outlook", "forecast", "pollen", "about"]
 
 
-def eval_context():
-    """The Context the service's evals build the tools over: stand-ins for every source (nothing behind them: the tools are built, never
-    run), the catalogue of every reading the service knows, the station's zone and NOW."""
-    from zoneinfo import ZoneInfo
-
-    from lib.service.context import Context
-    tz = ZoneInfo(NOW_TZ)
-    return Context(eco=object(), air=object(), composer=object(), forecast=object(), pollen=object(), tz=tz,
-                   clock=lambda: NOW.replace(tzinfo=tz).timestamp())
 
 
-def service_tools(ctx=None) -> list:
-    """The ten ServiceTools, each module's tools(ctx), over eval_context() when no ctx is given."""
-    ctx = ctx if ctx is not None else eval_context()
-    return [t for module in service_modules() for t in module.tools(ctx)]
 
 
 def service_instructions() -> str:
@@ -306,9 +287,6 @@ def service_system(now: datetime = NOW, instructions: str | None = None) -> str:
     return f"{system}\n\n{instructions}" if instructions else system
 
 
-def load_service_cases(path: Path = SERVICE_CASES) -> dict[str, dict]:
-    """{case id: its expectation in service terms ({"tools", "any_tools", "not_tools", "first_tool", "args", "note"})}."""
-    return json.loads(path.read_text())
 
 
 def _resolved(names) -> list[str] | str:
@@ -452,52 +430,14 @@ def _conditions(actual, want: list[dict]) -> str | None:
     return f"conditions not asked for: {left!r}" if left else None
 
 
-def _example_conditions(want: list[dict]) -> list[dict]:
-    return [{"field": w["field"][0] if isinstance(w["field"], list) else w["field"],
-             "op": (w["op"][0] if isinstance(w["op"], list) else w["op"]) if "op" in w else ">=", "value": w.get("value", 1)} for w in want]
 
 
-ABSENT = object()   # (example_value: the argument is best left out)
 
 
-def example_value(want):
-    """A concrete value that satisfies `want` (_matches), to call the tool with: a matcher's own "e.g.", else the first of any_of /
-    one_of, the names of reads / has, the conditions given; ABSENT where the argument is best left out."""
-    if not isinstance(want, dict):
-        return want
-    if "e.g." in want:
-        return want["e.g."]
-    if "absent" in want:
-        return ABSENT
-    for key in ("one_of", "any_of"):
-        if key in want:
-            return ABSENT if want[key][0] is None else want[key][0]
-    if "reads" in want or "reads_any" in want:
-        return list(want.get("reads") or want["reads_any"][:1])
-    if "means" in want:
-        return want["means"][0] if isinstance(want["means"], list) else want["means"]
-    if "conditions" in want:
-        return _example_conditions(want["conditions"])
-    if "has" in want:
-        return list(want["has"])
-    raise ValueError(f"no example for {want!r}: give it an \"e.g.\"")
 
 
-def expected_tools(expect: dict) -> list[str]:
-    """The tools an expectation would have called (tools, any_tools, first_tool, and those it gives arguments for), each once."""
-    return list(dict.fromkeys([*expect.get("tools", []), *expect.get("any_tools", []),
-                               *([expect["first_tool"]] if "first_tool" in expect else []), *expect.get("args", {})]))
 
 
-def example_calls(expect: dict) -> list[tuple[str, dict]]:
-    """Every call a service expectation describes, made concrete: (tool, arguments) for each tool and each alternative of its arguments
-    (example_value); a tool expected with no arguments named is called with {}."""
-    out = []
-    for tool in expected_tools(expect):
-        want = expect.get("args", {}).get(tool, {})
-        for alternative in (want if isinstance(want, list) else [want]):
-            out.append((tool, {k: v for k, w in alternative.items() if (v := example_value(w)) is not ABSENT}))
-    return out
 
 
 def service_problems(expect: dict | None) -> list[str]:

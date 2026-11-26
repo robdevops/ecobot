@@ -1,5 +1,5 @@
 """The evals' frozen world: the service's ten tools over the fake station's archive, an AirGradient on the same file, Open-Meteo and the
-pollen page (all faked, nothing fetched), with the clock fixed at the evals' NOW (evalkit.NOW: Tue 29 Sep 2026 14:05, Melbourne) in
+pollen page (all faked, nothing fetched), with the clock fixed at the evals' NOW (evalbase.NOW: Tue 29 Sep 2026 14:05, Melbourne) in
 lib/ and the engines. tests/test_service_evals.py calls the expected calls against it (at_eval_now, build_archive, real_context, with
 pytest's monkeypatch), and `scripts/eval_prompts.py --live` answers the bot's model from it (`world`: the archive built once per
 run, outside pytest; each run of each case gets fresh tools over its own copy, World.fresh), so the model sees real results, notes
@@ -20,9 +20,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from tests import evalkit
+from tests import evalbase
 
-EVAL_NOW = evalkit.NOW.replace(tzinfo=ZoneInfo(evalkit.NOW_TZ)).timestamp()
+EVAL_NOW = evalbase.NOW.replace(tzinfo=ZoneInfo(evalbase.NOW_TZ)).timestamp()
 
 
 class _DatetimeType(type(_dt.datetime)):   # (type, unless ECOBOT_CLOCK moved the clock: tests/clocks.py)
@@ -66,7 +66,7 @@ def at_eval_now(patch: pytest.MonkeyPatch, *also: str):
     import tests.fakes, tests.test_pollen, tests.test_service_forecast  # noqa: F401
     for info in pkgutil.walk_packages(lib.__path__, "lib."):
         importlib.import_module(info.name)
-    patch.setenv("TZ", evalkit.NOW_TZ)
+    patch.setenv("TZ", evalbase.NOW_TZ)
     _time.tzset()
     patch.setattr(_time, "time", lambda: EVAL_NOW)
     for name, module in list(sys.modules.items()):
@@ -109,7 +109,7 @@ def shared_eval_archive(shared_archive) -> Path:
     def make(folder, patch):
         at_eval_now(patch)
         return asyncio.run(build_archive(folder))
-    bare = shared_archive(f"eval-{EVAL_NOW:.0f}", make, [__file__, Path(evalkit.__file__)])
+    bare = shared_archive(f"eval-{EVAL_NOW:.0f}", make, [__file__, Path(evalbase.__file__)])
 
     def fill(folder, patch):
         at_eval_now(patch)
@@ -118,7 +118,7 @@ def shared_eval_archive(shared_archive) -> Path:
             await close(await real_context(folder, bare))
         asyncio.run(held())
         return folder / "ecobot.sqlite"
-    return shared_archive(f"eval-world-{EVAL_NOW:.0f}", fill, [__file__, Path(evalkit.__file__), here / "test_pollen.py",
+    return shared_archive(f"eval-world-{EVAL_NOW:.0f}", fill, [__file__, Path(evalbase.__file__), here / "test_pollen.py",
                                                               here / "test_service_forecast.py", *here.parent.glob("lib/**/*.py")])
 
 
@@ -138,11 +138,11 @@ async def real_context(folder: Path, archive: Path):
     air = AirGradient(config(folder), transport=air_transport(rows_per_day=24)[0], storage=eco.storage)
     await air.start()
     forecast = Forecast(config(folder, forecast=True, forecast_lat=-37.8, forecast_lon=144.9, place="Melbourne"), None, open_meteo([]))
-    noon = datetime.combine(evalkit.NOW.date(), dtime(12, 0))
+    noon = datetime.combine(evalbase.NOW.date(), dtime(12, 0))
     forecast.now = lambda: noon
     pollen, _ = pollen_source(folder)
     ctx = await Context.open(eco=eco, air=air, composer=Composer(eco, air), forecast=forecast, pollen=pollen, clock=lambda: EVAL_NOW)
-    (summary,) = [t for t in evalkit.service_tools(ctx) if t.name == "summary"]
+    (summary,) = [t for t in evalbase.service_tools(ctx) if t.name == "summary"]
     held = json.loads(await summary.call({"readings": ["air"], "period": "last 30 days", "chart": False}))   # (the air's month, held)
     assert "error" not in held
     return ctx

@@ -134,6 +134,54 @@ def alert_state(tmp_path):
     return AlertState(tmp_path / "state.json")
 
 
+async def _hosted(make):
+    """The async fixture `start(*args)` for a context manager `make(*args)`: each is entered and left by a task of its own (the SDK client's
+    cancel scopes must be left by the task that entered them, and a fixture's setup and teardown are not one task); (start, close)."""
+    import asyncio
+    tasks, stop = [], asyncio.Event()
+
+    async def hold(args, kwargs, entered):
+        try:
+            async with make(*args, **kwargs) as served:
+                entered.set_result(served)
+                await stop.wait()
+        except BaseException as e:
+            if not entered.done():
+                entered.set_exception(e)
+            else:
+                raise
+
+    async def start(*args, **kwargs):
+        entered = asyncio.get_running_loop().create_future()
+        tasks.append(asyncio.create_task(hold(args, kwargs, entered)))
+        return await entered
+
+    async def close():
+        stop.set()
+        await asyncio.gather(*tasks)
+    return start, close
+
+
+@pytest.fixture
+async def serve_mcp():
+    """ecobot-mcp's real server in memory with the SDK's client connected (tests/mcp_client.py): `mcp = await serve_mcp(ctx, alert_log,
+    tools=..., sources=...)`, each closed when the test ends."""
+    from tests.mcp_client import serve_ecobot
+    start, close = await _hosted(serve_ecobot)
+    yield start
+    await close()
+
+
+@pytest.fixture
+async def serve_irrigation_mcp():
+    """irrigation-mcp's real server in memory with the SDK's client connected (tests/mcp_client.py): `mcp = await
+    serve_irrigation_mcp(folder, device)`, each closed when the test ends."""
+    from tests.mcp_client import serve_irrigation_mcp as serving
+    start, close = await _hosted(serving)
+    yield start
+    await close()
+
+
 @pytest.fixture
 async def serve():
     """ecobot-mcp in memory, the bot's client of it connected (tests/served.py): `weather = await serve(ctx, alert_log, tools=...,

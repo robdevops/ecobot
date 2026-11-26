@@ -803,26 +803,31 @@ async def test_other_alerts_send_no_picture(tmp_path):
     assert sent.events and all("chart" not in e for e in sent.events) and asked == []
 
 
-async def test_the_alert_charts_are_the_buttons_one_day_charts_drawn_from_each_sources_history(serve, tmp_path, archived_cache):
-    """The chart under an alert (and its 🔄) is the one-day chart of its fixed call (the Wind, Temperature and Particulates buttons'),
-    drawn by ecobot-mcp over each source's history."""
+async def test_the_alert_charts_are_one_day_charts_drawn_from_each_sources_history(tmp_path, archived_cache):
+    """The chart an alert carries is the one-day chart of its type's fixed call (Wind, Temperature, UV, Particulates), as data, with the
+    drawn_by that has it drawn again, made over each source's history."""
+    from lib import charts
     from lib.airgradient import AirGradient
     from lib.alerts import pictures
-    from lib.service.context import Context
+    from lib.specs import from_json
     from tests.fakes import air_transport, archived_station, config
     eco, _ = await archived_station(tmp_path, archived_cache)
-    station = await serve(Context(eco=eco, tz=TZ))
+
+    def picture(chart, text):
+        spec = from_json(chart)
+        assert charts.render_data(chart, TZ)[:4] == b"\x89PNG", text
+        assert chart["drawn_by"]["tool"] == "summary" and spec.caption(datetime.now(TZ).date()).startswith(text), text
+        return spec
     for kind, text in (("temps", "Temperature"), ("gusts", "Wind"), ("uv", "UV")):
-        picture = await pictures.chart(pictures.CHARTS[kind], TZ, station)
-        assert picture and picture.png[:4] == b"\x89PNG", text
-        assert picture.title.startswith(text) and picture.newest and abs(picture.newest - eco.now().timestamp()) < 3600, text
+        chart = await pictures.chart_data(eco, pictures.CHARTS[kind], TZ)
+        assert picture(chart, text).newest and abs(picture(chart, text).newest - eco.now().timestamp()) < 3600, text
     transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     (tmp_path / "air").mkdir()
     air = AirGradient(config(tmp_path / "air"), transport=transport)
     await air.start()
-    picture = await pictures.chart(pictures.CHARTS["particulates"], TZ, await serve(Context(air=air, tz=TZ)))
-    assert picture and picture.png[:4] == b"\x89PNG" and picture.title.startswith("Air quality") and picture.newest
-    assert await pictures.chart(pictures.CHARTS["gusts"], TZ, await serve(tools=[])) is None        # a service without the tool: no chart, no error
+    chart = await pictures.chart_data(air, pictures.CHARTS["particulates"], TZ)
+    assert picture(chart, "Air quality").newest
+    assert await pictures.chart_data(eco, ("nothing", {}), TZ) is None                              # a call that can't be made: no chart, no error
     await eco.close()
     await air.close()
 

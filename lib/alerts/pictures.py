@@ -1,25 +1,32 @@
-"""The chart that goes with an alert: the same picture a keyboard button gives (the Wind button's fixed call is the gusts alert's), so
-what an alert shows is defined once, by those calls (lib/templates.py CALLS: the Wind button is summary {readings: ["wind"], period: "1d",
-chart: true}), which the service draws: the rule puts the chart's data, with its drawn_by, in the alert's event (chart_data), and the bot
-has it drawn (picture_of: by ecobot-mcp, lib/weather.py, replaying the chart's drawn_by). AlertCharts keeps those charts with the bot's
-other charts (the ImageCache, by call), so one is drawn once and uploaded once however many times it is sent."""
+"""The chart that goes with an alert: a one-day chart of its type's fixed call (CHARTS: summary {readings: [...], period: "1d",
+chart: true}), which the service draws. The rule puts the chart's data, with its drawn_by, in the alert's event (chart_data); a client
+draws it again by replaying the chart's drawn_by. The Picture, picture_of, chart and AlertCharts below are the bot's (an image cache
+keyed by call)."""
 
 import json
 import logging
 from datetime import datetime, timezone, tzinfo
 from typing import NamedTuple
 
-from .. import templates
-from ..periods import call_key
 from ..specs import from_json
 from ..timeutil import now_local
 
 log = logging.getLogger(__name__)
 
-# The alert types that carry a chart, and the service call that draws it: what the alert is sent with, and what its Refresh draws again
-# (the Wind, Temperature and Particulates buttons' own calls; UV's has no button)
-CHARTS = {"gusts": templates.CALLS["Wind chart 1d"], "uv": ("summary", {"readings": ["uv"], "period": "1d", "chart": True}),
-          "temps": templates.CALLS["Temperature chart 1d"], "particulates": templates.CALLS["Particulates chart 1d"]}
+def day_chart(*readings: str) -> tuple[str, dict]:
+    """summary of these readings (the service's words) over the last day, as a chart."""
+    return "summary", {"readings": list(readings), "period": "1d", "chart": True}
+
+
+def call_key(tool: str, arguments: dict) -> str:
+    """A call as a picture cache keys it: the tool and its arguments as canonical JSON (sorted keys)."""
+    return f"{tool} {json.dumps(arguments, sort_keys=True, ensure_ascii=False, separators=(',', ':'))}"
+
+
+# The alert types that carry a chart, and the service call that draws it: what an alert event's chart is made by, and what a client
+# draws again
+CHARTS = {"gusts": day_chart("wind"), "uv": day_chart("uv"), "temps": day_chart("temperature"),
+          "particulates": day_chart("pm2.5", "pm10", "pm1")}
 CHART_POINTS = "drawn"   # every point, as drawn (lib/service/common.py AS_DRAWN): the bot's picture
 
 
