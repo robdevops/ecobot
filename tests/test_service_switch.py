@@ -414,7 +414,7 @@ async def asked_the_model(serve, world, alert_state, monkeypatch, text, steps, r
     """Ask the bot `text` with a scripted model (Scripted), the air sensor's live-chart link configured: the text or caption of each
     message it sent."""
     from lib.llm import Agent
-    world.air.link = ("live chart", "https://air.example")   # (ecobot://station names it: read as the bot connects)
+    world.air.link = ("live dashboard", "https://air.example")   # (ecobot://station names it: read as the bot connects)
     bot = await world.bot(alert_state, monkeypatch, serve)
     bot.agent = Agent(Scripted(steps, reply), "m", world.tools)
     msg = world.message()
@@ -442,7 +442,7 @@ async def test_the_air_link_goes_under_an_answer_that_read_the_air_and_no_other(
     """The live-chart link follows what was read (as before the swap, when air_quality's call brought it), never a key or a word
     anywhere in a result: not `current` of every sensor, nor a refusal's catalogue of readings."""
     said = await asked_the_model(serve, world, alert_state, monkeypatch, text, steps)
-    assert said and all(("live chart" in s) is link for s in said), said
+    assert said and all(("live dashboard" in s) is link for s in said), said
 
 
 async def test_an_error_reply_gets_no_air_link(serve, world, alert_state, monkeypatch):

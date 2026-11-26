@@ -46,7 +46,7 @@ STATUS_URI = "ecobot://status"   # the Status picture (lib/status.py)
 LISTENED = (STATION_URI, ALERTS_URI)   # what the bot listens to (not the live readings, pushed with each new reading)
 CALL_WAIT = 5.0          # how long a question's call waits for the service while it is being reached again, before it is refused
 BACKGROUND = "background"   # request _meta priority of a call nobody waits for (lib/service/common.py): refused at once while down
-AIR_LINK_LABEL = "live chart"   # the AirGradient dashboard link's words (lib/airgradient/source.py)
+AIR_LINK_LABEL = "live dashboard"   # the AirGradient dashboard link's words (lib/airgradient/source.py)
 AS_A_CALL = object()   # a wait of CALL_WAIT seconds (read when called)
 UNREACHABLE = "The weather service isn't reachable right now: try again in a minute."
 

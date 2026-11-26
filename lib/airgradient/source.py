@@ -102,7 +102,7 @@ class AirGradient(Source):
         self.loc, self.tz = cfg.airgradient_location or "local", cfg.tz   # (the stored readings are kept under this)
         self.token = cfg.airgradient_token
         self.cloud = cfg.airgradient_cloud    # without an account (or with MCP_AIRGRADIENT_SOURCE saying not) the cloud is never asked
-        self.link = ("live chart", cfg.airgradient_dashboard) if cfg.airgradient_dashboard else None
+        self.link = ("live dashboard", cfg.airgradient_dashboard) if cfg.airgradient_dashboard else None
         self.client = httpx.AsyncClient(timeout=15, transport=transport, verify=ssl_context())
         self.local = LocalSensor(cfg.airgradient_local_url, cloud=self.cloud) if cfg.airgradient_local else None   # the monitor's own server
         owned = (storage is None) if owned is None else owned
