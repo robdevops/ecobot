@@ -449,3 +449,15 @@ async def test_an_error_reply_gets_no_air_link(serve, world, alert_state, monkey
     """The air was read, then the model timed out: the apology goes alone."""
     said = await asked_the_model(serve, world, alert_state, monkeypatch, "how's the air", [[("current", {"readings": ["air"]})]], TimeoutError())
     assert said == ["Sorry, that took too long. Please try again in a moment."]
+
+
+async def test_a_chart_the_service_could_not_draw_is_said_in_the_reply(serve, world, alert_state, monkeypatch, caplog):
+    """The model asked for a chart and the service drew none (no Pillow there, or its renderer failed): the reply says so in a line and
+    the bot logs it, never only the text."""
+    from types import SimpleNamespace
+    from lib import chart_images, mcp_server
+    monkeypatch.setattr(mcp_server, "chart_images", SimpleNamespace(**{**vars(chart_images), "renderer": lambda: None}))
+    said = await asked_the_model(serve, world, alert_state, monkeypatch, "chart temperature this week",
+                                 [[("summary", {"readings": ["temperature"], "period": "7d", "chart": True})]], reply="Temperature this week.")
+    assert said and "Temperature this week." in said[-1] and "Couldn't draw the chart:" in said[-1], said
+    assert any("no picture of it reached the bot" in r.getMessage() for r in caplog.records)

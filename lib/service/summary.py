@@ -21,6 +21,7 @@ here, as the bot's code goes): `caption` under a chart (report.chart_caption), a
 """
 
 import json
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -44,7 +45,10 @@ from .context import Context
 from .daylook import FIGURES, day_look
 from .names import AIR_DEVICE, STATION, Reading
 
+log = logging.getLogger(__name__)
+
 NAME = "summary"
+CHART_FAILED = "Couldn't draw the chart:"   # the line that says a chart asked for is not drawn, with the reason after it
 DEFAULT_READINGS = ("temperature", "humidity")   # the station's usual set: outdoor and indoor temperature and humidity
 LAYOUTS = ("auto", "panels", "two_axes", "same_axis")
 RATING = ":rating"
@@ -87,7 +91,7 @@ ARGUMENTS = {   # every argument but the readings and the period, as a model rea
                         "Default false."),
     "every_day": _boolean("true to list every day of a period of up to 31 days; otherwise a period over 7 days lists only the days of "
                           "its lows and highs. Default false."),
-    "chart": _boolean("Draw a chart. Default: on for periods of 3 days or more."),
+    "chart": _boolean("Draw a chart. Always true for a request to chart, plot, graph, draw, overlay or show lines or a picture, over any period, \"today\" too. Default: on for periods of 3 days or more, off for shorter ones."),
     "chart_readings": {"type": "array", "items": {"type": "string"},
                        "description": "What to draw, top to bottom, when not all of `readings`: names or words as for readings; \"all\" "
                                       "is every weather-station reading in the station's usual order; add \":rating\" to an air-quality "
@@ -413,7 +417,7 @@ class Summary:
         if layout not in LAYOUTS:
             raise Refusal(f"`layout` is one of {', '.join(LAYOUTS)}, not {args.get('layout')!r}.", layouts=list(LAYOUTS))
         chart = _flag(args, "chart")
-        if chart is None and any(rating for _, rating in drawn):   # a rating is only ever drawn
+        if chart is None and (layout in ("two_axes", "same_axis") or any(rating for _, rating in drawn)):   # only ever drawn
             chart = True
         asked = any(str(args.get(k) or "").strip() for k in ("period", "start", "end"))
         period = read_period(args, tz=ctx.zone, now=ctx.now(), default="last 24 hours" if chart and not asked else "today",
@@ -504,11 +508,6 @@ class Summary:
         ctx = self.ctx
         call = await self.read(args)
         route = self._route(call)
-        if route == "composer" and self._whole_days(call) is None:
-            yesterday = ctx.now().date() - timedelta(days=1)
-            raise Refusal(f"A chart that mixes the two sensors, draws a rating or uses same_axis is drawn over whole days, up to "
-                          f"yesterday ({day_text(yesterday)}): {call.period.text} has none. Ask for a period with whole days ('last 24 "
-                          f"hours' draws yesterday, 'last 7 days'), or leave the chart out.")
         background, fetch = meta.get("priority") == BACKGROUND, meta.get("fetch", True)
         station = [r for r in call.readings if r.device == STATION]
         air = [r for r in call.readings if r.device == AIR_DEVICE]
@@ -553,9 +552,14 @@ class Summary:
         if no_readings:
             fields["note_no_readings"] = (f"Nothing held of {', '.join(no_readings)} for this period: say so." if not series else
                                           f"Nothing held of {', '.join(no_readings)} for this period; the others are summarised.")
-        if call.chart and not charts and "chart" not in found["notes"]:
-            fields["note_chart"] = ("No chart: an average chart draws each whole day's average, and this period has fewer than two whole "
-                                    "days before today." if call.average else "No chart: too few readings to draw for this period.")
+        failed = None   # why a chart that was asked for isn't drawn: said in the reply's own words too, never left out
+        if call.chart and not charts:
+            if "chart" in found["notes"]:
+                failed = found["notes"]["chart"].removeprefix("No chart: ")
+            else:
+                failed = ("an average chart draws each whole day's average, and this period has fewer than two whole days before today."
+                          if call.average else "too few readings to draw for this period.")
+                fields["note_chart"] = f"No chart: {failed}"
         if found["notes"]:
             fields["notes"] = found["notes"]
         if found["missing"]:
@@ -567,6 +571,8 @@ class Summary:
             fields["caption"] = caption
         elif not charts and (text := self._text(call, q, out, air_out)):
             fields["text"] = text
+        if failed:
+            fields["text"] = "\n".join(filter(None, [fields.get("text"), f"{CHART_FAILED} {failed}"]))
         finished = call.answers and charts and caption and not self._needs_words(fields) and not call.period.note   # (the model reads it)
         fields.update(self._charts(call, route, charts, meta))
         if finished:
@@ -669,7 +675,12 @@ class Summary:
         args = {"panels": panels, "start_date": first.isoformat(), "end_date": last.isoformat(),
                 "two_axes": call.layout == "two_axes", "same_axis": call.layout == "same_axis", "invert_second_axis": call.invert}
         turn = Turn()
-        result = json.loads(await composer.plot_chart(args, turn))
+        try:
+            result = json.loads(await composer.plot_chart(args, turn))
+        except Exception as e:   # (a chart that can't be drawn is said, with its reason, and logged whole)
+            log.exception("summary: the chart of %s couldn't be drawn", [p["series"] for p in panels])
+            found["notes"]["chart"] = f"No chart: {type(e).__name__}: {e}."
+            return
         if "error" in result:   # (what plot_chart refuses is checked first: this is a reading it has nothing of)
             found["notes"]["chart"] = f"No chart: {result['error'].rstrip('.')}."
             return
@@ -684,9 +695,10 @@ class Summary:
                                           "up to yesterday, as today isn't over" if cut else "") + ".")
 
     def _whole_days(self, call: Call) -> tuple[date, date] | None:
-        """The first and last day plot_chart draws for this period: its days up to yesterday (None when that leaves none)."""
-        first, last = call.period.first_day, min(call.period.last_day, self.ctx.now().date() - timedelta(days=1))
-        return (first, last) if first <= last else None
+        """The first and last day plot_chart draws for this period: its days up to yesterday; a period with none (today) draws yesterday."""
+        yesterday = self.ctx.now().date() - timedelta(days=1)
+        first, last = call.period.first_day, min(call.period.last_day, yesterday)
+        return (first, last) if first <= last else (yesterday, yesterday)
 
     async def _looks(self, first: date, last: date) -> Callable[[date | None], dict | None]:
         """day -> its look (daylook.day_look over its day row's figures), for the days of the period; nothing without the station."""

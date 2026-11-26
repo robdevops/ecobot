@@ -468,7 +468,7 @@ async def test_a_call_that_cant_be_answered_is_refused_with_what_to_send_instead
     out = await ask(tool, readings=["pm2.5", "pm10", "co2", "voc", "rain"], chart=True, period="this week")
     assert "at most 4 readings" in out["error"]
     out = await ask(tool, readings=["pm2.5", "rain"], chart=True, period="today")
-    assert "whole days" in out["error"] and "'last 7 days'" in out["error"]
+    assert "charts" in out and "today isn't over" in out["notes"]["chart"]   # today has no whole day: yesterday is drawn, and said
     assert "true or false" in (await ask(tool, chart="maybe"))["error"]
     assert "names no reading" in (await ask(tool, chart=True, chart_readings=[":rating"]))["error"]
     every = summary.tools(Context(eco=ctx.eco))[0]   # (every reading the service knows: rain rate is drawn only alone)
@@ -520,3 +520,61 @@ async def test_a_chart_drawn_ahead_asks_after_the_rest_and_a_chart_points_budget
     big = await ask(tool, {"chart_points": 500}, readings=["pressure"], period="this week")
     assert max(len(s["points"]) for s in big["charts"][0]["panels"][0]["series"]) > 150
     await close(ctx)
+
+
+# ---------- a chart asked for is drawn, or the reply says why not ----------
+def png_of(out: dict, ctx) -> list[bytes]:
+    """Each chart of an answer drawn as the service's pictures are."""
+    from lib import chart_images
+    return [chart_images.render(c, ctx.zone, False)[0] for c in out["charts"]]
+
+
+CHART_CALLS = {
+    "grouped": dict(readings=FOUR, chart=True, layout="two_axes", invert_second_axis=True),
+    "interleaved": dict(readings=[FOUR[0], FOUR[2], FOUR[1], FOUR[3]], chart=True, layout="two_axes", invert_second_axis=True),
+    "no layout": dict(readings=FOUR, chart=True),
+    "no chart flag": dict(readings=FOUR, layout="two_axes", invert_second_axis=True),   # the layout says it is a chart
+}
+
+
+async def test_the_two_sensor_overlay_is_a_picture_over_today_and_every_other_period(tmp_path, archived_cache):
+    tool, ctx, _ = await make(tmp_path, archived_cache, air=True)
+    for name, call in CHART_CALLS.items():
+        for period in ({"period": "today"}, {}, {"period": "yesterday"}, {"period": "last 24 hours"}):
+            out = await ask(tool, **call, **period)
+            assert "error" not in out and len(out["charts"]) == 1, (name, period, out.get("error"))
+            assert out["charts"][0]["period"] == [days_ago(1), days_ago(1)], (name, period)   # whole days: today isn't over
+            (png,) = png_of(out, ctx)
+            assert png[:4] == b"\x89PNG" and len(png) > 5000, (name, period)
+    today = await ask(tool, **CHART_CALLS["grouped"], period="today")
+    assert "today isn't over" in today["notes"]["chart"] and "text" not in today
+    await close(ctx)
+
+
+async def test_chart_temperature_today_is_a_picture(tmp_path, archived_cache):
+    tool, ctx, _ = await make(tmp_path, archived_cache, air=True)
+    out = await ask(tool, readings=["temperature"], period="today", chart=True)
+    (png,) = png_of(out, ctx)
+    assert png[:4] == b"\x89PNG" and len(png) > 5000
+    assert "charts" not in await ask(tool, readings=["temperature"], period="today")   # without chart: figures only
+    await close(ctx)
+
+
+async def test_a_chart_that_cannot_be_drawn_is_said_in_the_text_and_logged(tmp_path, archived_cache, caplog):
+    tool, ctx, _ = await make(tmp_path, archived_cache, air=True)
+
+    async def broken(args, turn):
+        raise ValueError("no room for four lines")
+    ctx.composer.plot_chart = broken
+    out = await ask(tool, **CHART_CALLS["grouped"], period="yesterday")
+    assert "charts" not in out and "Couldn't draw the chart: ValueError: no room for four lines." in out["text"]
+    assert any(r.exc_info and "no room for four lines" in str(r.exc_info[1]) for r in caplog.records)   # the traceback is logged
+    ctx.composer.plot_chart = Composer(ctx.eco, ctx.air).plot_chart
+    few = await ask(tool, readings=["pm2.5"], chart=True, period="last 2 days", average=True)   # no chart for want of days: said too
+    assert "charts" not in few and "Couldn't draw the chart:" in few["text"] and few["note_chart"].startswith("No chart:")
+    await close(ctx)
+
+
+def test_the_schema_says_a_request_to_chart_sets_chart_true_even_for_today():
+    text = summary.ARGUMENTS["chart"]["description"]
+    assert "Always true for a request to chart, plot, graph" in text and "\"today\" too" in text

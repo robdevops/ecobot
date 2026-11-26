@@ -2032,12 +2032,7 @@
           },
           "layout": "two_axes",
           "invert_second_axis": true,
-          "chart": {
-            "one_of": [
-              true,
-              null
-            ]
-          }
+          "chart": true
         },
         {
           "chart_readings": {
@@ -2050,12 +2045,7 @@
           },
           "layout": "two_axes",
           "invert_second_axis": true,
-          "chart": {
-            "one_of": [
-              true,
-              null
-            ]
-          }
+          "chart": true
         }
       ]
     },
@@ -2409,5 +2399,24 @@
       }
     },
     "note": "the air over a period is summary of the air sensor's readings, PM2.5 among them"
+  },
+  "chart-temperature-today": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ]
+        },
+        "period": {
+          "means": "today"
+        },
+        "chart": true
+      }
+    },
+    "note": "chart means chart: true, even for today, where the default draws none"
   }
 }

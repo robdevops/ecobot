@@ -37,7 +37,7 @@ from .timeutil import now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 from .logs import BUGS, QUOTES, fit
 from .warm import Tasks   # (the service's too: ecobot_mcp)
-from .weather import UNREACHABLE, ChartImage, ChartNotDrawn, RemoteWeather, ServiceUnreachable
+from .weather import UNREACHABLE, ChartImage, ChartNotDrawn, RemoteWeather, ServiceUnreachable, charts_of
 
 log = logging.getLogger(__name__)
 
@@ -1444,6 +1444,10 @@ class Bot:
             system = prompt.build(datetime.now(self.cfg.tz), self._instructions())
             answer = Answer(await self._ask_model(working, system, effort, turn, draft, lambda tokens: self._warn(msg, tokens)))
             answer.pictures = [picture for slot, result in enumerate(turn.results) if result for picture in turn.pictures.get(slot, ())]
+            if undrawn := [result[2] for slot, result in enumerate(turn.results) if result and charts_of(result[2]) and not turn.pictures.get(slot)]:
+                note = next((str(out["chart_image_note"]) for out in undrawn if out.get("chart_image_note")), "no picture came with the answer")
+                log.error("%s: a chart was asked for but no picture of it reached the bot: %s", chat_tag(msg.chat_id), note)
+                answer.reply = f"{answer.reply.rstrip()}\n\nCouldn't draw the chart: the picture couldn't be made.".strip()
             return answer
         working.append({"role": "assistant", "content": answer.reply})
         return answer

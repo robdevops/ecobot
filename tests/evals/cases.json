@@ -1135,5 +1135,16 @@
     "covers": [
       "m:air-quality"
     ]
+  },
+  {
+    "id": "chart-temperature-today",
+    "ask": "chart temperature today",
+    "note": "a request to chart over a short period still sets chart true (the default is no chart for a day)",
+    "expect": {
+      "effort": "none"
+    },
+    "covers": [
+      "c:stack"
+    ]
   }
 ]

@@ -270,7 +270,7 @@ class EcobotServer:
         try:
             pngs = await asyncio.to_thread(lambda: [chart_images.render(c, self.ctx.zone, dark)[0] for c in charts])
         except Exception as e:
-            log.error("MCP: %s's chart couldn't be drawn: %s: %s", params.name, type(e).__name__, e)
+            log.error("MCP: %s's chart couldn't be drawn: %s: %s", params.name, type(e).__name__, e, exc_info=True)
             return tool_result(await tool.call(params.arguments or {}, meta), note=chart_images.NOT_DRAWN_NOTE)   # (as if off)
         if mode == chart_images.LINK:
             base = self.chart_url_base(getattr(ctx, "request", None))
