@@ -1,7 +1,6 @@
-"""The programs as they are installed: three Docker images from one Dockerfile (each with only its own packages: the bot's no Pillow
-and no source's, docs/ecobot-mcp.md step 6b; irrigation-mcp's no Telegram, no model client, no Pillow, step 8), compose running each from
-its own, and the systemd units: ecobot-mcp's without the bot's
-secrets, by their new and old names, and the bot's wanting and started after ecobot-mcp's. (Read as text: the CI workflow docker.yml
+"""The programs as they are installed: two Docker images from one Dockerfile (ecobot-mcp's with Pillow; irrigation-mcp's with its
+own packages alone, no Pillow and no source, docs/ecobot-mcp.md step 8), compose running each from its own, and the systemd units,
+which drop each other's secrets (and the old Telegram bot's) by their new and old names. (Read as text: the CI workflow docker.yml
 builds and runs the images themselves.)"""
 
 import json
@@ -26,58 +25,55 @@ def requirements(name: str) -> set[str]:
     return found
 
 
-def test_ecobot_mcp_needs_no_telegram_and_no_model_client_and_the_bot_only_its_own_packages():
-    mcp, bot, both = requirements("requirements-mcp.txt"), requirements("requirements-bot.txt"), requirements("requirements.txt")
-    irrigation = requirements("requirements-irrigation.txt")
-    assert {"mcp", "uvicorn", "httpx"} <= mcp and not {"python-telegram-bot", "openai"} & mcp
-    assert bot == {"python-telegram-bot", "openai", "mcp", "httpx"}            # no Pillow, no source's packages (holidays, zeroconf)
+def test_each_program_needs_only_its_own_packages():
+    mcp, irrigation = requirements("requirements-mcp.txt"), requirements("requirements-irrigation.txt")
+    both = requirements("requirements.txt")
+    assert {"mcp", "uvicorn", "httpx", "holidays", "zeroconf"} <= mcp and not {"python-telegram-bot", "openai"} & mcp
     assert irrigation == {"mcp", "uvicorn", "httpx"}                           # irrigation-mcp: the server, its client, Tuya's client
-    assert both == mcp | bot | irrigation                                      # (a systemd install's one venv: every program)
+    assert both == mcp | irrigation                                            # (a systemd install's one venv: both programs)
+    assert not (ROOT / "requirements-bot.txt").exists() and "pillow" in requirements("requirements-charts.txt")
     pins = lambda name: {line.split("#")[0].strip() for line in (ROOT / name).read_text().splitlines() if line.startswith(("mcp", "uvicorn"))}
-    assert {p for p in pins("requirements-mcp.txt") if p.startswith("mcp")} == pins("requirements-bot.txt")   # the sides of MCP upgraded together
-    assert pins("requirements-irrigation.txt") == pins("requirements-mcp.txt")
+    assert pins("requirements-irrigation.txt") == pins("requirements-mcp.txt")   # the sides of MCP upgraded together
 
 
 def test_one_dockerfile_builds_both_images_each_checked_at_build():
     text = (ROOT / "Dockerfile").read_text()
-    assert re.search(r"^FROM app AS ecobot-mcp$", text, re.M) and re.search(r"^FROM app AS ecobot$", text, re.M)
-    mcp, bot = text.split("FROM app AS ecobot-mcp")[1].split("FROM app AS ecobot\n")
-    mcp, irrigation = mcp.split("FROM app AS irrigation-mcp")
-    assert "requirements-mcp.txt" in text.split("FROM base AS venv-mcp")[1].split("FROM base AS venv-bot")[0]
-    venv_bot = text.split("FROM base AS venv-bot")[1].split("FROM base AS venv-irrigation")[0]
+    assert not re.search(r"^FROM app AS ecobot$", text, re.M) and "venv-bot" not in text and "ecobot.py" not in text
+    stages = re.findall(r"^FROM \S+ AS (\S+)$", text, re.M)
+    assert stages[-1] == "ecobot-mcp" and {"ecobot-mcp", "irrigation-mcp"} <= set(stages)   # (a bare docker build makes ecobot-mcp)
+    mcp = text.split("FROM app AS ecobot-mcp")[1]
+    irrigation = text.split("FROM app AS irrigation-mcp")[1].split("FROM app AS ecobot-mcp")[0]
+    venv_mcp = text.split("FROM base AS venv-mcp")[1].split("FROM base AS venv-irrigation")[0]
     venv_irrigation = text.split("FROM base AS venv-irrigation")[1].split("FROM base AS app")[0]
+    assert "-r /tmp/requirements-mcp.txt" in venv_mcp and "-r /tmp/requirements-charts.txt" in venv_mcp
     assert "-r /tmp/requirements-irrigation.txt" in venv_irrigation and "requirements-charts" not in venv_irrigation
-    assert "-r /tmp/requirements-bot.txt" in venv_bot and not re.search(r"requirements(-mcp|-charts)?\.txt", venv_bot.replace("requirements-bot.txt", ""))
     assert 'CMD ["python", "-m", "ecobot_mcp"]' in mcp and "import ecobot_mcp.__main__" in mcp and "find_spec('telegram') is None" in mcp
-    assert 'CMD ["python", "ecobot.py"]' in bot and "import lib.bot, ecobot" in bot and "find_spec('PIL') is None" in bot
-    assert all(f"'{m}'" in bot for m in ("lib.ecowitt", "lib.airgradient", "lib.forecast", "lib.pollen", "lib.storage",
-                                         "lib.irrigation.tuya", "lib.irrigation.watchdog", "lib.irrigation.check"))   # (irrigation-mcp's, 8b)
-    assert "lib.irrigation_remote" in bot
     assert 'CMD ["python", "-m", "irrigation_mcp"]' in irrigation and "import irrigation_mcp.__main__" in irrigation
     assert "find_spec('telegram') is None" in irrigation and "find_spec('PIL') is None" in irrigation and "'lib.storage'" in irrigation
     ignored = (ROOT / ".dockerignore").read_text()
-    assert all(f"!{name}" in ignored for name in ("requirements-mcp.txt", "requirements-bot.txt", "requirements-irrigation.txt", "irrigation_mcp/"))
+    assert all(f"!{name}" in ignored for name in ("requirements-mcp.txt", "requirements-irrigation.txt", "irrigation_mcp/", "ecobot_mcp/"))
+    assert "!ecobot.py" not in ignored and "requirements-bot" not in ignored
 
 
 def test_compose_runs_each_program_from_its_own_image():
     text = (ROOT / "compose.yaml").read_text()
     services = dict(re.findall(r"^  ([\w-]+):\n((?:    .*\n|\s*\n)+)", text, re.M))
-    mcp, bot, irrigation = services["ecobot-mcp"], services["ecobot"], services["irrigation-mcp"]
+    assert set(services) == {"ecobot-mcp", "irrigation-mcp"}
+    mcp, irrigation = services["ecobot-mcp"], services["irrigation-mcp"]
     assert "image: irrigation-mcp" in irrigation and "target: irrigation-mcp" in irrigation and "profiles: [irrigation]" in irrigation
     assert "IRRIGATION_BIND: 0.0.0.0:8766" in irrigation and "- 8766:8766" in irrigation and "docker/irrigation.env" in irrigation
     assert "IRRIGATION_ECOBOT_MCP_URL=http://ecobot-mcp:8765/mcp" in (ROOT / "docker" / "irrigation.env").read_text()
     assert "image: ecobot-mcp" in mcp and "target: ecobot-mcp" in mcp and "hostname: ecobot-mcp" in mcp and "- 8765:8765" in mcp
-    assert "image: ecobot\n" in bot and "target: ecobot\n" in bot and "profiles: [bot]" in bot and "depends_on: [ecobot-mcp]" in bot
-    assert "BOT_MCP_URL=http://ecobot-mcp:8765/mcp" in (ROOT / "docker" / "bot.env").read_text()
+    assert "profiles" not in mcp and not (ROOT / "docker" / "bot.env").exists()
 
 
 def test_the_ecobot_mcp_image_compiles_what_its_start_and_first_requests_import(tmp_path):
     """The image's user can't write bytecode, so what the build step doesn't import is compiled again at every start: the tools
     (lib.service.*), uvicorn's HTTP protocol and lifespan, anyio's asyncio backend, the clients' connection pool and certificates. The
-    step itself is run here (bar its check that Telegram and the model client are not installed, which they are in a dev venv)."""
+    step itself is run here (bar its check that Telegram and the model client are not installed)."""
     import subprocess
     import sys
-    text = (ROOT / "Dockerfile").read_text().split("FROM app AS ecobot-mcp")[1].split("FROM app AS irrigation-mcp")[0]
+    text = (ROOT / "Dockerfile").read_text().split("FROM app AS ecobot-mcp")[1]
     program = re.search(r'RUN DATA_DIR=/tmp/build python -c "(.*?)" \\\n', text, re.S)[1].replace("\\\n", "")
     program = program.split("; assert importlib.util.find_spec")[0]
     shown = "import json; print(json.dumps(sorted(sys.modules)))"
@@ -116,91 +112,53 @@ def test_an_old_ecobot_service_unit_still_starts_ecobot_mcp_without_the_bots_sec
     assert ran == [True] and "BOT_TELEGRAM_TOKEN" not in __import__("os").environ
 
 
-def test_the_systemd_upgrade_copies_the_ecobot_mcp_unit_in_again():
-    text = (ROOT / "README.md").read_text()
-    upgrade = text.split("### systemd", 2)[2].split("### Docker")[0]
-    assert "sudo cp /opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload && " \
-           "sudo systemctl restart ecobot-mcp ecobot" in upgrade
-    assert "BOT_MCP_URL=http://127.0.0.1:8765/mcp" in upgrade and "sudo systemctl enable --now ecobot-mcp.service" in upgrade   # (a bot
-                                                                                                                            # that ran alone)
-
-
-def test_the_bots_unit_wants_ecobot_mcps_and_starts_after_it_and_the_readme_installs_both():
-    """Under systemd the bot is ecobot-mcp's client (step 6b): its unit pulls ecobot-mcp's in and starts after it, and the install
-    enables both, ecobot-mcp first."""
-    unit = (ROOT / "ecobot.service").read_text()
-    wants = re.search(r"^Wants=(.*)$", unit, re.M)[1].split()
-    after = re.search(r"^After=(.*)$", unit, re.M)[1].split()
-    assert "ecobot-mcp.service" in wants and "ecobot-mcp.service" in after
-    readme = (ROOT / "README.md").read_text()
-    install = readme.split("### systemd", 1)[1].split("### ", 1)[0]
-    assert "sudo systemctl enable --now ecobot-mcp.service ecobot.service" in install                     # ecobot-mcp first
-    assert "/opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/" in install
-    assert "BOT_MCP_URL=http://127.0.0.1:8765/mcp" in install and "on its own (optional)" not in readme
-
-
 def unit(name: str) -> tuple[str, dict[str, list[str]]]:
     text = (ROOT / name).read_text()
     keys = ("Wants", "After", "Before", "UnsetEnvironment", "ExecStart", "User", "StateDirectory", "Restart", "RestartPreventExitStatus")
     return text, {k: (m[1].split() if (m := re.search(rf"^{k}=(.*)$", text, re.M)) else []) for k in keys}
 
 
-def test_irrigation_mcps_unit_runs_it_after_ecobot_mcp_and_before_the_bot_without_the_others_secrets():
+def test_irrigation_mcps_unit_runs_it_after_ecobot_mcp_without_the_others_secrets():
     """Step 8b: irrigation-mcp's own unit, from the same checkout and venv, the same dynamic user and data folder; it wants ecobot-mcp's
-    (its daily check asks it) and starts before the bot's; it drops the bot's and ecobot-mcp's secrets, by every name they have had."""
+    (its daily check asks it) and starts after it; it drops ecobot-mcp's secrets and the old Telegram bot's, by every name they have had."""
     text, irrigation = unit("irrigation-mcp.service")
     assert irrigation["ExecStart"] == ["/opt/ecobot/.venv/bin/python", "-m", "irrigation_mcp"]
-    assert "ecobot-mcp.service" in irrigation["Wants"] and "ecobot-mcp.service" in irrigation["After"] and "ecobot.service" in irrigation["Before"]
+    assert "ecobot-mcp.service" in irrigation["Wants"] and "ecobot-mcp.service" in irrigation["After"] and not irrigation["Before"]
+    assert unit("ecobot-mcp.service")[1]["Before"] == ["irrigation-mcp.service"]
     assert irrigation["User"] == ["ecobot"] and irrigation["StateDirectory"] == ["ecobot"]          # (the folder and its owner the others')
     by_env = {f.metadata["env"]: old_names(f) for f in fields(Config) if f.metadata.get("env")}
     for name in ("BOT_TELEGRAM_TOKEN", "BOT_OPENROUTER_API_KEY", "MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY", "MCP_AIRGRADIENT_API_TOKEN",
                  "MCP_HOMEASSISTANT_TOKEN"):
-        assert {name, *by_env.get(name, ())} <= set(irrigation["UnsetEnvironment"]), name   # (the bot's: no Config fields any more)
+        assert {name, *by_env.get(name, ())} <= set(irrigation["UnsetEnvironment"]), name   # (the old bot's: no Config fields any more)
     assert not any(n.startswith("IRRIGATION_") or n == "AUTH_TOKENS" for n in irrigation["UnsetEnvironment"])
     assert "WantedBy=multi-user.target" in text
     from irrigation_mcp.__main__ import SETTINGS_EXIT          # (without its settings it isn't restarted every 10 s for good)
     assert irrigation["Restart"] == ["on-failure"] and irrigation["RestartPreventExitStatus"] == [str(SETTINGS_EXIT)]
 
 
-def test_the_bots_unit_wants_irrigation_mcps_only_as_a_wish_and_drops_the_tuya_secrets():
-    """The bot's unit wants irrigation-mcp's and starts after it (Wants=: a unit that isn't installed changes nothing, so the bot starts
-    without it), and never sees the controller's secrets, by any of their names; ecobot-mcp's starts before irrigation-mcp's."""
-    _, bot = unit("ecobot.service")
-    assert "irrigation-mcp.service" in bot["Wants"] and "irrigation-mcp.service" in bot["After"]
-    assert not re.search(r"^(Requires|BindsTo|Requisite)=.*irrigation", (ROOT / "ecobot.service").read_text(), re.M)
-    by_env = {f.metadata["env"]: old_names(f) for f in fields(Config) if f.metadata.get("env")}
-    for name in ("IRRIGATION_TUYA_CLIENT_ID", "IRRIGATION_TUYA_CLIENT_SECRET"):
-        assert {name, *by_env[name]} <= set(bot["UnsetEnvironment"]), name
-    assert "IRRIGATION_TUYA_DEVICE_ID" not in bot["UnsetEnvironment"]   # (kept: the bot warns when it is set and BOT_IRRIGATION_MCP_URL isn't)
-    assert "irrigation-mcp.service" in unit("ecobot-mcp.service")[1]["Before"]
-
-
-def test_docker_leaves_the_bot_without_irrigation_unless_set_and_every_compose_file_covers_irrigation_mcp():
-    bot_env = (ROOT / "docker" / "bot.env").read_text()
-    assert re.search(r"^BOT_IRRIGATION_MCP_URL=$", bot_env, re.M) and "http://irrigation-mcp:8766/mcp" in bot_env   # (empty; how to set it)
+def test_every_compose_file_covers_only_the_two_services():
     host = (ROOT / "compose.host-network.yaml").read_text()
     irrigation = host.split("  irrigation-mcp:\n")[1]
     assert "network_mode: host" in irrigation and "ports: !reset []" in irrigation
-    assert "IRRIGATION_ECOBOT_MCP_URL: http://127.0.0.1:8765/mcp" in irrigation and "BOT_IRRIGATION_MCP_URL:" not in host
+    assert "IRRIGATION_ECOBOT_MCP_URL: http://127.0.0.1:8765/mcp" in irrigation
+    assert re.findall(r"^  ([\w-]+):$", host, re.M) == ["ecobot-mcp", "irrigation-mcp"]
     journald = (ROOT / "compose.journald.yaml").read_text()
-    assert all(f"  {name}:\n    logging: !override\n      driver: journald" in journald for name in ("ecobot", "ecobot-mcp", "irrigation-mcp"))
+    assert re.findall(r"^  ([\w-]+):$", journald, re.M) == ["ecobot-mcp", "irrigation-mcp"]
+    assert all(f"  {name}:\n    logging: !override\n      driver: journald" in journald for name in ("ecobot-mcp", "irrigation-mcp"))
     services = dict(re.findall(r"^  ([\w-]+):\n((?:    .*\n|\s*\n)+)", (ROOT / "compose.yaml").read_text(), re.M))
     irrigation = services["irrigation-mcp"]
     assert "depends_on: [ecobot-mcp]" in irrigation and "- /var/lib/private/ecobot:/data" in irrigation
-    assert "env_file: [docker/irrigation.env, /etc/ecobot.env]" in irrigation   # (/etc/ecobot.env after: its settings win, as the bot's)
+    assert "env_file: [docker/irrigation.env, /etc/ecobot.env]" in irrigation   # (/etc/ecobot.env after: its settings win)
 
 
-def test_the_readme_installs_and_upgrades_irrigation_mcp_for_systemd_and_docker():
-    readme = (ROOT / "README.md").read_text()
-    irrigation = readme.split("### Irrigation\n", 1)[1].split("\n## ", 1)[0]
-    assert "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp" in irrigation and "BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp" in irrigation
-    assert "sudo cp /opt/ecobot/irrigation-mcp.service /etc/systemd/system/" in irrigation and "COMPOSE_PROFILES=bot,irrigation" in irrigation
-    assert "sudo systemctl enable --now irrigation-mcp.service" in irrigation
-    assert all(f"IRRIGATION_TUYA_{n}=" in irrigation for n in ("DEVICE_ID", "CLIENT_ID", "CLIENT_SECRET"))
-    upgrade = readme.split("## Upgrading", 1)[1].split("\n## ", 1)[0]
-    systemd, docker = upgrade.split("### systemd", 1)[1].split("### Docker", 1)
-    assert "irrigation-mcp.service" in systemd and "From a bot that ran the irrigation controller itself" in systemd
-    assert "From a bot that ran the irrigation controller itself" in docker and "http://irrigation-mcp:8766/mcp" in docker
+def test_the_packaging_names_no_bot_program():
+    assert not (ROOT / "ecobot.service").exists()
+    for path in ("ecobot-mcp.service", "irrigation-mcp.service"):
+        text = (ROOT / path).read_text()
+        assert not re.search(r"^(Before|After|Wants|Requires)=.*\becobot\.service", text, re.M), path
+    workflows = "".join(p.read_text() for p in (ROOT / ".github" / "workflows").glob("*.yml"))
+    assert "--target ecobot " not in workflows and "requirements-bot" not in workflows and "eval_prompts" not in workflows
+    assert "NOTIFY_TELEGRAM" not in workflows
 
 
 def test_no_workflow_has_a_plain_value_yaml_would_read_as_a_mapping():

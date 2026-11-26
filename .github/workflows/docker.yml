@@ -2,7 +2,7 @@ name: Docker images
 
 on:
   push:   # any branch, so a pull request's commits carry the check too
-    paths: [Dockerfile, .dockerignore, requirements.txt, requirements-bot.txt, requirements-mcp.txt, requirements-irrigation.txt, requirements-charts.txt, .github/workflows/docker.yml]
+    paths: [Dockerfile, .dockerignore, requirements.txt, requirements-mcp.txt, requirements-irrigation.txt, requirements-charts.txt, .github/workflows/docker.yml]
   workflow_dispatch:
 
 permissions:
@@ -10,9 +10,8 @@ permissions:
 
 jobs:
   image:
-    # The three images build from the Dockerfile (each target's build imports its program, ecobot-mcp's with no Telegram and no model
-    # client in it, irrigation-mcp's with neither and no Pillow or source, the bot's with no Pillow, no source and none of
-    # irrigation-mcp's controller), each program starts in its image, and the charts ecobot-mcp draws are the approved ones, in Inter
+    # The two images build from the Dockerfile (each target's build imports its program, irrigation-mcp's with no Pillow or source),
+    # each program starts in its image, and the charts ecobot-mcp draws are the approved ones, in Inter
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -20,8 +19,6 @@ jobs:
         run: docker build --target ecobot-mcp --build-arg COMMIT="$GITHUB_SHA" -t ecobot-mcp .
       - name: Build irrigation-mcp
         run: docker build --target irrigation-mcp --build-arg COMMIT="$GITHUB_SHA" -t irrigation-mcp .
-      - name: Build ecobot (the bot)
-        run: docker build --target ecobot --build-arg COMMIT="$GITHUB_SHA" -t ecobot .
       - name: ecobot-mcp starts and names this commit
         run: |
           docker run --rm --network none ecobot-mcp > start-mcp.log 2>&1 || true   # stops: no data source set
@@ -32,12 +29,7 @@ jobs:
           docker run --rm --network none irrigation-mcp > start-irrigation.log 2>&1 || true   # stops: no Tuya settings
           cat start-irrigation.log
           grep -q "Starting irrigation-mcp ${GITHUB_SHA::7}" start-irrigation.log
-      - name: The bot starts and names this commit
-        run: |
-          docker run --rm --network none -e BOT_TELEGRAM_TOKEN=0:x -e BOT_OPENROUTER_API_KEY=x ecobot > start.log 2>&1 || true   # stops: no BOT_MCP_URL
-          cat start.log
-          grep -q "Starting ecobot ${GITHUB_SHA::7}" start.log
-      - name: "Charts drawn in ecobot-mcp's image (the bot's draws none: it has no Pillow)"
+      - name: "Charts drawn in ecobot-mcp's image"
         run: |
           for image in ecobot-mcp; do
           docker run --rm --network none -v "$PWD/tests:/app/tests:ro" "$image" python -c '
@@ -52,7 +44,7 @@ jobs:
           done
       - name: Size
         run: |
-          for image in ecobot-mcp irrigation-mcp ecobot; do
+          for image in ecobot-mcp irrigation-mcp; do
             unpacked=$(docker run --rm --network none --user 0 --entrypoint du "$image" -sx --apparent-size --block-size=1M / | cut -f1)
             compressed=$(docker save "$image" | gzip -c | wc -c)
             echo "The image ${image}: ${unpacked} MB unpacked, $((compressed / 1000000)) MB compressed" | tee -a "$GITHUB_STEP_SUMMARY"

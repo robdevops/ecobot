@@ -3,7 +3,7 @@
 bot's own file is only read: the copy is made with SQLite's backup, so the bot can keep running. Run it where the bot runs, with its
 settings:
 
-    sudo docker compose exec ecobot python scripts/bench_storage.py
+    sudo docker compose exec ecobot-mcp python scripts/bench_storage.py
     python scripts/bench_storage.py [--data /var/lib/private/ecobot] [--repeat 3]
 
 and paste the table it prints.

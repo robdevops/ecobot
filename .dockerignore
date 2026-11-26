@@ -1,14 +1,12 @@
 # Only what the image is built from: no state, caches, secrets (*.env), tests or venv can reach it (the scripts are there to be run
-# in the container: docker compose exec ecobot python scripts/...)
+# in the container: docker compose exec ecobot-mcp python scripts/...)
 *
-!ecobot.py
 !ecobot_mcp/
 !irrigation_mcp/
 !lib/
 !schemas/
 !scripts/
 !requirements.txt
-!requirements-bot.txt
 !requirements-mcp.txt
 !requirements-irrigation.txt
 !requirements-charts.txt

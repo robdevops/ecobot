@@ -1,25 +1,23 @@
 # irrigation-mcp, the irrigation controller's MCP server (python -m irrigation_mcp, docs/ecobot-mcp.md 3.9 and step 8): the Tuya
 # controller, the watchdog that closes the valve after a run, the daily check (rain, battery) and the MCP server at
-# http://127.0.0.1:8766/mcp. Optional: install it beside ecobot-mcp.service and ecobot.service, from the same checkout and venv (see
-# ecobot.service), only if you have the controller:
+# http://127.0.0.1:8766/mcp. Optional: install it beside ecobot-mcp.service, from the same checkout and venv (see
+# ecobot-mcp.service), only if you have the controller:
 #   sudo cp /opt/ecobot/irrigation-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload
-#   sudo systemctl enable --now irrigation-mcp.service && sudo systemctl restart ecobot
+#   sudo systemctl enable --now irrigation-mcp.service
 # It needs IRRIGATION_TUYA_DEVICE_ID, IRRIGATION_TUYA_CLIENT_ID and IRRIGATION_TUYA_CLIENT_SECRET in /etc/ecobot.env (it stops at start,
-# saying so, without them, and isn't restarted until it is started again), and the bot BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp there to show the Irrigation button and deliver
-# its alerts. Its daily check asks ecobot-mcp (IRRIGATION_ECOBOT_MCP_URL, default http://127.0.0.1:8765/mcp) for the rain and the
-# forecast: this unit pulls ecobot-mcp's in and starts after it, and before the bot (the bot's unit wants this one only if it is installed).
+# saying so, without them, and isn't restarted until it is started again). Its daily check asks ecobot-mcp (IRRIGATION_ECOBOT_MCP_URL, default http://127.0.0.1:8765/mcp) for the rain and the
+# forecast: this unit pulls ecobot-mcp's in and starts after it.
 # Only one irrigation-mcp runs on a data folder (irrigation.lock): a second stops at start, saying so.
-# The data folder is the bot's own, /var/lib/private/ecobot (StateDirectory=ecobot), shared with the same dynamic user (User=ecobot) as
-# the other two units: irrigation-mcp keeps irrigation_state.json and irrigation_alerts.sqlite there, and the generated token (with
-# AUTH_TOKENS unset) is the one all three use.
-# It reads /etc/ecobot.env as the others do, less the bot's and ecobot-mcp's secrets, by their names and their old ones
+# The data folder is /var/lib/private/ecobot (StateDirectory=ecobot), shared with the same dynamic user (User=ecobot) as
+# ecobot-mcp.service: irrigation-mcp keeps irrigation_state.json and irrigation_alerts.sqlite there, and the generated token (with
+# AUTH_TOKENS unset) is the one both use.
+# It reads /etc/ecobot.env as ecobot-mcp does, less ecobot-mcp's secrets and the old Telegram bot's, by their names and their old ones
 # (UnsetEnvironment=): its settings are the IRRIGATION_ ones and the shared ones (docs/configuration.md). IRRIGATION_BIND defaults to
 # 127.0.0.1:8766; to reach it from other machines set IRRIGATION_BIND=0.0.0.0:8766 and put TLS in front of it.
 [Unit]
 Description=irrigation-mcp (the ecobot irrigation controller's MCP server)
 After=network-online.target ecobot-mcp.service
 Wants=network-online.target ecobot-mcp.service
-Before=ecobot.service
 
 [Service]
 DynamicUser=yes
