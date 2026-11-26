@@ -308,9 +308,10 @@ For applications that keep an eye on the station rather than ask about it; a mod
 | `ecobot://now/weather` | the live reading as kept, in the service's names (`current`'s, nothing fetched for it): `{as_of, sensors: {sensor: {reading: {value, unit, text, [emoji], [compass]}}}, lines, heading, [unavailable]}` | each new reading (5 s with HA, 60 s cloud only) |
 | `ecobot://now/air` | the latest air reading, the same shape: its time, each reading's rating, PM2.5's and PM10's AQI and band (the US AQI is the higher) | each new reading |
 | `ecobot://alerts` (in the resource list) and `ecobot://alerts{?since,expired}` (a template) | the alerts, newest last, kept 30 days; `since` an alert id: those after it; unexpired ones only unless `expired=true` (3.6) | each new alert, on the bare URI |
+| `ecobot://feed` | the same alerts as a feed for signalbot (`lib/feed.py`, 3.6): `{identity, kinds: [{kind, label, words}], items: [{id, kind, time, expires, text, [link], [chart: {tool, arguments, [arg, values]}]}]}`, unexpired only | each new alert |
 | `ecobot://forecast` | the forecast days, structured (min and max, rain chance, chance of at least 1 mm, the day's rain in mm with its likely range, summary), with `fetched_at` and `place` | each new forecast |
 | `ecobot://pollen` | grass and asthma levels with their days, `fetched_at`, `in_season` | each new page |
-| `ecobot://status` | the Status picture (step 6): the station's temperature, humidity and rain gauges in a row as a PNG (a blob, `image/png`, `lib/gauges.py`), after their readings as JSON text (`{gauges: [{title, value, unit, rows}], lines}`: the reading now and the day's, month's and year's highs and lows, which the picture leaves out); from `current` with context, read as a call is; without Pillow, the text with `image_note` | no |
+| `ecobot://status` | the Status picture (step 6): the station's temperature, humidity and rain gauges in a row as a PNG (a blob, `image/png`, `lib/gauges.py`), after their readings as JSON text (`{gauges: [{title, value, unit, rows}], lines}`: the reading now and the day's, month's and year's highs and lows, which the picture leaves out), then the report alone as `text/plain`, for a client that posts words as they are; from `current` with context, read as a call is; without Pillow, the text with `image_note` | no |
 | `ecobot://health` | each loop's last success and failure, archive progress, the file's size | no |
 | `ecobot://schema/chart` | the chart data's JSON Schema (3.7) | no |
 
@@ -346,6 +347,12 @@ every 60 seconds, particulates every 30 minutes and only then, since its two-rea
   A client back after a gap sends what is still true, never the morning's rain as news.
 - **Delivery is the client's.** A client listens, reads `ecobot://alerts?since=<last id it handled>`, and sends each alert to whoever
   it serves. Our bot does this for its subscribed chats.
+- **As a feed for signalbot.** `ecobot://feed` (and irrigation-mcp's `irrigation://feed`) gives the unexpired alerts in signalbot's feed
+  format (its `docs/FEEDS.md`; `lib/feed.py`), so signalbot posts them to the chats subscribed with `/alerts`, with no client of ours:
+  the kinds this server can send now (by its sources), each with its label and the words people use for it; each alert's id as a
+  string, its `text`, its link's URL, and its chart's `drawn_by` as `{tool, arguments}`, with `arg` "period" and its periods as `values`
+  when the call names one, which signalbot offers as buttons. signalbot reads it every 30 seconds. `ecobot://alerts` stays as it is for
+  our bot and EcoBridge until they are retired (TODO.md).
 - **The forecast alert is station-wide:** for today and tomorrow, it compares each new forecast with the first one fetched after 6am
   that day (its baseline), alerts when the maximum moves by more than 2°C or the chance of rain rises past 50% (or falls from there to 30% or less: the band
   keeps a chance hovering around 50% from alerting each way on every refresh), and makes the forecast it
@@ -416,6 +423,9 @@ Charts are data: the client draws them, or its model does from the numbers.
   `MCP_CHART_BASE_URL`'s (where a proxy serves `/charts` to browsers, e.g. nginx's `location /ecobot-charts/ { proxy_pass
   http://127.0.0.1:8765/charts/; }`), else the MCP request's own scheme and host (`X-Forwarded-Proto`, `X-Forwarded-Host` when
   present) with `/charts`.
+- **A client without a model** (signalbot's direct commands, which post a result as it comes) gets the caption too: with images or
+  links made, an answer that isn't complete has its `caption` (or `text`) as a last text block for the person (`audience: ["user"]`),
+  as a complete answer has its `reply`. Asking with the connection URL (`/mcp?charts=png`) is enough, as such a client sends no `_meta`.
 - **Our bot** has every chart it sends drawn by the service (step 6a), as images
   (`chart_image: "png"`, in its own theme, `chart_dark`, which it keeps with each picture in its image cache): the charts drawn ahead,
   the period buttons, the alerts' pictures and their 🔄, a sentence answered in code and the model's answers' charts (each call the
@@ -564,7 +574,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
    (`lib/prompt.py`); tool_choice is the model's own, the reasoning effort still comes from the words. Its shortcuts (`lib/intent.py`)
    are fixed calls built directly: a named reading's chart and a period (summary with the person's words for both, the keyboard's and
    the alerts' sentences among them; with no chart word, over more than a day or a day given as a number, "co2 1d"), weather now, the
-   report (current, pollen, the next 3 days' forecast) and the gauges; everything else it answered in code goes to the model. The turn
+   report (current, pollen, 3 days' forecast) and the gauges; everything else it answered in code goes to the model. The turn
    ends on a step whose every result is complete. The live-chart link goes under an answer whose calls read the air (`bot.reads_air`),
    and the forecast days shown, by `forecast` or `outlook`, are recorded for the forecast alert. `lib/service/legacy.py` is gone; the
    `Turn` is only the engines' options, set by the service from its arguments. `--live` asks the model as the bot does (its prompt,
@@ -777,7 +787,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
      `Bot.on_command` answers `/<prompt> <words>` (`prompt_arguments`: in order, the last taking the rest; a refusal such as `/chart`
      with no reading is said in the chat; another bot's command is left alone). `/report` is the `report` prompt; Status is a
      keyboard button, so a fixed read with no model: one message, `ecobot://status`'s picture with the report ecobot-mcp writes in
-     code as its caption (its `report`: current's sections, today's forecast, the pollen) and a 🔄 that reads it again in place
+     code as its caption (its `report`: current's sections, 3 days' forecast, the pollen) and a 🔄 that reads it again in place
      (`Bot.status`, `Bot.on_status_button`). (Built first as the picture, then the report prompt's answer as a second message: two
      messages, no 🔄 and a model call for a button; changed.) `lib/report.py`, `lib/report_menu.py` and
      `scripts/report_inputs.py` are deleted (an old report's 🔄 is out of date). `draw_buttons_ahead`, its loop and the alert charts kept

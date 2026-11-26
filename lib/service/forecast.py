@@ -182,7 +182,7 @@ DESCRIPTION = (
     "The weather forecast (Open-Meteo) for the station's place: today and the days ahead, each day's summary with its emoji, its lowest "
     "and highest temperature, the day's rain total in mm (about N mm, with a likely range when the models differ; under 1 mm; nothing on a dry day) and the chance of at least 1 mm of rain. For \"what's tomorrow like\": {\"period\": \"tomorrow\"}; \"the "
     "forecast for the weekend\": {\"period\": \"this weekend\"}; \"will it rain this week\", \"forecast\": {} (the next 7 days). A "
-    "report (\"report\", \"status\", \"sitrep\") is current, forecast {\"period\": \"today\"} and pollen, called together.\n"
+    "report (\"report\", \"status\", \"sitrep\") is current, forecast {\"period\": \"next 3 days\"} and pollen, called together.\n"
     "Not for: the next few hours from the station's own readings (\"will it rain soon\", \"do I need an umbrella\": outlook); what was "
     "measured, a device or reading with a period (\"weather week\", \"ecowitt week\": the past week, summary; days, for days "
     "ranked or counted). Only what is ahead is forecast.\n"

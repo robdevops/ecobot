@@ -30,7 +30,7 @@ DESCRIPTION = (
     "Melbourne's grass pollen level and the thunderstorm asthma risk for the station's district, each Low, Moderate, High or Extreme, "
     "from melbournepollen.com.au. For \"pollen today\", \"is it bad for hay fever\", \"thunderstorm asthma risk\": {}. Takes no "
     "arguments. The forecasts run only from October to December: out of season it says so, as an error. A report (\"report\", "
-    "\"status\", \"sitrep\") is current, forecast {\"period\": \"today\"} and pollen, called together.\n"
+    "\"status\", \"sitrep\") is current, forecast {\"period\": \"next 3 days\"} and pollen, called together.\n"
     "Not for: air quality, PM2.5 and the like (the air sensor: current, summary); the weather forecast (forecast).\n"
     "Result: `text`, the whole answer for the person, ready to send; `lines`, emoji included: copy them as they are; `grass` and "
     "`asthma`, each level with its emoji (grass with `day`, the day its forecast is for; asthma with `updated`, when the site last "

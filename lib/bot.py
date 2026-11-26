@@ -672,7 +672,7 @@ class Bot:
 
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Status (the button, /status): a fixed read, no model (ecobot://status): one message, the Status picture (the station's three
-        gauges) with the report ecobot-mcp writes (the readings now, today's forecast, the pollen) as its caption, and a 🔄 under it
+        gauges) with the report ecobot-mcp writes (the readings now, 3 days' forecast, the pollen) as its caption, and a 🔄 under it
         (on_status_button). Without the picture, the report alone, with the 🔄."""
         msg = update.effective_message
         log.info("%s: Status", describe_source(update), extra=QUOTES)

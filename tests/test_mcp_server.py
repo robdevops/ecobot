@@ -156,8 +156,8 @@ async def test_each_resource_is_listed_and_readable_as_json(world):
             content = contents[0]
             assert content.mime_type == "application/json" and content.uri == uri
             read[uri] = json.loads(content.text)
-            if uri == mcp_server.STATUS_URI:   # the Status picture: its readings as JSON, then the picture (test_the_status_picture...)
-                assert [c.mime_type for c in contents] == ["application/json", "image/png"]
+            if uri == mcp_server.STATUS_URI:   # the Status picture: its readings as JSON, the picture, the report (test_the_status_picture...)
+                assert [c.mime_type for c in contents] == ["application/json", "image/png", "text/plain"]
             else:
                 assert len(contents) == 1
     station = read["ecobot://station"]
@@ -171,6 +171,9 @@ async def test_each_resource_is_listed_and_readable_as_json(world):
     air = read["ecobot://now/air"]
     assert air["sensors"]["air"]["pm2_5"]["rating"] and "aqi_us" in air["sensors"]["air"]["pm2_5"]
     assert [a["kind"] for a in read[ALERTS_URI]["alerts"]] == ["rain"] and read[ALERTS_URI]["last_id"] == 1
+    feed = read[mcp_server.FEED_URI]   # the same alerts as a feed for signalbot (lib/feed.py, tests/test_feed.py)
+    assert [i["id"] for i in feed["items"]] == ["1"] and feed["identity"] == read[ALERTS_URI]["identity"]
+    assert [k["kind"] for k in feed["kinds"]] == ["rain", "gusts", "uv", "temps", "particulates", "pollen_and_asthma", "forecast"]
     forecast = read["ecobot://forecast"]
     assert forecast["place"] == "Melbourne" and forecast["days"] and {"date", "min_c", "max_c", "text"} <= set(forecast["days"][0])
     assert {"in_season", "grass", "asthma", "fetched_at"} <= set(read["ecobot://pollen"])
@@ -181,7 +184,7 @@ async def test_each_resource_is_listed_and_readable_as_json(world):
 
 
 async def test_the_status_picture_is_three_gauges_as_a_png_with_their_readings_as_json(world, monkeypatch):
-    """ecobot://status: the report in words (current's sections, today's forecast, the pollen: written in code, no model) and the
+    """ecobot://status: the report in words (current's sections, 3 days' forecast, the pollen: written in code, no model) and the
     station's temperature, humidity and rain gauges drawn as a PNG (lib/gauges.py, from current with context, the three readings named),
     after their readings and highs and lows as JSON; without Pillow, the JSON alone with a note."""
     import io
@@ -198,11 +201,14 @@ async def test_the_status_picture_is_three_gauges_as_a_png_with_their_readings_a
     async with Client(world.server) as client:
         (entry,) = [r for r in (await client.list_resources()).resources if str(r.uri) == mcp_server.STATUS_URI]
         assert entry.mime_type == "image/png"
-        text, blob = (await client.read_resource(mcp_server.STATUS_URI)).contents
+        text, blob, words = (await client.read_resource(mcp_server.STATUS_URI)).contents
     assert sorted(asked, key=len) == [{}, gauge_sheet.call(gauge_sheet.STATUS)]           # the report's readings now, and the gauges'
     data = json.loads(text.text)
     assert data["report"] == await status.report(world.service) and data["report"].startswith("Weather station (")   # written in code
+    assert words.mime_type == "text/plain" and words.text == data["report"]   # the report alone, for a client that posts words as they are
     assert "\n\nForecast (" in data["report"]
+    forecast = data["report"].split("\n\nForecast (", 1)[1].split("\n\n", 1)[0]
+    assert len(forecast.splitlines()) - 1 == 3, forecast   # today and the next two days, as the report has shown since b9101da
     sheet = gauge_sheet.sheet(json.loads(await real(gauge_sheet.call(gauge_sheet.STATUS))), gauge_sheet.STATUS)
     assert data["gauges"] == [status.gauge(t) for t in sheet.tiles] and data["lines"] == [status.line(t) for t in sheet.tiles]
     assert data["gauges"][0]["value"] == sheet.tiles[0].value and set(data["gauges"][0]["rows"]) == {"Daily", "Monthly", "Yearly"}
@@ -212,15 +218,16 @@ async def test_the_status_picture_is_three_gauges_as_a_png_with_their_readings_a
                                                                                gauges.TILE_H + 2 * gauges.MARGIN)
     monkeypatch.setattr(status, "_renderer", lambda: None)   # (no Pillow)
     async with Client(world.server) as client:
-        (alone,) = (await client.read_resource(mcp_server.STATUS_URI)).contents
-    assert json.loads(alone.text)["image_note"] == status.UNAVAILABLE_NOTE
+        alone, words = (await client.read_resource(mcp_server.STATUS_URI)).contents
+    assert json.loads(alone.text)["image_note"] == status.UNAVAILABLE_NOTE and words.mime_type == "text/plain"
 
 
 async def test_a_resource_there_is_none_of_is_refused_naming_those_there_are(tmp_path):
     server = EcobotServer(Context(tz=TZ), AlertLog(tmp_path / "a.sqlite", TZ))
     async with Client(server.server) as client:
         listed = [r.uri for r in (await client.list_resources()).resources]
-        assert listed == ["ecobot://station", ALERTS_URI, "ecobot://health", "ecobot://schema/chart"]   # (no sensor, no forecast, no pollen)
+        assert listed == ["ecobot://station", ALERTS_URI, mcp_server.FEED_URI, "ecobot://health",
+                          "ecobot://schema/chart"]   # (no sensor, no forecast, no pollen)
         for uri in ("ecobot://now/weather", "ecobot://status", "ecobot://nowhere", "ecobot://health?x=1"):
             with pytest.raises(MCPError, match="No resource") as e:
                 await client.read_resource(uri)
@@ -464,7 +471,8 @@ async def test_over_http_the_connections_url_asks_for_images_and_a_call_can_say_
             plain = await client.call_tool("summary", CHARTED)
             asked = await client.call_tool("summary", CHARTED, meta={"chart_image": "png"})
     for got in (images, asked):
-        assert [b.type for b in got.content] == ["text", "image"] and len(got.meta[chart_images.CHARTS_META]) == 1
+        assert [b.type for b in got.content] == ["text", "image", "text"] and len(got.meta[chart_images.CHARTS_META]) == 1
+        assert got.content[-1].annotations.audience == ["user"] and got.content[-1].text == json.loads(got.content[0].text)["caption"]
         assert images_of(got)[0] == charts.render_data(got.meta[chart_images.CHARTS_META][0], TZ, dark=False)
     for got in (without, plain):
         assert [b.type for b in got.content] == ["text"] and not ours(got)
@@ -512,7 +520,8 @@ async def test_a_call_asking_for_links_gets_each_chart_s_url_and_markdown_and_a_
         png = await client.call_tool("summary", CHARTED, meta={"chart_image": "png"})
     told = json.loads(got.content[0].text)
     whole = json.loads(await world.service["summary"].call(CHARTED, {"chart_points": AS_DRAWN}))
-    assert [b.type for b in got.content] == ["text", "resource_link"] and not images_of(got)
+    assert [b.type for b in got.content] == ["text", "resource_link", "text"] and not images_of(got)
+    assert got.content[-1].annotations.audience == ["user"]   # the caption, for a client that posts without a model
     (chart,) = told["charts"]
     (key,) = link_ids(got)
     assert chart == {"title": whole["charts"][0]["title"], "period": whole["charts"][0]["period"], "url": f"{BASE}/{key}.png",
@@ -613,8 +622,8 @@ async def test_over_http_a_link_serves_the_png_without_a_token_or_an_allowed_hos
     assert got.status_code == 200 and got.headers["content-type"] == "image/png" and got.content == images_of(as_png)[0]
     assert got.headers["cache-control"].startswith("private, max-age=") and 0 < int(got.headers["cache-control"].rsplit("=")[-1]) <= 86400
     assert missing.status_code == other.status_code == expired.status_code == 404 and refused.status_code == 401
-    assert [b.type for b in as_png.content] == ["text", "image"] and [b.type for b in without.content] == ["text"]
-    assert [b.type for b in asked.content] == ["text", "resource_link"]
+    assert [b.type for b in as_png.content] == ["text", "image", "text"] and [b.type for b in without.content] == ["text"]
+    assert [b.type for b in asked.content] == ["text", "resource_link", "text"]
     lines = [r.getMessage() for r in caplog.records if r.name == "lib.mcp_server.requests"]
     key = link_ids(linked)[0]
     assert any(f"GET /charts/{key[:6]}….png -> 200" in line for line in lines), lines
