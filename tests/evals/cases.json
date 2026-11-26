@@ -1014,7 +1014,7 @@
   },
   {
     "id": "prompt-report",
-    "ask": "Give me a report: the readings now, today's forecast and the pollen.",
+    "ask": "Give me a report: the readings now, 3 days' forecast and the pollen.",
     "note": "ecobot-mcp's report prompt, as the bot's /report command asks the model (the Status button is the report written in code, no model)",
     "expect": {
       "effort": "low"

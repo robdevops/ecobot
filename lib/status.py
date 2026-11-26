@@ -1,4 +1,4 @@
-"""Status (ecobot://status, docs/ecobot-mcp.md step 6): its report in words (report: the readings now, today's forecast and the
+"""Status (ecobot://status, docs/ecobot-mcp.md step 6): its report in words (report: the readings now, 3 days' forecast and the
 pollen, written here from the tools' own answers, as the report always was: no model), and its picture, the weather station's temperature, humidity and rain gauges in a
 row (gauge_sheet.STATUS), drawn as a PNG by lib/gauges.py, with their readings as JSON beside it: each gauge's reading now and its
 highs and lows (rain: its wettest day and total) of today, the month and the year, which the picture leaves out (the web page's
@@ -70,9 +70,9 @@ async def _answer(service, name: str, args: dict) -> dict | None:
 
 async def report(service) -> str:
     """Status's words, written here from the service's own answers, as the report always was (no model): each device's section now
-    (current's headings and lines: the weather station's, the air sensor's), then today's forecast and the pollen (their `text`), those
+    (current's headings and lines: the weather station's, the air sensor's), then 3 days' forecast and the pollen (their `text`), those
     there are, a blank line between."""
-    now, forecast, pollen = await asyncio.gather(_answer(service, "current", {}), _answer(service, "forecast", {"period": "today"}),
+    now, forecast, pollen = await asyncio.gather(_answer(service, "current", {}), _answer(service, "forecast", {"period": "next 3 days"}),
                                                  _answer(service, "pollen", {}))
     sections = []
     for device, lines in ((now or {}).get("lines") or {}).items():

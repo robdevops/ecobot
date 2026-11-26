@@ -184,7 +184,7 @@ async def test_each_resource_is_listed_and_readable_as_json(world):
 
 
 async def test_the_status_picture_is_three_gauges_as_a_png_with_their_readings_as_json(world, monkeypatch):
-    """ecobot://status: the report in words (current's sections, today's forecast, the pollen: written in code, no model) and the
+    """ecobot://status: the report in words (current's sections, 3 days' forecast, the pollen: written in code, no model) and the
     station's temperature, humidity and rain gauges drawn as a PNG (lib/gauges.py, from current with context, the three readings named),
     after their readings and highs and lows as JSON; without Pillow, the JSON alone with a note."""
     import io
@@ -207,6 +207,8 @@ async def test_the_status_picture_is_three_gauges_as_a_png_with_their_readings_a
     assert data["report"] == await status.report(world.service) and data["report"].startswith("Weather station (")   # written in code
     assert words.mime_type == "text/plain" and words.text == data["report"]   # the report alone, for a client that posts words as they are
     assert "\n\nForecast (" in data["report"]
+    forecast = data["report"].split("\n\nForecast (", 1)[1].split("\n\n", 1)[0]
+    assert len(forecast.splitlines()) - 1 == 3, forecast   # today and the next two days, as the report has shown since b9101da
     sheet = gauge_sheet.sheet(json.loads(await real(gauge_sheet.call(gauge_sheet.STATUS))), gauge_sheet.STATUS)
     assert data["gauges"] == [status.gauge(t) for t in sheet.tiles] and data["lines"] == [status.line(t) for t in sheet.tiles]
     assert data["gauges"][0]["value"] == sheet.tiles[0].value and set(data["gauges"][0]["rows"]) == {"Daily", "Monthly", "Yearly"}

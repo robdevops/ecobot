@@ -63,7 +63,7 @@ DESCRIPTION = (
     "(\"weather now\", \"how's it outside\"): {}. How hot is it: {readings: [\"temperature\"]}. Is it raining: {readings: [\"rain\"]}. "
     "The air now: {readings: [\"air\"]}. With today's, this month's and this year's highs and lows beside each reading, as gauges show "
     "them (rain: its totals and wettest day; wind: its highest gust): {context: true}. A report, status or sitrep: current, forecast "
-    "(period \"today\") and pollen, called together. Not for: will it rain (outlook); a period's highs, lows (\"lowest and highest "
+    "(\"next 3 days\") and pollen, called together. Not for: will it rain (outlook); a period's highs, lows (\"lowest and highest "
     "humidity\"), averages or a chart, "
     "a device or reading with a period, \"ecowitt week\", \"weather week\" (summary); values at set times (readings); the days ahead (forecast). Result: sensors.<sensor>.<reading> (sensors.outdoor."
     "temperature) with value, unit, text ready to quote (\"12.3 °C\") and emoji when the reading is one to notice (put it right "

@@ -107,7 +107,7 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
     POLLEN_URI: ("pollen", "Pollen and thunderstorm asthma", "Grass pollen and thunderstorm asthma levels: {in_season, fetched_at, "
                  "grass: {level, emoji, date}, asthma: {level, emoji, updated}, lines}. Pushed on each new page.", "pollen"),
     STATUS_URI: ("status", "Status", "The report in words and the weather station's temperature, humidity and rain gauges in a row, as a "
-                 "picture (image/png, a blob), with JSON text first: {report (the readings now, today's forecast and the pollen, each "
+                 "picture (image/png, a blob), with JSON text first: {report (the readings now, 3 days' forecast and the pollen, each "
                  "section a heading then its lines: to send as it is), gauges: [{title, value, unit, rows: {Daily, Monthly, "
                  "Yearly: {Max, Min} or {Max, Total}}}], lines}; the picture shows the readings now, the text their highs and lows too. "
                  "Without the picture (no Pillow here) the text has `image_note`. Not pushed.", "eco"),
@@ -124,8 +124,8 @@ PERIOD = types.PromptArgument(name="period", description="The period in your own
 PROMPTS = {   # name: (description, arguments, the question: a format string over the arguments, with their defaults). A name is also a
               # chat command (Telegram's: lowercase, digits and _, at most 32), so none takes a bot command's name (lib/templates.COMMANDS)
     "now": ("The weather and the air now.", [], "How is it outside now?"),
-    "report": ("A report: the readings now, today's forecast and the pollen.", [],
-               "Give me a report: the readings now, today's forecast and the pollen."),
+    "report": ("A report: the readings now, 3 days' forecast and the pollen.", [],
+               "Give me a report: the readings now, 3 days' forecast and the pollen."),
     "will_it_rain": ("Will it rain in the next few hours: the station's read and the forecast.", [], "Will it rain in the next few hours?"),
     "weather_chart": ("Every reading of the weather station over a period, a panel each.", [PERIOD],
                 "Chart every weather reading, a panel each, over {period}."),

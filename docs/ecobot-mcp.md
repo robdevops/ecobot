@@ -574,7 +574,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
    (`lib/prompt.py`); tool_choice is the model's own, the reasoning effort still comes from the words. Its shortcuts (`lib/intent.py`)
    are fixed calls built directly: a named reading's chart and a period (summary with the person's words for both, the keyboard's and
    the alerts' sentences among them; with no chart word, over more than a day or a day given as a number, "co2 1d"), weather now, the
-   report (current, pollen, the next 3 days' forecast) and the gauges; everything else it answered in code goes to the model. The turn
+   report (current, pollen, 3 days' forecast) and the gauges; everything else it answered in code goes to the model. The turn
    ends on a step whose every result is complete. The live-chart link goes under an answer whose calls read the air (`bot.reads_air`),
    and the forecast days shown, by `forecast` or `outlook`, are recorded for the forecast alert. `lib/service/legacy.py` is gone; the
    `Turn` is only the engines' options, set by the service from its arguments. `--live` asks the model as the bot does (its prompt,
@@ -787,7 +787,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
      `Bot.on_command` answers `/<prompt> <words>` (`prompt_arguments`: in order, the last taking the rest; a refusal such as `/chart`
      with no reading is said in the chat; another bot's command is left alone). `/report` is the `report` prompt; Status is a
      keyboard button, so a fixed read with no model: one message, `ecobot://status`'s picture with the report ecobot-mcp writes in
-     code as its caption (its `report`: current's sections, today's forecast, the pollen) and a 🔄 that reads it again in place
+     code as its caption (its `report`: current's sections, 3 days' forecast, the pollen) and a 🔄 that reads it again in place
      (`Bot.status`, `Bot.on_status_button`). (Built first as the picture, then the report prompt's answer as a second message: two
      messages, no 🔄 and a model call for a button; changed.) `lib/report.py`, `lib/report_menu.py` and
      `scripts/report_inputs.py` are deleted (an old report's 🔄 is out of date). `draw_buttons_ahead`, its loop and the alert charts kept
