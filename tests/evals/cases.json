@@ -975,6 +975,39 @@
     "covers": []
   },
   {
+    "id": "overlay-two-sensors-inverted-axis",
+    "ask": "overlay ecowitt outdoor temperature with airgradient temperature. On another, inverted axis, do the same for outdoor humidity from each",
+    "note": "four readings, one call, one chart: temperature of both sensors left, humidity of both on an inverted right axis (the bot once drew a panel per pair)",
+    "expect": {
+      "effort": "none"
+    },
+    "covers": [
+      "c:two-axes"
+    ]
+  },
+  {
+    "id": "one-chart-two-axes",
+    "ask": "plot temperature and humidity on one chart with two axes",
+    "note": "the words ask for one chart with a scale each: layout two_axes",
+    "expect": {
+      "effort": "none"
+    },
+    "covers": [
+      "c:two-axes"
+    ]
+  },
+  {
+    "id": "temperature-and-humidity-panels",
+    "ask": "chart temperature and humidity",
+    "note": "no words for one chart or a second axis: the default, a panel each (layout left out, auto or panels)",
+    "expect": {
+      "effort": "none"
+    },
+    "covers": [
+      "c:stack"
+    ]
+  },
+  {
     "id": "humidity-each-hour",
     "ask": "What was the humidity each hour for the last 5 hours",
     "note": "the bot said its tool only gave extremes: the readings tool gives a value per hour",

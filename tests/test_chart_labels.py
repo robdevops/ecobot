@@ -122,3 +122,105 @@ def test_a_panel_with_two_scales_is_drawn_with_both_latest_values_and_a_right_ax
     chart = Chart(panel.label, "s", [panel])
     assert labels_of(chart)[-2:] == ["4", "400.5"]                          # each line's latest value, by its own scale
     assert charts.render(chart, timezone.utc)[:4] == b"\x89PNG"
+
+
+# ---------- four lines, two scales, one panel (temperature of both sensors left, humidity of both right, upside down) ----------
+def four_lines(flip: bool = False, days: int = 1) -> Chart:
+    from lib.panels import panel_for, two_axes
+    n = 48 * days
+    xs = list(range(1_790_000_000, 1_790_000_000 + n * 1800, 1800))
+    up = [i / (n - 1) for i in range(n)]   # a day that warms and dries
+    spec = [("temperature", "Ecowitt temperature", [10 + 10 * u for u in up]), ("air_temperature", "AirGradient temperature", [11 + 10 * u for u in up]),
+            ("humidity", "Ecowitt humidity", [80 - 40 * u for u in up]), ("air_humidity", "AirGradient humidity", [78 - 40 * u for u in up])]
+    panels = [panel_for(name if name in ("temperature", "humidity") else name.removeprefix("air_"), [
+        Line(label, xs, ys, low=[y - 0.8 for y in ys], high=[y + 0.8 for y in ys], reading=name)]) for name, label, ys in spec]
+    for panel, (_, label, _) in zip(panels, spec):
+        panel.label = label
+    panel = two_axes(panels, flip_right=flip)
+    return Chart(panel.label, "s", [panel])
+
+
+def pixels(chart: Chart):
+    from io import BytesIO
+
+    from PIL import Image
+    return Image.open(BytesIO(charts.render(chart, timezone.utc))).convert("RGB")
+
+
+def near(rgb, hex_colour: str, tolerance: int = 40) -> bool:
+    want = tuple(int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
+    return all(abs(a - b) <= tolerance for a, b in zip(rgb, want))
+
+
+def colour_columns(image, hex_colour: str, x0: int, x1: int) -> list[int]:
+    """The columns of x0..x1 that hold a pixel of that colour."""
+    return [x for x in range(x0, x1) if any(near(image.getpixel((x, y)), hex_colour) for y in range(image.height))]
+
+
+def test_four_lines_on_two_scales_are_one_panel_one_colour_family_for_each_scale():
+    chart = four_lines()
+    (panel,) = chart.panels
+    assert [(s.label, s.right) for s in panel.lines] == [("Ecowitt temperature (°C)", False), ("AirGradient temperature (°C)", False),
+                                                          ("Ecowitt humidity (%)", True), ("AirGradient humidity (%)", True)]
+    assert [charts._colour(s, i, panel.reading) for i, s in enumerate(panel.lines)] == [
+        charts.READING_COLOURS[r] for r in ("temperature", "air_temperature", "humidity", "air_humidity")]
+    warm, cool = [charts.READING_COLOURS[r] for r in ("temperature", "air_temperature")], [charts.READING_COLOURS[r] for r in ("humidity", "air_humidity")]
+    assert all(int(c[1:3], 16) > int(c[5:7], 16) for c in warm) and all(int(c[5:7], 16) > int(c[1:3], 16) for c in cool)   # red beats blue, blue beats red
+
+
+def test_each_of_the_four_lines_is_labelled_with_its_latest_value_and_the_right_scale_can_run_downwards():
+    upright, inverted = four_lines(), four_lines(flip=True)
+    for chart in (upright, inverted):
+        ends = [t for t in charts.draw_texts(chart, timezone.utc) if t.text in ("20", "21", "40", "38")]
+        assert sorted(t.text for t in ends) == ["20", "21", "38", "40"]            # every line ends with its latest value
+    y = lambda chart, text: next(t.y for t in charts.draw_texts(chart, timezone.utc) if t.text == text)
+    assert y(upright, "40") > y(upright, "20") + 50     # a humidity that fell ends below a temperature that rose
+    assert y(inverted, "40") < y(inverted, "20") + 50 and y(inverted, "40") < y(upright, "40") - 100   # upside down it ends high: 80 is the bottom
+    assert y(inverted, "38") < y(upright, "38") - 100 and y(inverted, "20") == pytest.approx(y(upright, "20"))   # the left scale is untouched
+
+
+@pytest.mark.parametrize("days", [1, 90])
+@pytest.mark.parametrize("flip", [False, True])
+def test_the_two_scales_ticks_stand_outside_the_plot_in_their_lines_colours_with_their_units(flip, days):
+    chart = four_lines(flip, days)
+    image = pixels(chart)
+    plot_left, plot_right = round(charts.AX_RECT[0] * image.width), round((charts.AX_RECT[0] + charts._axes_width(chart)) * image.width)
+    assert image.size == (1280, 720)
+    left = colour_columns(image, charts.READING_COLOURS["temperature"], 0, plot_left - 2)          # the left ticks: the first line's colour
+    right = colour_columns(image, charts.READING_COLOURS["humidity"], plot_right + 2, image.width)   # the right ticks: the second scale's first
+    assert left and right and max(left) < plot_left and min(right) > plot_right
+    assert min(left) >= 0 and max(right) < image.width                           # the text is not cut off by the picture's edge
+
+
+def test_a_scales_ticks_carry_a_short_unit_and_a_long_one_stays_in_the_key():
+    a = lambda *names: [Line(n, [1, 2], [1.0, 2.0]) for n in names]
+    assert charts._scale_unit(a("Ecowitt temperature (°C)", "AirGradient temperature (°C)")) == "°C"
+    assert charts._scale_unit(a("Humidity (%)")) == "%"
+    assert charts._scale_unit(a("Solar radiation (W/m²)")) == ""                    # too wide for a tick
+    assert charts._scale_unit(a("Temperature (°C)", "Humidity (%)")) == "" and charts._scale_unit(a("UV index")) == ""
+
+
+def test_the_key_names_all_four_lines_with_their_units_and_the_range_of_each_is_shaded(monkeypatch):
+    chart, keys, real = four_lines(), [], charts._legend
+    monkeypatch.setattr(charts, "_legend", lambda canvas, entries, **kw: (keys.append(entries), real(canvas, entries, **kw))[1])
+    pixels(chart)
+    assert keys == [[(charts.READING_COLOURS["temperature"], "Ecowitt temperature (°C)"), (charts.READING_COLOURS["air_temperature"], "AirGradient temperature (°C)"),
+                     (charts.READING_COLOURS["humidity"], "Ecowitt humidity (%)"), (charts.READING_COLOURS["air_humidity"], "AirGradient humidity (%)")]]
+    image = pixels(chart)
+    for reading in ("temperature", "air_temperature", "humidity", "air_humidity"):   # a band is the line's colour, faint: lighter than the line
+        faint = charts._blend(charts.READING_COLOURS[reading], 0.8)
+        assert any(near(image.getpixel((x, y)), faint, 14) for x in range(150, 1100, 7) for y in range(240, 600, 3)), reading
+
+
+def test_readings_are_grouped_to_the_two_scales_by_unit_whatever_their_order():
+    from lib.panels import panel_for, two_axes
+    made = lambda reading, label: panel_for(reading, [Line(label, [1, 2, 3], [1.0, 2.0, 3.0], reading=reading)])
+    t, at, h, ah = (made("temperature", "Ecowitt temperature"), made("temperature", "AirGradient temperature"),
+                    made("humidity", "Ecowitt humidity"), made("humidity", "AirGradient humidity"))
+    for order, sides in (([t, at, h, ah], [False, False, True, True]), ([t, h, at, ah], [False, True, False, True]),
+                         ([h, ah, t, at], [False, False, True, True]), ([h, t, ah, at], [False, True, False, True])):
+        merged = two_axes(order)
+        assert [s.right for s in merged.lines] == sides
+        assert [s.label for s in merged.lines if not s.right] == [p.label + f" ({p.unit})" for p, side in zip(order, sides) if not side]
+    assert two_axes([h, t, ah, at]).label == "Humidity and Temperature"           # the first reading's unit is the left scale
+    assert two_axes([t, at, h]) is not None and two_axes([t, h, made("pressure", "Pressure")]) is None   # a third unit has no side

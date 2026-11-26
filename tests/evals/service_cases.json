@@ -2015,6 +2015,168 @@
     },
     "note": "the AirGradient's own humidity is air.humidity; both sensors on one chart"
   },
+  "overlay-two-sensors-inverted-axis": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "outdoor.temperature",
+              "air.temperature",
+              "outdoor.humidity",
+              "air.humidity"
+            ]
+          },
+          "layout": "two_axes",
+          "invert_second_axis": true,
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "outdoor.temperature",
+              "air.temperature",
+              "outdoor.humidity",
+              "air.humidity"
+            ]
+          },
+          "layout": "two_axes",
+          "invert_second_axis": true,
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "four readings in ONE call, layout two_axes, the right scale (humidity) inverted: not a call or a panel per pair"
+  },
+  "one-chart-two-axes": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity"
+            ]
+          },
+          "layout": "two_axes",
+          "invert_second_axis": {
+            "one_of": [
+              false,
+              null
+            ]
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity"
+            ]
+          },
+          "layout": "two_axes",
+          "invert_second_axis": {
+            "one_of": [
+              false,
+              null
+            ]
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "one chart with two axes asked for: layout two_axes, the second scale upright as it was not asked to be inverted"
+  },
+  "temperature-and-humidity-panels": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity"
+            ]
+          },
+          "layout": {
+            "one_of": [
+              null,
+              "auto",
+              "panels"
+            ]
+          },
+          "invert_second_axis": {
+            "one_of": [
+              false,
+              null
+            ]
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity"
+            ]
+          },
+          "layout": {
+            "one_of": [
+              null,
+              "auto",
+              "panels"
+            ]
+          },
+          "invert_second_axis": {
+            "one_of": [
+              false,
+              null
+            ]
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "a plain chart of two readings keeps the default, a panel each: layout two_axes only for words that ask for one chart or a second axis"
+  },
   "humidity-each-hour": {
     "tools": [
       "readings"

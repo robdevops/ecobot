@@ -201,7 +201,7 @@ Ten tools in place of twelve: one per kind of question, each over both sensors w
 - `readings` is what to summarise (default: the weather station's usual set, outdoor and indoor temperature and humidity);
   `chart_readings` is what to draw, defaulting to all of `readings`.
 - `layout`: `auto` draws one reading as a line for each sensor that has it, plus the compass rose when wind direction is among them;
-  more than one reading as panels, one each, on one time axis; `two_axes` puts two on one panel with a scale each; `same_axis` two of
+  more than one reading as panels, one each, on one time axis; `two_axes` puts two on one panel with a scale each (up to four in two units: the first reading's unit on the left, the other on the right, one call for all of them, asked for by "one chart", "another axis", "two Y axes" or "overlay ... on another axis"); `same_axis` two of
   one unit over each other; `invert_second_axis` modifies `two_axes`. A reading can be drawn as its traffic-light rating
   (`air.pm2_5:rating`), in `chart_readings` or in `readings` (summarised as the reading, and drawn as its rating when
   `chart_readings` isn't sent; a model sends it either way). `all` draws every reading in the station's usual order (temperature, humidity, solar, pressure, rain, dew point,

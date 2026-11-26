@@ -302,6 +302,41 @@ async def test_two_axes_and_the_second_axis_upside_down(tmp_path, archived_cache
     await close(ctx)
 
 
+FOUR = ["outdoor.temperature", "air.temperature", "outdoor.humidity", "air.humidity"]
+
+
+async def test_two_readings_from_each_sensor_are_one_panel_with_two_scales_when_asked_and_a_panel_each_otherwise(tmp_path, archived_cache):
+    tool, ctx, _ = await make(tmp_path, archived_cache, air=True)
+    out = await ask(tool, readings=FOUR, period="yesterday", chart=True, layout="two_axes", invert_second_axis=True)
+    (chart,) = out["charts"]
+    (panel,) = chart["panels"]                                        # one chart, one panel
+    assert [(s["name"], s["right"]) for s in panel["series"]] == [
+        ("Ecowitt temperature (°C)", False), ("AirGradient temperature (°C)", False), ("Ecowitt humidity (%)", True), ("AirGradient humidity (%)", True)]
+    assert panel["flip_right"] is True and chart["source"] == "Ecowitt weather station and AirGradient sensor"
+    assert "Temperature" in out["caption"] and "Humidity" in out["caption"]
+    upright = await ask(tool, readings=FOUR, period="yesterday", chart=True, layout="two_axes")
+    assert upright["charts"][0]["panels"][0]["flip_right"] is False
+    for layout in ({}, {"layout": "panels"}, {"layout": "auto"}):    # no words for one chart: a panel each, as before
+        out = await ask(tool, readings=FOUR, period="yesterday", chart=True, **layout)
+        assert len(out["charts"][0]["panels"]) == 4 and not any(s["right"] for p in out["charts"][0]["panels"] for s in p["series"])
+    pair = await ask(tool, readings=FOUR[:2], period="yesterday", chart=True, layout="two_axes")   # one reading from two sensors: a scale each
+    assert [s["right"] for s in pair["charts"][0]["panels"][0]["series"]] == [False, True]
+    three = await ask(tool, readings=["outdoor.temperature", "outdoor.humidity", "pressure"], period="yesterday", chart=True, layout="two_axes")
+    assert [len(p["series"]) for p in three["charts"][0]["panels"]] == [1, 1, 1]            # three units have no two sides: a panel each
+    four = await ask(tool, readings=[*FOUR[:3], "pressure"], period="yesterday", chart=True, layout="two_axes")
+    assert "charts" not in four and "exactly two units" in four["notes"]["chart"]
+    await close(ctx)
+
+
+def test_the_schema_tells_the_model_when_to_ask_for_one_chart_with_two_scales():
+    props = summary.ARGUMENTS
+    layout, invert = props["layout"]["description"], props["invert_second_axis"]["description"]
+    for words in ("another axis", "two Y axes", "overlay", "ONE", "never one call per pair", "Never for a plain"):
+        assert words in layout
+    assert "inverted axis" in invert and "second unit" in invert and "first" in invert
+    assert props["layout"]["enum"] == ["auto", "panels", "two_axes", "same_axis"]
+
+
 async def test_an_air_chart_is_the_air_sensors_and_an_average_one_is_each_days(tmp_path, archived_cache):
     tool, ctx, _ = await make(tmp_path, archived_cache, air=True, rows_per_day=24)
     out = await ask(tool, readings=["pm2.5", "co2"], period="last 3 days")
