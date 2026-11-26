@@ -1199,7 +1199,7 @@
         }
       }
     },
-    "note": "a volume question about a future day: the forecast's rain total (about N mm), not the station's gauge"
+    "note": "a volume question about a future day: the forecast's rain total (~N mm), not the station's gauge"
   },
   "forecast-volume-week": {
     "tools": [

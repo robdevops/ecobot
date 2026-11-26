@@ -26,7 +26,6 @@ DRIZZLE_MM = 0.2                  # a day with less than this has no amount in i
 HEAVY_MM = 30                     # a day of at least this (rounded) is called heavy
 SPREAD = (0.1, 0.9)               # the range given is these quantiles of the ensemble members' day totals
 FLOOR_LADDER = (2, 3, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100)   # a high-confidence floor is stated as one of these mm, rounded down
-VERY_LIKELY_PCT = 90              # "very likely" is the wording for this confidence and above ("likely" below it)
 MIN_HOURS = 20                    # a member's day counts only with this many hours of data
 HEADERS = {"User-Agent": "ecobot/1.0 (personal weather bot)"}
 FORECAST_REFRESH_SECONDS = 15 * 60
@@ -83,44 +82,42 @@ def floor_mm(d: dict) -> int | None:
     return step if step is not None and step < rounded_mm(mm) else None
 
 
-def floor_text(floor: int) -> str:
-    """"at least 15 mm very likely (90%)": the confidence is 1 - SPREAD[0]."""
-    pct = whole(100 * (1 - SPREAD[0]))
-    return f"at least {floor} mm {'very likely' if pct >= VERY_LIKELY_PCT else 'likely'} ({pct}%)"
-
-
 def amount_text(d: dict) -> str | None:
-    """The day's volume: "under 1 mm", "about 3 mm", "about 12 mm, likely 8–25 mm", "heavy: about 40 mm, at least 15 mm very likely
-    (90%)"; None for a dry day (under DRIZZLE_MM, or no chance at all of 1 mm) and for a day with no total. A day whose floor_mm
-    stands gives the floor in place of the range; otherwise the range is the ensemble members' spread, when it is wider than the
-    total's own rounding."""
+    """The day's volume with how sure it is, "<amount> (<range> likely; ≥<N> at <P>%)": "under 1 mm", "~3 mm (1–3.5 likely; ≥1 at 80%)",
+    "~12 mm (6–20 likely; ≥5 at 90%)", "heavy: ~40 mm (15–60 likely; ≥15 at 90%)"; None for a dry day (under DRIZZLE_MM, or no chance at all
+    of 1 mm) and for a day with no total. The range is the ensemble members' spread (SPREAD), given when it is wider than the total's own
+    rounding; the last item is the floor_mm step at 1 - SPREAD[0] when the day has one, else 1 mm at the chance of it. A part with no
+    figure is left out, and with nothing to put in the brackets there are none."""
     mm = d.get("rain_mm")
     if mm is None or mm < DRIZZLE_MM:
         return None
     if mm < 1:
         return None if d.get("rain_1mm_pct") == 0 else "under 1 mm"
-    text = f"about {mm_number(mm)} mm"
+    text = f"~{mm_number(mm)} mm"
     if rounded_mm(mm) >= HEAVY_MM:
         text = f"heavy: {text}"
-    if (floor := floor_mm(d)) is not None:
-        return f"{text}, {floor_text(floor)}"
+    items = []
     lo, hi = d.get("rain_mm_lo"), d.get("rain_mm_hi")
     if lo is not None and hi is not None:
         lo, hi = min(lo, mm), max(hi, mm)
         if rounded_mm(lo) != rounded_mm(hi) and hi >= 1:
-            text += f", likely {mm_number(lo) if lo >= 1 else 0}–{mm_number(hi)} mm"
-    return text
+            items.append(f"{mm_number(lo) if lo >= 1 else 0}–{mm_number(hi)} likely")
+    if (floor := floor_mm(d)) is not None:
+        items.append(f"≥{floor} at {whole(100 * (1 - SPREAD[0]))}%")
+    elif d.get("rain_1mm_pct") is not None:
+        items.append(f"≥1 at {d['rain_1mm_pct']}%")
+    return f"{text} ({'; '.join(items)})" if items else text
 
 
 def describe_day(d: dict) -> str:
-    """"🌧️ Rain. 11–17°C, 90% chance of rain"; with the day's total: "🌦️ Showers. 19–23°C, about 3 mm (80% chance of at least 1 mm)"; a
-    day with a floor says it in place of the chance: "🌦️ Showers. 19–23°C, about 40 mm, at least 15 mm very likely (90%)" """
+    """"🌧️ Rain. 11–17°C, 90% chance of rain"; with the day's total: "🌦️ Showers. 19–23°C, ~3 mm (1–3.5 likely; ≥1 at 80%)"; a wet day
+    with a floor: "🌦️ Showers. 19–23°C, heavy: ~40 mm (15–60 likely; ≥15 at 90%)" """
     if d.get("rain_1mm_pct") is not None:
         chance = f"{d['rain_1mm_pct']}% chance of at least 1 mm"
     else:   # a day saved before the ensemble figure, or the ensemble was unavailable: Open-Meteo's own (more than 0.1 mm in the wettest hour)
         chance = f"{d['rain_chance_pct']}% chance of rain" if d.get("rain_chance_pct") is not None else None
     if amount := amount_text(d):
-        chance = amount if floor_mm(d) is not None else f"{amount} ({chance})" if chance else amount
+        chance = amount if "(" in amount or chance is None else f"{amount} ({chance})"
     details = [temps(d)] + ([chance] if chance else [])
     rest = ", ".join(x for x in details if x)
     return " ".join(x for x in (d.get("summary") or "", rest) if x) or "no data"

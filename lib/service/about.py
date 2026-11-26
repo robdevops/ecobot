@@ -64,7 +64,7 @@ STATION_TEXT = ("Weather station (Ecowitt): outdoor and indoor temperature and h
 AIR_TEXT = ("Air quality (outdoor AirGradient): " + ", ".join(f"{AIR_LABELS[m]} ({CHART_UNITS[m] or 'index'})" for m in ALL_METRICS)
             + ", each with a traffic-light rating, and PM2.5 and PM10 each with its US AQI (the US AQI is the higher); also the sensor's own temperature and humidity "
               "(air.temperature, air.humidity).")
-FORECAST_TEXT = "Forecast: today and the days ahead from Open-Meteo (summary, temperatures, the day's rain in mm with the amount very likely to fall at least on a wet day, else the chance of at least 1 mm of rain)."
+FORECAST_TEXT = "Forecast: today and the days ahead from Open-Meteo (summary, temperatures, the day's rain as \"~17 mm (9–25 likely; ≥5 at 90%)\": the total, the likely range, and the amount at least that share of the model runs give; on a showery day the chance of at least 1 mm)."
 POLLEN_TEXT = ("Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High, Extreme). Both forecasts "
                "only run from October to December.")
 ALERTS_NOTE = ("Alerts can't be added or changed by asking (\"tell me when the wind reaches 100\", another threshold, another reading): "

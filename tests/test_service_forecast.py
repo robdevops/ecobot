@@ -140,7 +140,7 @@ async def test_the_lines_are_weather_forecasts_and_each_day_has_its_figures(tmp_
                               "rain_1mm_pct": 0, "rain_mm": 0.0, "rain_mm_low": 0.0, "rain_mm_high": 0.0, "rain_mm_floor": None}
     assert out["days"][1] == {"date": (today + timedelta(days=1)).isoformat(), "min": 11.5, "max": 17, "summary": "☀️ Clear.",
                               "rain_chance": 10, "rain_1mm_pct": 75, "rain_mm": 3.2, "rain_mm_low": 0.9, "rain_mm_high": 3.0, "rain_mm_floor": None}
-    assert out["lines"][1].endswith(", about 3 mm, likely 0–3 mm (75% chance of at least 1 mm)")
+    assert out["lines"][1].endswith(", ~3 mm (0–3 likely; ≥1 at 75%)")
     assert out["place"] == "Melbourne" and out["source"] == "Open-Meteo" and out["fresh"] == FRESH
     fetched = datetime.fromtimestamp(int(forecast.fetched_at), TZ)
     assert out["fetched_at"] == fetched.isoformat() and out["as_of"]["time"] == fetched.isoformat()

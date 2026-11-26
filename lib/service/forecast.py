@@ -180,7 +180,7 @@ def section(heading: str, lines: list[str], *, place: str | None, fetched_at: fl
 # ---------- the tool ----------
 DESCRIPTION = (
     "The weather forecast (Open-Meteo) for the station's place: today and the days ahead, each day's summary with its emoji, its lowest "
-    "and highest temperature, the day's rain total in mm (about N mm, on a wet day then \"at least 15 mm very likely (90%)\", else a likely range, under 1 mm, or nothing when dry) else the chance of at least 1 mm. For \"what's tomorrow like\": {\"period\": \"tomorrow\"}; \"the "
+    "and highest temperature, the day's rain as \"~17 mm (9–25 likely; ≥5 at 90%)\" (total, likely range, the amount at least so likely; a showery day \"≥1 at 80%\"; \"under 1 mm\"; none when dry), else the chance of at least 1 mm. For \"what's tomorrow like\": {\"period\": \"tomorrow\"}; \"the "
     "forecast for the weekend\": {\"period\": \"this weekend\"}; \"will it rain this week\", \"forecast\": {} (the next 7 days). A "
     "report (\"report\", \"status\", \"sitrep\") is current, forecast {\"period\": \"next 3 days\"} and pollen, called together.\n"
     "Not for: the next few hours from the station's own readings (\"will it rain soon\", \"do I need an umbrella\": outlook); what was "
