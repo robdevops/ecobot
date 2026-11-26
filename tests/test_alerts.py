@@ -6,12 +6,10 @@ import pytest
 
 from lib.airgradient import Latest
 from lib.alert_log import AlertLog
-from lib.alerts.notify import AlertState, Notifier
-from lib.alerts.pictures import CHARTS, Picture
+from lib.alerts.pictures import CHARTS
 from lib.alerts.particulates import ParticulatesMonitor
 from lib.alerts.store import AlertStore
 from lib.alerts.weather import WeatherMonitor
-from lib.entities import with_link
 from tests.fakes import TZ
 from tests import engines
 
@@ -302,166 +300,14 @@ async def test_stale_air_readings_are_ignored(tmp_path):
     assert not sent
 
 
-# ---------- chats and delivery ----------
-def test_alert_state_survives_restarts_and_opt_out(tmp_path):
-    path = tmp_path / "s.json"
-    state = AlertState(path)
-    state.add_chat(1, "Home")
-    state.add_chat(2, "Work")
-    state.set_alerts(2, False)
-    state.monitor["rain"] = {"alerted_state": "raining", "alerted_time": 5, "since": 5}
-    state.save()
-    again = AlertState(path)
-    assert again.alert_chats("rain") == [1] and again.monitor["rain"]["alerted_state"] == "raining" and not again.subscribed(2, "rain")
-
-
-def test_the_footer_is_the_links_label_in_italic_placed_in_utf16_units():
-    text, entities = with_link("\U0001f327️ Rain \n", ("live chart", "https://x"))
-    assert text == "\U0001f327️ Rain\nlive chart" and with_link("Rain \n", None) == ("Rain", [])
-    italic, link = entities
-    assert italic.type == "italic" and italic.offset == link.offset == len("\U0001f327️ Rain".encode("utf-16-le")) // 2 + 1
-    assert italic.length == link.length == len("live chart") and link.url == "https://x"
-
-
-async def test_alerts_are_silent_and_a_chat_that_blocked_the_bot_is_marked_gone(tmp_path):
-    from telegram.error import Forbidden
-    state = AlertState(tmp_path / "s.json")
-    state.add_chat(1, "ok")
-    state.add_chat(2, "blocked")
-    calls = []
-
-    class Bot:
-        async def send_message(self, chat_id, text, **kw):
-            calls.append((chat_id, kw))
-            if chat_id == 2:
-                raise Forbidden("bot was blocked")
-    await Notifier(Bot(), state)("hi", kind="rain")
-    assert all(kw["disable_notification"] for _, kw in calls) and state.chats[2]["gone"] and state.alert_chats("rain") == [1]
-
-
-async def test_an_alerts_chart_is_drawn_once_and_only_when_some_chat_gets_the_alert(tmp_path):
-    state = AlertState(tmp_path / "s.json")
-    for chat in (1, 2):
-        state.add_chat(chat, str(chat))
-    state.set_kind(2, "uv", False)
-    drawn, sent = [], []
-
-    async def chart():
-        drawn.append(1)
-        return Picture(b"png", "Wind, today", None)
-
-    class Bot:
-        async def send_photo(self, chat_id, photo, **kw):
-            sent.append((chat_id, photo))
-    notifier = Notifier(Bot(), state)
-    assert await notifier("Gusts", kind="gusts", chart=chart) == 2 and drawn == [1] and [p for _, p in sent] == [b"png"] * 2
-    assert await notifier("UV", kind="uv", chart=chart, chats=[2]) == 0 and drawn == [1]       # chat 2 has UV alerts off: not drawn
-    assert await notifier("UV", kind="uv", chart=chart, chats=[1, 2]) == 1 and drawn == [1, 1] and sent[-1] == (1, b"png")
-
-
-async def test_a_gone_chat_keeps_its_settings_gets_nothing_and_is_back_when_it_writes(tmp_path):
-    from telegram.error import BadRequest, Forbidden
-    state = AlertState(tmp_path / "s.json")
-    for chat in (1, 2, 3):
-        state.add_chat(chat, str(chat))
-    state.set_kind(2, "rain", False)
-    calls, refusals = [], {2: Forbidden("bot was blocked by the user"), 3: BadRequest("Message thread not found")}
-
-    class Bot:
-        async def send_message(self, chat_id, text, **kw):
-            calls.append(chat_id)
-            if chat_id in refusals:
-                raise refusals[chat_id]
-    await Notifier(Bot(), state)("hi", kind="uv")
-    assert state.chats[2]["gone"] and state.muted(2) == {"rain"} and state.present() == [1, 3]
-    assert not state.chats[3].get("gone")                         # only "chat not found" means gone: the chat is still there
-    calls.clear()
-    await Notifier(Bot(), state)("again", kind="uv")
-    assert calls == [1, 3]                                        # nothing is sent to a gone chat
-    state.add_chat(2, "2")                                        # it writes again
-    assert state.subscribed(2, "uv") and not state.subscribed(2, "rain") and AlertState(state.path).present() == [1, 2, 3]
-
-
-def test_a_migrated_group_keeps_its_settings(tmp_path):
-    state = AlertState(tmp_path / "s.json")
-    state.add_chat(-5, "group")
-    state.set_kind(-5, "uv", False)
-    state.migrate_chat(-5, -1005)
-    assert -5 not in state.chats and state.muted(-1005) == {"uv"} and AlertState(state.path).muted(-1005) == {"uv"}
-
-
-def test_a_damaged_state_file_is_kept_aside_not_overwritten(tmp_path, caplog):
-    path = tmp_path / "s.json"
-    path.write_text('{"chats": {"1": {"title": "Home"}}, "monitor": {"rain": {"alerted_st')   # cut short
-    state = AlertState(path)
-    assert state.chats == {}
-    state.add_chat(2, "Work")                                      # the next save
-    aside = list(tmp_path.glob("s.json.damaged-*"))
-    assert len(aside) == 1 and aside[0].read_text().startswith('{"chats": {"1"') and "moved it to" in caplog.text
-    assert AlertState(path).chats == {2: {"title": "Work"}}
-
-
+# ---------- the state file ----------
 def test_a_save_is_on_disk_before_it_replaces_the_old_file(tmp_path, monkeypatch):
     from lib.alerts import store
     calls, replace = [], store.os.replace
     monkeypatch.setattr(store.os, "fsync", lambda fd: calls.append("fsync"))
     monkeypatch.setattr(store.os, "replace", lambda a, b: (calls.append("replace"), replace(a, b)))
-    AlertState(tmp_path / "s.json").add_chat(1, "Home")
-    assert calls == ["fsync", "replace"]
-    calls.clear()
     AlertStore(tmp_path / "alert_state.json").save()
     assert calls == ["fsync", "replace"] * 2       # (a new store is written at once, then saved)
-
-
-async def test_one_chat_failing_never_stops_the_alert_reaching_the_others(tmp_path, monkeypatch):
-    from telegram.error import Forbidden
-    state = AlertState(tmp_path / "s.json")
-    for chat in (1, 2, 3):
-        state.add_chat(chat, f"chat {chat}")
-    got = []
-
-    class Bot:
-        async def send_message(self, chat_id, text, **kw):
-            if chat_id == 1:
-                raise Forbidden("bot was blocked")
-            got.append(chat_id)
-
-    def full():
-        raise OSError(28, "No space left on device")
-    monkeypatch.setattr(state, "save", full)                       # forgetting chat 1 can't be saved
-    await Notifier(Bot(), state)("hi", kind="rain")
-    assert got == [2, 3]
-
-
-@pytest.mark.filterwarnings("ignore:Deprecated since version v22.2")   # python-telegram-bot 22: retry_after will be a timedelta
-async def test_a_short_flood_wait_or_a_dropped_connection_is_tried_once_more_and_a_timeout_is_not(tmp_path, monkeypatch):
-    from telegram.error import NetworkError, RetryAfter, TimedOut
-    from lib.alerts import notify
-    waits = []
-
-    async def sleep(seconds):
-        waits.append(seconds)
-    monkeypatch.setattr(notify.asyncio, "sleep", sleep)
-    flood, long_flood = RetryAfter(5), RetryAfter(300)
-    state = AlertState(tmp_path / "s.json")
-    state.add_chat(1, "chat")
-
-    class Bot:
-        def __init__(self, *errors):
-            self.errors, self.tries = list(errors), 0
-
-        async def send_message(self, chat_id, text, **kw):
-            self.tries += 1
-            if self.errors:
-                raise self.errors.pop(0)
-    cases = [((flood,), True, 2, [5]), ((NetworkError("Connection reset by peer"),), True, 2, [3]),
-             ((NetworkError("down"), NetworkError("down")), False, 2, [3]),    # once more, not twice
-             ((TimedOut(),), False, 1, []),                                   # it may have arrived
-             ((long_flood,), False, 1, [])]                                   # not waited out
-    for errors, sent, tries, waited in cases:
-        waits.clear()
-        bot = Bot(*errors)
-        assert (bool(await Notifier(bot, state)("hi", kind="rain", chats=[1])), bot.tries, waits) == (sent, tries, waited), errors
 
 
 def uv(*values, start=T0):
@@ -700,35 +546,6 @@ async def test_a_dry_night_has_no_summary_and_quiet_hours_can_be_off(tmp_path):
     assert len(sent) == 1 and "started raining" in sent[0]
 
 
-def test_unsubscribing_from_all_keeps_future_alert_types_off_until_subscribed(tmp_path, monkeypatch):
-    from lib.alerts import menu, notify
-    state = notify.AlertState(tmp_path / "s.json")
-    for chat in (1, 2, 3):
-        state.add_chat(chat, str(chat))
-    state.set_kind(1, "all", False)                       # unsubscribe from all
-    state.set_kind(2, "rain", False)                      # just one type: the normal mode
-    monkeypatch.setitem(menu.LABELS, "newthing", "new thing")
-    assert not state.subscribed(1, "newthing") and state.subscribed(2, "newthing") and state.subscribed(3, "newthing")
-    state.set_kind(1, "uv", True)                         # then one type back on: only that one
-    monkeypatch.setitem(menu.LABELS, "newer", "newer")
-    assert state.subscribed(1, "uv") and not state.subscribed(1, "rain") and not state.subscribed(1, "newer") and state.alert_chats("uv") == [1, 2, 3]
-    state.set_kind(1, "uv", False)
-    assert state.muted(1) == set(menu.LABELS)             # nothing on at all
-    state.set_kind(1, "all", True)                        # subscribe to all: new types come on again
-    assert state.subscribed(1, "newer") and state.subscribed(1, "rain")
-    offered = ["rain", "gusts", "uv", "temps"]            # a bot with the weather station alone
-    for kind in offered[:-1]:
-        state.set_kind(3, kind, False, offered)
-    monkeypatch.setitem(menu.LABELS, "newest", "newest")
-    assert state.subscribed(3, "newest") and state.subscribed(3, "temps")   # some still on: the normal mode
-    state.set_kind(3, "temps", False, offered)            # every type the bot sends, off one by one: "unsubscribe from all"
-    monkeypatch.setitem(menu.LABELS, "newer still", "newer still")
-    assert state.muted(3) == set(menu.LABELS) and not state.subscribed(3, "newer still")
-    state.set_kind(3, "rain", True, offered)
-    again = notify.AlertState(state.path)                 # and it survives a restart
-    assert again.subscribed(3, "rain") and not again.subscribed(3, "uv") and not again.subscribed(3, "newer still")
-
-
 CHART = {"title": "a chart", "drawn_by": {"tool": "summary", "arguments": {"readings": ["wind"], "period": "1d", "chart": True}}}
 
 
@@ -792,6 +609,13 @@ async def test_both_particulates_alerts_carry_the_particulates_chart(tmp_path):
     for pm in (90, 90):
         await quiet.check(air_reading(pm))
     assert len(quiet_seen) == 1 and "chart" not in quiet_seen.events[0]
+
+
+def test_every_alert_chart_is_the_one_day_summary_chart_of_its_readings():
+    day = {"period": "1d", "chart": True}
+    assert CHARTS == {"gusts": ("summary", {"readings": ["wind"], **day}), "uv": ("summary", {"readings": ["uv"], **day}),
+                      "temps": ("summary", {"readings": ["temperature"], **day}),
+                      "particulates": ("summary", {"readings": ["pm2.5", "pm10", "pm1"], **day})}
 
 
 async def test_other_alerts_send_no_picture(tmp_path):

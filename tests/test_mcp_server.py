@@ -479,16 +479,6 @@ async def test_over_http_the_connections_url_asks_for_images_and_a_call_can_say_
         assert got.content[0].text == await world.service["summary"].call(CHARTED)
 
 
-def test_every_prompt_name_is_a_telegram_command_and_none_is_one_of_the_bots_own():
-    """The bot offers each prompt as a /command (docs/ecobot-mcp.md step 6c): Telegram's form, and no clash with the keyboard's."""
-    import re
-    from lib import templates
-    from lib.mcp_server import PROMPTS
-    for name in PROMPTS:
-        assert re.fullmatch(r"[a-z0-9_]{1,32}", name), name
-    assert not set(PROMPTS) & (set(templates.COMMANDS) - {"report"})   # (/report becomes the report prompt, step 6c)
-
-
 # ---------- chart links (3.7: ?charts=link) ----------
 BASE = "https://example.org/ecobot-charts"
 

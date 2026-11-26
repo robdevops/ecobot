@@ -17,7 +17,7 @@ STEP = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
 
 
 class StandInService:
-    """A test's stand-in for the service's tools (lib.service.Service), served by ecobot-mcp in memory (tests/served.py) for the bot to
+    """A test's stand-in for the service's tools (lib.service.Service), served by ecobot-mcp in memory (tests/mcp_client.py) for a client to
     call: `answers` is {tool: its answer}, each a dict (sent as JSON) or a function (args, meta) -> dict; every call is kept in `calls`
     as (tool, args)."""
 
@@ -404,8 +404,7 @@ async def archived_station(tmp_path, cache_file):
 
 
 def draws(monkeypatch, render):
-    """ecobot-mcp's drawing (lib/chart_images.render, which the server in memory draws with, tests/served.py: the bot draws nothing
-    itself) stood in for by render(chart, tz) -> PNG bytes (or anything the test sends as the picture)."""
+    """ecobot-mcp's drawing (lib/chart_images.render, which the server in memory draws with, tests/mcp_client.py) stood in for by render(chart, tz) -> PNG bytes (or anything the test sends as the picture)."""
     from lib import chart_images
     monkeypatch.setattr(chart_images, "render", lambda chart, tz, dark=None: (render(chart, tz), bool(dark)))
 

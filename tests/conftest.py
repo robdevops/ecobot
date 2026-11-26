@@ -110,7 +110,7 @@ def no_settings_from_outside(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def the_log_levels_as_they_were():
-    """The programs' main() (ecobot.py, ecobot_mcp) set the "ecobot" and "lib" loggers' levels from LOG_LEVEL: put back after every
+    """The programs' main() (ecobot_mcp, irrigation_mcp) set the "ecobot" and "lib" loggers' levels from LOG_LEVEL: put back after every
     test, so a test that reads the debug lines doesn't depend on which ran before it on its worker."""
     import logging
     levels = {name: logging.getLogger(name).level for name in ("ecobot", "lib")}
@@ -125,13 +125,6 @@ def ha_states_unshared(monkeypatch):
     is still shared): for the tests whose fake Home Assistant changes what it says from one request to the next, a few ms apart."""
     from lib.ecowitt import homeassistant
     monkeypatch.setattr(homeassistant, "STATES_SHARE_SECONDS", 0)
-
-
-@pytest.fixture
-def alert_state(tmp_path):
-    """The bot's chats and settings (an AlertState) in a file of the test's own: what a Bot is given, as in the running bot."""
-    from lib.alerts.notify import AlertState
-    return AlertState(tmp_path / "state.json")
 
 
 async def _hosted(make):
@@ -180,32 +173,6 @@ async def serve_irrigation_mcp():
     start, close = await _hosted(serving)
     yield start
     await close()
-
-
-@pytest.fixture
-async def serve():
-    """ecobot-mcp in memory, the bot's client of it connected (tests/served.py): `weather = await serve(ctx, alert_log, tools=...,
-    sources=...)`, each closed when the test ends."""
-    import contextlib
-
-    from tests.served import ecobot_mcp
-    async with contextlib.AsyncExitStack() as stack:
-        async def start(*args, **kwargs):
-            return await stack.enter_async_context(ecobot_mcp(*args, **kwargs))
-        yield start
-
-
-@pytest.fixture
-async def serve_irrigation():
-    """irrigation-mcp in memory, the bot's client of it connected (tests/served.py): `irrigation = await serve_irrigation(folder,
-    device)`, each closed when the test ends."""
-    import contextlib
-
-    from tests.served import irrigation_mcp
-    async with contextlib.AsyncExitStack() as stack:
-        async def start(*args, **kwargs):
-            return await stack.enter_async_context(irrigation_mcp(*args, **kwargs))
-        yield start
 
 
 @pytest.fixture(scope="session")

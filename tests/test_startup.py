@@ -1,80 +1,39 @@
-"""Runs the programs' main() end to end against fakes: ecobot-mcp's (python -m ecobot_mcp) over the fake sources, which runs them,
-their archives and the alert rules; and the bot's (ecobot.main), ecobot-mcp's client (docs/ecobot-mcp.md step 6b), against ecobot-mcp
-under uvicorn on a localhost port and a fake Telegram."""
+"""Runs ecobot-mcp's main() (python -m ecobot_mcp) end to end over the fake sources, which runs them, their archives and the alert
+rules; and the settings' reading (lib/config.py)."""
 
-import contextlib
 import logging
 import asyncio
 import os
 import signal
-from types import SimpleNamespace as NS
 
 import pytest
 
-import ecobot
 import ecobot_mcp.__main__ as service_main
 from ecobot_mcp import core
-from lib.alert_log import AlertLog
 from lib.config import Config
 from lib.ecowitt import archive
-from lib.mcp_server import EcobotServer, http_app
-from lib.service.context import Context
 from datetime import datetime, timedelta, timezone
 
 from lib.airgradient import source as air_source
 from tests.fakes import TZ, air_transport, config, ecowitt_transport
-from tests.test_mcp_listen import Serving, free_port, until
+from tests.test_mcp_listen import free_port
 
 TOKEN = "s3cret"
 
 
 @pytest.fixture(autouse=True)
 def the_log_as_it_was():
-    """main() sets the bot's log levels and width from the settings: put back after each test here, for the tests that come after."""
+    """main() sets the log levels from the settings: put back after each test here, for the tests that come after."""
     levels = {name: logging.getLogger(name).level for name in ("ecobot", "lib")}
-    width = ecobot._format.width
     yield
     for name, level in levels.items():
         logging.getLogger(name).setLevel(level)
-    ecobot._format.width = width
 
 
 @pytest.fixture(autouse=True)
 def quick_shutdown(monkeypatch):
     """A listen stream still open when ecobot-mcp stops is ended after a quarter of a second, not SHUTDOWN_SECONDS (3)."""
     monkeypatch.setattr(service_main, "SHUTDOWN_SECONDS", 0.25)
-
-
-class FakeApp:
-    def __init__(self):
-        self.sent, self.handlers, self.menus = [], [], []
-        self.updater = NS(start_polling=self._noop, stop=self._noop)
-        self.bot = NS(username="testbot", send_message=self.send_message, set_my_commands=self.set_my_commands)
-
-    async def _noop(self, *a, **k):
-        pass
-
-    async def send_message(self, chat_id, text, **kw):
-        self.sent.append((chat_id, text, kw))
-
-    async def set_my_commands(self, commands):
-        self.menus.append([c.command for c in commands])
-
-    initialize = shutdown = start = stop = _noop
-
-    def add_handler(self, h, group=0):
-        self.handlers.append(h)
-
-    def add_error_handler(self, h):
-        self.handlers.append(h)
-
-
-class FakeBuilder:
-    def __init__(self, app):
-        self.app = app
-
-    def __getattr__(self, name):
-        return lambda *a, **k: self if name != "build" else self.app
 
 
 # ---------- ecobot-mcp (python -m ecobot_mcp): the sources, their archives, the alert rules ----------
@@ -248,84 +207,6 @@ async def test_the_other_sources_run_in_the_weather_station_s_time_zone(tmp_path
     assert "The time zone has no name, only an offset (UTC+10:00)" in caplog.text
 
 
-# ---------- the bot (ecobot.main), ecobot-mcp's client ----------
-@contextlib.asynccontextmanager
-async def ecobot_mcp_up(tmp_path):
-    """ecobot-mcp (its server with no sources, and its alert log) under uvicorn on a free localhost port: its URL, the bot's
-    BOT_MCP_URL."""
-    port = free_port()
-    alerts = AlertLog(tmp_path / "alerts.sqlite", TZ)
-    try:
-        async with Serving(http_app(EcobotServer(Context(tz=TZ), alerts), tokens=(TOKEN,)), port):
-            yield f"http://127.0.0.1:{port}/mcp"
-    finally:
-        alerts.close()
-
-
-def bot_settings(tmp_path, monkeypatch, url: str, app, **over) -> Config:
-    """The bot's settings, ecobot-mcp at `url` with the token it accepts; `app` its Telegram."""
-    cfg = config(tmp_path, mcp_url=url, auth_tokens=(TOKEN,), **over)
-    monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
-    monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
-    return cfg
-
-
-async def run_bot_until(check, what: str):
-    """The bot's main() until check() is true, then stopped (SIGTERM)."""
-    async def stop_then():
-        try:
-            await until(check, 20, what)
-        finally:
-            os.kill(os.getpid(), signal.SIGTERM)
-    stopper = asyncio.create_task(stop_then())
-    await ecobot.main()
-    await stopper
-
-
-async def test_main_starts_as_ecobot_mcps_client_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog):
-    """The command menu is the bot's own commands and one per ecobot-mcp prompt (step 6c); no chart is drawn ahead."""
-    from lib import templates
-    from lib.mcp_server import PROMPTS
-    caplog.set_level("INFO")
-    monkeypatch.setattr(ecobot._format, "width", 0)   # put back after the test
-    app = FakeApp()
-    async with ecobot_mcp_up(tmp_path) as url:
-        bot_settings(tmp_path, monkeypatch, url, app, log_width=120)
-        await run_bot_until(lambda: app.menus, "the command menu set")
-    log = caplog.text
-    assert "Telegram: @testbot, Model: " in log and f"ecobot-mcp: {url}" in log and "Ecowitt: " not in log
-    assert len(app.handlers) == 12  # start+help, reset, keyboard, alerts, usage, the buttons' commands, the prompts' commands, the one button handler, other updates, membership, messages, errors
-    assert ecobot._format.width == 120                   # BOT_LOG_WIDTH reaches the bot's own log lines
-    own = [name for name, _ in templates.MENU]
-    assert app.menus == [[*own[:own.index("alerts")], *PROMPTS, *own[own.index("alerts"):]]]   # once: the prompts read before it was set
-
-
-async def test_a_failure_part_way_through_starting_closes_everything_already_open(tmp_path, monkeypatch, caplog):
-    """Telegram fails once ecobot-mcp's connection, the model's client and Telegram are up: each is closed, the last opened first,
-    and a close that fails doesn't stop the rest. The bot stops with the error that stopped it."""
-    app, closed = FakeApp(), []
-    app.stop = lambda: closed.append("telegram") or app._noop()
-
-    class Client:
-        def __init__(self, **settings):
-            pass
-
-        async def close(self):
-            closed.append("model")
-            raise OSError("connection reset")
-    monkeypatch.setattr(ecobot, "AsyncOpenAI", Client)
-    monkeypatch.setattr(ecobot.RemoteWeather, "close", lambda self, orig=ecobot.RemoteWeather.close: closed.append("ecobot-mcp") or orig(self))
-
-    async def down(self, bot):
-        raise RuntimeError("Telegram is down")
-    monkeypatch.setattr(ecobot.Bot, "publish_commands", down)
-    async with ecobot_mcp_up(tmp_path) as url:
-        bot_settings(tmp_path, monkeypatch, url, app)
-        with pytest.raises(RuntimeError, match="Telegram is down"):
-            await ecobot.main()
-    assert closed == ["telegram", "model", "ecobot-mcp"] and "connection reset" in caplog.text
-
-
 def test_the_time_zone_without_a_station_is_tz_else_the_one_etc_localtime_links_to(monkeypatch, caplog):
     from lib import config as config_module
     from lib.config import local_tz
@@ -419,51 +300,16 @@ def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monk
     assert Config.from_env(bot=False).chart_all_vpd is True
 
 
-async def test_main_with_irrigation_mcp_is_its_client_listening_to_its_alerts_and_runs_no_controller_itself(tmp_path, monkeypatch, caplog):
-    """BOT_IRRIGATION_MCP_URL (step 8b): the bot connects to irrigation-mcp (under uvicorn here, with the same token) as it does to
-    ecobot-mcp, its Irrigation button on the keyboard, its alerts delivered (their last id kept apart); no Tuya client, watchdog or daily
-    check runs in the bot."""
-    from lib.irrigation import Watchdog
-    from lib.irrigation import server as irrigation_server
-    from lib.irrigation.state import IrrigationState
-    from lib.alerts.notify import AlertState
-    from tests.fakes import FakeController
-    caplog.set_level("INFO")
-    app, port = FakeApp(), free_port()
-    device = FakeController()
-    alerts = AlertLog(tmp_path / "irrigation_alerts.sqlite", TZ)
-    server = irrigation_server.IrrigationServer(device, Watchdog(device, IrrigationState(tmp_path / "irrigation_state.json")), alerts, tz=TZ)
-    publishing = asyncio.create_task(server.run())
-    try:
-        async with ecobot_mcp_up(tmp_path) as url, Serving(irrigation_server.http_app(server, tokens=(TOKEN,)), port):
-            bot_settings(tmp_path, monkeypatch, url, app, irrigation_mcp_url=f"http://127.0.0.1:{port}/mcp")
-            await run_bot_until(lambda: "irrigation-mcp" in AlertState(tmp_path / "state.json").marks, "the irrigation alerts' delivery")
-    finally:
-        publishing.cancel()
-        await asyncio.gather(publishing, return_exceptions=True)
-        alerts.close()
-    assert f"irrigation-mcp: connected to http://127.0.0.1:{port}/mcp" in caplog.text and len(app.handlers) == 12
-    assert device.commands == []                                                           # nothing asked of the controller at start
-
-
-async def test_without_bot_irrigation_mcp_url_there_is_no_irrigation_and_old_tuya_settings_are_a_warning(tmp_path, monkeypatch, caplog):
-    app = FakeApp()
-    monkeypatch.setenv("BOT_TUYA_DEVICE_ID", "dev1")                                         # (the bot ran the controller itself before)
-    async with ecobot_mcp_up(tmp_path) as url:
-        bot_settings(tmp_path, monkeypatch, url, app)
-        await run_bot_until(lambda: app.menus, "the command menu set")
-    assert "The irrigation controller's settings are set but BOT_IRRIGATION_MCP_URL isn't" in caplog.text
-    assert "irrigation-mcp:" not in caplog.text
-
-
 def test_only_the_lines_that_are_not_ordinary_are_marked_with_their_level():
-    fmt = ecobot.LogFormat("%(levelname)s %(message)s")
+    from lib.logs import LogFormat
+    fmt = LogFormat("%(levelname)s %(message)s")
     line = lambda level: fmt.format(logging.LogRecord("lib.bot", level, __file__, 1, "hello", None, None))
     assert [line(l) for l in (logging.INFO, logging.WARNING, logging.ERROR, logging.DEBUG)] == ["hello", "WARN hello", "ERROR hello", "DEBUG hello"]
 
 
 def test_log_lines_do_not_name_their_module():
-    fmt = ecobot.LogFormat("%(levelname)s %(message)s")
+    from lib.logs import LogFormat
+    fmt = LogFormat("%(levelname)s %(message)s")
     record = lambda name: logging.LogRecord(name, logging.INFO, __file__, 1, "hello", None, None)
     assert fmt.format(record("ecobot")) == "hello" and fmt.format(record("lib.bot")) == "hello"        # and no "INFO" before an ordinary line
 
@@ -506,30 +352,6 @@ def test_a_traceback_is_logged_whole_after_its_message():
     assert any(len(line) > 40 for line in lines[2:-1])                  # the frames too, whole
 
 
-def test_the_log_width_is_24_unless_set_and_0_keeps_whole_messages(monkeypatch):
-    from lib.config import Config
-    for k, v in (("BOT_TELEGRAM_TOKEN", "t"), ("BOT_OPENROUTER_API_KEY", "k"), ("BOT_MCP_URL", "http://127.0.0.1:8765/mcp"),
-                 ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
-        monkeypatch.setenv(k, v)
-    monkeypatch.delenv("BOT_LOG_WIDTH", raising=False)
-    assert Config.from_env().log_width == 24
-    for value, want in (("120", 120), ("0", 0), ("junk", 24), ("-5", 24), ("7.5", 24), ("²", 24)):
-        monkeypatch.setenv("BOT_LOG_WIDTH", value)
-        assert Config.from_env().log_width == want, value
-
-
-def test_the_preload_chat_is_a_chat_id_or_off(monkeypatch):
-    from lib.config import Config
-    for k, v in (("BOT_TELEGRAM_TOKEN", "t"), ("BOT_OPENROUTER_API_KEY", "k"), ("BOT_MCP_URL", "http://127.0.0.1:8765/mcp"),
-                 ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
-        monkeypatch.setenv(k, v)
-    monkeypatch.delenv("BOT_TELEGRAM_PRELOAD_CHAT", raising=False)
-    assert Config.from_env().telegram_preload_chat is None
-    for value, want in (("-1001234567890", -1001234567890), ("42", 42), ("", None), ("junk", None)):
-        monkeypatch.setenv("BOT_TELEGRAM_PRELOAD_CHAT", value)
-        assert Config.from_env().telegram_preload_chat == want, value
-
-
 def test_the_http_clients_lines_do_not_start_with_http_request():
     from lib.logs import LogFormat
     fmt = LogFormat("%(levelname)s %(message)s", width=80)
@@ -537,17 +359,3 @@ def test_the_http_clients_lines_do_not_start_with_http_request():
                                ("POST", "https://openrouter.ai/api/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
     assert fmt.format(record) == 'POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"'
     assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
-
-
-async def test_a_token_telegram_rejects_stops_the_bot_with_a_plain_message_that_does_not_show_the_token(tmp_path, monkeypatch):
-    from telegram.error import InvalidToken
-
-    class Rejecting(FakeApp):
-        async def initialize(self):
-            raise InvalidToken("The token `SECRET-TOKEN-123` was rejected by the server.")
-    async with ecobot_mcp_up(tmp_path) as url:
-        bot_settings(tmp_path, monkeypatch, url, Rejecting())
-        with pytest.raises(SystemExit) as stopped:
-            await ecobot.main()
-    assert "BOT_TELEGRAM_TOKEN was rejected by Telegram" in str(stopped.value) and "SECRET" not in str(stopped.value)
-    assert stopped.value.__cause__ is None and stopped.value.__suppress_context__

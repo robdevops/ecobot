@@ -1,6 +1,6 @@
 """The settings' names (docs/configuration.md): ecobot-mcp's start with MCP_, irrigation-mcp's with IRRIGATION_, the bot's with BOT_, the
 shared ones have none of them; an old name (or either of two) still works when the new one is unset, with one warning naming the new name (never the value). And the token: AUTH_TOKENS, or the
-one ecobot-mcp generates in the data folder, which the bot reads from there (lib/auth_token.py)."""
+one ecobot-mcp generates in the data folder (lib/auth_token.py)."""
 
 import logging
 import os
@@ -9,7 +9,6 @@ from dataclasses import fields
 
 import pytest
 
-import ecobot
 from ecobot_mcp import __main__ as mcp_main
 from lib import auth_token
 from lib.config import Config, env
@@ -161,55 +160,11 @@ def test_irrigation_mcp_reads_only_its_own_settings_and_the_shared_ones_and_cann
     assert service.tuya_device_id == "" and service.irrigation_bind == ("127.0.0.1", 8766)   # ecobot-mcp reads none of irrigation-mcp's
 
 
-def test_the_bot_reads_none_of_irrigation_mcps_settings_and_reaches_it_at_bot_irrigation_mcp_url(monkeypatch, tmp_path, caplog):
-    """Step 8b: the controller is irrigation-mcp's; the bot is its client (BOT_IRRIGATION_MCP_URL, unset: no irrigation), and reads no
-    IRRIGATION_ setting, nor their old names (BOT_TUYA_*, TUYA_*, BOT_IRRIGATION_CHECK_HOUR), so it warns of none of them either."""
-    bot_settings(monkeypatch, tmp_path)
-    for name, value in (("BOT_TUYA_CLIENT_ID", "old"), ("TUYA_DEVICE_ID", "older"), ("BOT_IRRIGATION_CHECK_HOUR", "6"), ("IRRIGATION_BIND", "0.0.0.0:1")):
-        monkeypatch.setenv(name, value)
-    cfg = Config.from_env()
-    for f in fields(Config):
-        if f.metadata.get("env", "").startswith("IRRIGATION_"):
-            assert getattr(cfg, f.name) == f.default, f.name
-    assert cfg.irrigation_mcp_url == "" and not cfg.irrigation and "Old setting names" not in caplog.text
-    monkeypatch.setenv("BOT_IRRIGATION_MCP_URL", "http://127.0.0.1:8766/mcp/")
-    assert Config.from_env().irrigation_mcp_url == "http://127.0.0.1:8766/mcp"
-    assert Config.from_env(program="irrigation").irrigation_mcp_url == ""                # (irrigation-mcp doesn't read the bot's)
-
-
 def test_irrigation_mcp_s_settings_have_their_defaults():
     defaults = {f.name: f.default for f in fields(Config)}
     assert defaults["irrigation_bind"] == ("127.0.0.1", 8766) and defaults["irrigation_allowed_hosts"] == ("127.0.0.1", "localhost")
     assert defaults["irrigation_ecobot_mcp_url"] == "http://127.0.0.1:8765/mcp" and defaults["irrigation_check_hour"] == 18
     assert defaults["tuya_base_url"] == "https://openapi.tuyaeu.com"
-
-
-def test_a_value_an_old_name_gives_is_checked_under_that_name(monkeypatch, tmp_path, caplog):
-    bot_settings(monkeypatch, tmp_path)
-    monkeypatch.setenv("ADMIN_ONLY", "ture")
-    assert Config.from_env().admin_only is False and "ADMIN_ONLY: 'ture' is not on or off" in caplog.text
-
-
-def test_the_bot_reads_only_its_own_settings_and_the_shared_ones_and_cannot_start_without_ecobot_mcp(monkeypatch, tmp_path, caplog):
-    """The bot is ecobot-mcp's client (docs/ecobot-mcp.md step 6b): ecobot-mcp's settings (MCP_, and their old names) are not read by
-    it, and it stops, saying what to do, without BOT_MCP_URL; it needs no source's settings."""
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "1:x")
-    with pytest.raises(SystemExit, match="BOT_MCP_URL is not set: the bot is a client of ecobot-mcp") as stopped:
-        Config.from_env()
-    assert "python -m ecobot_mcp" in str(stopped.value) and "http://127.0.0.1:8765/mcp" in str(stopped.value)
-    monkeypatch.setenv("BOT_MCP_URL", "http://127.0.0.1:8765/mcp")
-    for name, value in (("MCP_PLACE", "Hobart"), ("RAIN_QUIET_HOURS", "22-6"), ("MCP_ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b"),
-                        ("MCP_BIND", "0.0.0.0:9000"), ("DARKMODE", "on"), ("AUTH_TOKENS", "s3cret")):
-        monkeypatch.setenv(name, value)
-    caplog.clear()
-    cfg, service = Config.from_env(), Config.from_env(bot=False)
-    for f in fields(Config):
-        if f.name in MCP_ONLY:
-            assert getattr(cfg, f.name) == f.default, f.name                 # ecobot-mcp's: left at their defaults
-    assert (service.place, service.rain_quiet_hours, service.ecowitt_api_key, service.mcp_bind) == ("Hobart", (22, 6), "a", ("0.0.0.0", 9000))
-    assert cfg.dark_mode == "on" and cfg.auth_tokens == ("s3cret",) and cfg.mcp_url == "http://127.0.0.1:8765/mcp"   # shared, and its own
-    assert sum("RAIN_QUIET_HOURS" in r.getMessage() for r in caplog.records) == 1   # (ecobot-mcp's old name: said by ecobot-mcp alone)
 
 
 # ---------- the token ----------
@@ -234,21 +189,3 @@ def test_an_empty_token_file_is_replaced_and_an_unwritable_folder_stops_ecobot_m
         locked.mkdir(mode=0o500)
         with pytest.raises(SystemExit, match="AUTH_TOKENS is not set"):
             mcp_main.generated_token(config(locked))
-
-
-def test_the_bot_sends_the_first_of_auth_tokens_else_the_retired_one_else_the_generated_one(tmp_path, caplog):
-    assert ecobot.mcp_token(config(tmp_path, auth_tokens=("first", "second"))) == "first"
-    assert ecobot.mcp_token(config(tmp_path, auth_tokens=("first",), retired_mcp_token="old")) == "first"
-    assert "WEATHER_MCP_TOKEN is retired and ignored" in caplog.text
-    caplog.clear()
-    assert ecobot.mcp_token(config(tmp_path, retired_mcp_token="r3tired")) == "r3tired"
-    assert "move it into AUTH_TOKENS" in caplog.text and "r3tired" not in caplog.text
-    caplog.clear()
-    read = ecobot.mcp_token(config(tmp_path))                          # ecobot-mcp hasn't written its token yet: read again later,
-    assert callable(read) and read() is None and "no token" not in caplog.text   # and not said at once (it may be a moment away)
-    assert ecobot.no_token_yet(config(tmp_path), read) and f"there is no token at {tmp_path / 'auth_token'}" in caplog.text   # said
-    caplog.clear()                                                                                    # when ecobot-mcp can't be reached
-    token = auth_token.ensure(tmp_path)
-    assert read() == token and not ecobot.no_token_yet(config(tmp_path), read) and "no token" not in caplog.text
-    caplog.clear()
-    assert ecobot.mcp_token(config(tmp_path))() == token and "no token" not in caplog.text

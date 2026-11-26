@@ -68,14 +68,14 @@ def test_a_folder_that_cannot_be_made_stops_the_start_with_a_plain_message(monke
     assert "not writable" in str(stop.value) and "DATA_DIR" in str(stop.value)
 
 
-def test_the_bot_starts_without_matplotlib_or_numpy():
-    """The charts are drawn with Pillow and the statistics in plain Python: importing the bot loads neither."""
-    done = subprocess.run([sys.executable, "-c", "import sys, ecobot, lib.bot, lib.compose; assert not {'matplotlib', 'numpy'} & set(sys.modules)"], cwd=ROOT,
+def test_the_servers_start_without_matplotlib_or_numpy():
+    """The charts are drawn with Pillow and the statistics in plain Python: importing the servers loads neither."""
+    done = subprocess.run([sys.executable, "-c", "import sys, ecobot_mcp.core, irrigation_mcp.__main__, lib.compose; assert not {'matplotlib', 'numpy'} & set(sys.modules)"], cwd=ROOT,
                           capture_output=True, text=True)
     assert done.returncode == 0, done.stderr[-500:]
 
 def test_the_running_commit_is_read_without_running_git(tmp_path):
-    from ecobot import commit_in
+    from lib.version import commit_in
     git = lambda *a: subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True, text=True,
                                     env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
                                          "GIT_COMMITTER_EMAIL": "t@t"}).stdout.strip()

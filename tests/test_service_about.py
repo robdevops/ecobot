@@ -6,9 +6,8 @@ import time
 from datetime import timedelta
 from types import SimpleNamespace as NS
 
-from lib import templates
 from lib.airgradient import AirGradient
-from lib.alerts import forecast as forecast_alert, menu, particulates, weather
+from lib.alerts import forecast as forecast_alert, particulates, weather
 from lib.ecowitt.glance import UVI_ALERT
 from lib.service import about as ab
 from lib.service.about import AboutTool
@@ -61,12 +60,18 @@ async def test_arguments_are_refused_with_how_to_call_it():
     assert got == {"error": "about takes no arguments, not 'topic': call it with {}.", "arguments": []}
 
 
-def test_the_lists_are_the_ones_the_bots_prompt_menu_and_help_had():
-    assert "lightning" in ab.NEVER_AVAILABLE and set(ab.WITHOUT) == {"Pollen", "Forecast"} and "gusts" in ab.ALERT_WORDS   # (the old prompt's lists, kept here)
-    assert ab.TYPES == {kind: v for kind, v in menu.TYPES.items() if v[1] != "Irrigation"}   # (irrigation: a server of its own)
-    assert ab.MEASURES == templates.MEASURES
-    for sources in (EVERY, ["Ecowitt"], ["AirGradient", "Pollen"], []):
-        assert "\n".join(ab.measure_lines(sources)) == templates.capabilities_text(sources)   # the Help list, word for word
+def test_the_lists_are_the_services_own_tables_of_what_is_never_there_what_is_measured_and_what_alerts():
+    assert "lightning" in ab.NEVER_AVAILABLE and set(ab.WITHOUT) == {"Pollen", "Forecast"}
+    assert list(ab.TYPES) == list(ab.ALERT_WORDS) == ["rain", "gusts", "uv", "temps", "particulates", "pollen_and_asthma", "forecast"]
+    assert {source for _, source in ab.TYPES.values()} == {"Ecowitt", "AirGradient", "Pollen", "Forecast"} and "Irrigation" not in str(ab.TYPES)
+    assert list(ab.MEASURES) == ["Ecowitt", "AirGradient", "Pollen", "Forecast"]
+    assert ab.measure_lines(["Ecowitt"]) == ["\u2022 Temperature, humidity (indoor, outdoor)",
+                                            "\u2022 Dew point, vapour pressure deficit, pressure, wind speed",
+                                            "\u2022 Rain, solar radiation, UV index", "\u2022 History charts"]
+    assert ab.measure_lines(["AirGradient", "Pollen"]) == ["\u2022 PM1, PM2.5, PM10, CO\u2082, VOC, NOx",
+                                                          "\u2022 Pollen and thunderstorm asthma risk (October to December)", "\u2022 History charts"]
+    assert ab.measure_lines([]) == ["\u2022 History charts"]
+    assert len(ab.measure_lines(EVERY)) == 7
 
 
 # ---------- what it measures ----------
@@ -82,7 +87,7 @@ async def test_what_it_measures_and_doesnt_for_the_sources_there_are(tmp_path, a
     assert got["not_available"] == ab.NEVER_AVAILABLE
     assert list(got["tools"]) == ["current", "summary", "readings", "days", "relate", "scan", "outlook", "forecast", "pollen"]
     assert [a["kind"] for a in got["alerts"]] == list(ab.TYPES)
-    assert got["lines"] == templates.capabilities_text(EVERY).splitlines()
+    assert got["lines"] == ab.measure_lines(EVERY)
     assert json.loads(await AboutTool(ctx).tool().call({}, request_meta({"fetch": False}))) == got   # (it reads only what is held)
     await close(ctx)
 
@@ -110,7 +115,7 @@ def test_each_alert_has_its_rule_and_the_thresholds_the_rules_use(monkeypatch):
     assert rules["pollen_and_asthma"]["thresholds"] == {"from_level": "High"} and "from 7:30am" in rules["pollen_and_asthma"]["rule"]
     assert rules["rain"]["thresholds"] == {"dry_minutes": 60, "quiet_hours": "00:00-06:00"}
     assert rules["rain"]["rule"].endswith("None from 12am to 6am: one summary of the rain in those hours after them.")
-    assert all(a["what"] == ab.ALERT_WORDS[a["kind"]] and a["name"] == menu.LABELS[a["kind"]] for a in rules.values())
+    assert all(a["what"] == ab.ALERT_WORDS[a["kind"]] and a["name"] == ab.TYPES[a["kind"]][0] for a in rules.values())
     monkeypatch.setattr(ab, "RAIN_QUIET_HOURS", None)            # ecobot-mcp's settings, as the config sets them
     monkeypatch.setattr(ab, "ALERT_COOLDOWN_MINUTES", 90)
     rules = {a["kind"]: a for a in ab.alerts(EVERY)}

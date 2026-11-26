@@ -145,16 +145,3 @@ async def test_a_new_day_starts_a_new_baseline_and_a_restart_keeps_it(tmp_path):
     forecast.fetch([day(1, max_c=30.0), day(2)], hour=6, minute=10)
     await again.check()
     assert len(sent) == 1 and again.state.monitor["forecast"]["day"] == "2026-10-04"
-
-
-async def test_the_old_per_chat_forecast_record_is_dropped_and_nothing_fires_after_the_upgrade(tmp_path):
-    from lib.alerts.notify import AlertState
-    bot_state = AlertState(tmp_path / "bot_state.json")
-    bot_state.add_chat(1, "chat")
-    bot_state.monitor["forecast_sent"] = {"1": {TODAY.isoformat(): {**day(0, pct=90), "date": TODAY.isoformat()}}}
-    bot_state.save()
-    store = AlertStore(tmp_path / "alert_state.json", moved_from=AlertState(bot_state.path))
-    assert "forecast_sent" not in AlertState(bot_state.path).monitor and "forecast_sent" not in store.monitor
-    mon = ForecastMonitor(FakeForecast([day(0, pct=5)], hour=14), store, AlertLog(tmp_path / "alerts.sqlite", TZ))
-    await mon.check()                                                 # the first look after the upgrade: the baseline, no alert
-    assert Texts(mon.alerts) == []

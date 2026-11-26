@@ -214,7 +214,7 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
     assert "Alerts NOT running" not in log and "Telegram" not in log
 
 
-async def test_the_bot_s_warning_says_why_ecobot_mcp_refused_it(service, monkeypatch, caplog):
+async def test_a_clients_warning_says_why_ecobot_mcp_refused_it(service, monkeypatch, caplog):
     """The SDK reports every HTTP error as "Server returned an error response": the warning names the status and what to change."""
     monkeypatch.setattr(upstream, "BACKOFF", (0.1,))
     port = free_port()
