@@ -7,8 +7,7 @@ nothing of either in it, so irrigation-mcp loads none of ecobot-mcp's tools or s
   - `Uvicorn` and `server_config`: uvicorn's server as both run it (the signals left to the program, a listen stream given a moment to
     end at shutdown);
   - `generated_token`: AUTH_TOKENS unset, the token kept in the data folder (lib/auth_token.py), made at the first start;
-  - `hold_folder`: one process of a program per data folder (a lock file);
-  - `alerts_read`: an alert log (lib/alert_log.py) as its resource gives it, after `since`, unexpired unless `expired`."""
+  - `hold_folder`: one process of a program per data folder (a lock file)."""
 
 import contextlib
 import hmac
@@ -17,11 +16,9 @@ import logging
 import time
 from pathlib import Path
 
-import mcp_types as types
 import uvicorn
 from mcp.server.auth.provider import AccessToken
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.shared.exceptions import MCPError
 
 from . import auth_token
 
@@ -86,17 +83,6 @@ def hold_folder(folder: Path, name: str, program: str, command: str, stack):
         held.close()
         raise SystemExit(f"Another {program} ({command}) already runs on {path.parent}: stop it first, or give this one another DATA_DIR.")
     stack.callback(held.close)
-
-
-# ---------- an alert log as a resource ----------
-def alerts_read(alert_log, query: dict | None = None) -> dict:
-    """{alerts, last_id, identity}: the alerts after `since` (0), only the unexpired unless `expired` is true (query: parse_qs's)."""
-    query = query or {}
-    since = (query.get("since") or ["0"])[-1].strip()
-    expired = (query.get("expired") or ["false"])[-1].strip().lower() in ("true", "1", "yes", "on")
-    if since and not since.isdecimal():
-        raise MCPError(types.INVALID_PARAMS, f"`since` is an alert's id, a whole number, not {since!r}.")
-    return {"alerts": alert_log.since(int(since or 0), expired=expired), "last_id": alert_log.last_id(), "identity": alert_log.identity}
 
 
 # ---------- uvicorn ----------
@@ -230,4 +216,4 @@ class RequestLog:
             self.logger.warning("MCP %s refused: %s -> %d%s (Host %s)", client, what, status, f", {why}" if why else "", host or "none")
 
 
-__all__ = ["RequestLog", "alerts_read", "SHUTDOWN_SECONDS", "TokenCheck", "Uvicorn", "generated_token", "hold_folder", "host_settings", "server_config"]
+__all__ = ["RequestLog", "SHUTDOWN_SECONDS", "TokenCheck", "Uvicorn", "generated_token", "hold_folder", "host_settings", "server_config"]

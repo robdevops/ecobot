@@ -4,7 +4,7 @@ import asyncio
 import time
 
 from lib.alert_log import AlertLog
-from lib.mcp_server import ALERTS_URI, FEED_URI
+from lib.mcp_server import FEED_URI
 from lib.service.context import Context
 from tests.fakes import TZ
 
@@ -13,15 +13,15 @@ async def test_ecobot_mcp_in_memory_lists_calls_reads_and_announces_changes(serv
     alerts = AlertLog(tmp_path / "a.sqlite", TZ)
     mcp = await serve_mcp(Context(tz=TZ), alerts, sources=["Ecowitt"])
     try:
-        assert "about" in await mcp.tools() and {ALERTS_URI, FEED_URI} <= set(await mcp.resources())
-        assert any(t.startswith(ALERTS_URI) for t in await mcp.templates())
+        assert "about" in await mcp.tools() and FEED_URI in await mcp.resources()
+        assert await mcp.templates() == []
         assert "sources" in await mcp.read("ecobot://station")
         publishing = asyncio.create_task(mcp.server.watch_alerts())
-        async with mcp.listen(ALERTS_URI) as updates:
+        async with mcp.listen(FEED_URI) as updates:
             alerts.append("gusts", "💨 A gust of 72 km/h", "Gusts", expires=time.time() + 3600)
             await asyncio.wait_for(updates.__anext__(), 5)
-        got = await mcp.alerts(ALERTS_URI)
-        assert [a["text"] for a in got["alerts"]] == ["💨 A gust of 72 km/h"]
+        got = await mcp.feed(FEED_URI)
+        assert [a["text"] for a in got["items"]] == ["💨 A gust of 72 km/h"]
         publishing.cancel()
     finally:
         alerts.close()

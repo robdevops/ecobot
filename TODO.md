@@ -42,8 +42,3 @@ Then the storage redesign: [docs/storage-plan.md](docs/storage-plan.md) has the 
 requirements that were here are its section 2, the decisions its section 6.1). Steps 0 and 1 are done (the measurements, and the new storage
 checked on the real cache); next is step 2, the station on it. Its step 4 takes the AirGradient's readings from the monitor itself first,
 Home Assistant as the fallback and the cloud last (`MCP_AIRGRADIENT_SOURCE`; section 3.12 has how each source's PM2.5 is checked).
-
-## Remove ecobot://alerts and irrigation://alerts once signalbot has taken over
-
-When ecobot.py and EcoBridge are retired, remove `ecobot://alerts` and `irrigation://alerts` (and their `{?since,expired}` templates,
-`alerts_read`, and their `ResourceUpdated` pushes). signalbot reads `ecobot://feed` and `irrigation://feed` (`lib/feed.py`) instead.

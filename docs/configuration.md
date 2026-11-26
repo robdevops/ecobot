@@ -120,7 +120,7 @@ that names ecobot-mcp's container, as Docker's do.)
 
 ## irrigation-mcp's settings (`IRRIGATION_`)
 
-irrigation-mcp (`python -m irrigation_mcp`, [ecobot-mcp.md](ecobot-mcp.md) 3.9) is the irrigation controller's own MCP server: the tools `irrigation_status`, `water`, `stop` and `delay`, and `irrigation://alerts`; it runs the valve's watchdog and the daily check whatever any client does. It stops at start, saying which, without the three Tuya settings. Its state is `DATA_DIR/irrigation_state.json` (at its first start, the bot's irrigation entries in `bot_state.json` are copied over once), its alert log `DATA_DIR/irrigation_alerts.sqlite`; one irrigation-mcp runs per data folder (`irrigation.lock`).
+irrigation-mcp (`python -m irrigation_mcp`, [ecobot-mcp.md](ecobot-mcp.md) 3.9) is the irrigation controller's own MCP server: the tools `irrigation_status`, `water`, `stop` and `delay`, and `irrigation://feed`; it runs the valve's watchdog and the daily check whatever any client does. It stops at start, saying which, without the three Tuya settings. Its state is `DATA_DIR/irrigation_state.json` (at its first start, the bot's irrigation entries in `bot_state.json` are copied over once), its alert log `DATA_DIR/irrigation_alerts.sqlite`; one irrigation-mcp runs per data folder (`irrigation.lock`).
 
 | Variable | Default | Description |
 |---|---|---|

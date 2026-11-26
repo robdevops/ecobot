@@ -1,6 +1,6 @@
 """The irrigation controller, checked once a day (18:00 local by default, IRRIGATION_CHECK_HOUR): run by irrigation-mcp
 (irrigation_mcp, lib/irrigation/server.py). What it tells goes to `notify(text, kind=...)`: irrigation-mcp's alert log
-(irrigation://alerts), which the bot delivers to its chats.
+(irrigation://feed), which signalbot delivers.
 
   - a battery below 5% is told to the chats subscribed to "irrigation battery" (kind irrigation_battery) (at most once a day, until it is charged);
   - if more than 1 mm of rain fell in the last 24 hours, or Open-Meteo gives today or tomorrow a 50% or better chance of at least

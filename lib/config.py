@@ -383,7 +383,7 @@ class Config:
 
     @property
     def irrigation_alert_log_path(self) -> Path:
-        """irrigation-mcp's alert log (irrigation://alerts), apart from ecobot-mcp's."""
+        """irrigation-mcp's alert log (irrigation://feed), apart from ecobot-mcp's."""
         return self.state_path.parent / "irrigation_alerts.sqlite"
 
     @property

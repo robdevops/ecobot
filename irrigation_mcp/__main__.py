@@ -6,7 +6,7 @@ client does:
     irrigation_state.json);
   - the daily check at IRRIGATION_CHECK_HOUR (lib/irrigation/check.py): a low battery, and a 24 hour pause when it rained or rain is
     likely, asking ecobot-mcp (IRRIGATION_ECOBOT_MCP_URL) as its MCP client for the rain measured and the forecast; its alerts go to
-    irrigation://alerts;
+    irrigation://feed;
   - the MCP server (lib/irrigation/server.py) at http://IRRIGATION_BIND/mcp (default 127.0.0.1:8766), Streamable HTTP under uvicorn: put
     it behind TLS to reach it from elsewhere.
 

@@ -1,5 +1,5 @@
 """The service over MCP (lib/mcp_server.py, docs/ecobot-mcp.md 3.4-3.8): the ten tools listed and called over the SDK's in-memory
-transport with the same answers as the ServiceTools themselves, the resources and the alerts' template, the prompts, the publishing of
+transport with the same answers as the ServiceTools themselves, the resources, the prompts, the publishing of
 changes, the auth and the allowed hosts. The listen over the network is tests/test_mcp_listen.py's (under uvicorn,
 as docs 7 asks)."""
 
@@ -22,7 +22,7 @@ from mcp.shared.exceptions import MCPError
 from lib import chart_images, charts, mcp_server
 from lib.config import ROOT
 from lib.alert_log import AlertLog
-from lib.mcp_server import (ALERTS_TEMPLATE, ALERTS_URI, COMPLETE, PROMPTS, EcobotServer, TokenCheck, host_settings, prompt,
+from lib.mcp_server import (COMPLETE, PROMPTS, EcobotServer, TokenCheck, host_settings, prompt,
                             tool_result)
 from lib.service.common import AS_DRAWN, CHART_POINTS
 from lib.service.context import Context
@@ -170,9 +170,8 @@ async def test_each_resource_is_listed_and_readable_as_json(world):
     assert weather["sensors"]["outdoor"]["temperature"]["unit"] and weather["lines"] and weather["as_of"]
     air = read["ecobot://now/air"]
     assert air["sensors"]["air"]["pm2_5"]["rating"] and "aqi_us" in air["sensors"]["air"]["pm2_5"]
-    assert [a["kind"] for a in read[ALERTS_URI]["alerts"]] == ["rain"] and read[ALERTS_URI]["last_id"] == 1
     feed = read[mcp_server.FEED_URI]   # the same alerts as a feed for signalbot (lib/feed.py, tests/test_feed.py)
-    assert [i["id"] for i in feed["items"]] == ["1"] and feed["identity"] == read[ALERTS_URI]["identity"]
+    assert [i["id"] for i in feed["items"]] == ["1"] and feed["identity"] == world.alert_log.identity
     assert [k["kind"] for k in feed["kinds"]] == ["rain", "gusts", "uv", "temps", "particulates", "pollen_and_asthma", "forecast"]
     forecast = read["ecobot://forecast"]
     assert forecast["place"] == "Melbourne" and forecast["days"] and {"date", "min_c", "max_c", "text"} <= set(forecast["days"][0])
@@ -226,7 +225,7 @@ async def test_a_resource_there_is_none_of_is_refused_naming_those_there_are(tmp
     server = EcobotServer(Context(tz=TZ), AlertLog(tmp_path / "a.sqlite", TZ))
     async with Client(server.server) as client:
         listed = [r.uri for r in (await client.list_resources()).resources]
-        assert listed == ["ecobot://station", ALERTS_URI, mcp_server.FEED_URI, "ecobot://health",
+        assert listed == ["ecobot://station", mcp_server.FEED_URI, "ecobot://health",
                           "ecobot://schema/chart"]   # (no sensor, no forecast, no pollen)
         for uri in ("ecobot://now/weather", "ecobot://status", "ecobot://nowhere", "ecobot://health?x=1"):
             with pytest.raises(MCPError, match="No resource") as e:
@@ -234,7 +233,7 @@ async def test_a_resource_there_is_none_of_is_refused_naming_those_there_are(tmp
             assert e.value.error.code == mcp_server.RESOURCE_NOT_FOUND
 
 
-async def test_the_alerts_template_reads_after_an_id_and_leaves_the_expired_out_unless_asked(tmp_path):
+async def test_the_alerts_resources_are_gone_and_the_feed_leaves_the_expired_out(tmp_path):
     alerts = AlertLog(tmp_path / "a.sqlite", TZ)
     server = EcobotServer(Context(tz=TZ), alerts)
     now = time.time()
@@ -242,20 +241,13 @@ async def test_the_alerts_template_reads_after_an_id_and_leaves_the_expired_out_
     alerts.append("gusts", "Gusty", "Gusts", expires=now + 3600)                   # 2
     alerts.append("uv", "UV high", "UV", expires=None)                             # 3: never expires
     async with Client(server.server) as client:
-        (template,) = (await client.list_resource_templates()).resource_templates
-        assert template.uri_template == ALERTS_TEMPLATE
-
-        async def ids(uri):
-            return [a["id"] for a in json.loads((await client.read_resource(uri)).contents[0].text)["alerts"]]
-        assert await ids(ALERTS_URI) == [2, 3]
-        assert await ids(f"{ALERTS_URI}?since=2") == [3]
-        assert await ids(f"{ALERTS_URI}?expired=true") == [1, 2, 3]
-        assert await ids(f"{ALERTS_URI}?since=1&expired=true") == [2, 3]
-        assert await ids(f"{ALERTS_URI}?since=3") == []
-        with pytest.raises(MCPError, match="whole number"):
-            await ids(f"{ALERTS_URI}?since=last")
-        whole = json.loads((await client.read_resource(ALERTS_URI)).contents[0].text)
-        assert whole["last_id"] == 3 and whole["identity"] == alerts.identity
+        assert (await client.list_resource_templates()).resource_templates == []
+        feed = json.loads((await client.read_resource(mcp_server.FEED_URI)).contents[0].text)
+        assert [i["id"] for i in feed["items"]] == ["2", "3"] and feed["identity"] == alerts.identity
+        for uri in ("ecobot://alerts", "ecobot://alerts?since=2", f"{mcp_server.FEED_URI}?since=2"):
+            with pytest.raises(MCPError, match="No resource") as e:
+                await client.read_resource(uri)
+            assert e.value.error.code == mcp_server.RESOURCE_NOT_FOUND
     alerts.close()
 
 
@@ -277,18 +269,18 @@ async def test_a_live_resource_is_published_when_its_reading_changes_and_not_whe
     assert seen == [ResourceUpdated("ecobot://now/weather")] * 2
 
 
-async def test_a_new_alert_is_published_to_a_listener(tmp_path):
+async def test_a_new_alert_publishes_the_feed_to_a_listener(tmp_path):
     alerts = AlertLog(tmp_path / "a.sqlite", TZ)
     server = EcobotServer(Context(tz=TZ), alerts)
     publishing = asyncio.create_task(server.watch_alerts())
     try:
         async with Client(server.server) as client:
-            async with client.listen(resource_subscriptions=[ALERTS_URI, "ecobot://now/weather"]) as sub:
+            async with client.listen(resource_subscriptions=[mcp_server.FEED_URI, "ecobot://now/weather"]) as sub:
                 alerts.append("gusts", "💨 A gust of 72 km/h", "Gusts", expires=time.time() + 3600)
                 event = await asyncio.wait_for(sub.__anext__(), 5)
-                assert event == ResourceUpdated(ALERTS_URI)
-                got = json.loads((await client.read_resource(f"{ALERTS_URI}?since=0")).contents[0].text)
-                assert [a["text"] for a in got["alerts"]] == ["💨 A gust of 72 km/h"]
+                assert event == ResourceUpdated(mcp_server.FEED_URI)
+                got = json.loads((await client.read_resource(mcp_server.FEED_URI)).contents[0].text)
+                assert [a["text"] for a in got["items"]] == ["💨 A gust of 72 km/h"]
     finally:
         publishing.cancel()
         alerts.close()

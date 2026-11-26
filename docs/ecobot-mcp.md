@@ -307,8 +307,7 @@ For applications that keep an eye on the station rather than ask about it; a mod
 | `ecobot://station` | name, time zone, latitude and longitude, created; the sensors, their readings with labels, units and the words people use for them; each source's mode (HA, cloud, local) and retention; the alert kinds, what each means and its threshold; the AirGradient dashboard link | when the catalogue gains a reading |
 | `ecobot://now/weather` | the live reading as kept, in the service's names (`current`'s, nothing fetched for it): `{as_of, sensors: {sensor: {reading: {value, unit, text, [emoji], [compass]}}}, lines, heading, [unavailable]}` | each new reading (5 s with HA, 60 s cloud only) |
 | `ecobot://now/air` | the latest air reading, the same shape: its time, each reading's rating, PM2.5's and PM10's AQI and band (the US AQI is the higher) | each new reading |
-| `ecobot://alerts` (in the resource list) and `ecobot://alerts{?since,expired}` (a template) | the alerts, newest last, kept 30 days; `since` an alert id: those after it; unexpired ones only unless `expired=true` (3.6) | each new alert, on the bare URI |
-| `ecobot://feed` | the same alerts as a feed for signalbot (`lib/feed.py`, 3.6): `{identity, kinds: [{kind, label, words}], items: [{id, kind, time, expires, text, [link], [chart: {tool, arguments, [arg, values]}]}]}`, unexpired only | each new alert |
+| `ecobot://feed` | the alerts as a feed for signalbot (`lib/feed.py`, 3.6): `{identity, kinds: [{kind, label, words}], items: [{id, kind, time, expires, text, [link], [chart: {tool, arguments, [arg, values]}]}]}`, unexpired only | each new alert |
 | `ecobot://forecast` | the forecast days, structured (min and max, rain chance, chance of at least 1 mm, the day's rain in mm with its likely range and the floor `rain_mm_floor` (the `≥N` of the line `~17 mm (9–25 likely; ≥5 at 90%)`), summary), with `fetched_at` and `place` | each new forecast |
 | `ecobot://pollen` | grass and asthma levels with their days, `fetched_at`, `in_season` | each new page |
 | `ecobot://status` | the Status picture (step 6): the station's temperature, humidity and rain gauges in a row as a PNG (a blob, `image/png`, `lib/gauges.py`), after their readings as JSON text (`{gauges: [{title, value, unit, rows}], lines}`: the reading now and the day's, month's and year's highs and lows, which the picture leaves out), then the report alone as `text/plain`, for a client that posts words as they are; from `current` with context, read as a call is; without Pillow, the text with `image_note` | no |
@@ -343,16 +342,16 @@ every 60 seconds, particulates every 30 minutes and only then, since its two-rea
   particulates), which like every chart carries the call that drew it (`drawn_by`, 3.7), so a client's 🔄 calls it again for the
   latest readings with no knowledge of the kinds.
 - **Alerts go stale:** `expires` is set by the rule (rain and gusts about an hour, UV its rearm time, particulates the next check,
-  pollen the end of its day, a forecast the day it is about), and `ecobot://alerts?since=` returns only unexpired alerts unless asked.
+  pollen the end of its day, a forecast the day it is about), and `ecobot://feed` lists only unexpired alerts.
   A client back after a gap sends what is still true, never the morning's rain as news.
-- **Delivery is the client's.** A client listens, reads `ecobot://alerts?since=<last id it handled>`, and sends each alert to whoever
-  it serves. Our bot does this for its subscribed chats.
+- **Delivery is the client's.** A client listens for `ecobot://feed`, reads it when it changes, and sends each alert it has not handled
+  to whoever it serves.
 - **As a feed for signalbot.** `ecobot://feed` (and irrigation-mcp's `irrigation://feed`) gives the unexpired alerts in signalbot's feed
   format (its `docs/FEEDS.md`; `lib/feed.py`), so signalbot posts them to the chats subscribed with `/alerts`, with no client of ours:
   the kinds this server can send now (by its sources), each with its label and the words people use for it; each alert's id as a
   string, its `text`, its link's URL, and its chart's `drawn_by` as `{tool, arguments}`, with `arg` "period" and its periods as `values`
-  when the call names one, which signalbot offers as buttons. signalbot reads it every 30 seconds. `ecobot://alerts` stays as it is for
-  our bot and EcoBridge until they are retired (TODO.md).
+  when the call names one, which signalbot offers as buttons. signalbot reads it every 30 seconds. There is no `ecobot://alerts`: the feed is
+  the one alert resource, with no `since` or `expired` query.
 - **The forecast alert is station-wide:** for today and tomorrow, it compares each new forecast with the first one fetched after 6am
   that day (its baseline), alerts when the maximum moves by more than 2°C or the chance of rain rises past 50% (or falls from there to 30% or less: the band
   keeps a chance hovering around 50% from alerting each way on every refresh), and makes the forecast it
@@ -474,8 +473,8 @@ token check (`AUTH_TOKENS`, or the generated token) and Host check (`IRRIGATION_
 - **Rain and forecast** come from the weather service, as its client: the measured rain from `summary{readings: ["rain"], period: "last
   24 hours"}`, the forecast from `ecobot://forecast` (its days' chance of at least 1 mm and `fetched_at`). When the weather service is
   unreachable, the check runs on the forecast it last read and skips the measured rain.
-- **Its alerts** (battery low, paused for rain: `irrigation_battery`, `irrigation_pause`) are its own `irrigation://alerts`, in the same
-  shape and with the same listen as `ecobot://alerts`, from an alert log of its own (`irrigation_alerts.sqlite`, its own identity); a
+- **Its alerts** (battery low, paused for rain: `irrigation_battery`, `irrigation_pause`) are its own `irrigation://feed`, in the same
+  shape and with the same listen as `ecobot://feed`, from an alert log of its own (`irrigation_alerts.sqlite`, its own identity); a
   client listens to both servers.
 - **The time zone** is ecobot://station's once read, `TZ` before. It reaches ecobot-mcp at `IRRIGATION_ECOBOT_MCP_URL`, sending the
   first of `AUTH_TOKENS` (else the generated token), as the bot does.

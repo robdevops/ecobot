@@ -8,20 +8,18 @@ low-level SDK as ecobot-mcp's (lib/mcp_server.py), as Streamable HTTP behind the
     destructiveHint, so a client asks before it calls them. Each answers JSON as one text block, as ecobot-mcp's tools do; a refusal,
     or the controller unreachable (IrrigationError's message, safe to show), is `isError` with {"error": ...}, a refusal with
     "refused" too: "paused" (water while a weather delay is on) or "arguments".
-  - **Resources**: `irrigation://alerts` (and its template with `since` and `expired`): the alerts its daily check decides
-    (irrigation_battery, irrigation_pause), in ecobot://alerts' shape, from an alert log of its own (lib/alert_log.py:
-    irrigation_alerts.sqlite, its own identity), published as ResourceUpdated on each new one to whoever listens; and
-    `irrigation://feed`, the same alerts as a feed for signalbot (lib/feed.py).
+  - **Resources**: `irrigation://feed`: the alerts its daily check decides (irrigation_battery, irrigation_pause), not yet expired, as a
+    feed for signalbot (lib/feed.py), from an alert log of its own (lib/alert_log.py: irrigation_alerts.sqlite, its own identity),
+    published as ResourceUpdated on each new one to whoever listens.
   - **HTTP** (`http_app`): `streamable_http_app` at /mcp, its Host header checked against IRRIGATION_ALLOWED_HOSTS, each request's
     bearer token against AUTH_TOKENS (lib/mcp_http.TokenCheck), one line per request in the log (RequestLog).
 
 `IrrigationServer(device, watchdog, alert_log)` builds it; `notify(text, kind=...)` is the daily check's way to alert (it appends to the
-alert log); `run()` publishes the alerts. The watchdog and the daily check themselves are run by irrigation_mcp."""
+alert log); `run()` publishes the feed. The watchdog and the daily check themselves are run by irrigation_mcp."""
 
 import json
 import logging
 from datetime import datetime
-from urllib.parse import parse_qs, urlsplit
 
 import mcp_types as types
 from mcp.server.auth.settings import AuthSettings
@@ -30,7 +28,7 @@ from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, Res
 from mcp.shared.exceptions import MCPError
 
 from ..feed import feed_read
-from ..mcp_http import RequestLog, TokenCheck, alerts_read, host_settings
+from ..mcp_http import RequestLog, TokenCheck, host_settings
 from .common import DELAYS, MAX_MINUTES, IrrigationError, is_paused
 
 log = logging.getLogger(__name__)
@@ -39,14 +37,12 @@ requests_log = logging.getLogger(__name__ + ".requests")   # one line per HTTP r
 NAME = "irrigation"
 JSON = "application/json"
 RESOURCE_NOT_FOUND = -32002           # MCP's error for a resource there is none of
-ALERTS_URI = "irrigation://alerts"
-ALERTS_TEMPLATE = "irrigation://alerts{?since,expired}"
 FEED_URI = "irrigation://feed"
 INSTRUCTIONS = ("The garden's irrigation controller (a Tuya smart irrigation timer). irrigation_status reads it; water opens the valve "
                 "for some minutes (refused while a weather delay pauses the timer: cancel the delay first), stop closes it, delay pauses "
                 "the timer's own schedule for 24, 48 or 72 hours (cancel ends a pause). A run always ends: the server closes the valve "
                 "itself if the controller hasn't. Once a day it pauses the timer for 24 hours when it rained or rain is likely, and "
-                "warns of a low battery: irrigation://alerts.")
+                "warns of a low battery: irrigation://feed.")
 PAUSED = ("The irrigation is paused (weather delay {delay}): it can't water while paused. Cancel the pause first (delay with duration "
           "cancel), then water.")
 ALERTS = {   # kind: (title, how long it is news, in seconds)
@@ -193,22 +189,13 @@ class IrrigationServer:
     async def _list_resources(self, ctx, params) -> types.ListResourcesResult:
         if self.alert_log is None:
             return types.ListResourcesResult(resources=[])
-        return types.ListResourcesResult(resources=[types.Resource(
-            uri=ALERTS_URI, name="alerts", title="Irrigation alerts", mime_type=JSON,
-            description="The alerts the daily check has decided (irrigation_battery: the battery is low; irrigation_pause: paused for rain), "
-                        "newest last, kept 30 days: {alerts: [{id, kind, time, expires, title, text, data}], last_id, identity}; only "
-                        "those not yet expired (the template: since an id, and expired=true for all). Pushed on each new alert."),
+        return types.ListResourcesResult(resources=[
             types.Resource(uri=FEED_URI, name="feed", title="Irrigation alerts as a feed", mime_type=JSON,
                            description="The alerts not yet expired, for signalbot's feeds (lib/feed.py): {identity, kinds: [{kind, label, "
                                        "words}], items: [{id, kind, time, expires, text}]}. Pushed on each new alert.")])
 
     async def _list_templates(self, ctx, params) -> types.ListResourceTemplatesResult:
-        if self.alert_log is None:
-            return types.ListResourceTemplatesResult(resource_templates=[])
-        return types.ListResourceTemplatesResult(resource_templates=[types.ResourceTemplate(
-            uri_template=ALERTS_TEMPLATE, name="alerts since", title="Irrigation alerts since an id",
-            description="The alerts after the id `since` (a client's last handled), only those not yet expired unless `expired=true`.",
-            mime_type=JSON)])
+        return types.ListResourceTemplatesResult(resource_templates=[])
 
     async def _read_resource(self, ctx, params: types.ReadResourceRequestParams) -> types.ReadResourceResult:
         uri = str(params.uri)
@@ -217,22 +204,18 @@ class IrrigationServer:
 
     def read(self, uri: str) -> dict:
         """A resource's content. Raises MCPError (RESOURCE_NOT_FOUND) for one there is none of."""
-        parts = urlsplit(uri)
-        if f"{parts.scheme}://{parts.netloc}{parts.path}" == ALERTS_URI and self.alert_log is not None:
-            return alerts_read(self.alert_log, parse_qs(parts.query))
         if uri == FEED_URI and self.alert_log is not None:
             return feed_read(self.alert_log, list(ALERTS))
-        raise MCPError(RESOURCE_NOT_FOUND, f"No resource {uri!r}: there are {ALERTS_URI}, {ALERTS_TEMPLATE} and {FEED_URI}.")
+        raise MCPError(RESOURCE_NOT_FOUND, f"No resource {uri!r}: there is {FEED_URI}.")
 
     async def watch_alerts(self):
-        """Publish the alerts' URI on each new alert, until cancelled."""
+        """Publish the feed's URI on each new alert, until cancelled."""
         if self.alert_log is None:
             return
         last = self.alert_log.last_id()
         while True:
             await self.alert_log.wait(last)
             last = self.alert_log.last_id()
-            await self.bus.publish(ResourceUpdated(ALERTS_URI))
             await self.bus.publish(ResourceUpdated(FEED_URI))
 
     async def run(self):
@@ -253,4 +236,4 @@ def http_app(server: IrrigationServer, *, tokens=(), allowed_hosts=("127.0.0.1",
     return app
 
 
-__all__ = ["ALERTS", "ALERTS_TEMPLATE", "ALERTS_URI", "IrrigationServer", "TOOLS", "http_app"]
+__all__ = ["ALERTS", "IrrigationServer", "TOOLS", "http_app"]

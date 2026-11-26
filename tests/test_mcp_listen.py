@@ -22,7 +22,7 @@ from lib import upstream
 from ecobot_mcp.__main__ import Uvicorn, server_config
 from lib.upstream import Upstream, http_transport
 from lib.alert_log import AlertLog
-from lib.mcp_server import ALERTS_URI, EcobotServer, http_app
+from lib.mcp_server import FEED_URI, EcobotServer, http_app
 from lib.service.context import Context
 
 TZ = ZoneInfo("Australia/Melbourne")
@@ -92,8 +92,8 @@ async def test_a_client_that_listens_hears_an_alert_and_after_a_lost_listen_list
     async def read_new(*_):
         """The client's delivery: the alerts after the last id it handled, each once."""
         after = handled[-1] if handled else 0
-        got = json.loads((await up.client.read_resource(f"{ALERTS_URI}?since={after}")).contents[0].text)
-        handled.extend(a["id"] for a in got["alerts"] if a["id"] > (handled[-1] if handled else 0))
+        got = json.loads((await up.client.read_resource(FEED_URI)).contents[0].text)
+        handled.extend(int(a["id"]) for a in got["items"] if int(a["id"]) > after)
 
     async def listening():
         connections.append(True)

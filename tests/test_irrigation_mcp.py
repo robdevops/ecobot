@@ -25,7 +25,7 @@ from lib.irrigation import Tuya, Watchdog
 from lib.irrigation import server as server_module
 from lib.irrigation.check import IrrigationMonitor
 from lib.irrigation.ecobot import EcobotWeather
-from lib.irrigation.server import ALERTS_URI, FEED_URI, TOOLS, IrrigationServer, http_app
+from lib.irrigation.server import FEED_URI, TOOLS, IrrigationServer, http_app
 from lib.irrigation.state import IrrigationState
 from lib.mcp_http import Uvicorn, server_config
 from lib.timeutil import now_local
@@ -302,7 +302,7 @@ async def test_with_ecobot_mcp_unreachable_the_check_goes_on_the_forecast_last_r
 
 
 # ---------- its alerts ----------
-async def test_its_alerts_are_heard_through_a_listen_and_read_in_ecobot_alerts_shape(served, tmp_path):
+async def test_its_alerts_are_heard_through_a_listen_and_read_as_the_feed(served, tmp_path):
     publishing = asyncio.create_task(served.run())
     heard, listening = [], asyncio.Event()
 
@@ -318,29 +318,25 @@ async def test_its_alerts_are_heard_through_a_listen_and_read_in_ecobot_alerts_s
         served.device.status_now["battery_percentage"] = 3
         m = IrrigationMonitor(served.device, served.watchdog.state, served.notify, TZ, 18)
         await m.check(now_local(TZ))
-        await until(lambda: heard == [ALERTS_URI, FEED_URI], what="the alert's ResourceUpdated, and the feed's")
+        await until(lambda: heard == [FEED_URI], what="the feed's ResourceUpdated")
         client = await up.get()
         listed = (await client.list_resources()).resources
         templates = (await client.list_resource_templates()).resource_templates
-        data = json.loads((await client.read_resource(ALERTS_URI)).contents[0].text)
-        later = json.loads((await client.read_resource(f"{ALERTS_URI}?since=1")).contents[0].text)
         feed = json.loads((await client.read_resource(FEED_URI)).contents[0].text)
-        with pytest.raises(Exception, match="whole number"):
-            await client.read_resource(f"{ALERTS_URI}?since=x")
+        for gone in ("irrigation://alerts", f"{FEED_URI}?since=1"):
+            with pytest.raises(Exception, match="No resource"):
+                await client.read_resource(gone)
         with pytest.raises(Exception, match="No resource"):
             await client.read_resource("irrigation://nothing")
     finally:
         supervisor.cancel()
         publishing.cancel()
         await asyncio.gather(supervisor, publishing, return_exceptions=True)
-    assert [str(r.uri) for r in listed] == [ALERTS_URI, FEED_URI] and templates[0].uri_template == "irrigation://alerts{?since,expired}"
+    assert [str(r.uri) for r in listed] == [FEED_URI] and templates == []
     assert [k["kind"] for k in feed["kinds"]] == ["irrigation_battery", "irrigation_pause"] and feed["kinds"][0]["words"] == ["battery"]
     assert [(i["id"], i["kind"]) for i in feed["items"]] == [("1", "irrigation_battery")] and feed["items"][0]["text"].startswith("🪫")
-    assert data["last_id"] == 1 and data["identity"] == served.alert_log.identity and later["alerts"] == []
-    (alert,) = data["alerts"]
-    assert alert["kind"] == "irrigation_battery" and alert["title"] == "Irrigation battery low" and alert["id"] == 1
-    assert alert["text"] == "🪫 The irrigation battery is at 3%. Replace or recharge it soon, or watering will stop."
-    assert datetime.fromisoformat(alert["expires"]) - datetime.fromisoformat(alert["time"]) == timedelta(hours=24)
+    assert feed["identity"] == served.alert_log.identity
+    assert feed["items"][0]["text"] == "🪫 The irrigation battery is at 3%. Replace or recharge it soon, or watering will stop."
 
 
 # ---------- over HTTP ----------

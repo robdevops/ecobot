@@ -85,10 +85,6 @@ class McpClient:
         """The changes announced for these resources: `async with mcp.listen(uri) as updates:` then `await updates.__anext__()`."""
         return self.client.listen(resource_subscriptions=list(uris))
 
-    async def alerts(self, uri: str, since: int = 0, expired: bool = False):
-        """The alerts resource `uri` as data: what it holds after id `since`, with the expired ones when asked."""
-        return await self.read(f"{uri}?since={since}" + ("&expired=1" if expired else ""))
-
     async def feed(self, uri: str, **query):
         """The feed resource `uri` as data."""
         return await self.read(uri + ("?" + "&".join(f"{k}={quote(str(v))}" for k, v in query.items()) if query else ""))

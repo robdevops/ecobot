@@ -20,9 +20,9 @@ token check.
     `chart_note` asking the model to put each `markdown` in its reply, followed by one ResourceLink per chart (no bytes); result
     `_meta` as with images. A complete answer's reply carries the markdown images too. The URL is MCP_CHART_BASE_URL's, else the
     MCP request's own (X-Forwarded-Proto and X-Forwarded-Host when there) with /charts.
-  - **Resources** (3.4): RESOURCES, and the alerts with `since` and `expired` (the ALERTS_TEMPLATE). Each is JSON. The live ones are
+  - **Resources** (3.4): RESOURCES. Each is JSON. The live ones are
     published as ResourceUpdated when they change (`publish_changes`, every PUBLISH_SECONDS, from what the sources keep: no request is
-    made for it; a reading asked for again and unchanged is not sent), the alerts on each new event (`watch_alerts`, lib/alert_log.py
+    made for it; a reading asked for again and unchanged is not sent), the feed on each new alert (`watch_alerts`, lib/alert_log.py
     `wait`), the station when the catalogue gains a reading.
     ecobot://status is the Status picture (lib/status.py): its readings as a JSON text content, then the PNG as a blob (image/png),
     Pillow imported at the first read.
@@ -44,7 +44,7 @@ import os
 from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 import mcp_types as types
 from mcp.server.auth.settings import AuthSettings
@@ -59,7 +59,7 @@ from . import chart_images, theme
 from .alerts.kinds import available_kinds
 from .config import ROOT
 from .feed import feed_read
-from .mcp_http import CHART_PATH, RequestLog, TokenCheck, alerts_read, host_settings
+from .mcp_http import CHART_PATH, RequestLog, TokenCheck, host_settings
 from .service import Service
 from .service.about import AboutTool, alerts as alert_kinds
 from .service.common import AS_DRAWN, charts_as_titles, iso
@@ -82,10 +82,9 @@ JSON = "application/json"
 
 # ---------- resources (3.4) ----------
 STATION_URI, WEATHER_URI, AIR_URI = "ecobot://station", "ecobot://now/weather", "ecobot://now/air"
-ALERTS_URI, FORECAST_URI, POLLEN_URI = "ecobot://alerts", "ecobot://forecast", "ecobot://pollen"
+FORECAST_URI, POLLEN_URI = "ecobot://forecast", "ecobot://pollen"
 HEALTH_URI, SCHEMA_URI = "ecobot://health", "ecobot://schema/chart"
 STATUS_URI, FEED_URI = "ecobot://status", "ecobot://feed"
-ALERTS_TEMPLATE = "ecobot://alerts{?since,expired}"
 RESOURCES = {   # uri: (name, title, description, the source it needs: None for always)
     STATION_URI: ("station", "The station", "Its name, time zone, location and when it was set up; the sensors with their readings (name, "
                   "label, unit) and the words people use for them; each source's mode and how far back its history goes; the alert "
@@ -96,9 +95,6 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
     AIR_URI: ("now/air", "The air now", "The air sensor's latest reading, with each reading's rating, PM2.5's and PM10's US AQI and band (the US AQI is the higher): {as_of, "
               "sensors: {air: {reading: {value, unit, text, [rating], [aqi_us, band]}}}, lines, heading}. Pushed on each new reading.",
               "air"),
-    ALERTS_URI: ("alerts", "Alerts", "The alerts the service has decided, newest last, kept 30 days: {alerts: [{id, kind, time, expires, "
-                 "title, text, data, [link], [chart]}], last_id, identity}; only those not yet expired (the template: since an id, and "
-                 "expired=true for all). Pushed on each new alert.", None),
     FEED_URI: ("feed", "Alerts as a feed", "The alerts not yet expired, for signalbot's feeds (lib/feed.py): {identity, kinds: [{kind, "
                "label, words}] (those the sources here send), items: [{id, kind, time, expires, text, [link], [chart: {tool, arguments, "
                "[arg, values]}]}]}. Pushed on each new alert.", None),
@@ -113,10 +109,10 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
                  "Without the picture (no Pillow here) the text has `image_note`. Not pushed.", "eco"),
     HEALTH_URI: ("health", "Health", "Each loop's last success and failure, the archive's progress, the readings file's size and the "
                  "alert log's newest id. Not pushed.", None),
-    SCHEMA_URI: ("schema/chart", "Chart JSON Schema", "The JSON Schema of the charts in the tools' results and the alerts "
+    SCHEMA_URI: ("schema/chart", "Chart JSON Schema", "The JSON Schema of the charts in the tools' results and the feed's charts "
                  "(schemas/chart.json, versioned). Not pushed.", None),
 }
-PUSHED = (WEATHER_URI, AIR_URI, FORECAST_URI, POLLEN_URI)   # compared every PUBLISH_SECONDS (the alerts and the station have their own)
+PUSHED = (WEATHER_URI, AIR_URI, FORECAST_URI, POLLEN_URI)   # compared every PUBLISH_SECONDS (the feed and the station have their own)
 
 # ---------- prompts (3.5) ----------
 PERIOD = types.PromptArgument(name="period", description="The period in your own words (\"this week\", \"last 3 months\", \"yesterday\")",
@@ -327,15 +323,10 @@ class EcobotServer:
     async def _list_resources(self, ctx, params) -> types.ListResourcesResult:
         return types.ListResourcesResult(resources=[
             types.Resource(uri=uri, name=name, title=title, description=what, mime_type=chart_images.PNG if uri == STATUS_URI else JSON)
-            for uri, (name, title, what, need) in RESOURCES.items() if self._there(need) and (uri not in (ALERTS_URI, FEED_URI) or self.alert_log)])
+            for uri, (name, title, what, need) in RESOURCES.items() if self._there(need) and (uri != FEED_URI or self.alert_log)])
 
     async def _list_templates(self, ctx, params) -> types.ListResourceTemplatesResult:
-        if self.alert_log is None:
-            return types.ListResourceTemplatesResult(resource_templates=[])
-        return types.ListResourceTemplatesResult(resource_templates=[types.ResourceTemplate(
-            uri_template=ALERTS_TEMPLATE, name="alerts since", title="Alerts since an id",
-            description="The alerts after the id `since` (a client's last handled), only those not yet expired unless `expired=true`.",
-            mime_type=JSON)])
+        return types.ListResourceTemplatesResult(resource_templates=[])
 
     async def _read_resource(self, ctx, params: types.ReadResourceRequestParams) -> types.ReadResourceResult:
         uri = str(params.uri)
@@ -353,23 +344,16 @@ class EcobotServer:
         """A resource's content (a dict, sent as JSON). Raises MCPError (RESOURCE_NOT_FOUND) for one there is none of."""
         parts = urlsplit(uri)
         key = f"{parts.scheme}://{parts.netloc}{parts.path}"
-        query = parse_qs(parts.query)
-        if key == ALERTS_URI and self.alert_log is not None:
-            return self.alerts(query)
         if key == FEED_URI and self.alert_log is not None and not parts.query:
             return feed_read(self.alert_log, available_kinds(AboutTool(self.ctx).sources))
         entry = RESOURCES.get(key)
-        if entry is None or parts.query or key in (ALERTS_URI, FEED_URI) or not self._there(entry[3]):
+        if entry is None or parts.query or key == FEED_URI or not self._there(entry[3]):
             raise MCPError(RESOURCE_NOT_FOUND, f"No resource {uri!r}: there are "
-                                               f"{', '.join(u for u, e in RESOURCES.items() if self._there(e[3]))}, and {ALERTS_TEMPLATE}.")
+                                               f"{', '.join(u for u, e in RESOURCES.items() if self._there(e[3]))}.")
         if key == STATUS_URI:
             return (await self.status())[0]
         return await {STATION_URI: self.station, WEATHER_URI: lambda: self.now(STATION), AIR_URI: lambda: self.now(AIR_DEVICE),
                       FORECAST_URI: self.forecast, POLLEN_URI: self.pollen, HEALTH_URI: self.health, SCHEMA_URI: self.schema}[key]()
-
-    def alerts(self, query: dict | None = None) -> dict:
-        """{alerts, last_id, identity}: the alerts after `since` (0), only the unexpired unless `expired` is true."""
-        return alerts_read(self.alert_log, query)
 
     async def station(self) -> dict:
         """ecobot://station: what the station is and has (3.4)."""
@@ -482,14 +466,13 @@ class EcobotServer:
         return changed
 
     async def watch_alerts(self):
-        """Publish the alerts' URI on each new alert, until cancelled."""
+        """Publish the feed's URI on each new alert, until cancelled."""
         if self.alert_log is None:
             return
         last = self.alert_log.last_id()
         while True:
             await self.alert_log.wait(last)
             last = self.alert_log.last_id()
-            await self.bus.publish(ResourceUpdated(ALERTS_URI))
             await self.bus.publish(ResourceUpdated(FEED_URI))
 
     async def run(self, publish_every: float = PUBLISH_SECONDS, catalogue_every: float = CATALOGUE_SECONDS):
@@ -539,5 +522,5 @@ def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "lo
     return app
 
 
-__all__ = ["ALERTS_TEMPLATE", "ALERTS_URI", "COMPLETE", "EcobotServer", "PROMPTS", "RESOURCES", "TokenCheck", "charts_of", "connection_query",
+__all__ = ["COMPLETE", "EcobotServer", "PROMPTS", "RESOURCES", "TokenCheck", "charts_of", "connection_query",
            "host_settings", "http_app", "prompt", "request_base", "tool_entry", "tool_result"]
