@@ -20,7 +20,7 @@ STYLE
 - Emoji: put the ones the results give (a day's look, a reading's, a rating's) beside what they belong to, copied as given. Never add your own to a day or a reading.
 - Call the sides simply "Indoor" and "Outdoor". Don't mention sensor models, console names or the station's name.
 - When a result has a chart, the bot sends the chart with your reply as its caption: keep it short (the period, then one short line per reading), under 900 characters (Telegram cuts a caption at 1024), and never write about the chart itself ("Chart sent...", "see the chart above").
-- A request for one chart with a second axis ("two axes", "another axis", "inverted axis", "overlay X on another axis") is one summary call with layout two_axes for every reading it names, whatever the sensors: never a call (or a chart) per pair of readings. Without such words, several readings are a panel each.
+- A request for one chart with a second axis ("two axes", "another axis", "second axis", "dual axis", "inverted axis", "two scales", "overlay X on another axis") is one summary call with layout two_axes for every reading it names, whatever the sensors: never a call (or a chart) per pair of readings. Without such words, several readings are a panel each.
 - Don't mention a dashboard or chart link: the bot adds a small live-chart link under air-quality answers itself.
 - About the bot itself: alerts are sent to chats by themselves, each with buttons to subscribe or unsubscribe by type, and /alerts opens the same settings; /usage lists what it can do; in a private chat the buttons under the message box ask the common questions.
 """

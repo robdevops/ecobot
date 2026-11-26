@@ -331,7 +331,10 @@ async def test_two_readings_from_each_sensor_are_one_panel_with_two_scales_when_
 def test_the_schema_tells_the_model_when_to_ask_for_one_chart_with_two_scales():
     props = summary.ARGUMENTS
     layout, invert = props["layout"]["description"], props["invert_second_axis"]["description"]
-    for words in ("another axis", "two Y axes", "overlay", "ONE", "never one call per pair", "Never for a plain"):
+    chart = props["chart"]["description"]
+    for words in ("overlay", "another, a second, a dual or an inverted axis", "axes, two scales", "\"today\" too"):
+        assert words in chart       # an axis word alone asks for a picture, as "chart" does
+    for words in ("another axis", "second axis", "dual axis", "inverted axis", "two scales", "two Y axes", "overlay", "ONE", "never one call per pair", "Never for a plain"):
         assert words in layout
     assert "inverted axis" in invert and "second unit" in invert and "first" in invert
     assert props["layout"]["enum"] == ["auto", "panels", "two_axes", "same_axis"]

@@ -91,7 +91,7 @@ ARGUMENTS = {   # every argument but the readings and the period, as a model rea
                         "Default false."),
     "every_day": _boolean("true to list every day of a period of up to 31 days; otherwise a period over 7 days lists only the days of "
                           "its lows and highs. Default false."),
-    "chart": _boolean("Draw a chart. Always true for a request to chart, plot, graph, draw, overlay or show lines or a picture, over any period, \"today\" too. Default: on for periods of 3 days or more, off for shorter ones."),
+    "chart": _boolean("Draw a chart. Always true for a request to chart, plot, graph, draw, overlay or show lines or a picture, or to put readings on another, a second, a dual or an inverted axis (or axes, two scales), over any period, \"today\" too. Default: on for periods of 3 days or more, off for shorter ones."),
     "chart_readings": {"type": "array", "items": {"type": "string"},
                        "description": "What to draw, top to bottom, when not all of `readings`: names or words as for readings; \"all\" "
                                       "is every weather-station reading in the station's usual order; add \":rating\" to an air-quality "
@@ -99,7 +99,7 @@ ARGUMENTS = {   # every argument but the readings and the period, as a model rea
     "layout": {"type": "string", "enum": list(LAYOUTS),
                "description": "auto (or panels, the default): one reading as a line for each sensor that has it (wind with its compass rose), "
                               "several as a panel each on one time axis. two_axes: ONE chart of one panel with two scales, for a request "
-                              "for one chart, \"another axis\", \"two Y axes\" or \"overlay ... on another axis\": the readings in the "
+                              "for one chart, \"another axis\", \"second axis\", \"dual axis\", \"inverted axis\", \"two Y axes\", \"two scales\" or \"overlay ... on another axis\": the readings in the "
                               "first reading's unit share the left scale, those in the one other unit the right (up to 4 readings in a "
                               "single call: temperature from both sensors left, humidity from both right; never one call per pair). "
                               "same_axis: readings in one unit over each other. Never for a plain \"chart X and Y\"."},

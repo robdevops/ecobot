@@ -2051,6 +2051,36 @@
     },
     "note": "four readings in ONE call, layout two_axes, the right scale (humidity) inverted: not a call or a panel per pair"
   },
+  "second-axis-no-chart-word": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity"
+            ]
+          },
+          "layout": "two_axes",
+          "chart": true
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity"
+            ]
+          },
+          "layout": "two_axes",
+          "chart": true
+        }
+      ]
+    },
+    "note": "a second axis alone, without the word chart, is a chart: chart true, layout two_axes"
+  },
   "one-chart-two-axes": {
     "tools": [
       "summary"
