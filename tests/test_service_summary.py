@@ -73,6 +73,12 @@ async def test_the_tool_says_what_it_answers_what_it_is_not_for_and_how_to_read_
         "Default: outdoor and indoor temperature and humidity.")
     assert tool.parameters["properties"]["period"]["description"].endswith("Default: today; with chart true and no period, the last 24 hours.")
     assert tool.parameters["properties"]["layout"]["enum"] == ["auto", "panels", "two_axes", "same_axis"]
+    # "another, inverted axis" is a scale of one chart, per unit: the worked example sits in the layout option
+    layout = tool.parameters["properties"]["layout"]["description"]
+    for words in ("per UNIT, not per sensor", "never another chart or panel", 'layout: "two_axes", invert_second_axis: true, chart: true',
+                  "[A temperature, B temperature, A humidity, B humidity]"):
+        assert words in layout, words
+    assert "every reading in that unit, from every sensor" in tool.parameters["properties"]["invert_second_axis"]["description"]
     await close(ctx)
 
 

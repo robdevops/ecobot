@@ -102,8 +102,11 @@ ARGUMENTS = {   # every argument but the readings and the period, as a model rea
                               "for one chart, \"another axis\", \"second axis\", \"dual axis\", \"inverted axis\", \"two Y axes\", \"two scales\" or \"overlay ... on another axis\": the readings in the "
                               "first reading's unit share the left scale, those in the one other unit the right (up to 4 readings in a "
                               "single call: temperature from both sensors left, humidity from both right; never one call per pair). "
+                              "The axes are per UNIT, not per sensor, and \"another axis\" is another scale in the SAME chart, never another chart or panel. "
+                              "Example: \"overlay A with B; on another, inverted axis, do the same for humidity from each\" = {readings: [A temperature, "
+                              "B temperature, A humidity, B humidity], layout: \"two_axes\", invert_second_axis: true, chart: true}. "
                               "same_axis: readings in one unit over each other. Never for a plain \"chart X and Y\"."},
-    "invert_second_axis": _boolean("With layout two_axes: the right-hand scale, the second unit in the readings, runs top to bottom "
+    "invert_second_axis": _boolean("With layout two_axes: the second unit's scale (every reading in that unit, from every sensor, not one sensor's) runs top to bottom "
                                    "(\"inverted axis\"): list the unit to keep upright first."),
     "chart_answers_it": _boolean("true only when the question is just to see this chart and its figures: nothing else to answer (\"plot "
                                  "pressure this week\", not \"plot pressure this week: is a storm coming?\"). Then the result carries the "
