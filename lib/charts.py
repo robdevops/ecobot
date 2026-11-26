@@ -92,7 +92,7 @@ W_IN, H_IN = 6.4, 3.6            # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
 HEAD_IN, FOOT_IN = 0.9, 0.47     # room above and below the panels (inches)
-STACKED_KEY_IN = 0.28            # more room above a big chart whose colour key is stacked below its title (see _stacked_key)
+KEY_GAP_IN = 0.1, 0.14           # a big chart's wrapped colour key (see _stacked_key): its distance under the subtitle, and above the plot (inches)
 TITLE_IN, SUBTITLE_IN = 0.27, 0.52   # the headline's lines, centred this far below the top (the colour key beside a big chart's title too)
 ROSE_RECT = [0.685, 0.12, 0.27, 0.62]   # the wind rose beside a wind chart (figure fraction); the line's plot ends before it, at:
 BESIDE_ROSE_WIDTH = 0.57
@@ -138,7 +138,7 @@ SMALL = Look(end_dot=20, end_rim=1.2, pill_font=7.5, pill_dot=12, pill_rim=0.8, 
 
 
 def _stacked_key(p: Panel, look: Look) -> bool:
-    """Is the colour key of this big chart set in a column below the title (long names, or two scales), not in a row beside it?"""
+    """Is the colour key of this big chart set under the title, above the plot (long names, or two scales), not in a row beside the title?"""
     names = [s.label for s in p.lines] + ([p.bars.label] if p.bars else [])
     return look.in_headline and len(names) >= 2 and (any(s.right for s in p.lines) or sum(len(n) for n in names) > 24)
 
@@ -230,20 +230,27 @@ class Axes:
         self.canvas.current = ()
 
 
+def _note(canvas: Canvas, kind: str, box):
+    """Keep the extent of something drawn in canvas.layout[kind] (see layout_of); returns it."""
+    if hasattr(canvas, "layout"):
+        canvas.layout[kind].append(box)
+    return box
+
+
 def _style_axis(ax: Axes, ticks: list[float], fmt, colour: str | None = None):
     """The plain look shared by every chart: no frame but the baseline, faint horizontal grid, small muted ticks."""
     c, colour = ax.canvas, colour or MUTED
     shown = [t for t in ticks if min(ax.y0, ax.y1) - 1e-9 <= t <= max(ax.y0, ax.y1) + 1e-9]
     ax.add(0.5, lambda: [c.line([(ax.left, ax.Y(t)), (ax.right, ax.Y(t))], GRID, 0.8, round_ends=False) for t in shown])
-    ax.add(0.5, lambda: [c.text(fmt(t), ax.left - TICK_PAD * PT, ax.Y(t), TICK_FONT, colour, ha="right", va="center", record=False)
+    ax.add(0.5, lambda: [_note(c, "ticks", c.text(fmt(t), ax.left - TICK_PAD * PT, ax.Y(t), TICK_FONT, colour, ha="right", va="center", record=False))
                          for t in shown])
     ax.add(2.5, lambda: c.line([(ax.left, ax.bottom), (ax.right, ax.bottom)], AXIS, 0.8, round_ends=False))
 
 
 def _right_ticks(ax: Axes, ticks: list[float], colour: str, unit: str = ""):
     shown = [t for t in ticks if min(ax.y0, ax.y1) - 1e-9 <= t <= max(ax.y0, ax.y1) + 1e-9]
-    ax.add(0.5, lambda: [ax.canvas.text(f"{t + 0.0:g}{unit}", ax.right + TICK_PAD * PT, ax.Y(t), TICK_FONT, colour, va="center", record=False)
-                         for t in shown])
+    ax.add(0.5, lambda: [_note(ax.canvas, "ticks", ax.canvas.text(f"{t + 0.0:g}{unit}", ax.right + TICK_PAD * PT, ax.Y(t), TICK_FONT, colour,
+                                                                 va="center", record=False)) for t in shown])
 
 
 def _shade_zones(ax: Axes, zones, ybottom: float, ytop: float, alpha: float, zorder: float = 0):
@@ -416,48 +423,64 @@ def _time_ticks(x0: float, x1: float, span_days: float, tz: tzinfo, bars=None) -
 def _time_axis(ax: Axes, span_days: float, tz: tzinfo, bars=None):
     """The time axis's labels under the bottom panel."""
     ticks = _time_ticks(ax.x0, ax.x1, span_days, tz, bars)
-    ax.add(0.5, lambda: [ax.canvas.text(label, ax.X(t), ax.bottom + TICK_PAD * PT, TICK_FONT, MUTED, ha="center", va="top", record=False)
-                         for t, label in ticks])
+    ax.add(0.5, lambda: [_note(ax.canvas, "ticks", ax.canvas.text(label, ax.X(t), ax.bottom + TICK_PAD * PT, TICK_FONT, MUTED, ha="center",
+                                                                 va="top", record=False)) for t, label in ticks])
+
+
+def _key_size(canvas: Canvas, entries: list[tuple[str, str]], fontsize: float, spacing: float, ncol: int) -> tuple[float, float, list[float]]:
+    """(width, height, each column's width) in pixels of a colour key of `ncol` columns (filled down a column at a time)."""
+    fs = fontsize * PT
+    widths = [2.0 * fs + 0.2 * fs + canvas.measure(label, fontsize)[0] for _, label in entries]
+    rows = math.ceil(len(entries) / ncol)
+    columns = [widths[c * rows:(c + 1) * rows] for c in range(ncol)] if ncol > 1 and rows > 1 else \
+        [[w] for w in widths] if ncol > 1 else [widths]
+    col_w = [max(c) for c in columns if c]
+    return sum(col_w) + spacing * fs * (len(col_w) - 1) + 0.8 * fs, rows * fs * 1.5 + 0.3 * fs, col_w
+
+
+def _key_columns(canvas: Canvas, entries: list[tuple[str, str]], fontsize: float, room: float, spacing: float = 1.1) -> int:
+    """How many columns put the colour key in the fewest rows that fit in `room` pixels: one row when it fits, else two, and so on."""
+    for rows in range(1, len(entries)):
+        ncol = math.ceil(len(entries) / rows)
+        if _key_size(canvas, entries, fontsize, spacing, ncol)[0] <= room:
+            return ncol
+    return 1
 
 
 def _legend(canvas: Canvas, entries: list[tuple[str, str]], at: tuple[float, float], loc: str, size: float = 6, marker: str = "o",
             ink: str | None = None, spacing: float = 1.1, fontsize: float = 10, ncol: int = 1, pad: float = 0.5):
     """A row (or `ncol` columns) of coloured markers (dots; squares for shares and the rose's speeds), each with its name, unframed,
-    placed by its corner or side `loc` ("center right", "upper right", "lower right") at `at` (pixels), `pad` font sizes in from it."""
+    placed by its corner or side `loc` ("center right", "upper right", "lower right"; "upper left": the first dot's left edge at
+    `at`'s x) at `at` (pixels), `pad` font sizes in from it. Its extent is noted in canvas.layout["legend"]."""
     ink = ink or TEXT
     fs = fontsize * PT
-    handle, gap, col_gap, row = 2.0 * fs, 0.2 * fs, spacing * fs, fs * 1.5
-    widths = [handle + gap + canvas.measure(label, fontsize)[0] for _, label in entries]
+    handle, gap = 2.0 * fs, 0.2 * fs
+    box_w, box_h, col_w = _key_size(canvas, entries, fontsize, spacing, ncol)
     rows = math.ceil(len(entries) / ncol)
-    columns = [widths[c * rows:(c + 1) * rows] for c in range(ncol)] if ncol > 1 and rows > 1 else \
-        [[w] for w in widths] if ncol > 1 else [widths]
-    col_w = [max(c) for c in columns if c]
-    box_w = sum(col_w) + col_gap * (len(col_w) - 1) + 0.8 * fs
-    box_h = rows * row + 0.8 * fs - 0.5 * fs
-    right = at[0] - pad * fs
-    if loc == "center right":
-        top = at[1] - box_h / 2
-    elif loc == "upper right":
-        top = at[1] + pad * fs
-    else:   # lower right
-        top = at[1] - pad * fs - box_h
-    x = right - box_w + 0.4 * fs
+    if loc == "upper left":
+        top, x = at[1], at[0] - handle / 2 + size * PT / 2
+    else:
+        right = at[0] - pad * fs
+        top = at[1] - box_h / 2 if loc == "center right" else at[1] + pad * fs if loc == "upper right" else at[1] - pad * fs - box_h
+        x = right - box_w + 0.4 * fs
     k = 0
+    seen = []
     for c, w in enumerate(col_w):
         for r in range(rows if (ncol > 1 and rows > 1) or ncol == 1 else 1):
             if k >= len(entries):
                 break
             colour, label = entries[k]
-            y = top + 0.4 * fs + r * row + fs / 2
-            cx = x + handle / 2
+            y = top + 0.4 * fs + r * fs * 1.5 + fs / 2
+            cx, half = x + handle / 2, size * PT / 2
             if marker == "s":
-                half = size * PT / 2
                 canvas.rect(cx - half, y - half, cx + half, y + half, colour)
             else:
-                canvas.circle(cx, y, size * PT / 2, colour)
-            canvas.text(label, x + handle + gap, y, fontsize, ink, va="center", record=False)
+                canvas.circle(cx, y, half, colour)
+            seen += [(cx - half, y - half, cx + half, y + half), canvas.text(label, x + handle + gap, y, fontsize, ink, va="center", record=False)]
             k += 1
-        x += w + col_gap
+        x += w + spacing * fs
+    if seen and hasattr(canvas, "layout"):
+        canvas.layout["legend"].append((min(b[0] for b in seen), min(b[1] for b in seen), max(b[2] for b in seen), max(b[3] for b in seen)))
 
 
 def _box_of(canvas: Canvas, text: str, x: float, y: float, size: float, ha: str, va: str, pad: float):
@@ -675,21 +698,65 @@ def _figure(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".") if abs(value) >= 100 else f"{value:.3g}"
 
 
-def _end_labels(ax: Axes, drawn: list[tuple]):
-    """The latest value of each line in the margin beside it, nudged apart where they would touch, with a thin leader to its end."""
-    y_lo, y_hi = ax.get_ylim()
-    gap = 10 * (y_hi - y_lo) / ax.height_pt                 # 10 points, in data units
-    placed = []
-    for colour, xs, ys in sorted(drawn, key=lambda d: d[2][-1]):
-        y = max(ys[-1], placed[-1] + gap) if placed else ys[-1]
-        placed.append(y)
+END_FONT = 8.5   # the latest value written beside a line: its size (pt)
 
-        def label(colour=colour, xs=xs, ys=ys, y=y):
-            text, at = _figure(ys[-1]), (ax.fx(1.014), ax.Y(y))
-            box = _box_of(ax.canvas, text, *at, 8.5, "left", "center", 0.15 * 8.5)
-            _leader(ax.canvas, box, (ax.X(xs[-1]), ax.Y(ys[-1])), colour, 0.6, alpha=0.6)
-            ax.canvas.text(text, *at, 8.5, colour, "bold", va="center")
-        ax.add(3, label)
+
+def _spread(centres: list[float], pitch: float, lo: float, hi: float) -> list[float]:
+    """Where labels wanting to be centred at `centres` (pixels, top to bottom) go so that no two are closer than `pitch` and all stay in
+    lo..hi (a stack too tall for that overhangs both ends alike): those that would touch are stacked together about the middle of
+    what they wanted, the stack kept inside lo..hi (and apart from the next stack), so each stays as near its own place as it can."""
+    def start(members):
+        wanted = fmean(centres[i] - j * pitch for j, i in enumerate(members))
+        span = (len(members) - 1) * pitch
+        if span > hi - lo:   # more than fit between lo and hi: centred there, overhanging both ends
+            return (lo + hi - span) / 2
+        return min(max(wanted, lo), hi - span)
+    stacks: list[tuple[float, list[int]]] = []
+    for i in sorted(range(len(centres)), key=lambda i: (centres[i], i)):
+        stacks.append((start([i]), [i]))
+        while len(stacks) > 1 and stacks[-1][0] < stacks[-2][0] + len(stacks[-2][1]) * pitch - 1e-9:
+            members = stacks[-2][1] + stacks[-1][1]
+            stacks[-2:] = [(start(members), members)]
+    placed = [0.0] * len(centres)
+    for first, members in stacks:
+        for j, i in enumerate(members):
+            placed[i] = first + j * pitch
+    return placed
+
+
+def _side(ax: Axes, xs: list[float], ys: list[float]) -> int:
+    """-1 (above) when a line reaches its end from below, +1 (below) when from above: the label goes where the line is not."""
+    k = len(xs) - 1
+    while k > 0 and ax.X(xs[-1]) - ax.X(xs[k]) < 40:
+        k -= 1
+    return -1 if ax.Y(ys[k]) > ax.Y(ys[-1]) else 1
+
+
+def _end_labels(ax: Axes, drawn: list[tuple], twin: Axes | None = None, drawn_right: list[tuple] = ()):
+    """The latest value of every line in its colour: in the margin right of its end dot, or (a panel with two scales, whose right
+    margin holds the second scale's ticks) left of it, above it where its line comes up to the dot and below where it comes down. Labels never overlap:
+    they are spread apart (_spread) within the plot's height, and one moved more than half its height from its place has a thin
+    leader to its dot."""
+    owners = [(ax, d) for d in drawn] + [(twin, d) for d in drawn_right]
+
+    def labels():
+        c = ax.canvas
+        texts = [_figure(ys[-1]) for _, (_, _, ys) in owners]
+        height = max(c.measure(t, END_FONT, "bold")[1] for t in texts)
+        dots = [(o.X(xs[-1]), o.Y(ys[-1])) for o, (_, xs, ys) in owners]
+        shift = (height / 2 + 4 * PT) if twin else 0.0
+        wanted = [dy + shift * _side(o, xs, ys) for (o, (_, xs, ys)), (_, dy) in zip(owners, dots)] if twin else [dy for _, dy in dots]
+        for (o, (colour, _, _)), text, (dx, dy), want, y in zip(owners, texts, dots, wanted, _spread(wanted, height + 4, ax.top + height / 2,
+                                                                                                    ax.bottom - height / 2)):
+            at = (dx - 7 * PT, y) if twin else (ax.fx(1.014), y)
+            ha = "right" if twin else "left"
+            if abs(y - want) > height / 2:
+                _leader(c, _box_of(c, text, *at, END_FONT, ha, "center", 0.15 * END_FONT), (dx, dy), colour, 0.6, alpha=0.6)
+            if twin:   # left of its dot, over the lines: a halo of the background keeps it legible
+                for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)):
+                    c.text(text, at[0] + ox * 1.5, at[1] + oy * 1.5, END_FONT, BG, "bold", ha=ha, va="center", record=False)
+            _note(c, "end", (text, colour, c.text(text, *at, END_FONT, colour, "bold", ha=ha, va="center")))
+    (twin or ax).add(6.5, labels)
 
 
 def _draw_panel(ax: Axes, p: Panel, first: int, x0: float, x1: float, look: Look, canvas: Canvas):
@@ -749,15 +816,6 @@ def _right_axis(ax: Axes, lines: list[Line], first: int, look: Look, flip: bool 
     return twin, drawn
 
 
-def _own_end_labels(ax: Axes, drawn: list[tuple], above: bool):
-    """The latest value of each line beside its own end dot, above it (the left scale) or below it (the right): a panel with two scales
-    has its right margin taken by the second scale's ticks."""
-    for colour, xs, ys in drawn:
-        ax.add(3, lambda colour=colour, xs=xs, ys=ys: ax.canvas.text(
-            _figure(ys[-1]), ax.X(xs[-1]) - 5 * PT, ax.Y(ys[-1]) + (-8 if above else 8) * PT, 8.5, colour, "bold", ha="right",
-            va="bottom" if above else "top"))
-
-
 def _draw_readings(ax: Axes, p: Panel, first: int, x0: float, x1: float, look: Look, canvas: Canvas):
     """The panel's lines, each with its band, the rating zones of a rated reading behind it, the peaks labelled (as pills on the
     lines, or aside), rain behind them on a scale of its own, and the latest values beside them. Lines marked `right` are on a
@@ -782,8 +840,7 @@ def _draw_readings(ax: Axes, p: Panel, first: int, x0: float, x1: float, look: L
     twin = None
     if on_right:
         twin, drawn_right = _right_axis(ax, on_right, first + len(lines), look, p.flip_right)
-        _own_end_labels(ax, drawn, above=True)
-        _own_end_labels(twin, drawn_right, above=False)
+        _end_labels(ax, drawn, twin, drawn_right)
         drawn += drawn_right
     else:
         _end_labels(ax, drawn)   # every line ends with its latest value, a zero (night, calm) included
@@ -809,8 +866,15 @@ def _build(chart: Chart, tz: tzinfo) -> Canvas:
     look = _look_for(chart)
     height = H_IN if n <= 2 else H_IN + PANEL_IN * (n - 2)
     canvas = Canvas(round(W_IN * DPI), round(height * DPI), BG)
+    canvas.layout = {"legend": [], "end": [], "ticks": [], "plot": []}
     width = BESIDE_ROSE_WIDTH if chart.compass else _axes_width(chart)
-    head = HEAD_IN + (STACKED_KEY_IN if chart.single and _stacked_key(panels[0], look) else 0)
+    head, key_cols = HEAD_IN, 1
+    if chart.single and _stacked_key(panels[0], look):   # the key under the subtitle, in as few rows as fit, and the plot below it
+        names = [(BG, s.label) for s in panels[0].lines] + ([(BG, panels[0].bars.label)] if panels[0].bars else [])
+        measure = Canvas(2, 2, BG)
+        room = (AX_RECT[2] if not chart.compass else width) * canvas.width
+        key_cols = _key_columns(measure, names, look.legend_font, room)
+        head = max(head, SUBTITLE_IN + sum(KEY_GAP_IN) + _key_size(measure, names, look.legend_font, 1.1, key_cols)[1] / DPI)
     foot = FOOT_IN + (SOURCE_IN if chart.source else 0)
     body = height - head - foot
     gap = 0.27 if n > 2 else 0.22
@@ -824,6 +888,7 @@ def _build(chart: Chart, tz: tzinfo) -> Canvas:
         if look.card:   # the faint tint behind the panel
             canvas.rect(ax.left, ax.top, ax.right, ax.bottom, CARD)
         axes.append(ax)
+        _note(canvas, "plot", (ax.left, ax.top, ax.right, ax.bottom))
         count, entries, twin = _draw_panel(ax, p, used, x0, x1, look, canvas)
         used += count
         deg = _deg(p.unit)
@@ -836,7 +901,7 @@ def _build(chart: Chart, tz: tzinfo) -> Canvas:
             stacked = _stacked_key(p, look)   # long names or two scales: a column under the title, clear of it
             right = (AX_RECT[0] + AX_RECT[2]) * canvas.width
             if stacked:
-                key = dict(at=(right, (TITLE_IN + 0.17) * DPI), loc="upper right", ncol=1)
+                key = dict(at=(AX_RECT[0] * canvas.width, (SUBTITLE_IN + KEY_GAP_IN[0]) * DPI), loc="upper left", ncol=key_cols)
             elif look.in_headline:
                 key = dict(at=(right, TITLE_IN * DPI), loc="center right", ncol=len(entries))
             else:
@@ -905,5 +970,16 @@ def draw_texts(chart: Chart, tz: tzinfo, dark: bool = False) -> list[draw.Text]:
         _use(DARK if dark else LIGHT)
         try:
             return sorted(_build(chart, tz).texts, key=lambda t: t.order)
+        finally:
+            _use(LIGHT)
+
+
+def layout_of(chart: Chart, tz: tzinfo, dark: bool = False) -> dict:
+    """Where the parts of the chart are drawn, in figure pixels (left, top, right, bottom), for tests: "plot" (each panel's plot area),
+    "legend" (each colour key), "ticks" (every tick label) and "end" ((text, colour, box) of each line's latest value)."""
+    with _DRAWING:
+        _use(DARK if dark else LIGHT)
+        try:
+            return _build(chart, tz).layout
         finally:
             _use(LIGHT)

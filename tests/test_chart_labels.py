@@ -176,7 +176,7 @@ def test_each_of_the_four_lines_is_labelled_with_its_latest_value_and_the_right_
     y = lambda chart, text: next(t.y for t in charts.draw_texts(chart, timezone.utc) if t.text == text)
     assert y(upright, "40") > y(upright, "20") + 50     # a humidity that fell ends below a temperature that rose
     assert y(inverted, "40") < y(inverted, "20") + 50 and y(inverted, "40") < y(upright, "40") - 100   # upside down it ends high: 80 is the bottom
-    assert y(inverted, "38") < y(upright, "38") - 100 and y(inverted, "20") == pytest.approx(y(upright, "20"))   # the left scale is untouched
+    assert y(inverted, "38") < y(upright, "38") - 100 and abs(y(inverted, "20") - y(upright, "20")) < 30   # the left scale stays where it was, bar a nudge by the labels beside it
 
 
 @pytest.mark.parametrize("days", [1, 90])
@@ -224,3 +224,119 @@ def test_readings_are_grouped_to_the_two_scales_by_unit_whatever_their_order():
         assert [s.label for s in merged.lines if not s.right] == [p.label + f" ({p.unit})" for p, side in zip(order, sides) if not side]
     assert two_axes([h, t, ah, at]).label == "Humidity and Temperature"           # the first reading's unit is the left scale
     assert two_axes([t, at, h]) is not None and two_axes([t, h, made("pressure", "Pressure")]) is None   # a third unit has no side
+
+
+# ---------- the latest values and the colour key never overlap each other, the plot or the ticks ----------
+def wave(n: int, base: float, amp: float, end: float, phase: float = 0.0) -> list[float]:
+    """n values of a daily wave that finish exactly at `end`."""
+    import math
+    ys = [base + amp * math.sin(i / 48 * 2 * math.pi + phase) for i in range(n)]
+    return [y + (end - ys[-1]) * (i / (n - 1)) ** 3 for i, y in enumerate(ys)]
+
+
+def ending_together(ends=(18.0, 18.6, 77.0, 77.0), flip: bool = True, days: int = 1) -> Chart:
+    """Temperature of both sensors on the left scale, humidity of both on the right, whose last values are `ends`."""
+    from lib.panels import panel_for, two_axes
+    n = 48 * days
+    xs = list(range(1_790_000_000, 1_790_000_000 + n * 1800, 1800))
+    spec = [("temperature", "Ecowitt temperature", wave(n, 17, 4, ends[0])), ("temperature", "AirGradient temperature", wave(n, 17.5, 4, ends[1], 0.1)),
+            ("humidity", "Ecowitt humidity", wave(n, 70, -10, ends[2])), ("humidity", "AirGradient humidity", wave(n, 71, -10, ends[3], 0.1))]
+    panels = [panel_for(name, [Line(label, xs, ys, reading=("air_" + name) if "AirGradient" in label else name)]) for name, label, ys in spec]
+    for panel, (_, label, _) in zip(panels, spec):
+        panel.label = label
+    panel = two_axes(panels, flip_right=flip)
+    return Chart(panel.label, "s", [panel])
+
+
+def many_lines(ends: list[float], days: int = 1) -> Chart:
+    n = 48 * days
+    xs = list(range(1_790_000_000, 1_790_000_000 + n * 1800, 1800))
+    lines = [Line(f"Sensor number {i}", xs, wave(n, 15 + i * 0.3, 3, end, i * 0.2), reading=r)
+             for i, (end, r) in enumerate(zip(ends, ["temperature", "air_temperature", "dew_point", "feels_like", "vpd", "pressure"]))]
+    return Chart("T", "s", [Panel("Temperature", "°C", lines, reading="temperature")])
+
+
+def meet(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def check_labels(chart: Chart, count: int) -> float:
+    """Every latest value is drawn inside the picture and the plot's height, none touches another; returns the smallest gap (px) between two."""
+    layout = charts.layout_of(chart, timezone.utc)
+    ends = layout["end"]
+    assert len(ends) == count
+    plot = layout["plot"][0]
+    for text, _, box in ends:
+        assert box[0] >= 0 and box[2] <= 1280 and box[1] >= plot[1] - 12 and box[3] <= plot[3] + 12, text   # within the plot's height (a tall stack overhangs by a little)
+    boxes = sorted((b for _, _, b in ends), key=lambda b: b[1])
+    assert not any(meet(a, b) for a, b in zip(boxes, boxes[1:]))
+    return min(b[1] - a[3] for a, b in zip(boxes, boxes[1:]))
+
+
+@pytest.mark.parametrize("days", [1, 90])
+@pytest.mark.parametrize("flip", [False, True])
+@pytest.mark.parametrize("ends", [(18.0, 18.6, 77.0, 77.0), (18.0, 18.1, 77.0, 77.0), (20.0, 20.0, 50.0, 50.0), (30.0, 30.0, 30.0, 30.0)])
+def test_four_latest_values_on_two_scales_never_overlap_even_when_they_are_equal(ends, flip, days):
+    chart = ending_together(ends, flip, days)
+    assert check_labels(chart, 4) >= 2
+    shown = sorted(t for t, _, _ in charts.layout_of(chart, timezone.utc)["end"])
+    assert shown == sorted(charts._figure(e) for e in ends)            # all four drawn, two equal ones as two labels
+    assert {c for _, c, _ in charts.layout_of(chart, timezone.utc)["end"]} == {charts.READING_COLOURS[r] for r in
+                                                                               ("temperature", "air_temperature", "humidity", "air_humidity")}
+
+
+@pytest.mark.parametrize("days", [1, 90])
+@pytest.mark.parametrize("ends", [[20.0] * 6, [20.0, 20.1, 20.2, 20.3, 20.4, 20.5], [10.0, 20.0, 20.0, 20.0, 30.0, 30.0], [5.0, 40.0]])
+def test_latest_values_of_lines_on_one_scale_never_overlap(ends, days):
+    assert check_labels(many_lines(ends, days), len(ends)) >= 2
+
+
+def test_a_latest_value_at_the_top_or_bottom_of_the_plot_stays_inside_it():
+    assert check_labels(many_lines([0.0, 0.0, 0.0, 0.0]), 4) >= 2
+    layout = charts.layout_of(many_lines([60.0, 60.0, 60.0]), timezone.utc)
+    assert all(box[1] >= layout["plot"][0][1] - 1 for _, _, box in layout["end"])
+
+
+def test_spread_keeps_labels_apart_near_their_places_and_inside_the_limits():
+    assert charts._spread([100.0], 20, 0, 500) == [100.0]
+    assert charts._spread([100.0, 300.0], 20, 0, 500) == [100.0, 300.0]               # far apart: untouched
+    assert charts._spread([100.0, 100.0], 20, 0, 500) == [90.0, 110.0]                # equal: one each side of the place
+    assert charts._spread([100.0, 105.0, 400.0], 20, 0, 500) == [92.5, 112.5, 400.0]   # the pair centred on where they wanted to be
+    assert charts._spread([10.0, 10.0], 20, 0, 500) == [0.0, 20.0]                    # at the top: pushed down, not out
+    assert charts._spread([490.0, 495.0, 500.0], 20, 0, 500) == [460.0, 480.0, 500.0]  # at the bottom: pushed up
+    assert charts._spread([300.0, 100.0, 300.0, 100.0], 20, 0, 500) == [290.0, 90.0, 310.0, 110.0]   # any order in
+
+
+def key_boxes(chart: Chart):
+    layout = charts.layout_of(chart, timezone.utc)
+    return layout["legend"], layout["plot"], layout["ticks"]
+
+
+@pytest.mark.parametrize("days", [1, 90])
+@pytest.mark.parametrize("flip", [False, True])
+def test_the_colour_key_stands_above_the_plot_clear_of_the_axes_and_their_ticks(flip, days):
+    (key,), (plot,), ticks = key_boxes(ending_together(flip=flip, days=days))
+    assert key[0] >= 0 and key[2] <= 1280 and key[1] > 0
+    assert key[3] <= plot[1] - 10                                         # wholly above the plot's top
+    assert key[0] <= plot[0] + 5                                          # at the left, where the title is
+    assert not any(meet(key, t) for t in ticks)
+
+
+def test_the_colour_key_is_one_row_when_it_fits_and_wraps_to_more_when_it_does_not():
+    (two,), (plot2,), _ = key_boxes(ending_together())                    # four long names: two rows of two
+    named = lambda names: Chart("T", "s", [Panel("P", "", [Line(n, [1, 2, 3], [1.0, 2.0, 3.0], reading="temperature") for n in names])])
+    (short,), (plot_short,), _ = key_boxes(named(["Outdoor temperature", "Indoor temperature"]))
+    (long,), (plot_long,), _ = key_boxes(named([f"A fairly long name of a line {i}" for i in range(6)]))
+    height = lambda k: k[3] - k[1]
+    assert height(two) > 1.6 * height(short) and height(long) > height(two)
+    for k, p in ((short, plot_short), (two, plot2), (long, plot_long)):
+        assert k[3] <= p[1] - 10 and k[0] >= 0 and k[2] <= 1280          # always above the plot: the plot gives up the room
+    assert plot_short[1] < plot2[1] < plot_long[1]
+
+
+@pytest.mark.parametrize("count", [2, 3, 4, 5, 6])
+def test_the_key_of_one_to_six_lines_stays_clear_of_the_plot_and_the_end_values(count):
+    chart = many_lines([20.0] * count)
+    (key,), (plot,), ticks = key_boxes(chart)
+    assert key[3] <= plot[1] - 10 and key[2] <= 1280 and not any(meet(key, t) for t in ticks)
+    assert not any(meet(key, box) for _, _, box in charts.layout_of(chart, timezone.utc)["end"])
