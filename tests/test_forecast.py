@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from lib.forecast import Forecast
-from lib.forecast.source import WMO, day_label, describe_day, temps
+from lib.forecast.source import WMO, amount_text, day_label, describe_day, quantile, rounded_mm, temps
 from tests.fakes import TZ, config
 from tests.test_pollen import started
 
@@ -157,4 +157,69 @@ async def test_when_the_ensemble_is_down_the_forecast_still_works_with_open_mete
     forecast, _ = make(tmp_path, ensemble=None)
     await started(forecast)
     assert forecast.lines()[0] == "Today: 🌧️ Rain. 11–16°C, 40% chance of rain"
+    await forecast.close()
+
+
+SHOWERS = {"summary": "🌦️ Showers.", "min_c": 19, "max_c": 23}
+
+
+def test_a_heavy_day_gives_its_total_called_heavy_with_the_chance():
+    assert describe_day({**SHOWERS, "rain_mm": 40.3, "rain_1mm_pct": 100, "rain_chance_pct": 100}) == \
+        "🌦️ Showers. 19–23°C, heavy: about 40 mm (100% chance of at least 1 mm)"
+
+
+def test_a_showery_day_gives_its_total_to_the_half_millimetre():
+    assert describe_day({**SHOWERS, "rain_mm": 3.2, "rain_1mm_pct": 80}) == "🌦️ Showers. 19–23°C, about 3 mm (80% chance of at least 1 mm)"
+    assert amount_text({"rain_mm": 3.3}) == "about 3.5 mm"
+
+
+def test_a_drizzle_day_is_under_1_mm_and_a_dry_day_has_no_amount():
+    assert describe_day({**SHOWERS, "rain_mm": 0.6, "rain_1mm_pct": 10}) == "🌦️ Showers. 19–23°C, under 1 mm (10% chance of at least 1 mm)"
+    assert describe_day({**SHOWERS, "rain_mm": 0.6, "rain_1mm_pct": 0}) == "🌦️ Showers. 19–23°C, 0% chance of at least 1 mm"
+    assert describe_day({**SHOWERS, "rain_mm": 0.0, "rain_1mm_pct": 0}) == "🌦️ Showers. 19–23°C, 0% chance of at least 1 mm"
+    assert describe_day({**SHOWERS, "rain_mm": 0.1, "rain_1mm_pct": 5}) == "🌦️ Showers. 19–23°C, 5% chance of at least 1 mm"
+
+
+def test_a_day_without_a_total_keeps_the_old_wording():
+    assert describe_day({**SHOWERS, "rain_1mm_pct": 100}) == "🌦️ Showers. 19–23°C, 100% chance of at least 1 mm"
+    assert describe_day({**SHOWERS, "rain_mm": None, "rain_chance_pct": 60}) == "🌦️ Showers. 19–23°C, 60% chance of rain"
+
+
+def test_a_total_with_no_chance_stands_alone():
+    assert describe_day({**SHOWERS, "rain_mm": 12.4}) == "🌦️ Showers. 19–23°C, about 12 mm"
+
+
+def test_the_ensemble_spread_is_a_range_when_it_is_wider_than_the_rounding():
+    day = {**SHOWERS, "rain_mm": 40.3, "rain_mm_lo": 15.2, "rain_mm_hi": 62.0, "rain_1mm_pct": 100}
+    assert describe_day(day) == "🌦️ Showers. 19–23°C, heavy: about 40 mm, likely 15–60 mm (100% chance of at least 1 mm)"
+    assert amount_text({"rain_mm": 8, "rain_mm_lo": 7.6, "rain_mm_hi": 8.4}) == "about 8 mm"                 # the same once rounded
+    assert amount_text({"rain_mm": 6, "rain_mm_lo": 0.2, "rain_mm_hi": 14}) == "about 6 mm, likely 0–14 mm"
+    assert amount_text({"rain_mm": 50, "rain_mm_lo": 2, "rain_mm_hi": 30}) == "heavy: about 50 mm, likely 2–50 mm"   # the total is inside it
+
+
+def test_rain_is_rounded_to_half_a_millimetre_under_5_a_millimetre_under_20_and_5_mm_from_20():
+    assert [rounded_mm(x) for x in (1.24, 1.25, 4.74, 4.75, 5.4, 5.5, 19.4, 19.5, 22.4, 22.5, 41, 47.6)] == \
+        [1.0, 1.5, 4.5, 5.0, 5.0, 6.0, 19.0, 20.0, 20.0, 25.0, 40, 50]
+    assert [amount_text({"rain_mm": x}) for x in (0.99, 1, 29.9, 27.4)] == ["under 1 mm", "about 1 mm", "heavy: about 30 mm", "about 25 mm"]
+
+
+def test_the_quantile_is_interpolated():
+    assert quantile([0, 10], 0.5) == 5 and quantile([3], 0.9) == 3 and quantile([4, 0, 2, 8, 6], 0.25) == 2
+
+
+async def test_the_total_and_the_spread_are_kept_from_open_meteo_and_the_ensemble(tmp_path):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        today = datetime.now(TZ).date()
+        if request.url.host.startswith("ensemble"):
+            return httpx.Response(200, json=ensemble_body({0: [10.0, 20.0, 30.0, 60.0, 40.0]}))
+        calls.append(request.url.params["daily"])
+        return httpx.Response(200, json={"daily": {"time": [str(today)], "temperature_2m_min": [19], "temperature_2m_max": [23],
+                                                   "precipitation_probability_max": [90], "precipitation_sum": [40.3], "weather_code": [80]}})
+    forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, httpx.MockTransport(handler))
+    forecast.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(12, 0))
+    await started(forecast)
+    assert "precipitation_sum" in calls[0]
+    assert forecast.lines(1)[0].endswith("🌦️ Showers. 19–23°C, heavy: about 40 mm, likely 14–50 mm (100% chance of at least 1 mm)")
     await forecast.close()

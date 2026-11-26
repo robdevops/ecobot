@@ -40,5 +40,5 @@ By default the bot answers everyone who messages it. `BOT_ADMIN_ONLY=on` answers
 ## Optional extras
 
 - **Pollen and thunderstorm asthma** for Melbourne (October to December), from melbournepollen.com.au: `MCP_POLLEN=on`.
-- **Daily forecast** from Open-Meteo, with the chance of at least 1 mm of rain: `MCP_FORECAST=on`.
+- **Daily forecast** from Open-Meteo, with the day's rain in mm and the chance of at least 1 mm: `• Friday: 🌦️ Showers. 19–23°C, about 40 mm (100% chance of at least 1 mm)`. The total is Open-Meteo's own (to 0.5 mm under 5 mm, 1 mm under 20, 5 mm from 20; "under 1 mm" for a drizzle, nothing on a dry day; "heavy" from 30 mm), with the ECMWF ensemble's 10th to 90th percentile as "likely 15–60 mm" when it is wider than the rounding: `MCP_FORECAST=on`.
 - **Irrigation controller** (a Tuya smart timer): an Irrigation button with its status and buttons to water for 5 to 30 minutes, switch off, pause for 24 to 72 hours, and its own alert toggles. A daily check at 18:00 delays watering 24 hours when rain fell or is likely. The controller is its own MCP server, irrigation-mcp (README: Irrigation): set the `IRRIGATION_TUYA_*` variables for it, run it, and set `BOT_IRRIGATION_MCP_URL` for the bot. While irrigation-mcp can't be reached the button says it couldn't reach the controller; the rest of the bot carries on.

@@ -98,7 +98,7 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
                  "title, text, data, [link], [chart]}], last_id, identity}; only those not yet expired (the template: since an id, and "
                  "expired=true for all). Pushed on each new alert.", None),
     FORECAST_URI: ("forecast", "The forecast", "The forecast days, structured: {place, fetched_at, days: [{date, min_c, max_c, "
-                   "rain_chance_pct, rain_1mm_pct, summary, text}]}. Pushed on each new forecast.", "forecast"),
+                   "rain_chance_pct, rain_1mm_pct, rain_mm, rain_mm_lo, rain_mm_hi, summary, text}]}. Pushed on each new forecast.", "forecast"),
     POLLEN_URI: ("pollen", "Pollen and thunderstorm asthma", "Grass pollen and thunderstorm asthma levels: {in_season, fetched_at, "
                  "grass: {level, emoji, date}, asthma: {level, emoji, updated}, lines}. Pushed on each new page.", "pollen"),
     STATUS_URI: ("status", "Status", "The report in words and the weather station's temperature, humidity and rain gauges in a row, as a "

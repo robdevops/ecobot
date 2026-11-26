@@ -69,7 +69,9 @@ DESCRIPTION = (
     "month\", average: true}; \"plot pressure this week\" {readings: [\"pressure\"], period: \"this week\", chart: true, "
     "chart_answers_it: true}; a device or reading and a period is the past, charted: \"weather week\", \"ecowitt week\" {readings: "
     "[\"all\"], period: \"week\", chart: true}, \"wind 3m\" {readings: [\"wind\"], period: \"3m\", chart: true}; a rating and rain "
-    "{readings: [\"pm2.5:rating\", \"rain\"]}.\n"
+    "{readings: [\"pm2.5:rating\", \"rain\"]}; \"overlay ecowitt and airgradient temperature, and humidity from each on another, inverted "
+    "axis\" is ONE call {readings: [\"outdoor.temperature\", \"air.temperature\", \"outdoor.humidity\", \"air.humidity\"], chart: true, "
+    "layout: \"two_axes\", invert_second_axis: true}.\n"
     "`period` is the person's words unchanged: \"past week\" is the last 7 days, \"last week\" the previous Monday to Sunday.\n"
     "Not for: days ranked, counted or filtered (wettest day, days over 35°C, rain per month): days. Values at set times: readings. "
     "A reading against rain: relate. Now: current. Ahead: forecast.\n"
@@ -93,10 +95,14 @@ ARGUMENTS = {   # every argument but the readings and the period, as a model rea
                                       "is every weather-station reading in the station's usual order; add \":rating\" to an air-quality "
                                       "reading to draw its traffic-light rating (\"air.pm2_5:rating\"). Default: all of readings."},
     "layout": {"type": "string", "enum": list(LAYOUTS),
-               "description": "auto (or panels): one reading as a line for each sensor that has it (wind with its compass rose), several "
-                              "as a panel each on one time axis. two_axes: two readings on one panel, a scale each (or more in exactly two "
-                              "units). same_axis: readings in one unit over each other. Default auto."},
-    "invert_second_axis": _boolean("With layout two_axes: the right-hand scale runs top to bottom."),
+               "description": "auto (or panels, the default): one reading as a line for each sensor that has it (wind with its compass rose), "
+                              "several as a panel each on one time axis. two_axes: ONE chart of one panel with two scales, for a request "
+                              "for one chart, \"another axis\", \"two Y axes\" or \"overlay ... on another axis\": the readings in the "
+                              "first reading's unit share the left scale, those in the one other unit the right (up to 4 readings in a "
+                              "single call: temperature from both sensors left, humidity from both right; never one call per pair). "
+                              "same_axis: readings in one unit over each other. Never for a plain \"chart X and Y\"."},
+    "invert_second_axis": _boolean("With layout two_axes: the right-hand scale, the second unit in the readings, runs top to bottom "
+                                   "(\"inverted axis\"): list the unit to keep upright first."),
     "chart_answers_it": _boolean("true only when the question is just to see this chart and its figures: nothing else to answer (\"plot "
                                  "pressure this week\", not \"plot pressure this week: is a storm coming?\"). Then the result carries the "
                                  "finished reply (`reply`, `complete`: true)."),

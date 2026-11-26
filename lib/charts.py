@@ -14,6 +14,7 @@ layout is given as it always was, in inches and shares of the figure.
 """
 
 import math
+import re
 import threading
 import time
 from bisect import bisect_left
@@ -239,9 +240,9 @@ def _style_axis(ax: Axes, ticks: list[float], fmt, colour: str | None = None):
     ax.add(2.5, lambda: c.line([(ax.left, ax.bottom), (ax.right, ax.bottom)], AXIS, 0.8, round_ends=False))
 
 
-def _right_ticks(ax: Axes, ticks: list[float], colour: str):
+def _right_ticks(ax: Axes, ticks: list[float], colour: str, unit: str = ""):
     shown = [t for t in ticks if min(ax.y0, ax.y1) - 1e-9 <= t <= max(ax.y0, ax.y1) + 1e-9]
-    ax.add(0.5, lambda: [ax.canvas.text(f"{t + 0.0:g}", ax.right + TICK_PAD * PT, ax.Y(t), TICK_FONT, colour, va="center", record=False)
+    ax.add(0.5, lambda: [ax.canvas.text(f"{t + 0.0:g}{unit}", ax.right + TICK_PAD * PT, ax.Y(t), TICK_FONT, colour, va="center", record=False)
                          for t in shown])
 
 
@@ -728,6 +729,14 @@ def _draw_bars_alone(ax: Axes, b):
     return 0, [], None
 
 
+def _scale_unit(lines: list[Line]) -> str:
+    """The short unit ("°C", "%") a scale's ticks carry in a panel of two scales: the one all its lines are named with ("Humidity (%)",
+    see panels.two_axes), when it is no more than three characters (a longer one stays in the colour key)."""
+    units = {m.group(1) if m else "" for m in (re.search(r"\(([^()]+)\)$", s.label) for s in lines)}
+    unit = units.pop() if len(units) == 1 else ""
+    return unit if len(unit) <= 3 else ""
+
+
 def _right_axis(ax: Axes, lines: list[Line], first: int, look: Look, flip: bool = False) -> tuple:
     """The lines of a panel's second scale, on an axis of their own at the right (ticks in the first line's colour, no frame, no
     grid: the left axis keeps the grid). Returns (the axis, what was drawn on it as _draw_lines gives it)."""
@@ -736,7 +745,7 @@ def _right_axis(ax: Axes, lines: list[Line], first: int, look: Look, flip: bool 
     twin.flipped = flip
     _pad_limits(twin, *_extent(lines), top=0.12, bottom=0.12, floor=0)
     drawn = _draw_lines(twin, lines, look, first)
-    _right_ticks(twin, nice_ticks(twin.y0, twin.y1, look.nbins), drawn[0][0])
+    _right_ticks(twin, nice_ticks(twin.y0, twin.y1, look.nbins), drawn[0][0], _scale_unit(lines))
     return twin, drawn
 
 
@@ -818,7 +827,7 @@ def _build(chart: Chart, tz: tzinfo) -> Canvas:
         count, entries, twin = _draw_panel(ax, p, used, x0, x1, look, canvas)
         used += count
         deg = _deg(p.unit)
-        tick_unit = deg if deg == "°" else ""
+        tick_unit = deg if deg == "°" else _scale_unit([s for s in p.lines if not s.right]) if twin else ""
         ticks = nice_ticks(ax.y0, ax.y1, 3 if n > 2 else look.nbins, integer=p.bars_only and p.bars.unit == "days")
         _style_axis(ax, ticks, lambda v, u=tick_unit: f"{v + 0.0:g}{u}", twin_colour(entries) if twin else MUTED)
         if twin:

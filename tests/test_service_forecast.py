@@ -106,6 +106,7 @@ def open_meteo(calls, days=7):
         return httpx.Response(200, json={"daily": {
             "time": [str(today + timedelta(days=n)) for n in range(days)], "temperature_2m_min": [10.5 + n for n in range(days)],
             "temperature_2m_max": [16 + n for n in range(days)], "precipitation_probability_max": [10 * n for n in range(days)],
+            "precipitation_sum": [3.2 if n % 2 else 0.0 for n in range(days)],
             "weather_code": [[63, 0, 95, 2, 80, 3, 61][n % 7] for n in range(days)]}})
     return httpx.MockTransport(handler)
 
@@ -136,9 +137,10 @@ async def test_the_lines_are_weather_forecasts_and_each_day_has_its_figures(tmp_
     assert out["period"]["asked"] == "the next 7 days" and out["period"]["text"].startswith("the next 7 days: ")
     assert out["period"]["start"] == datetime.combine(today, dtime(), tzinfo=TZ).isoformat()
     assert out["days"][0] == {"date": today.isoformat(), "min": 10.5, "max": 16, "summary": "🌧️ Rain.", "rain_chance": 0,
-                              "rain_1mm_pct": 0}
+                              "rain_1mm_pct": 0, "rain_mm": 0.0, "rain_mm_low": 0.0, "rain_mm_high": 0.0}
     assert out["days"][1] == {"date": (today + timedelta(days=1)).isoformat(), "min": 11.5, "max": 17, "summary": "☀️ Clear.",
-                              "rain_chance": 10, "rain_1mm_pct": 75}
+                              "rain_chance": 10, "rain_1mm_pct": 75, "rain_mm": 3.2, "rain_mm_low": 0.9, "rain_mm_high": 3.0}
+    assert out["lines"][1].endswith(", about 3 mm, likely 0–3 mm (75% chance of at least 1 mm)")
     assert out["place"] == "Melbourne" and out["source"] == "Open-Meteo" and out["fresh"] == FRESH
     fetched = datetime.fromtimestamp(int(forecast.fetched_at), TZ)
     assert out["fetched_at"] == fetched.isoformat() and out["as_of"]["time"] == fetched.isoformat()

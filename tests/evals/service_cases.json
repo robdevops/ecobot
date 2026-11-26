@@ -1183,6 +1183,34 @@
     },
     "note": "the forecast, not the station's own read of the next few hours"
   },
+  "forecast-volume-friday": {
+    "tools": [
+      "forecast"
+    ],
+    "not_tools": [
+      "outlook",
+      "readings"
+    ],
+    "args": {
+      "forecast": {
+        "period": {
+          "regex": "(?i)^(this )?(fri|friday)$",
+          "e.g.": "Friday"
+        }
+      }
+    },
+    "note": "a volume question about a future day: the forecast's rain total (about N mm), not the station's gauge"
+  },
+  "forecast-volume-week": {
+    "tools": [
+      "forecast"
+    ],
+    "not_tools": [
+      "outlook",
+      "readings"
+    ],
+    "note": "the forecast's rain totals for the days ahead"
+  },
   "philosophical-weather": {
     "not_tools": [
       "summary",

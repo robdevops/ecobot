@@ -22,6 +22,9 @@ OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
 ENSEMBLE = "https://ensemble-api.open-meteo.com/v1/ensemble"
 ENSEMBLE_MODEL = "ecmwf_ifs025"   # 51 members
 RAIN_MM = 1.0                     # "chance of at least 1 mm", as the Bureau of Meteorology says it
+DRIZZLE_MM = 0.2                  # a day with less than this has no amount in its line (dry)
+HEAVY_MM = 30                     # a day of at least this (rounded) is called heavy
+SPREAD = (0.1, 0.9)               # the range given is these quantiles of the ensemble members' day totals
 MIN_HOURS = 20                    # a member's day counts only with this many hours of data
 HEADERS = {"User-Agent": "ecobot/1.0 (personal weather bot)"}
 FORECAST_REFRESH_SECONDS = 15 * 60
@@ -39,6 +42,15 @@ def whole(x: float) -> int:
     return math.floor(x + 0.5)
 
 
+def quantile(values: list[float], q: float) -> float:
+    """The q quantile of the values, interpolated between neighbours."""
+    ordered = sorted(values)
+    at = q * (len(ordered) - 1)
+    low = math.floor(at)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (at - low)
+
+
 def temps(d: dict) -> str | None:
     lo, hi = d.get("min_c"), d.get("max_c")
     if lo is not None and hi is not None:
@@ -48,12 +60,44 @@ def temps(d: dict) -> str | None:
     return f"min {whole(lo)}°C" if lo is not None else None
 
 
+def rounded_mm(mm: float) -> float:
+    """A day's rain to a sensible step, halves up: under 5 mm the nearest 0.5, under 20 the nearest 1, from 20 the nearest 5."""
+    step = 0.5 if mm < 5 else 1 if mm < 20 else 5
+    return math.floor(mm / step + 0.5) * step
+
+
+def mm_number(mm: float) -> str:
+    return f"{rounded_mm(mm):g}"
+
+
+def amount_text(d: dict) -> str | None:
+    """The day's volume: "under 1 mm", "about 3 mm", "about 12 mm, likely 8–25 mm", "heavy: about 40 mm"; None for a dry day (under
+    DRIZZLE_MM, or no chance at all of 1 mm) and for a day with no total. The range is the ensemble members' spread, when it is wider than
+    the total's own rounding."""
+    mm = d.get("rain_mm")
+    if mm is None or mm < DRIZZLE_MM:
+        return None
+    if mm < 1:
+        return None if d.get("rain_1mm_pct") == 0 else "under 1 mm"
+    text = f"about {mm_number(mm)} mm"
+    if rounded_mm(mm) >= HEAVY_MM:
+        text = f"heavy: {text}"
+    lo, hi = d.get("rain_mm_lo"), d.get("rain_mm_hi")
+    if lo is not None and hi is not None:
+        lo, hi = min(lo, mm), max(hi, mm)
+        if rounded_mm(lo) != rounded_mm(hi) and hi >= 1:
+            text += f", likely {mm_number(lo) if lo >= 1 else 0}–{mm_number(hi)} mm"
+    return text
+
+
 def describe_day(d: dict) -> str:
-    """"🌧️ Rain. 11–17°C, 90% chance of rain" """
+    """"🌧️ Rain. 11–17°C, 90% chance of rain"; with the day's total: "🌦️ Showers. 19–23°C, about 40 mm (100% chance of at least 1 mm)" """
     if d.get("rain_1mm_pct") is not None:
         chance = f"{d['rain_1mm_pct']}% chance of at least 1 mm"
     else:   # a day saved before the ensemble figure, or the ensemble was unavailable: Open-Meteo's own (more than 0.1 mm in the wettest hour)
         chance = f"{d['rain_chance_pct']}% chance of rain" if d.get("rain_chance_pct") is not None else None
+    if amount := amount_text(d):
+        chance = f"{amount} ({chance})" if chance else amount
     details = [temps(d)] + ([chance] if chance else [])
     rest = ", ".join(x for x in details if x)
     return " ".join(x for x in (d.get("summary") or "", rest) if x) or "no data"
@@ -121,15 +165,18 @@ class Forecast(Source):
     async def _open_meteo(self) -> list[dict]:
         lat, lon = self.location
         d = await self._json(OPEN_METEO, latitude=lat, longitude=lon, timezone=str(self.tz),
-                             daily="temperature_2m_min,temperature_2m_max,precipitation_probability_max,weather_code")
+                             daily="temperature_2m_min,temperature_2m_max,precipitation_probability_max,precipitation_sum,weather_code")
         dd = d["daily"]
+        sums = dd.get("precipitation_sum") or [None] * len(dd["time"])
         return [
             {"date": date.fromisoformat(dd["time"][i]), "min_c": dd["temperature_2m_min"][i], "max_c": dd["temperature_2m_max"][i],
-             "summary": WMO.get(dd["weather_code"][i], ""), "rain_chance_pct": dd["precipitation_probability_max"][i]}
+             "summary": WMO.get(dd["weather_code"][i], ""), "rain_chance_pct": dd["precipitation_probability_max"][i],
+             "rain_mm": sums[i]}
             for i in range(len(dd["time"]))]
 
-    async def _ensemble(self, days: int) -> dict[date, int]:
-        """{local day: % of ensemble members with at least RAIN_MM that day}, to the nearest 5; a day with no usable members is left out.
+    async def _ensemble(self, days: int) -> dict[date, dict]:
+        """{local day: {"pct": % of ensemble members with at least RAIN_MM that day, to the nearest 5, "lo", "hi": the SPREAD quantiles of
+        the members' totals in mm}}; a day with no usable members is left out.
         Every `hourly` series named precipitation* is one member (the response names them by member and model)."""
         lat, lon = self.location
         d = await self._json(ENSEMBLE, latitude=lat, longitude=lon, timezone=str(self.tz), hourly="precipitation",
@@ -147,7 +194,8 @@ class Forecast(Source):
             for day, got in totals.items():
                 if len(got) >= MIN_HOURS:
                     sums.setdefault(day, []).append(sum(got))
-        return {date.fromisoformat(day): 5 * round(100 * sum(t >= RAIN_MM for t in totals) / len(totals) / 5)
+        return {date.fromisoformat(day): {"pct": 5 * round(100 * sum(t >= RAIN_MM for t in totals) / len(totals) / 5),
+                                          "lo": round(quantile(totals, SPREAD[0]), 1), "hi": round(quantile(totals, SPREAD[1]), 1)}
                 for day, totals in sums.items()}
 
     async def _with_chance(self, days: list[dict]) -> list[dict]:
@@ -157,7 +205,8 @@ class Forecast(Source):
         except Exception as e:   # the forecast still works without it
             log.warning("Ensemble rain chance unavailable (%s: %s); using Open-Meteo's own", type(e).__name__, e)
             return days
-        return [{**d, "rain_1mm_pct": chance[d["date"]]} if d["date"] in chance else d for d in days]
+        return [{**d, "rain_1mm_pct": chance[d["date"]]["pct"], "rain_mm_lo": chance[d["date"]]["lo"], "rain_mm_hi": chance[d["date"]]["hi"]}
+                if d["date"] in chance else d for d in days]
 
     async def warm(self, fresh: bool = True) -> str:
         """Fetch when due: never outside the sync hours (unless nothing is cached), and not while the forecast is young."""
