@@ -137,9 +137,9 @@ async def test_the_lines_are_weather_forecasts_and_each_day_has_its_figures(tmp_
     assert out["period"]["asked"] == "the next 7 days" and out["period"]["text"].startswith("the next 7 days: ")
     assert out["period"]["start"] == datetime.combine(today, dtime(), tzinfo=TZ).isoformat()
     assert out["days"][0] == {"date": today.isoformat(), "min": 10.5, "max": 16, "summary": "🌧️ Rain.", "rain_chance": 0,
-                              "rain_1mm_pct": 0, "rain_mm": 0.0, "rain_mm_low": 0.0, "rain_mm_high": 0.0}
+                              "rain_1mm_pct": 0, "rain_mm": 0.0, "rain_mm_low": 0.0, "rain_mm_high": 0.0, "rain_mm_floor": None}
     assert out["days"][1] == {"date": (today + timedelta(days=1)).isoformat(), "min": 11.5, "max": 17, "summary": "☀️ Clear.",
-                              "rain_chance": 10, "rain_1mm_pct": 75, "rain_mm": 3.2, "rain_mm_low": 0.9, "rain_mm_high": 3.0}
+                              "rain_chance": 10, "rain_1mm_pct": 75, "rain_mm": 3.2, "rain_mm_low": 0.9, "rain_mm_high": 3.0, "rain_mm_floor": None}
     assert out["lines"][1].endswith(", about 3 mm, likely 0–3 mm (75% chance of at least 1 mm)")
     assert out["place"] == "Melbourne" and out["source"] == "Open-Meteo" and out["fresh"] == FRESH
     fetched = datetime.fromtimestamp(int(forecast.fetched_at), TZ)
@@ -224,3 +224,12 @@ def test_it_is_offered_only_with_a_forecast_and_its_description_carries_the_rule
     assert len(DESCRIPTION) < 1500 and "outlook" in DESCRIPTION and "summary" in DESCRIPTION and '{"period": "tomorrow"}' in DESCRIPTION
     assert '"weather week", "ecowitt week": the past week, summary' in DESCRIPTION and "Only what is ahead is forecast." in DESCRIPTION
     assert list(PARAMETERS["properties"]) == ["period"] and "Default: the next 7 days." in PARAMETERS["properties"]["period"]["description"]
+
+
+def test_the_figures_of_a_wet_day_carry_the_floor_the_line_states():
+    from lib.service.forecast import day_figures
+    day = {"date": date(2026, 11, 13), "min_c": 19, "max_c": 23, "summary": "🌦️ Showers.", "rain_chance_pct": 100, "rain_1mm_pct": 100,
+           "rain_mm": 40.3, "rain_mm_lo": 15.2, "rain_mm_hi": 62.0}
+    figures = day_figures(day)
+    assert figures["rain_mm_floor"] == 15 and list(figures)[-1] == "rain_mm_floor"
+    assert day_figures({**day, "rain_mm_lo": 1.0})["rain_mm_floor"] is None

@@ -15,7 +15,7 @@ import logging
 import re
 from datetime import date, datetime, time, timedelta, tzinfo
 
-from ..forecast.source import SOURCE, day_label, describe_day
+from ..forecast.source import SOURCE, day_label, describe_day, floor_mm
 from ..periods_text import NUMBER_WORDS, WEEKDAY_NAMES, Period, PeriodError, read_period as read_past
 from ..timeutil import clock_text, day_text, to_local
 from .common import Refusal, ServiceTool, answer, iso
@@ -159,11 +159,11 @@ def day_lines(days: list[dict], today: date) -> list[str]:
 
 
 def day_figures(d: dict) -> dict:
-    """A day of the forecast as figures: {date, min, max, summary, rain_chance, rain_1mm_pct, rain_mm, rain_mm_low, rain_mm_high} (°C, %
-    and mm; None where it has none)."""
+    """A day of the forecast as figures: {date, min, max, summary, rain_chance, rain_1mm_pct, rain_mm, rain_mm_low, rain_mm_high,
+    rain_mm_floor} (°C, % and mm; None where it has none; the floor is the ladder step the line states, source.py floor_mm)."""
     return {"date": d["date"].isoformat(), "min": d.get("min_c"), "max": d.get("max_c"), "summary": d.get("summary") or None,
             "rain_chance": d.get("rain_chance_pct"), "rain_1mm_pct": d.get("rain_1mm_pct"), "rain_mm": d.get("rain_mm"),
-            "rain_mm_low": d.get("rain_mm_lo"), "rain_mm_high": d.get("rain_mm_hi")}
+            "rain_mm_low": d.get("rain_mm_lo"), "rain_mm_high": d.get("rain_mm_hi"), "rain_mm_floor": floor_mm(d)}
 
 
 def section(heading: str, lines: list[str], *, place: str | None, fetched_at: float | None, tz: tzinfo, today: date) -> str:
@@ -180,7 +180,7 @@ def section(heading: str, lines: list[str], *, place: str | None, fetched_at: fl
 # ---------- the tool ----------
 DESCRIPTION = (
     "The weather forecast (Open-Meteo) for the station's place: today and the days ahead, each day's summary with its emoji, its lowest "
-    "and highest temperature, the day's rain total in mm (about N mm, with a likely range when the models differ; under 1 mm; nothing on a dry day) and the chance of at least 1 mm of rain. For \"what's tomorrow like\": {\"period\": \"tomorrow\"}; \"the "
+    "and highest temperature, the day's rain total in mm (about N mm, on a wet day then \"at least 15 mm very likely (90%)\", else a likely range, under 1 mm, or nothing when dry) else the chance of at least 1 mm. For \"what's tomorrow like\": {\"period\": \"tomorrow\"}; \"the "
     "forecast for the weekend\": {\"period\": \"this weekend\"}; \"will it rain this week\", \"forecast\": {} (the next 7 days). A "
     "report (\"report\", \"status\", \"sitrep\") is current, forecast {\"period\": \"next 3 days\"} and pollen, called together.\n"
     "Not for: the next few hours from the station's own readings (\"will it rain soon\", \"do I need an umbrella\": outlook); what was "
@@ -188,8 +188,7 @@ DESCRIPTION = (
     "ranked or counted). Only what is ahead is forecast.\n"
     "Result: `period` (how the words were read, with the dates); `text`, the whole answer for the person, ready to send; `lines`, one a "
     "day, emoji included: copy them as they are, with the place in parentheses after the heading, e.g. Forecast (Melbourne); `days`, "
-    "each day's figures (min and max °C, rain_chance: Open-Meteo's chance of rain, rain_1mm_pct: the chance of at least 1 mm, the one "
-    "the lines give when there is one; rain_mm: the day's total, rain_mm_low and rain_mm_high: the likely range, in mm, unrounded); `place`, `fetched_at`; `note` when the forecast doesn't reach the end of the period.")
+    "each day's figures (min and max °C, rain_chance: Open-Meteo's, rain_1mm_pct: the chance of at least 1 mm; rain_mm: the day's total, rain_mm_low, rain_mm_high: the likely range; rain_mm_floor: the floor the line states, or null); `place`, `fetched_at`; `note` when the forecast ends before the period does.")
 PARAMETERS = {"type": "object", "properties": {"period": {
     "type": "string",
     "description": "The days ahead in the person's own words, passed on unchanged: today, tomorrow, the day after tomorrow, next N days "

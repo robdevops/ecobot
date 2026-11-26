@@ -4,7 +4,8 @@ import httpx
 import pytest
 
 from lib.forecast import Forecast
-from lib.forecast.source import WMO, amount_text, day_label, describe_day, quantile, rounded_mm, temps
+from lib.forecast import source
+from lib.forecast.source import FLOOR_LADDER, SPREAD, WMO, amount_text, day_label, describe_day, floor_mm, quantile, rounded_mm, temps
 from tests.fakes import TZ, config
 from tests.test_pollen import started
 
@@ -165,7 +166,7 @@ SHOWERS = {"summary": "🌦️ Showers.", "min_c": 19, "max_c": 23}
 
 def test_a_heavy_day_gives_its_total_called_heavy_with_the_chance():
     assert describe_day({**SHOWERS, "rain_mm": 40.3, "rain_1mm_pct": 100, "rain_chance_pct": 100}) == \
-        "🌦️ Showers. 19–23°C, heavy: about 40 mm (100% chance of at least 1 mm)"
+        "🌦️ Showers. 19–23°C, heavy: about 40 mm (100% chance of at least 1 mm)"   # (no spread: no floor)
 
 
 def test_a_showery_day_gives_its_total_to_the_half_millimetre():
@@ -190,8 +191,8 @@ def test_a_total_with_no_chance_stands_alone():
 
 
 def test_the_ensemble_spread_is_a_range_when_it_is_wider_than_the_rounding():
-    day = {**SHOWERS, "rain_mm": 40.3, "rain_mm_lo": 15.2, "rain_mm_hi": 62.0, "rain_1mm_pct": 100}
-    assert describe_day(day) == "🌦️ Showers. 19–23°C, heavy: about 40 mm, likely 15–60 mm (100% chance of at least 1 mm)"
+    day = {**SHOWERS, "rain_mm": 6, "rain_mm_lo": 0.2, "rain_mm_hi": 14, "rain_1mm_pct": 90}
+    assert describe_day(day) == "🌦️ Showers. 19–23°C, about 6 mm, likely 0–14 mm (90% chance of at least 1 mm)"
     assert amount_text({"rain_mm": 8, "rain_mm_lo": 7.6, "rain_mm_hi": 8.4}) == "about 8 mm"                 # the same once rounded
     assert amount_text({"rain_mm": 6, "rain_mm_lo": 0.2, "rain_mm_hi": 14}) == "about 6 mm, likely 0–14 mm"
     assert amount_text({"rain_mm": 50, "rain_mm_lo": 2, "rain_mm_hi": 30}) == "heavy: about 50 mm, likely 2–50 mm"   # the total is inside it
@@ -221,5 +222,59 @@ async def test_the_total_and_the_spread_are_kept_from_open_meteo_and_the_ensembl
     forecast.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(12, 0))
     await started(forecast)
     assert "precipitation_sum" in calls[0]
-    assert forecast.lines(1)[0].endswith("🌦️ Showers. 19–23°C, heavy: about 40 mm, likely 14–50 mm (100% chance of at least 1 mm)")
+    assert forecast.lines(1)[0].endswith("🌦️ Showers. 19–23°C, heavy: about 40 mm, at least 10 mm very likely (90%)")
     await forecast.close()
+
+
+def lo_hi(mm, lo, hi, pct=100):
+    return {**SHOWERS, "rain_mm": mm, "rain_mm_lo": lo, "rain_mm_hi": hi, "rain_1mm_pct": pct}
+
+
+def test_a_heavy_day_states_a_floor_in_place_of_the_range_and_the_chance():
+    line = describe_day(lo_hi(40.3, 15.2, 62))
+    assert line == "🌦️ Showers. 19–23°C, heavy: about 40 mm, at least 15 mm very likely (90%)"
+    assert "chance of at least 1 mm" not in line and "likely 1" not in line.replace("very likely", "")
+    assert amount_text(lo_hi(95, 52, 130)) == "heavy: about 95 mm, at least 50 mm very likely (90%)"
+    assert describe_day(lo_hi(12, 6.4, 20)).endswith("about 12 mm, at least 5 mm very likely (90%)")
+    assert floor_mm(lo_hi(40.3, 15.2, 62)) == 15 and floor_mm(lo_hi(12, 6.4, 20)) == 5
+
+
+def test_a_showery_day_and_a_day_without_spread_or_ensemble_keep_the_old_wording():
+    assert describe_day(lo_hi(3.2, 1.0, 3.5, 80)) == "🌦️ Showers. 19–23°C, about 3 mm, likely 1–3.5 mm (80% chance of at least 1 mm)"
+    assert floor_mm(lo_hi(3.2, 1.0, 3.5, 80)) is None and floor_mm(lo_hi(3.2, 1.9, 3.5, 80)) is None
+    assert floor_mm({**SHOWERS, "rain_mm": 40.3, "rain_1mm_pct": 100}) is None                       # no spread
+    assert floor_mm({**SHOWERS, "rain_mm": 40.3, "rain_mm_lo": 15.2, "rain_mm_hi": 62}) is None      # no ensemble chance
+    assert floor_mm(lo_hi(None, 15, 62)) is None and floor_mm(lo_hi(0.0, 0, 0, 0)) is None
+    assert describe_day(lo_hi(0.6, 0, 1, 10)).endswith("under 1 mm (10% chance of at least 1 mm)")
+
+
+def test_the_floor_never_reaches_the_rounded_total():
+    assert floor_mm(lo_hi(5, 5.2, 9)) is None                 # the floor would equal the total
+    assert floor_mm(lo_hi(4.6, 5.2, 9)) is None               # (lo above the total: the total stays)
+    assert floor_mm(lo_hi(6, 5.2, 9)) == 5
+    assert describe_day(lo_hi(5, 5.2, 9)).endswith("about 5 mm, likely 5–9 mm (100% chance of at least 1 mm)")
+
+
+def test_the_floor_is_the_ladder_step_at_or_below_the_quantile():
+    table = [(1.9, None), (2, 2), (2.9, 2), (3, 3), (4.9, 3), (5, 5), (9.9, 5), (10, 10), (14.9, 10), (15.2, 15), (19.9, 15), (20, 20),
+             (29.9, 25), (30, 30), (45, 40), (52, 50), (80, 75), (120, 100), (250, 100)]
+    assert FLOOR_LADDER == (2, 3, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100)
+    for lo, want in table:
+        assert floor_mm(lo_hi(500, lo, 600)) == want, lo
+
+
+def test_a_floor_above_1_mm_comes_with_at_least_90_percent_of_the_runs_at_1_mm():
+    """A 10th percentile above 1 mm puts 90% or more of the members at 1 mm or more: the ensemble's chance is then 90% or 95% or 100%."""
+    members = [2.1, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 9.0, 12.0, 20.0]
+    lo = quantile(members, SPREAD[0])
+    chance = 5 * round(100 * sum(m >= 1.0 for m in members) / len(members) / 5)
+    assert lo > 1 and chance >= 100 * (1 - SPREAD[0])
+    day = lo_hi(12, lo, 20, chance)
+    assert floor_mm(day) == 2 and "chance of at least 1 mm" not in describe_day(day)
+
+
+def test_the_percentage_in_the_floor_follows_the_spread(monkeypatch):
+    monkeypatch.setattr(source, "SPREAD", (0.2, 0.8))
+    assert describe_day(lo_hi(40.3, 15.2, 62)) == "🌦️ Showers. 19–23°C, heavy: about 40 mm, at least 15 mm likely (80%)"
+    monkeypatch.setattr(source, "SPREAD", (0.05, 0.95))
+    assert describe_day(lo_hi(40.3, 15.2, 62)).endswith("at least 15 mm very likely (95%)")

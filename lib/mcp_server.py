@@ -103,7 +103,7 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
                "label, words}] (those the sources here send), items: [{id, kind, time, expires, text, [link], [chart: {tool, arguments, "
                "[arg, values]}]}]}. Pushed on each new alert.", None),
     FORECAST_URI: ("forecast", "The forecast", "The forecast days, structured: {place, fetched_at, days: [{date, min_c, max_c, "
-                   "rain_chance_pct, rain_1mm_pct, rain_mm, rain_mm_lo, rain_mm_hi, summary, text}]}. Pushed on each new forecast.", "forecast"),
+                   "rain_chance_pct, rain_1mm_pct, rain_mm, rain_mm_lo, rain_mm_hi, rain_mm_floor, summary, text}]}. Pushed on each new forecast.", "forecast"),
     POLLEN_URI: ("pollen", "Pollen and thunderstorm asthma", "Grass pollen and thunderstorm asthma levels: {in_season, fetched_at, "
                  "grass: {level, emoji, date}, asthma: {level, emoji, updated}, lines}. Pushed on each new page.", "pollen"),
     STATUS_URI: ("status", "Status", "The report in words and the weather station's temperature, humidity and rain gauges in a row, as a "
@@ -414,10 +414,10 @@ class EcobotServer:
         return out
 
     async def forecast(self) -> dict:
-        from .forecast.source import describe_day
+        from .forecast.source import describe_day, floor_mm
         f = self.ctx.forecast
         return {"place": f.place, "fetched_at": iso(f.fetched_at, self.ctx.zone) if f.fetched_at else None,
-                "days": [{**d, "text": describe_day(d)} for d in (f.days or [])]}
+                "days": [{**d, "rain_mm_floor": floor_mm(d), "text": describe_day(d)} for d in (f.days or [])]}
 
     async def pollen(self) -> dict:
         p = self.ctx.pollen

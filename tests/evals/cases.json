@@ -660,7 +660,7 @@
   {
     "id": "forecast-volume-friday",
     "ask": "how much rain on Friday?",
-    "note": "a volume question is the forecast's line for that day (about N mm, with its likely range), not the station's rain gauge",
+    "note": "a volume question is the forecast's line for that day (about N mm, with the amount very likely at least or its likely range), not the station's rain gauge",
     "expect": {
       "effort": "none"
     },
