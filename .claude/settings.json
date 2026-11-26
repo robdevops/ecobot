@@ -1,7 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python scripts/eval_prompts.py)",
       "Bash(git fetch *)",
       "mcp__github__pull_request_read",
       "mcp__github__list_pull_requests",
