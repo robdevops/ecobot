@@ -69,7 +69,7 @@ async def main():
     async with contextlib.AsyncExitStack() as stack:
         mcp_http.hold_folder(folder, LOCK, "irrigation-mcp", "python -m irrigation_mcp", stack)
         tokens = cfg.auth_tokens or (mcp_http.generated_token(folder, log, "irrigation-mcp"),)
-        state = IrrigationState(cfg.irrigation_state_path, cfg.state_path)
+        state = IrrigationState(cfg.irrigation_state_path)
         device = Tuya(cfg)
         stack.push_async_callback(safely, device.close)
         watchdog = Watchdog(device, state)

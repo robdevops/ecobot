@@ -15,10 +15,13 @@ from dataclasses import fields  # noqa: E402
 
 OLD = """# keys
 TELEGRAM_BOT_TOKEN=123:abc
+OPENROUTER_API_KEY=sk-or
 export ECOWITT_API_KEY = "k e y"
 
 PLACE=Melbourne
 WEATHER_MCP_URL=http://ecobot-service:8765/mcp
+BOT_ADMIN_ONLY=on
+LOG_WIDTH=30
 MCP_SERVICE_ALLOWED_HOSTS=127.0.0.1,localhost,ecobot-service
 MCP_SERVICE_TOKENS=other,s3cret
 WEATHER_MCP_TOKEN=s3cret
@@ -31,19 +34,19 @@ def test_every_renamed_setting_is_found_from_the_configs_text():
     assert migrate_env.renames() == want
 
 
-def test_a_file_is_renamed_keeping_values_comments_quotes_and_order_and_the_token_goes_first():
+def test_a_file_is_renamed_keeping_values_comments_quotes_and_order_the_token_goes_first_and_the_bots_settings_go():
     out, notes = migrate_env.migrate(OLD.splitlines(keepends=True), migrate_env.renames())
     assert "".join(out) == """# keys
-BOT_TELEGRAM_TOKEN=123:abc
 export MCP_ECOWITT_API_KEY = "k e y"
 
 MCP_PLACE=Melbourne
-BOT_MCP_URL=http://ecobot-mcp:8765/mcp
 MCP_ALLOWED_HOSTS=127.0.0.1,localhost,ecobot-mcp
 AUTH_TOKENS=s3cret,other
 TZ=Australia/Melbourne
 """
     assert any("put first" in n for n in notes) and any("WEATHER_MCP_TOKEN removed" in n for n in notes)
+    for gone in ("TELEGRAM_BOT_TOKEN", "OPENROUTER_API_KEY", "WEATHER_MCP_URL", "BOT_ADMIN_ONLY", "LOG_WIDTH"):
+        assert any(n.startswith(f"{gone} removed") for n in notes), gone
     again, _ = migrate_env.migrate(out, migrate_env.renames())
     assert again == out   # (run again: nothing changes)
 
@@ -66,9 +69,9 @@ def test_without_write_nothing_changes_and_secrets_are_masked_with_write_a_backu
     os.chmod(env, 0o600)
     assert migrate_env.main([str(env)]) == 0
     shown = capsys.readouterr().out
-    assert env.read_text() == OLD and "123:abc" not in shown and "s3cret" not in shown and "+BOT_TELEGRAM_TOKEN=****" in shown
+    assert env.read_text() == OLD and "123:abc" not in shown and "s3cret" not in shown and "-TELEGRAM_BOT_TOKEN=****" in shown
     assert migrate_env.main([str(env), "--write"]) == 0
-    assert "BOT_TELEGRAM_TOKEN=123:abc" in env.read_text() and stat.S_IMODE(env.stat().st_mode) == 0o600
+    assert "TELEGRAM" not in env.read_text() and "MCP_PLACE=Melbourne" in env.read_text() and stat.S_IMODE(env.stat().st_mode) == 0o600
     backups = list(tmp_path.glob("ecobot.env.bak-*"))
     assert len(backups) == 1 and backups[0].read_text() == OLD and stat.S_IMODE(backups[0].stat().st_mode) == 0o600
     assert migrate_env.main([str(env), "--write"]) == 0 and "nothing to rename" in capsys.readouterr().out
@@ -81,8 +84,7 @@ def test_a_setting_with_two_old_names_takes_either_and_the_irrigation_check_hour
     assert names["BOT_TUYA_DEVICE_ID"] == names["TUYA_DEVICE_ID"] == "IRRIGATION_TUYA_DEVICE_ID"
     assert names["BOT_IRRIGATION_CHECK_HOUR"] == "IRRIGATION_CHECK_HOUR" and "IRRIGATION_CHECK_HOUR" not in names
     out, _ = migrate_env.migrate(["TUYA_DEVICE_ID=d\n", "BOT_TUYA_CLIENT_ID=c\n", "IRRIGATION_CHECK_HOUR=7\n"], names)
-    assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "IRRIGATION_TUYA_CLIENT_ID=c\n", "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n",
-                   "IRRIGATION_CHECK_HOUR=7\n"]                                            # (the bot's way to irrigation-mcp added: below)
+    assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "IRRIGATION_TUYA_CLIENT_ID=c\n", "IRRIGATION_CHECK_HOUR=7\n"]
     out, notes = migrate_env.migrate(["TUYA_CLIENT_SECRET=s\n", "BOT_TUYA_CLIENT_SECRET=s\n"], names)   # both old ones, the same value
     assert out == ["IRRIGATION_TUYA_CLIENT_SECRET=s\n"] and any("BOT_TUYA_CLIENT_SECRET removed" in n for n in notes)
     out, _ = migrate_env.migrate(["BOT_IRRIGATION_CHECK_HOUR=6\n", "IRRIGATION_CHECK_HOUR=6\n"], names)
@@ -93,32 +95,17 @@ def test_a_setting_with_two_old_names_takes_either_and_the_irrigation_check_hour
         migrate_env.migrate(["BOT_IRRIGATION_CHECK_HOUR=6\n", "IRRIGATION_CHECK_HOUR=7\n"], names)
 
 
-def test_the_irrigation_controllers_settings_bring_the_bots_way_to_irrigation_mcp_once():
-    """Step 8b: the controller is irrigation-mcp's and the bot its client; a file with any Tuya setting (any of its names, set) and no
-    BOT_IRRIGATION_MCP_URL gets it, after them, as systemd reaches irrigation-mcp, with a note (Docker's address in it)."""
+def test_the_bots_settings_are_removed_and_a_renamed_bot_setting_is_renamed_not_removed():
     names = migrate_env.renames()
-    out, notes = migrate_env.migrate(["TUYA_DEVICE_ID=d\n", "BOT_TUYA_CLIENT_SECRET=s\n", "TZ=Australia/Melbourne"], names)
-    assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "IRRIGATION_TUYA_CLIENT_SECRET=s\n", "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n",
-                   "TZ=Australia/Melbourne"]
-    assert any("BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp added" in n and "http://irrigation-mcp:8766/mcp" in n for n in notes)
+    out, notes = migrate_env.migrate(["BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n", "BOT_TUYA_DEVICE_ID=d\n", "BOT_FUTURE=1\n",
+                                      "TZ=UTC\n"], names)
+    assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "TZ=UTC\n"]
+    assert any(n.startswith("BOT_IRRIGATION_MCP_URL removed") for n in notes) and "BOT_TUYA_DEVICE_ID -> IRRIGATION_TUYA_DEVICE_ID" in notes
     again, notes = migrate_env.migrate(out, names)
     assert again == out and notes == []                                                     # (run again: nothing changes)
-    out, _ = migrate_env.migrate(["IRRIGATION_TUYA_DEVICE_ID=d"], names)                    # the last line, without its newline
-    assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n"]
-    kept = ["IRRIGATION_TUYA_DEVICE_ID=d\n", "BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp\n"]
-    assert migrate_env.migrate(kept, names) == (kept, [])                                   # one already there (Docker's) is left alone
-    for none in (["TZ=UTC\n"], ["TUYA_DEVICE_ID=\n"], ["# TUYA_DEVICE_ID=d\n"],   # no controller (unset, or commented out)
-                 ["TUYA_BASE_URL=https://x\n"], ["BOT_TUYA_CLIENT_ID=c\n", "TUYA_CLIENT_SECRET=s\n"]):   # (no device id: no controller)
-        assert "BOT_IRRIGATION_MCP_URL" not in "".join(migrate_env.migrate(none, names)[0]), none
 
 
-@pytest.mark.parametrize("named", ["WEATHER_MCP_URL=http://ecobot-service:8765/mcp", "BOT_MCP_URL=http://ecobot-mcp:8765/mcp",
-                                   "MCP_ALLOWED_HOSTS=ecobot-mcp,ecobot.lan", "IRRIGATION_ECOBOT_MCP_URL=http://ecobot-mcp:8765/mcp"])
-def test_in_a_docker_install_s_file_the_bots_way_to_irrigation_mcp_is_its_container(named):
-    """A file that names ecobot-mcp's container (or its old name) in a URL or an allowed host is a Docker install's: there 127.0.0.1 is
-    the bot's own container, so the line added is http://irrigation-mcp:8766/mcp, and the note says so."""
-    out, notes = migrate_env.migrate([named + "\n", "TUYA_DEVICE_ID=d\n"], migrate_env.renames())
-    assert out[-1] == "BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp\n"
-    assert any("BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp added" in n and "Docker" in n for n in notes)
-    out, _ = migrate_env.migrate(["BOT_MCP_URL=http://my-ecobot-mcp.lan:8765/mcp\n", "TUYA_DEVICE_ID=d\n"], migrate_env.renames())
-    assert out[-1] == "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n"   # (another name that merely contains it: systemd's)
+def test_the_old_container_name_in_ecobot_mcps_url_or_the_allowed_hosts_becomes_its_new_one():
+    out, _ = migrate_env.migrate(["IRRIGATION_ECOBOT_MCP_URL=http://ecobot-service:8765/mcp\n", "MCP_ALLOWED_HOSTS=ecobot-service\n"],
+                                 migrate_env.renames())
+    assert out == ["IRRIGATION_ECOBOT_MCP_URL=http://ecobot-mcp:8765/mcp\n", "MCP_ALLOWED_HOSTS=ecobot-mcp\n"]

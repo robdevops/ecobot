@@ -1,5 +1,5 @@
-"""The settings' names (docs/configuration.md): ecobot-mcp's start with MCP_, irrigation-mcp's with IRRIGATION_, the bot's with BOT_, the
-shared ones have none of them; an old name (or either of two) still works when the new one is unset, with one warning naming the new name (never the value). And the token: AUTH_TOKENS, or the
+"""The settings' names (docs/configuration.md): ecobot-mcp's start with MCP_, irrigation-mcp's with IRRIGATION_, the
+shared ones have neither; an old name (or either of two) still works when the new one is unset, with one warning naming the new name (never the value). And the token: AUTH_TOKENS, or the
 one ecobot-mcp generates in the data folder (lib/auth_token.py)."""
 
 import logging
@@ -28,23 +28,21 @@ IRRIGATION_ONLY = {"tuya_device_id", "tuya_client_id", "tuya_client_secret", "tu
 def test_every_setting_is_named_for_the_program_that_reads_it():
     for f in fields(Config):
         name = f.metadata.get("env")
-        if not name or name == "WEATHER_MCP_TOKEN":   # (retired)
+        if not name:
             continue
         if name in SHARED:
-            assert not name.startswith(("MCP_", "BOT_", "IRRIGATION_")), name
+            assert not name.startswith(("MCP_", "IRRIGATION_")), name
         elif f.name in IRRIGATION_ONLY:
             assert name.startswith("IRRIGATION_"), name
         elif f.name in MCP_ONLY:
             assert name.startswith("MCP_"), name
         else:
-            assert name.startswith("BOT_"), name
+            raise AssertionError(f"{name}: not named for the program that reads it")
 
 
-def bot_settings(monkeypatch, tmp_path):
-    """What both programs need to start: the bot's token and ecobot-mcp's address (the bot's), a station (ecobot-mcp's)."""
+def both_programs_settings(monkeypatch, tmp_path):
+    """What both programs need to start: a station (ecobot-mcp's) and the controller (irrigation-mcp's)."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "1:x")
-    monkeypatch.setenv("BOT_MCP_URL", "http://127.0.0.1:8765/mcp")
     monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
     monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
     monkeypatch.setenv("IRRIGATION_TUYA_DEVICE_ID", "dev")   # (irrigation-mcp's: the three it needs)
@@ -54,8 +52,8 @@ def bot_settings(monkeypatch, tmp_path):
 
 def read_by(name: str) -> dict:
     """How the program that reads a setting reads its settings: ecobot-mcp's (MCP_) by ecobot-mcp, irrigation-mcp's (IRRIGATION_) by
-    irrigation-mcp, the others by the bot."""
-    return {"program": "mcp" if name.startswith("MCP_") else "irrigation" if name.startswith("IRRIGATION_") else "bot"}
+    ecobot-mcp, the shared ones by either."""
+    return {"program": "irrigation" if name.startswith("IRRIGATION_") else "mcp"}
 
 
 OLD_AND_NEW = [("ECOWITT_API_KEY", "MCP_ECOWITT_API_KEY", "ecowitt_api_key", "k3y", "k3y"),
@@ -66,25 +64,16 @@ OLD_AND_NEW = [("ECOWITT_API_KEY", "MCP_ECOWITT_API_KEY", "ecowitt_api_key", "k3
                ("MCP_SERVICE_BIND", "MCP_BIND", "mcp_bind", "0.0.0.0:9000", ("0.0.0.0", 9000)),
                ("MCP_SERVICE_ALLOWED_HOSTS", "MCP_ALLOWED_HOSTS", "mcp_allowed_hosts", "weather.lan", ("weather.lan",)),
                ("MCP_SERVICE_TOKENS", "AUTH_TOKENS", "auth_tokens", "s3cret,other", ("s3cret", "other")),
-               ("OPENROUTER_API_KEY", "BOT_OPENROUTER_API_KEY", "openrouter_api_key", "sk-s3cret", "sk-s3cret"),
-               ("OPENROUTER_MODEL", "BOT_OPENROUTER_MODEL", "openrouter_model", "a/model", "a/model"),
-               ("ADMIN_ONLY", "BOT_ADMIN_ONLY", "admin_only", "on", True),
-               ("ADMIN_CHAT_IDS", "BOT_ADMIN_CHAT_IDS", "admin_chat_ids", "5 -9", frozenset({5, -9})),
-               ("LOG_WIDTH", "BOT_LOG_WIDTH", "log_width", "80", 80),
-               ("WEATHER_MCP_URL", "BOT_MCP_URL", "mcp_url", "http://ecobot-mcp:8765/mcp", "http://ecobot-mcp:8765/mcp"),
                ("TUYA_CLIENT_SECRET", "IRRIGATION_TUYA_CLIENT_SECRET", "tuya_client_secret", "tuya-s3cret", "tuya-s3cret"),
                ("BOT_TUYA_CLIENT_SECRET", "IRRIGATION_TUYA_CLIENT_SECRET", "tuya_client_secret", "tuya-s3cret", "tuya-s3cret"),
                ("BOT_TUYA_BASE_URL", "IRRIGATION_TUYA_BASE_URL", "tuya_base_url", "https://openapi.tuyaus.com/", "https://openapi.tuyaus.com"),
                ("TUYA_BASE_URL", "IRRIGATION_TUYA_BASE_URL", "tuya_base_url", "https://openapi.tuyaus.com", "https://openapi.tuyaus.com"),
-               ("BOT_IRRIGATION_CHECK_HOUR", "IRRIGATION_CHECK_HOUR", "irrigation_check_hour", "7", 7),
-               ("TELEGRAM_PRELOAD_CHAT", "BOT_TELEGRAM_PRELOAD_CHAT", "telegram_preload_chat", "-100", -100)]
+               ("BOT_IRRIGATION_CHECK_HOUR", "IRRIGATION_CHECK_HOUR", "irrigation_check_hour", "7", 7)]
 
 
 @pytest.mark.parametrize("old, new, attr, text, want", OLD_AND_NEW, ids=[f"{row[0]}->{row[1]}" for row in OLD_AND_NEW])
 def test_a_setting_is_read_by_its_new_name_or_its_old_one_with_a_warning(monkeypatch, tmp_path, caplog, old, new, attr, text, want):
-    bot_settings(monkeypatch, tmp_path)
-    if new == "BOT_MCP_URL":
-        monkeypatch.delenv(new)
+    both_programs_settings(monkeypatch, tmp_path)
     monkeypatch.setenv(new, text)
     caplog.clear()
     assert getattr(Config.from_env(**read_by(new)), attr) == want and "Old setting names" not in caplog.text
@@ -99,22 +88,20 @@ def test_a_setting_is_read_by_its_new_name_or_its_old_one_with_a_warning(monkeyp
 
 def test_the_old_names_are_one_warning_and_a_new_name_wins_over_its_old_one(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    for old, value in (("TELEGRAM_BOT_TOKEN", "1:s3cret"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for old, value in (("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b"), ("PLACE", "Hobart"), ("MCP_PLACE", "Perth")):
         monkeypatch.setenv(old, value)
-    monkeypatch.setenv("BOT_LOG_WIDTH", "30")
-    monkeypatch.setenv("LOG_WIDTH", "99")
-    cfg = Config.from_env(bot=False)   # (ecobot-mcp reads every name; the bot only its own and the shared ones, below)
-    assert cfg.telegram_token == "1:s3cret" and cfg.ecowitt and cfg.log_width == 30
+    cfg = Config.from_env()
+    assert cfg.ecowitt and cfg.place == "Perth"
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     renamed = [w for w in warnings if "Old setting names" in w]
-    assert len(renamed) == 1 and "TELEGRAM_BOT_TOKEN -> BOT_TELEGRAM_TOKEN" in renamed[0] and "ECOWITT_APP_KEY -> MCP_ECOWITT_APP_KEY" in renamed[0]
-    assert any("Ignoring LOG_WIDTH" in w for w in warnings) and "s3cret" not in caplog.text and "99" not in caplog.text
+    assert len(renamed) == 1 and "ECOWITT_APP_KEY -> MCP_ECOWITT_APP_KEY" in renamed[0] and "PLACE -> " not in renamed[0].replace("MCP_PLACE", "")
+    assert any("Ignoring PLACE" in w for w in warnings) and "Hobart" not in caplog.text and "Perth" not in caplog.text
 
 
 def test_of_two_old_names_the_newer_is_read_and_the_older_named_as_ignored(monkeypatch, tmp_path, caplog):
     """IRRIGATION_TUYA_CLIENT_SECRET was BOT_TUYA_CLIENT_SECRET, and before that TUYA_CLIENT_SECRET: either is still read, the newer
     when both are set; each set beside a newer one is named as ignored (never their values)."""
-    bot_settings(monkeypatch, tmp_path)
+    both_programs_settings(monkeypatch, tmp_path)
     monkeypatch.delenv("IRRIGATION_TUYA_CLIENT_SECRET")
     monkeypatch.setenv("TUYA_CLIENT_SECRET", "oldest-s3cret")
     monkeypatch.setenv("BOT_TUYA_CLIENT_SECRET", "older-s3cret")
@@ -132,8 +119,7 @@ def test_of_two_old_names_the_newer_is_read_and_the_older_named_as_ignored(monke
 def test_irrigation_mcp_reads_only_its_own_settings_and_the_shared_ones_and_cannot_start_without_the_controller(monkeypatch, tmp_path,
                                                                                                                 caplog):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    for name, value in (("BOT_TELEGRAM_TOKEN", "1:x"), ("BOT_MCP_URL", "http://x/mcp"), ("MCP_PLACE", "Hobart"), ("MCP_BIND", "0.0.0.0:9"),
-                        ("WEATHER_MCP_TOKEN", "r3tired"), ("AUTH_TOKENS", "s3cret"), ("LOG_LEVEL", "debug"),
+    for name, value in (("MCP_PLACE", "Hobart"), ("MCP_BIND", "0.0.0.0:9"), ("AUTH_TOKENS", "s3cret"), ("LOG_LEVEL", "debug"),
                         ("IRRIGATION_TUYA_DEVICE_ID", "dev")):
         monkeypatch.setenv(name, value)
     with pytest.raises(SystemExit, match="irrigation-mcp needs the irrigation controller's Tuya settings") as stopped:
@@ -150,7 +136,7 @@ def test_irrigation_mcp_reads_only_its_own_settings_and_the_shared_ones_and_cann
     assert cfg.irrigation_ecobot_mcp_url == "http://ecobot-mcp:8765/mcp" and cfg.irrigation_check_hour == 18
     assert cfg.auth_tokens == ("s3cret",) and cfg.log_level == "DEBUG"                     # the shared ones
     for f in fields(Config):
-        if f.metadata.get("env", "").startswith(("MCP_", "BOT_")) or f.metadata.get("env") == "WEATHER_MCP_TOKEN":
+        if f.metadata.get("env", "").startswith("MCP_"):
             assert getattr(cfg, f.name) == f.default, f.name                              # the others': left at their defaults
     assert cfg.irrigation_state_path == tmp_path / "irrigation_state.json"
     assert cfg.irrigation_alert_log_path == tmp_path / "irrigation_alerts.sqlite"

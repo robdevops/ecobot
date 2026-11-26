@@ -39,10 +39,10 @@ def quick_shutdown(monkeypatch):
 # ---------- ecobot-mcp (python -m ecobot_mcp): the sources, their archives, the alert rules ----------
 def ecobot_mcp_settings(tmp_path, monkeypatch, history_days=10, **over) -> Config:
     """ecobot-mcp's settings (the fake station and air sensor, a free port), its sources' fakes plugged in, the archives unpaced."""
-    cfg = config(tmp_path, telegram_token="", auth_tokens=(TOKEN,), mcp_bind=("127.0.0.1", free_port()), **over)
+    cfg = config(tmp_path, auth_tokens=(TOKEN,), mcp_bind=("127.0.0.1", free_port()), **over)
     eco_t, _ = ecowitt_transport(history_days=history_days)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
-    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, bot=True: cfg))
+    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, program="mcp": cfg))
     for cls, transport in ((core.Ecowitt, eco_t), (core.AirGradient, air_t)):
         monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(archive, "PACE_SECONDS", 0)
@@ -223,21 +223,18 @@ def test_the_time_zone_without_a_station_is_tz_else_the_one_etc_localtime_links_
 
 def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatch):
     from lib.config import Config
-    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "t")
-    monkeypatch.setenv("BOT_OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
     monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("MCP_ALERT_COOLDOWN_MINUTES", raising=False)
-    assert Config.from_env(bot=False).alert_cooldown_minutes == 60   # (ecobot-mcp's: the alert rules are its)
+    assert Config.from_env().alert_cooldown_minutes == 60   # (ecobot-mcp's: the alert rules are its)
     for value, want in (("45", 45), ("1", 5), ("0", 5), ("-3", 5), ("999", 150), ("junk", 60)):   # 0 is under 5 like 1 is
         monkeypatch.setenv("MCP_ALERT_COOLDOWN_MINUTES", value)
-        assert Config.from_env(bot=False).alert_cooldown_minutes == want, value
+        assert Config.from_env().alert_cooldown_minutes == want, value
 
 
 def test_the_log_level_is_a_setting_and_a_typo_keeps_info_with_a_warning(monkeypatch, caplog):
     from lib.config import Config
-    for k, v in (("BOT_TELEGRAM_TOKEN", "t"), ("BOT_OPENROUTER_API_KEY", "k"), ("BOT_MCP_URL", "http://127.0.0.1:8765/mcp"),
-                 ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
+    for k, v in (("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
     assert Config.from_env().log_level == "INFO"
@@ -250,23 +247,21 @@ def test_the_log_level_is_a_setting_and_a_typo_keeps_info_with_a_warning(monkeyp
 
 def test_a_blank_setting_means_its_default_and_a_missing_key_says_which(monkeypatch, caplog):
     from lib.config import Config
-    for k, v in (("BOT_TELEGRAM_TOKEN", " t "), ("BOT_OPENROUTER_API_KEY", "k"), ("BOT_MCP_URL", "http://127.0.0.1:8765/mcp"),
-                 ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
+    for k, v in (("MCP_ECOWITT_API_KEY", " a "), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
-    for k in ("BOT_OPENROUTER_MODEL", "BOT_OPENROUTER_BASE_URL", "PLACE", "MCP_POLLEN_DISTRICT", "IRRIGATION_TUYA_BASE_URL"):
+    for k in ("PLACE", "MCP_POLLEN_DISTRICT", "IRRIGATION_TUYA_BASE_URL"):
         monkeypatch.setenv(k, "  ")
     monkeypatch.setenv("POLLEN", "enabled")
-    cfg, service = Config.from_env(), Config.from_env(bot=False)   # (the bot's settings; ecobot-mcp's)
+    service = Config.from_env()   # (ecobot-mcp's)
     for k, v in (("IRRIGATION_TUYA_DEVICE_ID", "d"), ("IRRIGATION_TUYA_CLIENT_ID", "c"), ("IRRIGATION_TUYA_CLIENT_SECRET", "s")):
         monkeypatch.setenv(k, v)
     irrigation = Config.from_env(program="irrigation")   # (irrigation-mcp's)
-    assert (cfg.telegram_token, cfg.openrouter_model, cfg.openrouter_base_url, service.place, service.pollen_district, irrigation.tuya_base_url) == (
-        "t", "deepseek/deepseek-v4.1-flash-1017", "https://openrouter.ai/api/v1", "Melbourne", "Central", "https://openapi.tuyaeu.com")
+    assert (service.ecowitt_api_key, service.place, service.pollen_district, irrigation.tuya_base_url) == (
+        "a", "Melbourne", "Central", "https://openapi.tuyaeu.com")
     assert service.pollen is False and "POLLEN: 'enabled' is not on or off; keeping the default (off)" in caplog.text
-    monkeypatch.setenv("BOT_OPENROUTER_API_KEY", " ")
-    assert Config.from_env().openrouter_api_key == ""            # no model is allowed: the bot then answers only what it works out itself
-    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", " ")
-    with pytest.raises(SystemExit, match="BOT_TELEGRAM_TOKEN is not set"):
+    for k in ("MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY"):
+        monkeypatch.setenv(k, " ")
+    with pytest.raises(SystemExit, match="Set MCP_ECOWITT_API_KEY"):   # (no source: it says which settings make one)
         Config.from_env()
 
 
@@ -284,9 +279,9 @@ def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_
     monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
     monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("MCP_CHART_ALL_FEELS_LIKE", raising=False)
-    assert Config.from_env(bot=False).chart_all_feels_like is False   # (ecobot-mcp's: it draws the charts)
+    assert Config.from_env().chart_all_feels_like is False   # (ecobot-mcp's: it draws the charts)
     monkeypatch.setenv("MCP_CHART_ALL_FEELS_LIKE", "on")
-    assert Config.from_env(bot=False).chart_all_feels_like is True
+    assert Config.from_env().chart_all_feels_like is True
 
 
 def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
@@ -295,9 +290,9 @@ def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monk
                  ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("MCP_CHART_ALL_VPD", raising=False)
-    assert Config.from_env(bot=False).chart_all_vpd is False
+    assert Config.from_env().chart_all_vpd is False
     monkeypatch.setenv("MCP_CHART_ALL_VPD", "on")
-    assert Config.from_env(bot=False).chart_all_vpd is True
+    assert Config.from_env().chart_all_vpd is True
 
 
 def test_only_the_lines_that_are_not_ordinary_are_marked_with_their_level():

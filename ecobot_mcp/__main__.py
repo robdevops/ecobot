@@ -3,7 +3,7 @@
 the alert log, and the MCP server (lib/mcp_server.py) at http://MCP_BIND/mcp, Streamable HTTP under uvicorn: put it behind TLS (a
 reverse proxy such as Caddy) to reach it from elsewhere.
 
-Settings come from the environment (lib/config.py, docs/configuration.md): the MCP_ ones and the shared ones; the bot's (BOT_) are not
+Settings come from the environment (lib/config.py, docs/configuration.md): the MCP_ ones and the shared ones; irrigation-mcp's (IRRIGATION_) are not
 needed. Among them MCP_BIND (host:port, default 127.0.0.1:8765), MCP_ALLOWED_HOSTS (the Host names it answers, default 127.0.0.1 and
 localhost) and AUTH_TOKENS (token,token,..., one per client). Every request needs one of the tokens: with AUTH_TOKENS unset, the one
 it generates at its first start and keeps in the data folder (lib/auth_token.py)."""
@@ -38,7 +38,7 @@ def generated_token(cfg: Config) -> str:
 async def main():
     from lib.mcp_server import EcobotServer, http_app
     log.info("Starting ecobot-mcp %s", version())
-    cfg = Config.from_env(bot=False)
+    cfg = Config.from_env()
     for name in ("ecobot", "lib"):
         logging.getLogger(name).setLevel(cfg.log_level)
     host, port = cfg.mcp_bind

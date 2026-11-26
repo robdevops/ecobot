@@ -109,7 +109,7 @@ async def test_status_points_with_no_value_or_no_code_are_read_safely(tmp_path):
 
 def test_the_controller_is_on_only_with_all_three_settings_and_the_hour_is_read_safely_by_irrigation_mcp_alone(monkeypatch, tmp_path):
     assert cfg(tmp_path).irrigation and not config(tmp_path).irrigation and not config(tmp_path, tuya_device_id="d", tuya_client_id="c").irrigation
-    env = {"BOT_TELEGRAM_TOKEN": "t", "BOT_OPENROUTER_API_KEY": "k", "BOT_MCP_URL": "http://127.0.0.1:8765/mcp",
+    env = {"MCP_ECOWITT_API_KEY": "a", "MCP_ECOWITT_APP_KEY": "b",
            "IRRIGATION_TUYA_DEVICE_ID": " dev ", "IRRIGATION_TUYA_CLIENT_ID": "cid", "IRRIGATION_TUYA_CLIENT_SECRET": "sec"}
     for k, v in env.items():
         monkeypatch.setenv(k, v)
@@ -119,8 +119,8 @@ def test_the_controller_is_on_only_with_all_three_settings_and_the_hour_is_read_
     monkeypatch.setenv("IRRIGATION_TUYA_BASE_URL", "https://openapi.tuyaus.com/")
     irrigation = Config.from_env(program="irrigation")
     assert irrigation.tuya_base_url == "https://openapi.tuyaus.com" and irrigation.tuya_device_id == "dev" and irrigation.irrigation
-    bot = Config.from_env()                                                              # the bot reads none of them (step 8b)
-    assert not bot.irrigation and bot.tuya_device_id == "" and bot.irrigation_mcp_url == ""
+    service = Config.from_env()                                                          # ecobot-mcp reads none of them
+    assert not service.irrigation and service.tuya_device_id == ""
 
 
 # ---------- the daily check ----------

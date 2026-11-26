@@ -70,24 +70,12 @@ def _animations(value: str, default: str, name: str) -> str:
     return default
 
 
-def _required(value: str, default: str, name: str) -> str:
-    """A setting the bot can't run without; it stops with a message naming it when it is unset or blank."""
-    if value:
-        return value
-    raise SystemExit(f"{name} is not set: the bot can't start without it (see docs/configuration.md)")
-
-
-REQUIRED_BY_BOT = ("telegram_token",)   # read only by the bot: ecobot-mcp (python -m ecobot_mcp) runs without them
 REQUIRED_BY_IRRIGATION = ("tuya_device_id", "tuya_client_id", "tuya_client_secret")   # irrigation-mcp (python -m irrigation_mcp) can't run without them
-MCP_PREFIX = "MCP_"   # ecobot-mcp's own settings: the bot doesn't read them (they keep their defaults in its Config)
-BOT_PREFIX = "BOT_"   # the bot's own
+MCP_PREFIX = "MCP_"   # ecobot-mcp's own settings: irrigation-mcp doesn't read them (they keep their defaults in its Config)
 IRRIGATION_PREFIX = "IRRIGATION_"   # irrigation-mcp's own
-PROGRAMS = ("bot", "mcp", "irrigation")
+PROGRAMS = ("mcp", "irrigation")
 NO_TUYA = ("irrigation-mcp needs the irrigation controller's Tuya settings: set IRRIGATION_TUYA_DEVICE_ID, IRRIGATION_TUYA_CLIENT_ID "
            "and IRRIGATION_TUYA_CLIENT_SECRET (docs/configuration.md); {missing} not set")
-NO_SERVICE = ("BOT_MCP_URL is not set: the bot is a client of ecobot-mcp and can't start without it. Run ecobot-mcp (python -m "
-              "ecobot_mcp, the ecobot-mcp.service unit, or the ecobot-mcp container) and set BOT_MCP_URL to its endpoint, e.g. "
-              "http://127.0.0.1:8765/mcp (docs/configuration.md)")
 
 
 def _tokens(value: str, default: tuple, name: str) -> tuple[str, ...]:
@@ -178,24 +166,6 @@ def _hours(value: str, default: tuple[int, int] | None, name: str) -> tuple[int,
     return (start, end) if 0 <= start <= 23 and 0 <= end <= 24 and start != end else default
 
 
-def _ids(value: str, default: frozenset[int], name: str) -> frozenset[int]:
-    """"123, -1001 456" -> {123, -1001, 456}. An entry that is not a whole number is ignored (and logged): it must not stop the bot."""
-    found, bad = set(), []
-    for part in filter(None, re.split(r"[,\s]+", value)):
-        try:
-            found.add(int(part))
-        except ValueError:
-            bad.append(part)
-    if bad:
-        log.warning("%s: ignoring %s (not whole numbers)", name, ", ".join(map(repr, bad)))
-    return frozenset(found) or default
-
-
-def _whole(value: str, default: int, name: str) -> int:
-    """"100" -> 100, "0" -> 0; anything but a whole number of 0 or more -> the default."""
-    return int(value) if value.isdecimal() else default
-
-
 def _between(low: int, high: int, clamp: bool = True):
     """A reader of a whole number from `low` to `high`; one outside is kept to them when `clamp` ("0" is `low`, like any number under it),
     else it is the default, as anything unreadable is."""
@@ -215,17 +185,6 @@ def _readings_in_a_row(value: str, default: int, name: str) -> int:
     if value.lower() in ("off", "no", "false", "none"):
         return 1
     return max(1, int(value)) if value.isdecimal() else default
-
-
-def _chat_id(value: str, default: int | None, name: str) -> int | None:
-    """A Telegram chat id (negative for a group or channel); None, with a warning, when it is not a whole number."""
-    if not value:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        log.warning("%s: ignoring %r (not a chat id, a whole number)", name, value)
-        return None
 
 
 def _number(value: str, default: float | None = None, name: str = "") -> float | None:
@@ -302,15 +261,12 @@ def env(name: str) -> str:
     return os.getenv(name, "").strip()
 
 
-RETIRED_TOKEN = "WEATHER_MCP_TOKEN"   # the bot's token before AUTH_TOKENS: still sent when AUTH_TOKENS is unset, with a warning
-
-
 @dataclass(frozen=True)
 class Config:
     tz: tzinfo
     state_path: Path
     storage_path: Path                                             # the one file of readings, the pollen page and the forecast (lib/storage)
-    # ecobot-mcp's (python -m ecobot_mcp): the sources, the alert rules and the MCP server. The bot doesn't read them
+    # ecobot-mcp's (python -m ecobot_mcp): the sources, the alert rules and the MCP server. irrigation-mcp doesn't read them
     ecowitt_api_key: str = _setting("MCP_ECOWITT_API_KEY", "", old="ECOWITT_API_KEY")
     ecowitt_app_key: str = _setting("MCP_ECOWITT_APP_KEY", "", old="ECOWITT_APP_KEY")
     ecowitt_source: str = _setting("MCP_ECOWITT_SOURCE", "auto", _source, old="ECOWITT_SOURCE")   # auto: Home Assistant if set, Ecowitt's cloud as its fallback if set too; cloud: the cloud only; homeassistant: Home Assistant only
@@ -336,23 +292,11 @@ class Config:
     mcp_allowed_hosts: tuple[str, ...] = _setting("MCP_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names, old="MCP_SERVICE_ALLOWED_HOSTS")   # the Host names it answers (any port, unless one is given)
     mcp_dashboard: bool = _setting("MCP_DASHBOARD", True, _flag)    # the gauges' live web page at /dashboard beside /mcp: read-only, no token, any Host (off: 404)
     mcp_dashboard_animations: str = _setting("MCP_DASHBOARD_ANIMATIONS", "on", _animations)   # on: everything animated, the weather drawn behind the gauges; low: no weather, the zoom at once (the gauges and tiles moving); off: no weather, nothing animated
-    mcp_dashboard_indoor: bool = _setting("MCP_DASHBOARD_INDOOR", True, _flag)   # off: the page leaves out the indoor tiles, drawn nor sent (privacy); the bot, tools, Status picture and alerts unchanged
+    mcp_dashboard_indoor: bool = _setting("MCP_DASHBOARD_INDOOR", True, _flag)   # off: the page leaves out the indoor tiles, drawn nor sent (privacy); the tools and alerts unchanged
     mcp_chart_base_url: str = _setting("MCP_CHART_BASE_URL", "", _url)   # where people's browsers reach the chart links' pictures (/charts beside /mcp, e.g. through a proxy: https://example.org/ecobot-charts); unset: the MCP request's own address with /charts
     mcp_chart_link_hours: int = _setting("MCP_CHART_LINK_HOURS", 24, _between(1, 720))   # how long a chart link's picture is kept (in memory: a restart forgets them)
-    # The bot's (ecobot.py)
-    telegram_token: str = _setting("BOT_TELEGRAM_TOKEN", "", old="TELEGRAM_BOT_TOKEN")                       # (REQUIRED_BY_BOT: it stops without it)
-    telegram_preload_chat: int | None = _setting("BOT_TELEGRAM_PRELOAD_CHAT", None, _chat_id, old="TELEGRAM_PRELOAD_CHAT")   # a chat the other periods of each chart are silently uploaded to ahead of the press (none: off)
-    openrouter_api_key: str = _setting("BOT_OPENROUTER_API_KEY", "", old="OPENROUTER_API_KEY")                   # unset: the bot runs without the model, answering only what it works out in code
-    openrouter_base_url: str = _setting("BOT_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1", old="OPENROUTER_BASE_URL")
-    openrouter_model: str = _setting("BOT_OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017", old="OPENROUTER_MODEL")
-    admin_only: bool = _setting("BOT_ADMIN_ONLY", False, _flag, old="ADMIN_ONLY")         # on: the bot answers nobody but the admins of the groups it is in (and BOT_ADMIN_CHAT_IDS)
-    admin_chat_ids: frozenset[int] = _setting("BOT_ADMIN_CHAT_IDS", frozenset(), _ids, old="ADMIN_CHAT_IDS")   # more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
-    log_width: int = _setting("BOT_LOG_WIDTH", 24, _whole, old="LOG_WIDTH")             # the most characters of a chat message kept in the log, then an ellipsis (…); 0 keeps all
-    mcp_url: str = _setting("BOT_MCP_URL", "", _url, old="WEATHER_MCP_URL")    # ecobot-mcp's endpoint, e.g. http://127.0.0.1:8765/mcp (the bot is its client, and stops without it: NO_SERVICE)
-    retired_mcp_token: str = _setting(RETIRED_TOKEN, "")            # retired: sent only when AUTH_TOKENS is unset (ecobot.mcp_token)
-    irrigation_mcp_url: str = _setting("BOT_IRRIGATION_MCP_URL", "", _url)   # irrigation-mcp's endpoint, e.g. http://127.0.0.1:8766/mcp (unset: no irrigation in the bot)
-    # irrigation-mcp's (python -m irrigation_mcp): the irrigation controller, its watchdog and daily check, and its MCP server. The bot
-    # reads none of them: it is irrigation-mcp's client (BOT_IRRIGATION_MCP_URL)
+    # irrigation-mcp's (python -m irrigation_mcp): the irrigation controller, its watchdog and daily check, and its MCP server.
+    # ecobot-mcp reads none of them
     tuya_device_id: str = _setting("IRRIGATION_TUYA_DEVICE_ID", "", old=("BOT_TUYA_DEVICE_ID", "TUYA_DEVICE_ID"))   # all three switch the irrigation controller on (irrigation-mcp stops without them)
     tuya_client_id: str = _setting("IRRIGATION_TUYA_CLIENT_ID", "", old=("BOT_TUYA_CLIENT_ID", "TUYA_CLIENT_ID"))
     tuya_client_secret: str = _setting("IRRIGATION_TUYA_CLIENT_SECRET", "", old=("BOT_TUYA_CLIENT_SECRET", "TUYA_CLIENT_SECRET"))
@@ -361,24 +305,24 @@ class Config:
     irrigation_bind: tuple[str, int] = _setting("IRRIGATION_BIND", ("127.0.0.1", 8766), _bind)   # host:port irrigation-mcp listens on
     irrigation_allowed_hosts: tuple[str, ...] = _setting("IRRIGATION_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names)   # the Host names it answers (any port, unless one is given)
     irrigation_ecobot_mcp_url: str = _setting("IRRIGATION_ECOBOT_MCP_URL", "http://127.0.0.1:8765/mcp", _url)   # ecobot-mcp, which its daily check asks for the rain and the forecast
-    # Every program reads them
+    # Both programs read them
     dark_mode: str | tuple[int, int] = _setting("DARKMODE", "off", _dark_mode)   # off: light charts; on: dark; "8pm-8am" (or 20:00-8:00, 20-8): dark those hours in the station's time zone
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the program's own debug lines; the libraries keep theirs
-    auth_tokens: tuple[str, ...] = _setting("AUTH_TOKENS", (), _tokens, old="MCP_SERVICE_TOKENS")   # "token,token,...": ecobot-mcp accepts each, the bot sends the first; unset: the one ecobot-mcp generates in the data folder (lib/auth_token.py)
+    auth_tokens: tuple[str, ...] = _setting("AUTH_TOKENS", (), _tokens, old="MCP_SERVICE_TOKENS")   # "token,token,...": ecobot-mcp accepts each, a client sends one; unset: the one ecobot-mcp generates in the data folder (lib/auth_token.py)
 
     @property
     def alert_state_path(self) -> Path:
-        """The alert rules' own state (lib/alerts/store.py), beside the bot's."""
+        """The alert rules' own state (lib/alerts/store.py), beside the state file."""
         return self.state_path.parent / "alert_state.json"
 
     @property
     def alert_log_path(self) -> Path:
-        """The alert log (lib/alert_log.py), beside the bot's state."""
+        """The alert log (lib/alert_log.py), beside the state file."""
         return self.state_path.parent / "alerts.sqlite"
 
     @property
     def irrigation_state_path(self) -> Path:
-        """irrigation-mcp's state (the watchdog's run, the daily check's days: lib/irrigation/state.py), beside the bot's."""
+        """irrigation-mcp's state (the watchdog's run, the daily check's days: lib/irrigation/state.py), beside the state file."""
         return self.state_path.parent / "irrigation_state.json"
 
     @property
@@ -432,22 +376,18 @@ class Config:
 
     @staticmethod
     def reads(program: str, name: str) -> bool:
-        """Whether `program` (PROGRAMS) reads the setting `name`: the bot its own (BOT_) and the shared ones; ecobot-mcp every one but
-        irrigation-mcp's; irrigation-mcp its own and the shared ones (not the bot's retired token)."""
-        if program == "bot":
-            return not name.startswith((MCP_PREFIX, IRRIGATION_PREFIX))
+        """Whether `program` (PROGRAMS) reads the setting `name`: ecobot-mcp every one but irrigation-mcp's; irrigation-mcp its own and the
+        shared ones (not ecobot-mcp's)."""
         if program == "irrigation":
-            return name.startswith(IRRIGATION_PREFIX) or not name.startswith((MCP_PREFIX, BOT_PREFIX)) and name != RETIRED_TOKEN
+            return name.startswith(IRRIGATION_PREFIX) or not name.startswith(MCP_PREFIX)
         return not name.startswith(IRRIGATION_PREFIX)
 
     @classmethod
-    def from_env(cls, bot: bool = True, program: str | None = None) -> "Config":
+    def from_env(cls, program: str = "mcp") -> "Config":
         """Every setting from its variable, the files in the data folder. Stops, saying why, when one the program can't run without is
-        missing or the folder can't be written. program: "bot" (the default), "mcp" for ecobot-mcp (python -m ecobot_mcp; bot=False
-        says the same), which has no Telegram token, or "irrigation" for irrigation-mcp (python -m irrigation_mcp). Each reads only the
-        settings it uses (Config.reads), the others keeping their defaults. Old names still read are named in one warning (never their
-        values)."""
-        program = program or ("bot" if bot else "mcp")
+        missing or the folder can't be written. program: "mcp" for ecobot-mcp (python -m ecobot_mcp, the default) or "irrigation" for
+        irrigation-mcp (python -m irrigation_mcp). Each reads only the settings it uses (Config.reads), the others keeping their
+        defaults. Old names still read are named in one warning (never their values)."""
         if program not in PROGRAMS:
             raise ValueError(f"no program {program!r}: {', '.join(PROGRAMS)}")
         data = data_dir()
@@ -467,13 +407,6 @@ class Config:
         if program == "irrigation":
             if missing := [f.metadata["env"] for f in fields(cls) if f.name in REQUIRED_BY_IRRIGATION and not getattr(cfg, f.name)]:
                 raise SystemExit(NO_TUYA.format(missing=", ".join(missing)))
-            return cfg
-        if program == "bot":
-            for f in fields(cls):
-                if f.name in REQUIRED_BY_BOT:
-                    _required(getattr(cfg, f.name), f.default, f.metadata["env"])
-            if not cfg.mcp_url:
-                raise SystemExit(NO_SERVICE)
             return cfg
         if not (cfg.ecowitt or cfg.airgradient):
             raise SystemExit("Set MCP_ECOWITT_API_KEY + MCP_ECOWITT_APP_KEY and/or MCP_HOMEASSISTANT_URL + MCP_HOMEASSISTANT_TOKEN and/or "

@@ -115,7 +115,7 @@ async def main():
         storage = Storage(folder / FILE, tz)
         macs = sorted({s.device for s in storage.sensors.all() if s.kind != "air"})
         air_sensors = storage.sensors.all(kind="air")
-        cfg = Config(telegram_token="", openrouter_api_key="", openrouter_base_url="", openrouter_model="", tz=tz, ecowitt_api_key="offline",
+        cfg = Config(tz=tz, ecowitt_api_key="offline",
                      ecowitt_app_key="offline", airgradient_token="offline", airgradient_location=air_sensors[0].device if air_sensors else "offline",
                      airgradient_dashboard="", state_path=folder / "state.json", storage_path=folder / FILE)
         eco = air = None

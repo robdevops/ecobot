@@ -162,11 +162,11 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
     from tests.fakes import air_transport, config, ecowitt_transport
     caplog.set_level("INFO")
     port = free_port()
-    cfg = config(tmp_path, telegram_token="", auth_tokens=("pr0xy",), mcp_bind=("127.0.0.1", port),
+    cfg = config(tmp_path, auth_tokens=("pr0xy",), mcp_bind=("127.0.0.1", port),
                  mcp_allowed_hosts=("weather.lan",))
     eco_t, _ = ecowitt_transport(history_days=10)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
-    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, bot=True: cfg))
+    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, program="mcp": cfg))
     for cls, transport in ((core.Ecowitt, eco_t), (core.AirGradient, air_t)):
         monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(archive, "PACE_SECONDS", 0)

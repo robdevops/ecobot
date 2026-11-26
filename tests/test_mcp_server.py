@@ -321,27 +321,25 @@ def test_the_allowed_hosts_take_any_port_unless_one_is_named():
     assert "https://weather.lan:443" in settings.allowed_origins and "http://127.0.0.1:*" in settings.allowed_origins
 
 
-def test_the_service_reads_its_settings_and_needs_no_telegram_token(monkeypatch, tmp_path, caplog):
+def test_the_service_reads_its_settings_and_needs_no_other_program_s_settings(monkeypatch, tmp_path, caplog):
     from lib.config import Config
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    for key, value in {"MCP_ECOWITT_API_KEY": "a", "MCP_ECOWITT_APP_KEY": "b", "BOT_TELEGRAM_TOKEN": ""}.items():
+    for key, value in {"MCP_ECOWITT_API_KEY": "a", "MCP_ECOWITT_APP_KEY": "b"}.items():
         monkeypatch.setenv(key, value)
     for key in ("AUTH_TOKENS", "MCP_BIND", "MCP_ALLOWED_HOSTS"):
         monkeypatch.delenv(key, raising=False)
-    with pytest.raises(SystemExit, match="BOT_TELEGRAM_TOKEN is not set"):
-        Config.from_env()                                                   # the bot can't start without it ...
-    cfg = Config.from_env(bot=False)                                        # ... the service can
+    cfg = Config.from_env()                                        # (no irrigation controller needed)
     assert cfg.auth_tokens == () and cfg.mcp_bind == ("127.0.0.1", 8765) and cfg.mcp_allowed_hosts == ("127.0.0.1", "localhost")
     monkeypatch.setenv("AUTH_TOKENS", " s3cret , t0k:en,, s3cret")
     monkeypatch.setenv("MCP_BIND", "0.0.0.0:9000")
     monkeypatch.setenv("MCP_ALLOWED_HOSTS", "weather.lan, 192.168.1.5:9000")
-    cfg = Config.from_env(bot=False)
+    cfg = Config.from_env()
     assert cfg.auth_tokens == ("s3cret", "t0k:en") and "s3cret" not in caplog.text
     assert cfg.mcp_bind == ("0.0.0.0", 9000) and cfg.mcp_allowed_hosts == ("weather.lan", "192.168.1.5:9000")
     for value, want in (("[::1]:8800", ("::1", 8800)), ("9001", ("127.0.0.1", 9001)), ("host:port", ("127.0.0.1", 8765)),
                         ("h:70000", ("127.0.0.1", 8765))):
         monkeypatch.setenv("MCP_BIND", value)
-        assert Config.from_env(bot=False).mcp_bind == want, value
+        assert Config.from_env().mcp_bind == want, value
 
 
 def test_one_service_per_data_folder(tmp_path):

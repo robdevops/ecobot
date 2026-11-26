@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Rename the settings in an environment file (/etc/ecobot.env) to their new names (docs/configuration.md, "Renamed settings"):
-ecobot-mcp's are MCP_..., irrigation-mcp's IRRIGATION_..., the bot's BOT_..., the shared ones unprefixed. Values, comments, blank lines and order are kept.
+ecobot-mcp's are MCP_..., irrigation-mcp's IRRIGATION_..., the shared ones unprefixed. Values, comments, blank lines and order are kept.
 
     sudo python3 scripts/migrate_env.py /etc/ecobot.env            # show what would change (secrets masked); changes nothing
     sudo python3 scripts/migrate_env.py /etc/ecobot.env --write    # change it, after a backup beside it (same owner and mode)
@@ -11,13 +11,11 @@ alone. It stops, changing nothing, where it can't tell what you meant: an old an
 TUYA_DEVICE_ID and BOT_TUYA_DEVICE_ID, both IRRIGATION_TUYA_DEVICE_ID's) both set to different values.
 
 Beyond the plain renames:
-  - the bot's retired token, WEATHER_MCP_TOKEN, goes into AUTH_TOKENS (the shared list, was MCP_SERVICE_TOKENS) as its first token,
-    the one the bot sends; dropped if it is already there;
-  - the old container's name, ecobot-service, in a URL or an allowed host becomes ecobot-mcp's;
-  - with the irrigation controller's device id set (any of its names) and no BOT_IRRIGATION_MCP_URL, that is added after the
-    controller's settings, as http://127.0.0.1:8766/mcp (systemd: irrigation-mcp on this machine), or http://irrigation-mcp:8766/mcp in
-    a Docker install's file (one whose URL or allowed host names ecobot-mcp's container, ecobot-mcp or ecobot-service): the controller
-    is irrigation-mcp's now, and the bot its client.
+  - the retired token, WEATHER_MCP_TOKEN, goes into AUTH_TOKENS (the shared list, was MCP_SERVICE_TOKENS) as its first token; dropped
+    if it is already there;
+  - the old container's name, ecobot-service, in an allowed host or ecobot-mcp's URL becomes ecobot-mcp's;
+  - the settings of the Telegram bot, which is gone (BOT_..., TELEGRAM_..., OPENROUTER_..., ADMIN_ONLY, ADMIN_CHAT_IDS, LOG_WIDTH,
+    WEATHER_MCP_URL), are removed, each with a note: nothing reads them. (The backup keeps them.)
 """
 
 import argparse
@@ -33,11 +31,8 @@ from pathlib import Path
 CONFIG = Path(__file__).resolve().parent.parent / "lib" / "config.py"
 RETIRED_TOKEN, TOKENS = "WEATHER_MCP_TOKEN", "AUTH_TOKENS"
 OLD_HOST, NEW_HOST = "ecobot-service", "ecobot-mcp"
-IRRIGATION_URL, IRRIGATION_AT = "BOT_IRRIGATION_MCP_URL", "http://127.0.0.1:8766/mcp"   # the bot's way to irrigation-mcp (systemd)
-IRRIGATION_IN_DOCKER = "http://irrigation-mcp:8766/mcp"                                   # ... and in Docker (compose's service name)
-TUYA = re.compile(r"^(?:IRRIGATION_|BOT_)?TUYA_")   # the controller's settings, by any of their names
-DEVICE = re.compile(r"^(?:IRRIGATION_|BOT_)?TUYA_DEVICE_ID$")   # ... its device id: without it there is no controller
-CONTAINER = re.compile(r"(?:^|[/,\s@])(?:ecobot-mcp|ecobot-service)(?:[:/,\s]|$)")   # ecobot-mcp's container named: a Docker install
+GONE = re.compile(r"BOT_.*|TELEGRAM_BOT_TOKEN|TELEGRAM_PRELOAD_CHAT|OPENROUTER_(?:API_KEY|BASE_URL|MODEL)|ADMIN_ONLY|ADMIN_CHAT_IDS|LOG_WIDTH"
+                  r"|WEATHER_MCP_URL")   # the Telegram bot's settings (a BOT_ one that was renamed, such as BOT_TUYA_*, is renamed first)
 SECRET = re.compile(r"TOKEN|KEY|SECRET|PASSWORD")
 LINE = re.compile(r"^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*?)\s*$")
 
@@ -84,6 +79,9 @@ def migrate(lines: list[str], names: dict[str, str]) -> tuple[list[str], list[st
             out.append(line)
             continue
         lead, key, eq, raw = m.groups()
+        if key not in names and GONE.fullmatch(key):
+            notes.append(f"{key} removed: the Telegram bot is gone and nothing reads it")
+            continue
         value, quote = unquoted(raw)
         end = "\n" if line.endswith("\n") else ""
         if key == RETIRED_TOKEN:
@@ -91,7 +89,7 @@ def migrate(lines: list[str], names: dict[str, str]) -> tuple[list[str], list[st
                 out.append(f"{lead}{TOKENS}{eq}{raw}{end}")
                 notes.append(f"{RETIRED_TOKEN} -> {TOKENS}")
             else:
-                notes.append(f"{RETIRED_TOKEN} removed: its token is the first of {TOKENS}, the one the bot sends")
+                notes.append(f"{RETIRED_TOKEN} removed: its token is the first of {TOKENS}")
             continue
         new = names.get(key)
         if new and (new in values or new in written):   # (the new one is there already, with the same value: the old line goes)
@@ -106,24 +104,11 @@ def migrate(lines: list[str], names: dict[str, str]) -> tuple[list[str], list[st
             listed = [t.strip() for t in value.split(",") if t.strip()]
             value = ",".join([token, *[t for t in listed if t != token]])
             if listed[:1] != [token]:
-                notes.append(f"{TOKENS}: {RETIRED_TOKEN}'s token put first, the one the bot sends")
-        if OLD_HOST in value and name in ("BOT_MCP_URL", "MCP_ALLOWED_HOSTS"):
+                notes.append(f"{TOKENS}: {RETIRED_TOKEN}'s token put first")
+        if OLD_HOST in value and name in ("IRRIGATION_ECOBOT_MCP_URL", "MCP_ALLOWED_HOSTS"):
             value = value.replace(OLD_HOST, NEW_HOST)
             notes.append(f"{name}: {OLD_HOST} -> {NEW_HOST} (the container's new name)")
         out.append(f"{lead}{name}{eq}{quote}{value}{quote}{end}")
-    settings = [(i, m.group(2), unquoted(m.group(4))[0]) for i, line in enumerate(out) if (m := LINE.match(line.rstrip("\n")))]
-    tuya = [i for i, name, value in settings if TUYA.match(name) and value]
-    if any(DEVICE.match(name) and value for _, name, value in settings) and IRRIGATION_URL not in values:
-        docker = any(CONTAINER.search(value) for _, name, value in settings if name.endswith(("_URL", "_HOSTS")))
-        at = tuya[-1] + 1
-        if not out[at - 1].endswith("\n"):
-            out[at - 1] += "\n"
-        url = IRRIGATION_IN_DOCKER if docker else IRRIGATION_AT
-        out.insert(at, f"{IRRIGATION_URL}={url}\n")
-        notes.append(f"{IRRIGATION_URL}={url} added: the irrigation controller is irrigation-mcp's now and the bot its client " + (
-            "(Docker, as this file names ecobot-mcp's container: start the `irrigation` profile; under systemd it would be "
-            f"{IRRIGATION_AT})" if docker else
-            f"(install and start irrigation-mcp.service; in Docker make it {IRRIGATION_IN_DOCKER} and start the `irrigation` profile)"))
     return out, notes
 
 
@@ -174,7 +159,7 @@ def main(argv=None) -> int:
         print("\nNothing changed. Run again with --write to change the file.")
         return 0
     backup = write(args.path, new)
-    print(f"\nChanged {args.path}; the old file is {backup}. Restart ecobot-mcp, irrigation-mcp and the bot to use it.")
+    print(f"\nChanged {args.path}; the old file is {backup}. Restart ecobot-mcp and irrigation-mcp to use it.")
     return 0
 
 

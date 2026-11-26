@@ -868,9 +868,9 @@ def test_mcp_dashboard_is_read_as_on_or_off(monkeypatch, tmp_path):
     monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
     monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("MCP_DASHBOARD", raising=False)
-    assert Config.from_env(bot=False).mcp_dashboard is True
+    assert Config.from_env().mcp_dashboard is True
     monkeypatch.setenv("MCP_DASHBOARD", "off")
-    assert Config.from_env(bot=False).mcp_dashboard is False
+    assert Config.from_env().mcp_dashboard is False
 
 
 INDOOR_TITLES = ["Indoor temperature", "Indoor humidity"]
@@ -940,13 +940,13 @@ def test_mcp_dashboard_indoor_is_read_as_on_or_off_on_by_default_and_a_typo_keep
     monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
     monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("MCP_DASHBOARD_INDOOR", raising=False)
-    assert Config.from_env(bot=False).mcp_dashboard_indoor is True
+    assert Config.from_env().mcp_dashboard_indoor is True
     for value, want in (("off", False), ("no", False), ("FALSE", False), ("0", False), ("on", True), ("yes", True), ("", True)):
         monkeypatch.setenv("MCP_DASHBOARD_INDOOR", value)
-        assert Config.from_env(bot=False).mcp_dashboard_indoor is want, value
+        assert Config.from_env().mcp_dashboard_indoor is want, value
     caplog.set_level("WARNING", logger="lib.config")
     monkeypatch.setenv("MCP_DASHBOARD_INDOOR", "hidden")
-    assert Config.from_env(bot=False).mcp_dashboard_indoor is True
+    assert Config.from_env().mcp_dashboard_indoor is True
     assert any("MCP_DASHBOARD_INDOOR" in r.getMessage() and "'hidden'" in r.getMessage() for r in caplog.records), caplog.records
 
 
@@ -956,13 +956,13 @@ def test_mcp_dashboard_animations_is_read_as_on_off_or_low_on_by_default_and_a_t
     monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
     monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("MCP_DASHBOARD_ANIMATIONS", raising=False)
-    assert Config.from_env(bot=False).mcp_dashboard_animations == "on"
+    assert Config.from_env().mcp_dashboard_animations == "on"
     for value, want in (("off", "off"), ("OFF", "off"), ("no", "off"), ("on", "on"), ("true", "on"), ("", "on"), ("low", "low"), ("LOW", "low")):
         monkeypatch.setenv("MCP_DASHBOARD_ANIMATIONS", value)
-        assert Config.from_env(bot=False).mcp_dashboard_animations == want, value
+        assert Config.from_env().mcp_dashboard_animations == want, value
     caplog.set_level("WARNING", logger="lib.config")
     monkeypatch.setenv("MCP_DASHBOARD_ANIMATIONS", "sometimes")
-    assert Config.from_env(bot=False).mcp_dashboard_animations == "on"
+    assert Config.from_env().mcp_dashboard_animations == "on"
     assert any("MCP_DASHBOARD_ANIMATIONS" in r.getMessage() and "'sometimes'" in r.getMessage() for r in caplog.records), caplog.records
 
 

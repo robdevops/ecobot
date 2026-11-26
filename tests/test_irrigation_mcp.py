@@ -1,7 +1,7 @@
 """irrigation-mcp (docs/ecobot-mcp.md 3.9, step 8): the irrigation controller's own MCP server. Its tools over the SDK's in-memory
 transport with a fake controller (and once with the fake Tuya cloud, signed); the watchdog closing a run after a restart; the daily check
 asking ecobot-mcp (in memory) for the rain and the forecast, pausing on either and leaving a delay someone set, and going on the forecast
-last read when ecobot-mcp can't be reached; its alerts heard through a listen; its state copied once from the bot's; the token and the
+last read when ecobot-mcp can't be reached; its alerts heard through a listen; the token and the
 Host checked over HTTP; `python -m irrigation_mcp` starting and stopping; and what it imports (no Telegram, no model client, no Pillow,
 no source)."""
 
@@ -167,50 +167,6 @@ async def test_a_run_started_through_the_tools_is_closed_by_the_watchdog_after_a
     await reborn.check()
     assert device.commands[-1] == ("switch", False) and reborn.off_at is None
     assert json.loads((tmp_path / "irrigation_state.json").read_text()) == {"irrigation_watchdog": {}}
-
-
-def bot_state(tmp_path, monitor: dict) -> str:
-    path = tmp_path / "bot_state.json"
-    path.write_text(json.dumps({"chats": {"1": {"title": "Rob"}}, "monitor": monitor, "charts": {}}))
-    return path.read_text()
-
-
-async def test_at_its_first_start_the_bots_watchdog_and_check_state_is_copied_once(tmp_path, caplog):
-    caplog.set_level("INFO")
-    off_at = time.time() - 100
-    bots = bot_state(tmp_path, {"irrigation_watchdog": {"off_at": off_at}, "rain": {"since": 5},
-                                "irrigation_monitor": {"checked": "2026-11-11", "paused": "2026-11-11", "battery_warned": "2026-11-10"}})
-    state = IrrigationState(tmp_path / "irrigation_state.json", tmp_path / "bot_state.json")
-    assert state.monitor == {"irrigation_watchdog": {"off_at": off_at},
-                             "irrigation_monitor": {"checked": "2026-11-11", "paused": "2026-11-11", "battery_warned": "2026-11-10"}}
-    assert json.loads((tmp_path / "irrigation_state.json").read_text()) == state.monitor     # (kept at once: copied this once only)
-    assert (tmp_path / "bot_state.json").read_text() == bots                                    # the bot's file as it was
-    assert caplog.text.count("copied from") == 1
-    device = FakeController(switch=True)
-    await Watchdog(device, state).check()                                                      # a run the old bot armed: closed
-    assert device.commands == [("switch", False)]
-    m = IrrigationMonitor(device, state, None, TZ, 18)
-    assert not m.due(datetime(2026, 11, 11, 19, 0)) and m.due(datetime(2026, 11, 12, 18, 0))   # the bot's day is not checked again
-    caplog.clear()
-    again = IrrigationState(tmp_path / "irrigation_state.json", tmp_path / "bot_state.json")   # the next start: its own file
-    assert again.monitor == {"irrigation_watchdog": {}, "irrigation_monitor": state.monitor["irrigation_monitor"]}
-    assert "copied" not in caplog.text
-
-
-def test_without_the_bots_entries_nothing_is_copied_not_even_at_a_later_start_and_a_damaged_bot_file_is_left_alone(tmp_path, caplog):
-    caplog.set_level("INFO")
-    mine = tmp_path / "irrigation_state.json"
-    bot_state(tmp_path, {"rain": {"since": 5}})
-    assert IrrigationState(mine, tmp_path / "bot_state.json").monitor == {}
-    assert json.loads(mine.read_text()) == {}                                  # written at the first start, with nothing in it
-    bot_state(tmp_path, {"irrigation_watchdog": {"off_at": 5.0}})              # (an old bot run since): not copied at a later start
-    assert IrrigationState(mine, tmp_path / "bot_state.json").monitor == {} and "copied" not in caplog.text
-    mine.unlink()
-    assert IrrigationState(mine, tmp_path / "none.json").monitor == {}
-    mine.unlink()
-    (tmp_path / "bot_state.json").write_text("{not json")
-    assert IrrigationState(mine, tmp_path / "bot_state.json").monitor == {}
-    assert (tmp_path / "bot_state.json").read_text() == "{not json" and "copied" not in caplog.text
 
 
 # ---------- the daily check, as ecobot-mcp's client ----------
@@ -398,7 +354,7 @@ async def test_python_m_irrigation_mcp_starts_answers_with_the_generated_token_a
     port = free_port()
     cfg = tuya_config(tmp_path, irrigation_bind=("127.0.0.1", port), irrigation_allowed_hosts=("irrigation.lan",),
                       irrigation_ecobot_mcp_url="http://127.0.0.1:9/mcp")
-    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, bot=True, program=None: cfg))
+    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, program="mcp": cfg))
     monkeypatch.setattr(main_module, "STARTUP_WAIT", 0.2)
     monkeypatch.setattr(main_module, "SHUTDOWN_SECONDS", 0.25)
     fake = FakeTuya()
@@ -444,7 +400,7 @@ async def test_at_start_the_watchdog_and_the_tools_dont_wait_for_ecobot_mcp(tmp_
     port = free_port()
     cfg = tuya_config(tmp_path, irrigation_bind=("127.0.0.1", port), irrigation_ecobot_mcp_url="http://127.0.0.1:9/mcp")
     (tmp_path / "irrigation_state.json").write_text(json.dumps({"irrigation_watchdog": {"off_at": time.time() - 120}}))
-    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, bot=True, program=None: cfg))
+    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, program="mcp": cfg))
     monkeypatch.setattr(main_module, "STARTUP_WAIT", 60)
     monkeypatch.setattr(main_module, "SHUTDOWN_SECONDS", 0.25)
     fake = FakeTuya(status=[{"code": "switch", "value": True}, *TUYA_STATUS[1:]])
@@ -527,7 +483,7 @@ def test_irrigation_mcp_imports_no_telegram_no_model_client_no_pillow_and_no_sou
             "from lib.config import Config; from lib.warm import Tasks, every; "
             f"folder = {str(tmp_path)!r}; "
             "cfg = Config.from_env(program='irrigation'); tz = ZoneInfo('UTC'); "
-            "state = IrrigationState(cfg.irrigation_state_path, cfg.state_path); device = Tuya(cfg); dog = Watchdog(device, state); "
+            "state = IrrigationState(cfg.irrigation_state_path); device = Tuya(cfg); dog = Watchdog(device, state); "
             "w = EcobotWeather(cfg.irrigation_ecobot_mcp_url, 't', tz); log = AlertLog(cfg.irrigation_alert_log_path, tz); "
             "s = IrrigationServer(device, dog, log, tz=tz); IrrigationMonitor(device, state, s.notify, tz, 18, w.rain, w.forecast); "
             "http_app(s, tokens=('t',)); "

@@ -96,7 +96,7 @@ def test_the_ecobot_mcp_unit_drops_the_bots_secrets_by_their_new_and_old_names()
     unset = set(re.search(r"^UnsetEnvironment=(.*)$", text, re.M)[1].split())
     by_env = {f.metadata["env"]: old_names(f) for f in fields(Config) if f.metadata.get("env")}
     for name in ("BOT_TELEGRAM_TOKEN", "BOT_OPENROUTER_API_KEY", "IRRIGATION_TUYA_CLIENT_ID", "IRRIGATION_TUYA_CLIENT_SECRET"):
-        assert {name, *by_env[name]} <= unset, name
+        assert {name, *by_env.get(name, ())} <= unset, name   # (the bot's settings are no Config fields any more: named in the unit only)
     assert "AUTH_TOKENS" not in unset and "ExecStart=/opt/ecobot/.venv/bin/python -m ecobot_mcp" in text
 
 
@@ -155,7 +155,7 @@ def test_irrigation_mcps_unit_runs_it_after_ecobot_mcp_and_before_the_bot_withou
     by_env = {f.metadata["env"]: old_names(f) for f in fields(Config) if f.metadata.get("env")}
     for name in ("BOT_TELEGRAM_TOKEN", "BOT_OPENROUTER_API_KEY", "MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY", "MCP_AIRGRADIENT_API_TOKEN",
                  "MCP_HOMEASSISTANT_TOKEN"):
-        assert {name, *by_env[name]} <= set(irrigation["UnsetEnvironment"]), name
+        assert {name, *by_env.get(name, ())} <= set(irrigation["UnsetEnvironment"]), name   # (the bot's: no Config fields any more)
     assert not any(n.startswith("IRRIGATION_") or n == "AUTH_TOKENS" for n in irrigation["UnsetEnvironment"])
     assert "WantedBy=multi-user.target" in text
     from irrigation_mcp.__main__ import SETTINGS_EXIT          # (without its settings it isn't restarted every 10 s for good)

@@ -88,10 +88,10 @@ def chart_data(title: str = "Temperature", drawn_by: dict | None = None) -> dict
 
 
 def config(tmp_path, **over) -> Config:
-    base = dict(telegram_token="1:x", openrouter_api_key="k", openrouter_base_url="http://x", openrouter_model="m", tz=TZ,
+    base = dict(tz=TZ,
                 ecowitt_api_key="a", ecowitt_app_key="b", airgradient_token="t", airgradient_location="42",
                 airgradient_dashboard="https://example.com/live", state_path=tmp_path / "state.json",
-                storage_path=tmp_path / "ecobot.sqlite", admin_only=False)   # tests that are about BOT_ADMIN_ONLY switch it on
+                storage_path=tmp_path / "ecobot.sqlite")
     return Config(**{**base, **over})
 
 

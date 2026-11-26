@@ -598,10 +598,10 @@ def test_the_antispike_setting_is_a_number_of_readings_default_2_and_off_is_1(mo
     for k, v in (("BOT_TELEGRAM_TOKEN", "t"), ("BOT_OPENROUTER_API_KEY", "k"), ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("MCP_ANTISPIKE_REQUIRE_CONSECUTIVE", raising=False)
-    assert Config.from_env(bot=False).antispike_require_consecutive == 2   # (ecobot-mcp's setting)
+    assert Config.from_env().antispike_require_consecutive == 2   # (ecobot-mcp's setting)
     for value, want in (("3", 3), ("1", 1), ("0", 1), ("off", 1), ("junk", 2), ("", 2)):
         monkeypatch.setenv("MCP_ANTISPIKE_REQUIRE_CONSECUTIVE", value)
-        assert Config.from_env(bot=False).antispike_require_consecutive == want, value
+        assert Config.from_env().antispike_require_consecutive == want, value
 
 
 async def test_a_date_with_an_offset_is_read_and_a_bad_one_is_not_called_a_sensor_fault(tmp_path):
