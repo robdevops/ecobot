@@ -3032,7 +3032,7 @@ const WEATHER = {
     // each mark: just short of it, then at it
     const marks = { rain: [{ rain_rate: 0 }, { rain_rate: 0.1 }], haze: [{ "AQI": 50 }, { "AQI": 51 }],
                     uv: [{ "UV index": 6.2 }, { "UV index": 6.3 }], humidity: [{ Humidity: 89.9 }, { Humidity: 90 }],
-                    wind: [{ Wind: 15 }, { Wind: 15.1 }], heat: [{ Temperature: 34.9 }, { Temperature: 35 }],
+                    wind: [{ Wind: 15 }, { Wind: 15.1 }], heat: [{ Temperature: 29.9 }, { Temperature: 30 }],
                     ice: [{ Temperature: 0.1 }, { Temperature: -0.1 }], iceAtZero: [{ Temperature: 0 }, { Temperature: -0.1 }],
                     flood: [{ flood: 0.049 }, { flood: 0.05 }] };
     out.marks = {};
@@ -3049,7 +3049,7 @@ const WEATHER = {
     out.humidityStrength = [];
     for (const rh of [91, 95, 100]) { await reads({ Humidity: rh }); out.humidityStrength.push((await weatherSeen(page)).levels.humidity); }
     out.heatStrength = [];
-    for (const t of [35, 39, 43, 48]) { await reads({ Temperature: t }); out.heatStrength.push((await weatherSeen(page)).levels.heat); }
+    for (const t of [30, 35, 36.5, 43, 48]) { await reads({ Temperature: t }); out.heatStrength.push((await weatherSeen(page)).levels.heat); }
     out.uvStrength = [];
     for (const index of [7, 8.5, 11, 12]) { await reads({ "UV index": index }); out.uvStrength.push((await weatherSeen(page)).levels.uv); }
     out.iceDepth = [];

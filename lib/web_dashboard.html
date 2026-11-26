@@ -189,7 +189,7 @@ const screenRoom = () => ({w: document.documentElement.clientWidth, h: document.
 // out; the tab hidden, it waits. Only with MCP_DASHBOARD_ANIMATIONS on and no reduced motion asked for: otherwise the page never
 // sets it going (animate false), and nothing is drawn, no loop, no frame.
 //   Sky.set(want, animate): want {rain: 0-1 (its strength), haze: 0-5 (the AQI's band above Good), humidity: 0-1 (90 % to
-//   100 %), uv: 0-1 (the UV index from 6 to 11), wind: 0 or 1, heat: 0-1 (35 °C to 43 °C), ice: how far below 0 °C it is (0: none), flood: 0-1 (the bucket's depth of full, from 0.05; 2: the test link's, full, its first frog
+//   100 %), uv: 0-1 (the UV index from 6 to 11), wind: 0 or 1, heat: 0-1 (30 °C to 43 °C), ice: how far below 0 °C it is (0: none), flood: 0-1 (the bucket's depth of full, from 0.05; 2: the test link's, full, its first frog
 //   sooner)}; animate false (the page's "stop", MCP_DASHBOARD_ANIMATIONS low or off, or reduced motion): nothing drawn (and
 //   anything blown across gone).
 //   Sky.setSun({rise, set, now, az, el, noon_el}): the station's sunrise and sunset and the time of day now (minutes since its local midnight: the page's
@@ -1055,7 +1055,7 @@ const Sky = (() => {
   // that is white at the centre through pale yellow-white to the pink-magenta halo that melts into the beams: at h = 1 larger and whiter,
   // at h = 0.3 smaller and dimmer with a warmer cream centre. The ember: a dark-orange glow in the halo, 4 x 0.3 (0.35 + 0.65 h)
   // exp(-r / 2.2 R) (1 - r / Rh)^2 smoothstep(1.2 R, 3.2 R, r) with a slow wobble (never on the ball, never an edge), and a
-  // elliptical bloom (6.5 R by 5.2 R, its outline and brightness wobbling), both scaled by the heat's share and faded in from 1.2 R to 3.2 R. The heat's h is its level: 0.3 at 35 C to 1 at 43 C
+  // elliptical bloom (6.5 R by 5.2 R, its outline and brightness wobbling), both scaled by the heat's share and faded in from 1.2 R to 3.2 R. The heat's h is its level: 0.3 at 30 C to 1 at 43 C
   // (0.3 where only the UV is on).
   // The breathing (the furnace): the halo and the ember bloom swell and shrink by the sum of three slow sines (sunPulse: 7, 11 and 17 s, none above 1/7 Hz), the more the hotter: see SUN_PULSE, SUN_PR,
   // SUN_PB. The breath weighs in only outside the white ball's blown-out edge (the radius rc where the unbreathed profile falls below 1), from rc + 0.5 R to rc + 2 R, so the ball keeps its size; the
@@ -1097,8 +1097,8 @@ const Sky = (() => {
   const SUN_BALL0 = 3.4, SUN_BALL1 = 2.6, SUN_HALO = 1.4, SUN_HALO_GAIN = 1.35, SUN_PROF = 4, SUN_EMBER = 4, SUN_BLOOM = 1;   // (the ball's reach Rh = 1.4 R (3.4 + 2.6 heat), the halo's width SUN_HALO; the profile's steps to a pixel; the ember's gain near the ball and the bloom's)
   // The furnace's breathing (TUNED, ARTISTIC): the halo and the ember bloom swell and shrink with three slow sines at once (SUN_PULSE: period s, weight, phase;
   // weights sum to 1, so the pulse p stays within -1 and 1, and the periods are incommensurate: it surges irregularly, none above 1/7 Hz, the page's rule being 0.5 Hz at most).
-  // The breath grows with the heat's share hq = (h - 0.3) / 0.7: the halo's radius by +-1.5 % at 35 C to +-22 % at 43 C (SUN_PR), its brightness by +-3 % to +-30 % (SUN_PB), the ember's
-  // brightness 1.25 times as much and its bloom's radius 1.25 times as much (SUN_PE), the white ball's own radius kept (the breath weighs in only outside its blown-out edge); the halo's baseline radius also grows by 25 % from 35 C to 43 C (SUN_GROW), the bloom's by 12 % (SUN_GROWB)
+  // The breath grows with the heat's share hq = (h - 0.3) / 0.7: the halo's radius by +-1.5 % at 30 C to +-22 % at 43 C (SUN_PR), its brightness by +-3 % to +-30 % (SUN_PB), the ember's
+  // brightness 1.25 times as much and its bloom's radius 1.25 times as much (SUN_PE), the white ball's own radius kept (the breath weighs in only outside its blown-out edge); the halo's baseline radius also grows by 25 % from 30 C to 43 C (SUN_GROW), the bloom's by 12 % (SUN_GROWB)
   const SUN_PULSE = [[7, 0.5, 0.6], [11, 0.3, 2.9], [17, 0.2, 4.1]], SUN_PR = [0.015, 0.22], SUN_PB = [0.03, 0.30], SUN_PE = 1.25, SUN_GROW = 0.25, SUN_GROWB = 0.12;
   const sunPulse = (clk) => { let p = 0; for (const [T, wt, ph] of SUN_PULSE) p += wt * Math.sin(2 * Math.PI * clk / T + ph); return p; };   // (-1 to 1)
   const sunReach = (R) => R * (SUN_BALL0 + SUN_BALL1) * SUN_HALO * (1 + SUN_GROW) * (1 + SUN_PR[1]);   // (the glow's reach at its hottest and fullest breath)
@@ -1492,7 +1492,7 @@ const Sky = (() => {
   })();
 
   // ---------- heat: the sun's white ball with its halo and ember flare (the sun above), the stronger the hotter ----------
-  // Its level h runs 0.3 at 35 C to 1 at 43 C (the page's levels: 0 below 35 C). It shows while its level is above 0 (35 C outdoors, or
+  // Its level h runs 0.3 at 30 C to 1 at 43 C (the page's levels: 0 below 30 C). It shows while its level is above 0 (30 C outdoors, or
   // feels-like), fading in and out over FADE_S. Dithered (the page's irregular dither, no grid), drawn at the very bottom, under every
   // other effect, behind the flood (nothing below its water), at a strength of its own under the brightness cap.
   const heat = effect((e) => ({
@@ -5108,7 +5108,7 @@ const Sky = (() => {
   // °F, its coloured bands as they were), its ticks every round step (0.5, 1, 2, 5, 10 ...) that gives no more of them than it had; a
   // dial's (the wind's 0 to 100 km/h), and a scale `round` (the rain's beaker), ending on its ticks (0 to 60 mph, every 10; 950 to 1050
   // hPa: 28 to 31 inHg, every 0.5; 0 to 100 mm: 0 to 4 in, every 1; 0 to 50 mm/h: 0 to 2 in/h, every 0.5). The pressure's arrow (its
-  // 3-hour tendency, told in hPa) as it was: the same way in either, just after the reading whatever its width. The weather's marks (heat from 35 °C, leaves from 15 km/h, flood above 30
+  // 3-hour tendency, told in hPa) as it was: the same way in either, just after the reading whatever its width. The weather's marks (heat from HEAT_FROM, 30 °C, leaves from 15 km/h, flood above 30
   // mm/h) read the server's own figures: unchanged by these.
   const UNITS = {temperature: {metric: "°C", other: "°F", name: "Temperature unit", convert: (c) => c * 9 / 5 + 32},
                  wind: {metric: "km/h", other: "mph", name: "Wind speed unit", convert: (k) => k / 1.609344},
@@ -5773,7 +5773,7 @@ const Sky = (() => {
   // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
   // stronger to 8 mm/h), haze from the AQI tile's (the US AQI's) Moderate band up (1-5, a band each: its baked pattern; its opacity and
   // tint follow the air sensor's PM2.5 itself, continuously: data.pm25, Sky.setPm25), uv at a UV index of 11, humidity at 90 %
-  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself, and down to 85 % once on: hysteresis), wind above 15 km/h (the reading now, not the gust), heat at 35 °C (stronger to 43 °C: 0.3 to 1), ice below 0 °C (how far below), a flash flood
+  // humidity (heavier to 100 %: 0.1 at 91 %, 1 at 100 %; 0.05 at 90 % itself, and down to 85 % once on: hysteresis), wind above 15 km/h (the reading now, not the gust), heat at HEAT_FROM, 30 °C (stronger to HEAT_TO, 43 °C: 0.3 to 1), ice below 0 °C (how far below), a flash flood
   // from the server's leaky bucket over the past hours' rain (data.flood.depth, 0-1: the effect's level, from FLOOD_SHOW, 0.05, up; the
   // water's height follows it: see the flood). A tile with no reading now calls for nothing.
   const CALLED_BY = {rain: "Rain", haze: "AQI", uv: "UV index", humidity: "Humidity", wind: "Wind", heat: "Temperature",
@@ -5783,6 +5783,7 @@ const Sky = (() => {
   // The humidity's fog has a hysteresis, so a reading hovering at its mark doesn't toggle it with each fetch: on from 90 % and kept on down
   // to 85 % (off below that). The state is the page's, from the data it has fetched (a page load starts with the plain mark); a tile with
   // no reading now clears it. The flood has none: its depth is the server's leaky bucket, which moves slowly itself.
+  const HEAT_FROM = 30, HEAT_TO = 43;   // (the heat's ends in °C: level 0.3 at HEAT_FROM, 1 at HEAT_TO)
   const FOG_ON = 90, FOG_OFF = 85, FLOOD_SHOW = 0.05;   // (the flood shows from a depth of 0.05 of full)
   const PM25_EDGES = [9, 35.4, 55.4, 125.4, 225.4];     // (the EPA's 2024 PM2.5 breakpoints: a band where the AQI tile gives none)
   let fogging = false;
@@ -5803,7 +5804,7 @@ const Sky = (() => {
             haze: aqi !== null ? Math.min(5, bands.filter((b) => aqi > b).length) : pm25 !== null ? PM25_EDGES.filter((b) => pm25 > b).length : 0,
             uv: uvi !== null ? Sky.uvLevel(uvi) : 0,   // (the sun's own: 0 until the violet shows, then (UV - 6) / 5 to 1 at 11)
             humidity: fogging ? Math.max(0.05, Math.min(1, (humidity - 90) / 10)) : 0,
-            wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= 35 ? 0.3 + 0.7 * Math.min(1, (temperature - 35) / 8) : 0,
+            wind: wind !== null && wind > 15 ? 1 : 0, heat: temperature !== null && temperature >= HEAT_FROM ? 0.3 + 0.7 * Math.min(1, (temperature - HEAT_FROM) / (HEAT_TO - HEAT_FROM)) : 0,
             ice: temperature !== null && temperature < 0 ? -temperature : 0, flood: depth >= FLOOD_SHOW ? depth : 0};
   }
   // The wind's direction (the compass tile's reading: degrees, where it comes FROM, 0 north, 90 east, clockwise; east is the right of

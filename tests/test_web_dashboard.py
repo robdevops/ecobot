@@ -1974,7 +1974,7 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
     assert got["nothing"] == {"effects": [], "levels": {k: 0 for k in got["nothing"]["levels"]}, "running": False, "framed": [],
                               "link": None, "frames": 0, "ink": 0}
     # each effect at its mark and not just short of it (rain above 0 mm/h, the AQI's Moderate band from 51, above UV 6, 90 %, wind above
-    # 15 km/h, 35 °C, below 0 °C, not at it), its tile framed in red, the strip's link with it
+    # 15 km/h, 30 °C, below 0 °C, not at it), its tile framed in red, the strip's link with it
     for name, mark in got["marks"].items():
         effect = "ice" if name == "iceAtZero" else name
         assert mark["below"] | {"levels": None} == {"effects": [], "levels": None, "running": mark["below"]["running"], "framed": [],
@@ -1986,8 +1986,8 @@ async def test_the_weather_behind_the_tiles_comes_with_its_reading_at_its_mark_a
     assert got["humidityStrength"] == pytest.approx([0.1, 0.5, 1])              # heavier from 90 % to 100 %
     assert got["uvStrength"] == pytest.approx([0.2, 0.5, 1, 1])                  # the beams rise from UV 6 to UV 11: the level (UV - 6) / 5
     assert got["iceDepth"] == [0.5, 5]                                           # further in the colder
-    assert got["heatStrength"] == pytest.approx([0.3, 0.65, 1, 1])               # stronger from 35 °C to 43 °C
-    # shown in °F, mph, inHg and in: the same marks, of the readings in °C, km/h and mm/h (heat from 35 °C, leaves above 15 km/h, ice
+    assert got["heatStrength"] == pytest.approx([0.3, 0.3 + 0.7 * 5 / 13, 0.65, 1, 1])   # stronger from 30 °C to 43 °C: (T - 30) / 13 (35 °C: 0.569)
+    # shown in °F, mph, inHg and in: the same marks, of the readings in °C, km/h and mm/h (heat from 30 °C, leaves above 15 km/h, ice
     # below 0 °C, rain above 0 mm/h, heavy from 8; the flood from the server's bucket depth 0.05, not below it)
     calm = lambda m: {**m, "below": m["below"] | {"running": None}}   # (just short: whether the last effect's still fading out aside)
     assert {k: calm(m) for k, m in got["unitsMarks"].items()} == {k: calm(got["marks"][k]) for k in ("heat", "wind", "ice", "rain")}
@@ -3025,7 +3025,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert hot["night"]["noon"]["day"] and hot["night"]["noon"]["ink"] > 500, hot["night"]
     # the ball: a blown-out white ball with no disc edge: its brightness (the mean at each whole pixel of distance from the centre) never
     # rises going out and no step of one pixel is more than a sixth of the full scale (a disc's rim would be), white at its centre at
-    # 43 C (every channel high) and cream at 35 C, the ball much larger at 43 C than 35 C (the radius of half its brightness), its glow
+    # 43 C (every channel high) and cream at 30 C, the ball much larger at 43 C than 30 C (the radius of half its brightness), its glow
     # reaching 4.76 R to 8.4 R (1.4 R (3.4 + 2.6 heat): the halo 1.4 times as wide) and gone beyond that
     cool, hotter = hot["balls"]
     assert cool["level"] == pytest.approx(0.3) and hotter["level"] == 1 and cool["drawn"] <= cool["cap"] and hotter["drawn"] <= hotter["cap"], hot["balls"]
@@ -3039,7 +3039,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
     assert cool["centre"][0] > 240 and cool["lum"][2] < hotter["lum"][2], (cool["centre"], cool["lum"], hotter["lum"])   # (hot at its middle, dimmer round it than at 43 C)
     assert hotter["half"] > 1.8 * cool["half"] > 0 and hotter["Rh"] > 1.35 * cool["Rh"], (hotter["half"], cool["half"])
     # ... and its ember: a dark-orange flare outside the ball, there at 43 C but subtle (its field's largest value, the page showing 0.45 of
-    # it: under 0.6 and over 0.1), dimmer at 35 C
+    # it: under 0.6 and over 0.1), dimmer at 30 C
     assert 0.1 < hotter["ember"] < 0.6 and cool["ember"] < 0.6 * hotter["ember"], (hotter["ember"], cool["ember"])
     # no glow pixel on or beyond the edge of the ball's box (Rh + 3 from the sun), nor of the ember bloom's (the picture's own box), at the
     # sun's places through a summer and a winter day, the box's sides inside the window (its sides at the window's edge cut by it)
@@ -3057,7 +3057,7 @@ async def test_effects_asked_for_as_the_page_opens_alone_and_on_a_phone(server, 
         lum = look["lum"][:6]
         assert lum[0] > 200 and all(b <= a + 6 for a, b in zip(lum, lum[1:])), look
     # the furnace's breathing (120 s of the weather's clock, a sample every half second): the halo's radius at 0.15 of the ball's field swings clearly more at 43 C
-    # (peak to peak over 40 s: at least 25 % of its radius, and at least 3 times 35 C's, which stays under 8 %), its baseline radius at 43 C at least 20 % over 35 C's
+    # (peak to peak over 40 s: at least 25 % of its radius, and at least 3 times 30 C's, which stays under 8 %), its baseline radius at 43 C at least 20 % over 30 C's
     # (beyond the heat's own), the white ball's radius (where its profile falls through 1) varies under 5 %, and no glow measure has a pulse faster than 0.15 Hz
     def swing(rows, key, n=80):
         v = [r[key] for r in rows[:n]]
